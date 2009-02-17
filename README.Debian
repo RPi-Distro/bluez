@@ -1,4 +1,4 @@
-bluez-utils for Debian
+bluez for Debian
 ----------------------
 
 The /dev/rfcomm* serial devices entries are automatically created for using
@@ -23,17 +23,11 @@ devices you should install the bluez-pcmcia-support package.
 Some USB dongles require firmware to make them work: bluez-firmware from the
 "non-free" section provides the required firmware.
 
-Additional Documentation
-------------------------
-
-See http://www.bluez.org/documentation.html for BlueZ documentation
-and http://www.holtmann.org/linux/bluetooth/ for a collection of
-linux bluetooth related HOWTOs.
-
 Mailing lists
 -------------
-bluez-users@lists.sf.net - BlueZ general questions and discussions
-bluez-devel@lists.sf.net - BlueZ development 
+The old sourceforge lists have been discontinued, the new lists can be found at:
+
+http://www.bluez.org/development/lists/
 
 PIN (or passkey) management
 ---------------------------
