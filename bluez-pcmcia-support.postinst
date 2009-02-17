@@ -1,0 +1,23 @@
+#!/bin/sh
+
+#set -e
+#case "$1" in
+#    configure)
+#    	chmod a+x /etc/pcmcia/bluetooth
+#	;;
+#
+#    *)
+#        exit 0
+#    ;;
+#esac
+
+# temporary fix for #359614
+#case "$1" in
+    #configure)
+        #if [ ! -z "$2" ] && dpkg --compare-versions "$2" le 3.1-2; then
+           #ln -s ../bluez-pcmcia-support.rules /etc/udev/rules.d/z60_bluez-pcmcia-support.rules
+        #fi
+    #;;
+#esac
+
+#DEBHELPER#

@@ -1,0 +1,132 @@
+bluez-utils for Debian
+----------------------
+
+The /dev/rfcomm* serial devices entries are automatically created for using
+RFCOMM with legacy applications -- see rfcomm(8).  Users must be in group
+'dialout' to have privileges to use these devices.
+
+You can edit /etc/bluetooth/rfcomm.conf to have some rfcomm devices bound
+automatically at boot time.
+
+This package contains also the dund and pand daemons for enabling
+dial-up and ethernet networking over bluetooth.  Edit the
+/etc/default/bluetooth file in order to enable these services. See
+below for more details on their configuration.
+
+The manual pages in this package are mostly very rudimentary.  Further
+documentation for BlueZ can be found at http://www.bluez.org and at the BlueZ
+wiki http://wiki.bluez.org.
+
+If you wish to install PCMCIA card services support for your Bluetooth
+devices you should install the bluez-pcmcia-support package.
+
+Some USB dongles require firmware to make them work: bluez-firmware from the
+"non-free" section provides the required firmware.
+
+Additional Documentation
+------------------------
+
+See http://www.bluez.org/documentation.html for BlueZ documentation
+and http://www.holtmann.org/linux/bluetooth/ for a collection of
+linux bluetooth related HOWTOs.
+
+Mailing lists
+-------------
+bluez-users@lists.sf.net - BlueZ general questions and discussions
+bluez-devel@lists.sf.net - BlueZ development 
+
+PIN (or passkey) management
+---------------------------
+
+For asking a PIN when necessary a passkey agent is required, the bluez-gnome
+package provides one, another one is provided as an example in
+/usr/share/doc/bluez-utils/examples/passkey-agent.c After compilation launch as
+"./passkey-agent <your_passkey>"
+
+The old infrastructure /etc/bluetooth/passkey has been removed since the agent
+is supposed to be started by a user session. It is not meant to be system-wide. 
+
+Note to the tech-savvy:
+If you are stuck in console and absolutely need to pair with your bluetooth
+device have a look at /var/lib/bluetooth/<your_device_address>/pincodes.
+Please note that this mode of operation is _not_ _supported_.
+The format is (one per line): <remote_address><whitespace><pincode>
+Don't mess with files in /var/lib/bluetooth/ unless you know what you are
+doing.
+I repeat: manually adding a pincode for a remote device is NOT SUPPORTED.
+
+Keyboard and mouse support
+--------------------------
+
+The hidd daemon allows keyboards and mice to be connected to your
+system.  Ensure you have the hidp patch for Linux 2.6.6 or better
+from http://www.bluez.org/patches.html.
+
+Then change HIDD_ENABLED in /etc/default/bluetooth to 1 and restart
+bluetooth.  That enables the hidd server.  Discover you mouse or
+keyboard bluetooth address (bdaddr) by running "hcitool scan".  You
+must then connect to your keyboard or mouse using hidd --connect
+<bdaddr>.  On first connection, pairing is likely and you should press
+"connect" button on mice/keyboard, if any.  Mice normally have a
+preset PIN which should be in the manufacturer's documentation, try
+0000.  For keyboards, type the PIN on the Bluetooth keyboard and hit
+enter, and then supply it to the passkey agent (using a cable-attached
+keyboard).  In future your keyboard or mouse should reconnect to your computer
+automatically.  You must invoke hidd as root.
+
+Headset support
+---------------
+
+These tools now include some support for headsets.  There are two
+test programs 'hsmicro' and 'hsplay' that aren't installed by default;
+you'll need too get the source and compile these yourself as upstream
+doesn't want them installed.  This is because these tools are highly
+experimental and unstable, and shouldn't be depended on in any way.
+
+Bluetooth Networking Quickstart
+-------------------------------
+
+In the future this package will contain better documentation.  In the
+meantime, here's a quick primer:
+
+1. Starting dund and pand at boot time
+
+See /etc/default/bluetooth for how to configure these two daemons to
+run at boot-time.  Read below also.
+
+
+2. PPP over RFCOMM
+
+This is what most devices call "LAN Access" or "Serial Access".  It
+uses normal PPP over a serial connection.  Most PDAs will be able to
+connect using this method.
+
+Use the 'dund' tool to accept incoming connections.  Configure pppd
+as per the instructions in the ppp package.  Then run:
+
+  dund --listen --sdp --nodetach
+
+Try and connect your device and you'll see something like:
+
+dund[9801]: DUN daemon ver 1.1pre4
+dund[9811]: New connection from 00:02:31:24:17:6A
+
+The --sdp option causes the DUN access to be advertised to other
+devices via the SDP protocol.  Most devices need this in order to be
+able to connect.
+
+Run dund --help to see the various other options available to you.
+
+If you want to make an outgoing connection using PPP, for instance to
+a mobile phone, use the 'rfcomm' program from bluez-utils to bind a
+/dev/rfcommX serial port to the phone, and then then use pppd as you
+would with a normal modem.
+
+3. PAN
+
+The 'pand' tool allows you to use ethernet style networking over
+Bluetooth.  It creates a network interface on your machine that can be
+configured in the same way normal network devices are.
+
+For full details see the PAN HOWTO at
+<http://bluez.sourceforge.net/contrib/HOWTO-PAN>

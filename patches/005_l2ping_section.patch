@@ -1,0 +1,8 @@
+--- bluez-utils-2.4.orig/tools/l2ping.1	2004-01-15 20:43:05.000000000 +0000
++++ bluez-utils-2.4/tools/l2ping.1	2004-01-15 20:42:13.000000000 +0000
+@@ -1,4 +1,4 @@
+-.TH L2PING 1 "Jan 22 2002" BlueZ "Linux System Administration"
++.TH L2PING 8 "Jan 22 2002" BlueZ "Linux System Administration"
+ .SH NAME
+ l2ping \- Send L2CAP echo request and receive answer
+ .SH SYNOPSIS

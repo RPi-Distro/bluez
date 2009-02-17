@@ -1,0 +1,17 @@
+debian/tmp/etc/bluetooth/main.conf
+debian/tmp/etc/bluetooth/rfcomm.conf
+debian/tmp/etc/dbus*/*
+debian/tmp/usr/bin/hcitool
+debian/tmp/usr/bin/rfcomm
+debian/tmp/usr/bin/dfutool
+debian/tmp/usr/bin/l2ping
+debian/tmp/usr/bin/sdptool
+debian/tmp/usr/bin/ciptool
+debian/tmp/usr/sbin/*
+debian/tmp/usr/share/man/man1/dfutool*
+debian/tmp/usr/share/man/man1/ciptool*
+debian/tmp/usr/share/man/man1/hcitool*
+debian/tmp/usr/share/man/man1/sdptool*
+debian/tmp/usr/share/man/man1/rfcomm*
+debian/tmp/usr/share/man/man8/*
+debian/tmp/usr/lib/bluetooth/plugins/*.so
