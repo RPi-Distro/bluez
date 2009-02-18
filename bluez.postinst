@@ -26,15 +26,16 @@ case "$1" in
             echo "Creating device nodes ..."
             cd /dev && ./MAKEDEV bluetooth 1>/dev/null 2>/dev/null
         fi
+
         # reload dbus config file
         if [ -x /etc/init.d/dbus ]; then
             invoke-rc.d dbus force-reload || true
         fi
 
-	#reload udev rules
-	if [ -x /etc/init.d/udev ]; then
+        #reload udev rules
+        if [ -x /etc/init.d/udev ]; then
             invoke-rc.d udev reload || true
-	fi
+        fi
 
         ;;
 
