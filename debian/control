@@ -60,7 +60,6 @@ Package: bluez
 Architecture: any
 Depends: ${shlibs:Depends}, module-init-tools, makedev | udev, lsb-base, dbus, ${misc:Depends}
 Replaces: bluez-input, bluez-network, bluez-audio, bluez-serial, bluez-utils (<=4.9)
-Breaks: udev (<< 136-1)
 Description: Bluetooth tools and daemons
  This package contains tools and system daemons for using Bluetooth devices.
  .
