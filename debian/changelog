@@ -1,13 +1,14 @@
 bluez (4.30-0exp1) experimental; urgency=low
 
   * First upload of bluez 4.x (Closes: #499529)
-    - Include parts of the packaging from ubuntu, thanks!
+    - include parts of the packaging from ubuntu, thanks!
     - bluez-utils and bluez-libs are now a single source package 
     - libbluetooth2 -> libbluetooth3 bump
+    - conflict bluez with bluez-utils (<= 3.36-3)
   * Remove hid2hci patches/script
   * Remove broken link to documentation (Closes: #504675)
 
- -- Filippo Giunchedi <filippo@debian.org>  Wed, 18 Feb 2009 20:23:52 +0100
+ -- Filippo Giunchedi <filippo@debian.org>  Thu, 19 Feb 2009 14:36:00 +0100
 
 bluez (4.29-0ubuntu1) jaunty; urgency=low
 
