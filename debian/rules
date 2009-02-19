@@ -1,5 +1,5 @@
 #!/usr/bin/make -f
-# build rules for bluez-utils
+# build rules for bluez
 
 include /usr/share/cdbs/1/rules/buildcore.mk
 include /usr/share/cdbs/1/rules/debhelper.mk
@@ -49,15 +49,14 @@ install/bluez::
 install/bluez-alsa::
 	install -D -m 0644 $(CURDIR)/audio/asound.conf $(CURDIR)/debian/bluez-alsa/usr/share/alsa/bluetooth.conf
 
-binary-install/bluez-gstreamer::
-	LD_LIBRARY_PATH="$(CURDIR)/debian/tmp/usr/lib:$(LD_LIBRARY_PATH)" dh_gstscancodecs -pbluez-gstreamer
-	#dh_gstscancodecs -pbluez-gstreamer
-
-binary-install/bluez::
-	install -D -m 0644 $(CURDIR)/debian/bluetooth-dbus.conf $(CURDIR)/debian/bluez-utils/etc/dbus-1/system.d/bluetooth.conf
-
 install/bluez-pcmcia-support::
 	cp -f $(CURDIR)/scripts/bluetooth.rules $(CURDIR)/debian/bluez-pcmcia-support.udev
+
+binary-install/bluez-gstreamer::
+	LD_LIBRARY_PATH="$(CURDIR)/debian/tmp/usr/lib:$(LD_LIBRARY_PATH)" dh_gstscancodecs -pbluez-gstreamer
+
+binary-install/bluez::
+	install -D -m 0644 $(CURDIR)/debian/bluetooth-dbus.conf $(CURDIR)/debian/bluez/etc/dbus-1/system.d/bluetooth.conf
 
 binary-install/bluez-pcmcia-support::
 	chmod a+x $(CURDIR)/debian/bluez-pcmcia-support/lib/udev/bluetooth_serial
