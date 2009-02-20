@@ -7,8 +7,11 @@ bluez (4.30-0exp1) experimental; urgency=low
     - conflict bluez with bluez-utils (<= 3.36-3)
   * Remove hid2hci patches/script
   * Remove broken link to documentation (Closes: #504675)
+  * Install a sample commandline agent from test/ into bluetooth-agent
+    - add 001_test_agent_default_adapter.patch to get the default adapter
+  * Install test/simple-agent and test/list-devices as examples
 
- -- Filippo Giunchedi <filippo@debian.org>  Thu, 19 Feb 2009 14:36:00 +0100
+ -- Filippo Giunchedi <filippo@debian.org>  Fri, 20 Feb 2009 16:25:17 +0100
 
 bluez (4.29-0ubuntu1) jaunty; urgency=low
 
