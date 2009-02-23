@@ -11,8 +11,10 @@ bluez (4.30-0exp1) experimental; urgency=low
     - add 001_test_agent_default_adapter.patch to get the default adapter
   * Install test/simple-agent and test/list-devices as examples
   * Update copyright, use GPL 2+
+  * Remove old commented code from maintainer scripts (pcmcia-support postinst
+    and bluez preinst)
 
- -- Filippo Giunchedi <filippo@debian.org>  Mon, 23 Feb 2009 15:10:55 +0100
+ -- Filippo Giunchedi <filippo@debian.org>  Mon, 23 Feb 2009 15:21:26 +0100
 
 bluez (4.29-0ubuntu1) jaunty; urgency=low
 
