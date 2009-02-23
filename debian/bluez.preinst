@@ -35,11 +35,6 @@ rm_conffile() {
 
 case "$1" in
 install|upgrade)
-    #if dpkg --compare-versions "$2" le "2.19-1"; then
-    #   prep_mv_conffile "/etc/init.d/bluez-utils"
-    #   prep_mv_conffile "/etc/default/bluez-utils"
-    #fi
-
     if dpkg --compare-versions "$2" le "3.7-1"; then
         prep_mv_conffile "/etc/dbus-1/system.d/bluez-hcid.conf"
     fi
