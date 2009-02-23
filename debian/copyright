@@ -3,21 +3,20 @@ Sat, 13 Apr 2002 16:09:02 +0100.
 
 It was downloaded from http://bluez.org/
 
-Upstream Author:     Maksim Krasnyanskiy <maxk@qualcomm.com>
-
 Copyright:
 
    BlueZ - Bluetooth protocol stack for Linux
 
    Copyright (C) 2000-2001  Qualcomm Incorporated
    Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
-   Copyright (C) 2002-2007  Marcel Holtmann <marcel@holtmann.org>
+   Copyright (C) 2002-2009  Marcel Holtmann <marcel@holtmann.org>
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
 
-   This package is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; version 2 dated June, 1991.
+   This package is free software; you can redistribute it and/or modify it
+   under the terms of the GNU General Public License as published by the Free
+   Software Foundation; either version 2 of the License, or (at your option)
+   any later version.
 
 On Debian GNU/Linux systems, the complete text of the GNU General
 Public License can be found in `/usr/share/common-licenses/GPL'.
@@ -33,4 +32,3 @@ USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS, COPYRIGHTS,
 TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS SOFTWARE IS DISCLAIMED.
-
