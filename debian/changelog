@@ -1,20 +1,22 @@
-bluez (4.30-0exp1) experimental; urgency=low
+bluez (4.34-0exp1) experimental; urgency=low
 
   * First upload of bluez 4.x (Closes: #499529)
     - include parts of the packaging from ubuntu, thanks!
     - bluez-utils and bluez-libs are now a single source package 
     - libbluetooth2 -> libbluetooth3 bump
     - conflict bluez with bluez-utils (<= 3.36-3)
+    - update debian/copyright, thanks to Nobuhiro Iwamatsu
   * Remove hid2hci patches/script
   * Remove broken link to documentation (Closes: #504675)
   * Install a sample commandline agent from test/ into bluetooth-agent
     - add 001_test_agent_default_adapter.patch to get the default adapter
   * Install test/simple-agent and test/list-devices as examples
-  * Update copyright, use GPL 2+
   * Remove old commented code from maintainer scripts (pcmcia-support postinst
     and bluez preinst)
+  * Update watch file to match bluez only
+  * Add #DEBHELPER# to debian/bluez-utils.postrm
 
- -- Filippo Giunchedi <filippo@debian.org>  Mon, 23 Feb 2009 15:21:26 +0100
+ -- Filippo Giunchedi <filippo@debian.org>  Wed, 01 Apr 2009 11:11:50 +0200
 
 bluez (4.29-0ubuntu1) jaunty; urgency=low
 
