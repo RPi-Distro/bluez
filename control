@@ -21,7 +21,7 @@ Build-Depends: debhelper (>= 7),
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez
 Homepage: http://www.bluez.org
-Standards-Version: 3.8.0
+Standards-Version: 3.8.1
 
 Package: libbluetooth3
 Section: libs
