@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -e
 
 #Dummy transitional postrm script
 #Don't do anything.

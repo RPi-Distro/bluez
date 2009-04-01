@@ -16,8 +16,16 @@ bluez (4.34-0exp1) experimental; urgency=low
   * Update watch file to match bluez only
   * Add #DEBHELPER# to debian/bluez-utils.postrm
   * Update to S-V 3.8.1: no changes needed
+  * Fix lintian warnings:
+    - add -e to remaining maintainer scripts
+    - remove full path to update-rc.d in debian/bluez.postinst
+    - override "bluez-utils: maintainer-script-empty postrm" for transitional
+      bluez-utils postrm
+  * Use 7 in debian/compat
+  * Fix debian/bluez.preinst to use dpkg-query, thus removing the lintian
+    override
 
- -- Filippo Giunchedi <filippo@debian.org>  Wed, 01 Apr 2009 11:11:50 +0200
+ -- Filippo Giunchedi <filippo@debian.org>  Wed, 01 Apr 2009 12:20:01 +0200
 
 bluez (4.29-0ubuntu1) jaunty; urgency=low
 

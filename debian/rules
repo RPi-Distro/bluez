@@ -44,7 +44,8 @@ install/bluez::
 
 	install -D -m 0755 $(CURDIR)/test/agent $(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
 
-	install -D -m 0644 $(CURDIR)/debian/bluez.override $(CURDIR)/debian/bluez/usr/share/lintian/overrides/bluez
+install/bluez-utils::
+	install -D -m 0644 $(CURDIR)/debian/bluez-utils.override $(CURDIR)/debian/bluez-utils/usr/share/lintian/overrides/bluez-utils
 
 install/bluez-alsa::
 	install -D -m 0644 $(CURDIR)/audio/asound.conf $(CURDIR)/debian/bluez-alsa/usr/share/alsa/bluetooth.conf
