@@ -69,9 +69,9 @@ enable_hci_input()
 {
        if [ "$VERBOSE" != no ]; then
                log_progress_msg "hid_devices"
-               $HID2HCI --tohci
+               $HID2HCI -rhci
        else
-               $HID2HCI --tohci >/dev/null 2>&1
+               $HID2HCI -rhci -q
        fi
 }
 
@@ -79,9 +79,9 @@ disable_hci_input()
 {
        if [ "$VERBOSE" != no ]; then
                log_progress_msg "hid_devices"
-               $HID2HCI --tohid
+               $HID2HCI -rhid
        else
-               $HID2HCI --tohid >/dev/null 2>&1
+               $HID2HCI -rhid -q
        fi
 }
 
