@@ -1,3 +1,13 @@
+bluez (4.40-1) unstable; urgency=low
+
+  * New upstream release
+    - scripts/bluetooth.rules -> scripts/bluetooth-serial.rules
+    - switch to new syntax for hid2hci in init script
+  * Upload to unstable
+  * Install udev rules for hid2hci
+
+ -- Filippo Giunchedi <filippo@debian.org>  Wed, 20 May 2009 19:19:24 +0200
+
 bluez (4.34-0exp1) experimental; urgency=low
 
   * First upload of bluez 4.x (Closes: #499529)
