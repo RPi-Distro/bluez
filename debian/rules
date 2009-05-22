@@ -11,10 +11,9 @@ DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
 DEB_CONFIGURE_EXTRA_FLAGS := --enable-gstreamer \
                              --enable-alsa \
                              --enable-usb \
-                             --enable-hal \
                              --enable-netlink \
                              --enable-tools \
-							 --enable-test \
+                             --enable-test \
                              --enable-bccmd \
                              --enable-hid2hci \
                              --enable-dfutool \

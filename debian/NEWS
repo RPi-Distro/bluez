@@ -1,3 +1,18 @@
+bluez-utils (4.40-1) unstable; urgency=low
+
+  This version includes a new hid2hci program which expects the vendor ID and
+  product ID of the device to be switched to HID/HCI mode, this means the
+  switching is no longer done in init script but via udev rules for supported
+  devices. Adding new devices can be done by dropping rules into
+  /etc/udev/rules.d/ similar to ones found in
+  /lib/udev/rules.d/62-bluez-hid2hci.rules or by manually running hid2hci, see
+  hid2hci(8) manpage for further information.
+
+  This version also ships a simple commandline agent (bluetooth-agent) to do
+  pairing on the command line 
+
+ -- Filippo Giunchedi <filippo@debian.org>  Fri, 22 May 2009 15:21:35 +0200
+
 bluez-utils (3.36-3) unstable; urgency=low
 
   This version includes an new d-bus policy with updated access control.
