@@ -67,22 +67,12 @@ run_sdptool()
 
 enable_hci_input()
 {
-       if [ "$VERBOSE" != no ]; then
-               log_progress_msg "hid_devices"
-               $HID2HCI -rhci
-       else
-               $HID2HCI -rhci -q
-       fi
+    log_progress_msg "switching to HID/HCI no longer done in init script, see /usr/share/doc/bluez/NEWS.Debian.gz"
 }
 
 disable_hci_input()
 {
-       if [ "$VERBOSE" != no ]; then
-               log_progress_msg "hid_devices"
-               $HID2HCI -rhid
-       else
-               $HID2HCI -rhid -q
-       fi
+    log_progress_msg "switching to HID/HCI no longer done in init script, see /usr/share/doc/bluez/NEWS.Debian.gz"
 }
 
 start_uarts()

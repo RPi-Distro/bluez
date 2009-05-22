@@ -5,9 +5,13 @@
 # start
 BLUETOOTH_ENABLED=1
 
-# This setting will switch HID devices (e.g mouse/keyboad) to HCI mode, that is
+# This setting used to switch HID devices (e.g mouse/keyboad) to HCI mode, that is
 # you will have bluetooth functionality from your dongle instead of only HID.
+# This is now done by udev rules in /lib/udev/rules.d/62-bluez-hid2hci.rules
+# for supported devices by invoking hid2hci with correct parameters.
+# See /usr/share/doc/bluez/NEWS.Debian.gz for further information.
+
 # Note that not every bluetooth dongle is capable of switching back to HID
 # mode, see http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=355497
-HID2HCI_ENABLED=1
-HID2HCI_UNDO=1
+HID2HCI_ENABLED=0
+HID2HCI_UNDO=0
