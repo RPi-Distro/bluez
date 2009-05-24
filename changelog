@@ -1,3 +1,9 @@
+bluez (4.40-2) UNRELEASED; urgency=low
+
+  * Ship a libbluetooth3.symbols file instead of shlibs
+
+ -- Filippo Giunchedi <filippo@debian.org>  Sun, 24 May 2009 21:57:00 +0200
+
 bluez (4.40-1) unstable; urgency=low
 
   * New upstream release
