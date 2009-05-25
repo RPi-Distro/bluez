@@ -37,8 +37,13 @@ install/bluez::
 	install -D -m 0644 $(CURDIR)/audio/audio.conf $(CURDIR)/debian/bluez/etc/bluetooth/audio.conf
 	install -D -m 0644 $(CURDIR)/network/network.conf $(CURDIR)/debian/bluez/etc/bluetooth/network.conf
 	
-	# misc
+	# udev rules, actually upstream version is changed with
+	# sed -i 's@RUN+="/usr/sbin/hid2hci@RUN+="/lib/udev/bluez@' scripts/bluetooth-hid2hci.rules
+	# and the diff is in debian/patches/
 	install -D -m 0644 $(CURDIR)/scripts/bluetooth-hid2hci.rules $(CURDIR)/debian/bluez/lib/udev/rules.d/62-bluez-hid2hci.rules
+	install -D -m 0755 $(CURDIR)/debian/bluez_agent.udev $(CURDIR)/debian/bluez/lib/udev/bluez
+
+	# misc
 	install -D -m 0755 $(CURDIR)/test/agent $(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
 	install -D -m 0644 $(CURDIR)/debian/README.examples $(CURDIR)/debian/bluez/usr/share/doc/bluez/examples/README
 	mv $(DEB_DESTDIR)/usr/share/man/man1/l2ping.1 $(DEB_DESTDIR)/usr/share/man/man8/l2ping.8
