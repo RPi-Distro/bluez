@@ -1,4 +1,4 @@
-bluez (4.40-2) UNRELEASED; urgency=low
+bluez (4.40-2) unstable; urgency=low
 
   * Ship a libbluetooth3.symbols file instead of shlibs
   * Ship more examples from test/, thus suggest: python-gobject and
