@@ -1,2 +1,4 @@
 test/simple-agent
 test/list-devices
+test/monitor-bluetooth
+test/test-*

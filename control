@@ -61,6 +61,7 @@ Architecture: any
 Depends: ${shlibs:Depends}, module-init-tools, makedev | udev, lsb-base, dbus, ${misc:Depends}
 Replaces: bluez-input, bluez-network, bluez-audio, bluez-serial, bluez-utils (<=4.9)
 Conflicts: bluez-utils (<= 3.36-3)
+Suggests: python-gobject, python-dbus
 Description: Bluetooth tools and daemons
  This package contains tools and system daemons for using Bluetooth devices.
  .
