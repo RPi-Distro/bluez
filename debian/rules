@@ -32,16 +32,16 @@ install/bluetooth::
 	install -D -m 0644 $(CURDIR)/debian/bluetooth.override $(CURDIR)/debian/bluetooth/usr/share/lintian/overrides/bluetooth
 
 install/bluez::
+	# conf files
 	install -D -m 0644 $(CURDIR)/input/input.conf $(CURDIR)/debian/bluez/etc/bluetooth/input.conf
 	install -D -m 0644 $(CURDIR)/audio/audio.conf $(CURDIR)/debian/bluez/etc/bluetooth/audio.conf
 	install -D -m 0644 $(CURDIR)/network/network.conf $(CURDIR)/debian/bluez/etc/bluetooth/network.conf
-	#install -D -m 0755 $(CURDIR)/scripts/hid2hci.pm-utils $(CURDIR)/debian/bluez/usr/lib/pm-utils/sleep.d/48hid2hci
+	
+	# misc
 	install -D -m 0644 $(CURDIR)/scripts/bluetooth-hid2hci.rules $(CURDIR)/debian/bluez/lib/udev/rules.d/62-bluez-hid2hci.rules
-
-	mv $(DEB_DESTDIR)/usr/share/man/man1/l2ping.1 \
-	   $(DEB_DESTDIR)/usr/share/man/man8/l2ping.8
-
 	install -D -m 0755 $(CURDIR)/test/agent $(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
+	install -D -m 0644 $(CURDIR)/debian/README.examples $(CURDIR)/debian/bluez/usr/share/doc/bluez/examples/README
+	mv $(DEB_DESTDIR)/usr/share/man/man1/l2ping.1 $(DEB_DESTDIR)/usr/share/man/man8/l2ping.8
 
 install/bluez-utils::
 	install -D -m 0644 $(CURDIR)/debian/bluez-utils.override $(CURDIR)/debian/bluez-utils/usr/share/lintian/overrides/bluez-utils
