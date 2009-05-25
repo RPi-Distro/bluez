@@ -1,0 +1,54 @@
+diff --git a/scripts/bluetooth-hid2hci.rules b/scripts/bluetooth-hid2hci.rules
+index 1b231d1..ced32ee 100644
+--- a/scripts/bluetooth-hid2hci.rules
++++ b/scripts/bluetooth-hid2hci.rules
+@@ -8,29 +8,29 @@
+ #   413c:8154
+ #   413c:8158
+ #   413c:8162
+-ACTION=="add", ENV{ID_VENDOR}=="413c", ENV{ID_CLASS}=="mouse", ATTRS{bmAttributes}=="e0", KERNEL=="mouse*", RUN+="/usr/sbin/hid2hci --method dell -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="413c", ENV{ID_CLASS}=="mouse", ATTRS{bmAttributes}=="e0", KERNEL=="mouse*", RUN+="/lib/udev/bluez --method dell -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+ 
+ # Logitech devices
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c703" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c704" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c705" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70a" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70b" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70c" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70e" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c713" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c714" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c71b" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c71c" RUN+="/usr/sbin/hid2hci --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c703" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c704" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c705" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70a" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70b" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70c" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c70e" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c713" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c714" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c71b" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="046d", ENV{ID_MODEL}=="c71c" RUN+="/lib/udev/bluez --method logitech -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+ 
+ # CSR devices (in HID mode)
+-ACTION=="add", ENV{ID_VENDOR}=="0a12", ENV{ID_MODEL}=="1000" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="0458", ENV{ID_MODEL}=="1000" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+-ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="1000" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="0a12", ENV{ID_MODEL}=="1000" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="0458", ENV{ID_MODEL}=="1000" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
++ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="1000" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hci"
+ 
+ # CSR devices (in HCI mode)
+-#ACTION=="add", ENV{ID_VENDOR}=="0a12", ENV{ID_MODEL}=="0001" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
+-#ACTION=="add", ENV{ID_VENDOR}=="0458", ENV{ID_MODEL}=="003f" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
+-#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8203" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
+-#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8204" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
+-#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8207" RUN+="/usr/sbin/hid2hci --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
++#ACTION=="add", ENV{ID_VENDOR}=="0a12", ENV{ID_MODEL}=="0001" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
++#ACTION=="add", ENV{ID_VENDOR}=="0458", ENV{ID_MODEL}=="003f" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
++#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8203" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
++#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8204" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"
++#ACTION=="add", ENV{ID_VENDOR}=="05ac", ENV{ID_MODEL}=="8207" RUN+="/lib/udev/bluez --method csr -v $env{ID_VENDOR} -p $env{ID_MODEL} --mode hid"

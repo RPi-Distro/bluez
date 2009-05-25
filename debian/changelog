@@ -3,8 +3,10 @@ bluez (4.40-2) UNRELEASED; urgency=low
   * Ship a libbluetooth3.symbols file instead of shlibs
   * Ship more examples from test/, thus suggest: python-gobject and
     python-dbus together with README.examples
+  * Provide a script in /lib/udev/bluez for waiting on /usr being available
+    and a patch udev rules to use it
 
- -- Filippo Giunchedi <filippo@debian.org>  Mon, 25 May 2009 14:36:49 +0200
+ -- Filippo Giunchedi <filippo@debian.org>  Tue, 26 May 2009 00:02:53 +0200
 
 bluez (4.40-1) unstable; urgency=low
 
