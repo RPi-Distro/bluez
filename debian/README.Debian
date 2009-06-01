@@ -1,5 +1,5 @@
 bluez for Debian
-----------------------
+================
 
 The /dev/rfcomm* serial devices entries are automatically created for using
 RFCOMM with legacy applications -- see rfcomm(8).  Users must be in group
@@ -8,87 +8,65 @@ RFCOMM with legacy applications -- see rfcomm(8).  Users must be in group
 You can edit /etc/bluetooth/rfcomm.conf to have some rfcomm devices bound
 automatically at boot time.
 
-This package contains also the dund and pand daemons for enabling
-dial-up and ethernet networking over bluetooth.  Edit the
-/etc/default/bluetooth file in order to enable these services. See
-below for more details on their configuration.
-
-The manual pages in this package are mostly very rudimentary.  Further
-documentation for BlueZ can be found at http://www.bluez.org and at the BlueZ
-wiki http://wiki.bluez.org.
-
 If you wish to install PCMCIA card services support for your Bluetooth
 devices you should install the bluez-pcmcia-support package.
 
 Some USB dongles require firmware to make them work: bluez-firmware from the
 "non-free" section provides the required firmware.
 
-Mailing lists
--------------
+
+Mailing lists and documentation
+-------------------------------
 The old sourceforge lists have been discontinued, the new lists can be found at:
 
 http://www.bluez.org/development/lists/
 
+plus a wiki at: http://wiki.bluez.org/
+
 PIN (or passkey) management
 ---------------------------
+Interaction with the local user can be required while BT connection is
+being established (pairing process) and the PIN is not yet known or
+needs to be changed.
 
-For asking a PIN when necessary a passkey agent is required, the bluez-gnome
-package provides one, another one is provided as an example in
-/usr/share/doc/bluez-utils/examples/passkey-agent.c After compilation launch as
-"./passkey-agent <your_passkey>"
+To retrieve the passkey (or PIN) from the user a service program (agent)
+running in user's interactive session needs to be prepared and listen
+for requests of the bluez daemon when pairing begins.
 
-The old infrastructure /etc/bluetooth/passkey has been removed since the agent
-is supposed to be started by a user session. It is not meant to be system-wide. 
-
-Note to the tech-savvy:
-If you are stuck in console and absolutely need to pair with your bluetooth
-device have a look at /var/lib/bluetooth/<your_device_address>/pincodes.
-Please note that this mode of operation is _not_ _supported_.
-The format is (one per line): <remote_address><whitespace><pincode>
-Don't mess with files in /var/lib/bluetooth/ unless you know what you are
-doing.
-I repeat: manually adding a pincode for a remote device is NOT SUPPORTED.
-
-Keyboard and mouse support
---------------------------
-
-The hidd daemon allows keyboards and mice to be connected to your
-system.  Ensure you have the hidp patch for Linux 2.6.6 or better
-from http://www.bluez.org/patches.html.
-
-Then change HIDD_ENABLED in /etc/default/bluetooth to 1 and restart
-bluetooth.  That enables the hidd server.  Discover you mouse or
-keyboard bluetooth address (bdaddr) by running "hcitool scan".  You
-must then connect to your keyboard or mouse using hidd --connect
-<bdaddr>.  On first connection, pairing is likely and you should press
-"connect" button on mice/keyboard, if any.  Mice normally have a
-preset PIN which should be in the manufacturer's documentation, try
-0000.  For keyboards, type the PIN on the Bluetooth keyboard and hit
-enter, and then supply it to the passkey agent (using a cable-attached
-keyboard).  In future your keyboard or mouse should reconnect to your computer
-automatically.  You must invoke hidd as root.
+Examples of such programs are kblueplugd (kdebluetooth package) and
+bluetooth-applet (bluez-gnome or gnome-bluetooth packages). A minimal
+command-line agent is also provided by bluetooth-agent.
 
 Headset support
 ---------------
+There's support for bluetooth headset both via ALSA and GStreamer, respectively
+via bluez-alsa and bluez-gstreamer packages.
 
-These tools now include some support for headsets.  There are two
-test programs 'hsmicro' and 'hsplay' that aren't installed by default;
-you'll need too get the source and compile these yourself as upstream
-doesn't want them installed.  This is because these tools are highly
-experimental and unstable, and shouldn't be depended on in any way.
+ALSA
+~~~~
+You might setup your headset by discovering it with gnome-bluetooth, once setup
+add the following configuration to ~/.asoundrc:
 
-Bluetooth Networking Quickstart
--------------------------------
+	pcm.bluetooth {
+		   type bluetooth
+		   device <BT address>
+	}
 
-In the future this package will contain better documentation.  In the
-meantime, here's a quick primer:
+then audio can be played with supported player, e.g. mplayer:
 
-1. Starting dund and pand at boot time
+	mplayer -ao alsa:device=bluetooth
 
-See /etc/default/bluetooth for how to configure these two daemons to
-run at boot-time.  Read below also.
+See also: http://wiki.bluez.org/wiki/HOWTO/AudioDevices
 
+Legacy daemons
+--------------
+The bluez-compat package includes old legacy daemons such as dund, pand and hidd
+for enabling dial-up, ethernet networking and input devices over bluetooth.
 
+Bluetooth Networking Quickstart with legacy daemons
++++++++++++++++++++++++++++++++++++++++++++++++++++
+1. Start dund and pand at boot time
+ 
 2. PPP over RFCOMM
 
 This is what most devices call "LAN Access" or "Serial Access".  It
@@ -98,7 +76,7 @@ connect using this method.
 Use the 'dund' tool to accept incoming connections.  Configure pppd
 as per the instructions in the ppp package.  Then run:
 
-  dund --listen --sdp --nodetach
+dund --listen --sdp --nodetach
 
 Try and connect your device and you'll see something like:
 
@@ -124,3 +102,17 @@ configured in the same way normal network devices are.
 
 For full details see the PAN HOWTO at
 <http://bluez.sourceforge.net/contrib/HOWTO-PAN>
+
+Keyboard and mouse support with hidd
+++++++++++++++++++++++++++++++++++++
+The hidd daemon allows keyboards and mice to be connected to your system.
+Make sure you have hidd starting at boot as user root.
+Discover you mouse or keyboard bluetooth address (bdaddr) by running
+"hcitool scan".  You must then connect to your keyboard or mouse using hidd
+--connect <bdaddr>.  On first connection, pairing is likely and you should
+press "connect" button on mice/keyboard, if any.  Mice normally have a
+preset PIN which should be in the manufacturer's documentation, try 0000.
+For keyboards, type the PIN on the Bluetooth keyboard and hit enter, and
+then supply it to the passkey agent (using a cable-attached keyboard).  In
+future your keyboard or mouse should reconnect to your computer
+automatically.  You must invoke hidd as root.
