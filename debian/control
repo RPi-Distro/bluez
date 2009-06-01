@@ -78,22 +78,22 @@ Description: Bluetooth audio support
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
 
-Package: bluez-cups
-Architecture: any
-Depends: ${shlibs:Depends}, cups, ${misc:Depends}
-Description: Bluetooth printer driver for CUPS
- This package contains a driver to let CUPS print to Bluetooth-connected
- printers.
- .
- BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
- project distributed under GNU General Public License (GPL).
-
 Package: bluez-gstreamer
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Replaces: bluez-audio
 Description: Bluetooth GStreamer support
  This package contains a plugin to operate with GStreamer applications.
+ .
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
+
+Package: bluez-cups
+Architecture: any
+Depends: ${shlibs:Depends}, cups, ${misc:Depends}
+Description: Bluetooth printer driver for CUPS
+ This package contains a driver to let CUPS print to Bluetooth-connected
+ printers.
  .
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
@@ -124,6 +124,13 @@ Description: BlueZ 3.x compatibility binaries
 
 Package: bluez-utils
 Depends: bluetooth
+Architecture: all
+Description: Transitional package
+ This is a transitional package to assist with moving people to the
+ BlueZ 4.x stack.
+ 
+Package: bluez-audio
+Depends: bluez-alsa (>= 4), bluez-gstreamer (>= 4)
 Architecture: all
 Description: Transitional package
  This is a transitional package to assist with moving people to the
