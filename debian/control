@@ -18,8 +18,8 @@ Build-Depends: debhelper (>= 7),
                libnl-dev,
                libsndfile1-dev,
                libusb-dev,
-Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez
-Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez
+Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
+Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
 Standards-Version: 3.8.1
 
