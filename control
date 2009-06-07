@@ -49,9 +49,7 @@ Description: Development files for using the BlueZ Linux Bluetooth library
 Package: bluetooth
 Architecture: all
 Depends: bluez
-Recommends: bluez-alsa,
-            bluez-cups,
-            bluez-gstreamer,
+Recommends: bluez-alsa, bluez-cups, bluez-gstreamer
 Description: Bluetooth support
  This package provides all of the different plugins supported
  by the Bluez bluetooth stack.
@@ -59,7 +57,7 @@ Description: Bluetooth support
 Package: bluez
 Architecture: any
 Depends: ${shlibs:Depends}, module-init-tools, makedev | udev, lsb-base, dbus, ${misc:Depends}
-Replaces: bluez-input, bluez-network, bluez-audio, bluez-serial, bluez-utils (<=4.9)
+Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<=4.9)
 Conflicts: bluez-utils (<= 3.36-3)
 Suggests: python-gobject, python-dbus
 Description: Bluetooth tools and daemons
@@ -71,8 +69,8 @@ Description: Bluetooth tools and daemons
 Package: bluez-alsa
 Replaces: bluez-audio
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Bluetooth audio support
+Depends: ${shlibs:Depends}, ${misc:Depends}, bluez
+Description: Bluetooth ALSA support
  This package contains a driver operate with the ALSA stack.
  .
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
@@ -80,7 +78,7 @@ Description: Bluetooth audio support
 
 Package: bluez-gstreamer
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, bluez
 Replaces: bluez-audio
 Description: Bluetooth GStreamer support
  This package contains a plugin to operate with GStreamer applications.
