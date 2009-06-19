@@ -4,8 +4,9 @@ bluez (4.40-3) UNRELEASED; urgency=low
     bluez-gstreamer (Closes: #531449)
   * Install README.Debian in binary bluez (Closes: #532018)
   * Make bluez-{alsa,gstreamer} depend on bluez
+  * Switch to group bluetooth from netdev for authorized users
 
- -- Filippo Giunchedi <filippo@debian.org>  Sun, 07 Jun 2009 14:31:36 +0200
+ -- Filippo Giunchedi <filippo@debian.org>  Fri, 19 Jun 2009 12:52:26 +0200
 
 bluez (4.40-2) unstable; urgency=low
 

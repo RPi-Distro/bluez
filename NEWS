@@ -1,3 +1,12 @@
+bluez-utils (4.40-3) unstable; urgency=low
+
+  This version requires users to be in bluetooth group to be allowed to send
+  messages via dbus or be users in front of the computer (see consolekit for
+  example). The group was previously netdev and has been changed to allow for
+  more granularity.
+
+ -- Filippo Giunchedi <filippo@debian.org>  Fri, 19 Jun 2009 12:49:33 +0200
+
 bluez-utils (4.40-1) unstable; urgency=low
 
   This version includes a new hid2hci program which expects the vendor ID and
