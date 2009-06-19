@@ -17,8 +17,8 @@
 #
 # Updated for bluez 4.7 by Mario Limonciello <mario_limonciello@dell.com>
 #
-# startup control over dund and pand can be changed by editing
-# /etc/default/bluetooth
+# Note: older daemons like dund pand hidd are now shipped inside the
+# bluez-compat package
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 DESC=bluetooth
@@ -153,8 +153,15 @@ case "$1" in
 		enable_hci_input || true
 	fi
 	start_rfcomm || true
+
+	if [ "$HIDD_ENABLED" -eq 1 ] ||
+			[ "$PAND_ENABLED" -eq 1 ] ||
+			[ "$DUND_ENABLED" -eq 1 ]; then
+		log_progress_msg "compatibily daemons not started, see bluez-compat package"
+	fi
+
 	log_end_msg 0
-    ;;
+  ;;
   stop)
 	log_daemon_msg "Stopping $DESC"
 	if test "$BLUETOOTH_ENABLED" = "0"; then
@@ -170,14 +177,14 @@ case "$1" in
 	log_progress_msg "bluetoothd"
 	stop_uarts || true
 	log_end_msg 0
-	;;
+  ;;
   restart|force-reload)
 	$0 stop
 	$0 start
-	;;
+  ;;
   status)
 	status_of_proc "$DAEMON" "$DESC" && exit 0 || exit $?
-	;;
+  ;;
   *)
 	N=/etc/init.d/bluetooth
 	# echo "Usage: $N {start|stop|restart|reload|force-reload|status}" >&2
