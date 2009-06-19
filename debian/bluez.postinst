@@ -27,6 +27,11 @@ case "$1" in
             cd /dev && ./MAKEDEV bluetooth 1>/dev/null 2>/dev/null
         fi
 
+        # create bluetooth group if not already present
+        if ! getent group bluetooth > /dev/null; then
+            addgroup --quiet --system bluetooth
+        fi
+
         # reload dbus config file
         if [ -x /etc/init.d/dbus ]; then
             invoke-rc.d dbus force-reload || true
