@@ -1,5 +1,7 @@
-bluez (4.40-3) UNRELEASED; urgency=low
+bluez (4.42-1) UNRELEASED; urgency=low
 
+  * New upstream release
+    + drop not needed debian/patches/003_configure_amd64_rpath.patch
   * Provide transitional bluez-audio to migrate to bluez-alsa and
     bluez-gstreamer (Closes: #531449)
   * Install README.Debian in binary bluez (Closes: #532018)
