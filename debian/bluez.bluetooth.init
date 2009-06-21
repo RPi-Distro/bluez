@@ -37,6 +37,8 @@ RFCOMM_NAME=rfcomm
 RFCOMM_CONF=/etc/bluetooth/rfcomm.conf
 SDPTOOL=/usr/bin/sdptool
 
+SSD_OPTIONS="--oknodo --quiet --exec $DAEMON"
+
 test -f /etc/default/bluetooth && . /etc/default/bluetooth
 test -f /etc/default/rcS && . /etc/default/rcS
 
@@ -142,7 +144,7 @@ case "$1" in
 		exit 0
 	fi
 
-	start-stop-daemon --start --quiet --exec $DAEMON || true
+	start-stop-daemon --start $SSD_OPTIONS
 	log_progress_msg "bluetoothd"
 
 	run_sdptool || true
@@ -173,13 +175,14 @@ case "$1" in
 	if test "$HID2HCI_UNDO" = "1"; then
 		disable_hci_input || true
 	fi
-	start-stop-daemon --stop --quiet --exec $DAEMON || true
+	start-stop-daemon --stop $SSD_OPTIONS
 	log_progress_msg "bluetoothd"
 	stop_uarts || true
 	log_end_msg 0
   ;;
   restart|force-reload)
 	$0 stop
+	sleep 1
 	$0 start
   ;;
   status)
