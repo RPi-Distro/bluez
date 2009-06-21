@@ -7,8 +7,10 @@ bluez (4.40-3) UNRELEASED; urgency=low
   * Switch to group bluetooth from netdev for authorized users
   * Mention pand/hidd/dund move to bluez-compat in init script and default
     (Closes: #532622)
+  * debian/patches/002_test_agent_newapi.patch port bluetooth-agent to new
+    D-Bus API
 
- -- Filippo Giunchedi <filippo@debian.org>  Fri, 19 Jun 2009 18:48:51 +0200
+ -- Filippo Giunchedi <filippo@debian.org>  Sun, 21 Jun 2009 10:31:40 +0200
 
 bluez (4.40-2) unstable; urgency=low
 
