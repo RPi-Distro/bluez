@@ -28,8 +28,8 @@ DEB_CONFIGURE_EXTRA_FLAGS := --enable-gstreamer \
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-install/bluetooth::
-	install -D -m 0644 $(CURDIR)/debian/bluetooth.override $(CURDIR)/debian/bluetooth/usr/share/lintian/overrides/bluetooth
+#install/bluetooth::
+	#install -D -m 0644 $(CURDIR)/debian/bluetooth.override $(CURDIR)/debian/bluetooth/usr/share/lintian/overrides/bluetooth
 
 install/bluez::
 	# conf files
@@ -48,8 +48,8 @@ install/bluez::
 	install -D -m 0644 $(CURDIR)/debian/README.examples $(CURDIR)/debian/bluez/usr/share/doc/bluez/examples/README
 	mv $(DEB_DESTDIR)/usr/share/man/man1/l2ping.1 $(DEB_DESTDIR)/usr/share/man/man8/l2ping.8
 
-install/bluez-utils::
-	install -D -m 0644 $(CURDIR)/debian/bluez-utils.override $(CURDIR)/debian/bluez-utils/usr/share/lintian/overrides/bluez-utils
+#install/bluez-utils::
+	#install -D -m 0644 $(CURDIR)/debian/bluez-utils.override $(CURDIR)/debian/bluez-utils/usr/share/lintian/overrides/bluez-utils
 
 install/bluez-alsa::
 	install -D -m 0644 $(CURDIR)/audio/bluetooth.conf $(CURDIR)/debian/bluez-alsa/usr/share/alsa/bluetooth.conf
