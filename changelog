@@ -7,6 +7,7 @@ bluez (4.42-1) UNRELEASED; urgency=low
   * Install README.Debian in binary bluez (Closes: #532018)
   * Make bluez-{alsa,gstreamer} depend on bluez
   * Switch to group bluetooth from netdev for authorized users
+    (Closes: #534118)
   * Mention pand/hidd/dund move to bluez-compat in init script and default
     (Closes: #532622)
   * debian/patches/002_test_agent_newapi.patch port bluetooth-agent to new
