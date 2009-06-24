@@ -1,6 +1,0 @@
-debian/tmp/usr/bin/hidd
-debian/tmp/usr/bin/pand
-debian/tmp/usr/bin/dund
-debian/tmp/usr/share/man/man1/hidd*
-debian/tmp/usr/share/man/man1/pand*
-debian/tmp/usr/share/man/man1/dund*

@@ -1,4 +1,5 @@
 test/simple-agent
+test/simple-service
 test/list-devices
 test/monitor-bluetooth
 test/test-*
