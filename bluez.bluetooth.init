@@ -156,9 +156,9 @@ case "$1" in
 	fi
 	start_rfcomm || true
 
-	if [ "$HIDD_ENABLED" -eq 1 ] ||
-			[ "$PAND_ENABLED" -eq 1 ] ||
-			[ "$DUND_ENABLED" -eq 1 ]; then
+	if [ "$HIDD_ENABLED" == "1" ] ||
+			[ "$PAND_ENABLED" == "1" ] ||
+			[ "$DUND_ENABLED" == "1" ]; then
 		log_progress_msg "compatibily daemons not started, see bluez-compat package"
 	fi
 
