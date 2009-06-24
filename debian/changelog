@@ -1,4 +1,4 @@
-bluez (4.42-1) UNRELEASED; urgency=low
+bluez (4.42-1) unstable; urgency=low
 
   * New upstream release
     + drop not needed debian/patches/003_configure_amd64_rpath.patch
