@@ -39,7 +39,7 @@ install/bluez::
 	
 	# udev rules, actually upstream version is changed with
 	# sed -i 's@RUN+="/usr/sbin/hid2hci@RUN+="/lib/udev/bluez@' scripts/bluetooth-hid2hci.rules
-	# and the diff is in debian/patches/
+	# and the diff is in debian/patches/010_udev_rules_agent.patch
 	install -D -m 0644 $(CURDIR)/scripts/bluetooth-hid2hci.rules $(CURDIR)/debian/bluez/lib/udev/rules.d/62-bluez-hid2hci.rules
 	install -D -m 0755 $(CURDIR)/debian/bluez_agent.udev $(CURDIR)/debian/bluez/lib/udev/bluez
 
@@ -56,6 +56,12 @@ install/bluez-alsa::
 
 install/bluez-pcmcia-support::
 	cp -f $(CURDIR)/scripts/bluetooth-serial.rules $(CURDIR)/debian/bluez-pcmcia-support.udev
+
+binary-install/bluez-compat::
+	for d in pand dund hidd; do \
+		mv -v $(CURDIR)/debian/bluez/usr/bin/$$d $(CURDIR)/debian/bluez-compat/usr/bin/;\
+		mv -v $(CURDIR)/debian/bluez/usr/share/man/man1/$$d* $(CURDIR)/debian/bluez-compat/usr/share/man/man1/;\
+	done
 
 binary-install/bluez-gstreamer::
 	LD_LIBRARY_PATH="$(CURDIR)/debian/tmp/usr/lib:$(LD_LIBRARY_PATH)" dh_gstscancodecs -pbluez-gstreamer
