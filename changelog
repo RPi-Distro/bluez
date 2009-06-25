@@ -1,3 +1,10 @@
+bluez (4.42-2) UNRELEASED; urgency=low
+
+  * Fix "Bashisms in init script" (Closes: #534511)
+  * Handle upgrade of old /etc/modprobe.d/bluez (Closes: #523050)
+
+ -- Filippo Giunchedi <filippo@debian.org>  Thu, 25 Jun 2009 18:08:42 +0200
+
 bluez (4.42-1) unstable; urgency=low
 
   * New upstream release

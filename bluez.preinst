@@ -44,6 +44,19 @@ install|upgrade)
         rm_conffile bluez-utils "/etc/bluetooth/serial.service"
         rm_conffile bluez-utils "/etc/bluetooth/input.service"
     fi
+    
+    # now that modprobe whines remove this old conffile, will be
+    # http://bugs.debian.org/523050
+    base="/etc/modprobe.d/bluez"
+    rm_conffile "$base"
+    if [ -e "$base.dpkg-bak" ]; then
+        if [ -e "$base.conf" ]; then
+            echo "$base.conf exists, not touching"
+        else
+            echo "Moving $base.dpkg-bak to $base.conf"
+            mv -f "$base.dpkg-bak" "$base.conf"
+        fi
+    fi
 esac
 
 #DEBHELPER#
