@@ -1,4 +1,4 @@
-bluez (4.42-2) UNRELEASED; urgency=low
+bluez (4.42-2) unstable; urgency=low
 
   * Fix "Bashisms in init script" (Closes: #534511)
   * Handle upgrade of old /etc/modprobe.d/bluez (Closes: #523050)
