@@ -186,6 +186,7 @@ libbluetooth.so.3 libbluetooth3 #MINVER#
  sdp_uuid2strn@Base 4.40
  sdp_uuid32_create@Base 4.40
  sdp_uuid32_to_uuid128@Base 4.40
+ sdp_uuid_cmp@Base 4.56
  sdp_uuid_extract@Base 4.40
  sdp_uuid_to_proto@Base 4.40
  sdp_uuid_to_uuid128@Base 4.40
