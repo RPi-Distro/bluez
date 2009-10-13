@@ -1,3 +1,12 @@
+bluez (4.56-2) unstable; urgency=low
+
+  * debian/control:
+    - makedev re-added as alternate depend of udev, as
+      it's needed by postints. Thanks to Guillem Jover
+      for the report. (Closes: #546860)
+
+ -- Andrea Veri <andrea.veri89@gmail.com>  Wed, 14 Oct 2009 00:19:19 +0200
+
 bluez (4.56-1) unstable; urgency=low
 
   * New upstream release. (Closes: #539361)
