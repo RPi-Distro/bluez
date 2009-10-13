@@ -2,7 +2,8 @@ Source: bluez
 Section: admin
 Priority: optional
 Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth.debian.org>
-Uploaders: Filippo Giunchedi <filippo@debian.org>
+Uploaders: Filippo Giunchedi <filippo@debian.org>, Andrea Veri <andrea.veri89@gmail.com>
+DM-Upload-Allowed: yes
 Build-Depends: debhelper (>= 7),
                autotools-dev,
                cdbs,
@@ -21,7 +22,7 @@ Build-Depends: debhelper (>= 7),
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
-Standards-Version: 3.8.2
+Standards-Version: 3.8.3
 
 Package: libbluetooth3
 Section: libs
