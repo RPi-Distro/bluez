@@ -1,3 +1,30 @@
+bluez (4.56-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #539361)
+  * rctest man page is no more missing. (Closes: #535949)
+  * debian/control:
+    - bumped standards-version to 3.8.3. No changes needed.
+    - added myself into uploaders plus DM tag.
+    - removed makedev depends. (Closes: #546860)
+  * debian/copyright:
+    - added missing copyright holders.
+  * debian/patches/001_agent_fixes.patch:
+    - removed, applied upstream
+  * debian/patches/002_a2dpsink_marginal.patch:
+    - removed, applied upstream.
+  * debian/patches/005_l2ping_section.patch:
+    - removed, applied upstream.
+  * debian/rules:
+    - removed the hack to have man page installed correctly.
+      It has been fixed upstream and points to the right section. (8)
+  * debian/libbluetooth3.symbols:
+    - refreshed.
+  * debian/bluez.examples:
+    - test/test-* removed and added all needed examples by hand to avoid
+      the installation of useless stuff.
+
+ -- Andrea Veri <andrea.veri89@gmail.com>  Mon, 12 Oct 2009 15:40:02 +0200
+
 bluez (4.42-2) unstable; urgency=low
 
   * Fix "Bashisms in init script" (Closes: #534511)
