@@ -57,7 +57,7 @@ Description: Bluetooth support
 
 Package: bluez
 Architecture: any
-Depends: ${shlibs:Depends}, module-init-tools, udev, lsb-base, dbus, ${misc:Depends}
+Depends: ${shlibs:Depends}, module-init-tools, udev | makedev, lsb-base, dbus, ${misc:Depends}
 Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
 Conflicts: bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
 Suggests: python-gobject, python-dbus
