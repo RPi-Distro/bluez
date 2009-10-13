@@ -46,7 +46,6 @@ install/bluez::
 	# misc
 	install -D -m 0755 $(CURDIR)/test/agent $(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
 	install -D -m 0644 $(CURDIR)/debian/README.examples $(CURDIR)/debian/bluez/usr/share/doc/bluez/examples/README
-	mv $(DEB_DESTDIR)/usr/share/man/man1/l2ping.1 $(DEB_DESTDIR)/usr/share/man/man8/l2ping.8
 
 #install/bluez-utils::
 	#install -D -m 0644 $(CURDIR)/debian/bluez-utils.override $(CURDIR)/debian/bluez-utils/usr/share/lintian/overrides/bluez-utils
