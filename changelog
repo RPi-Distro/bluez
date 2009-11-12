@@ -1,3 +1,9 @@
+bluez (4.57-1) unstable; urgency=low
+
+  * New upstream bug fix release.
+
+ -- Andrea Veri <andrea.veri89@gmail.com>  Thu, 12 Nov 2009 21:27:54 +0100
+
 bluez (4.56-2) unstable; urgency=low
 
   * debian/control:
