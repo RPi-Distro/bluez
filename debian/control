@@ -2,7 +2,9 @@ Source: bluez
 Section: admin
 Priority: optional
 Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth.debian.org>
-Uploaders: Filippo Giunchedi <filippo@debian.org>, Andrea Veri <andrea.veri89@gmail.com>
+Uploaders: Filippo Giunchedi <filippo@debian.org>,
+	Andrea Veri <andrea.veri89@gmail.com>,
+	Nobuhiro Iwamatsu <iwamatsu@nigauri.org>
 DM-Upload-Allowed: yes
 Build-Depends: debhelper (>= 7),
                autotools-dev,
