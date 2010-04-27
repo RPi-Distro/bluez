@@ -1,3 +1,19 @@
+bluez (4.63-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/control.
+    - Remove Filippo Giunchedi <filippo@debian.org> from uploaders.
+    - bumped standards-version to 3.8.4.
+  * Add man files.
+    bluetooth-agent.1, l2test.1.
+  * Update libbluetooth3.symbols.
+    Add hci_bustostr@Base, hci_read_inq_response_tx_power_level@Base,
+    hci_typetostr@Base, sdp_get_supp_feat@Base, sdp_set_supp_feat@Base
+  * Update debian/NEWS.
+  * Add debian/source/format.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 20 Apr 2010 06:08:24 +0900
+
 bluez (4.60-1) unstable; urgency=low
 
   * New upstream release.
