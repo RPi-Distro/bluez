@@ -1,27 +1,3 @@
-bluez (4.63-1) unstable; urgency=low
-
-  * New upstream release.
-  * Update debian/control.
-    - Remove Filippo Giunchedi <filippo@debian.org> from uploaders.
-    - bumped standards-version to 3.8.4. No changes needed.
-  * Add man files.
-    bluetooth-agent.1, l2test.1.
-  * Update libbluetooth3.symbols.
-    hci_bustostr@Base , hci_read_inq_response_tx_power_level@Base
-    hci_typetostr@Base ,sdp_get_supp_feat@Base
-    sdp_set_supp_feat@Base
-
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 07 Apr 2010 04:45:53 +0900
-
-bluez-utils (4.40-3) unstable; urgency=low
-
-  This version requires users to be in bluetooth group to be allowed to send
-  messages via dbus or be users in front of the computer (see consolekit for
-  example). The group was previously netdev and has been changed to allow for
-  more granularity.
-
- -- Filippo Giunchedi <filippo@debian.org>  Fri, 19 Jun 2009 12:49:33 +0200
-
 bluez-utils (4.40-1) unstable; urgency=low
 
   This version includes a new hid2hci program which expects the vendor ID and

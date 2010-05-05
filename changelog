@@ -1,3 +1,9 @@
+bluez (4.63-2) unstable; urgency=low
+
+  * Remove some contents from debian/NEWS. (Closes: #579817)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 06 May 2010 06:50:14 +0900
+
 bluez (4.63-1) unstable; urgency=low
 
   * New upstream release.
