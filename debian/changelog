@@ -1,3 +1,15 @@
+bluez (4.66-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 17 Jun 2010 06:21:46 +0900
+
+bluez (4.64-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 15 May 2010 15:44:23 +0900
+
 bluez (4.63-2) unstable; urgency=low
 
   * Remove some contents from debian/NEWS. (Closes: #579817)
@@ -6,7 +18,6 @@ bluez (4.63-2) unstable; urgency=low
 
 bluez (4.63-1) unstable; urgency=low
 
-  * New upstream release.
   * Update debian/control.
     - Remove Filippo Giunchedi <filippo@debian.org> from uploaders.
     - bumped standards-version to 3.8.4.
