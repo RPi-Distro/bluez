@@ -36,6 +36,7 @@ install/bluez::
 	install -D -m 0644 $(CURDIR)/input/input.conf $(CURDIR)/debian/bluez/etc/bluetooth/input.conf
 	install -D -m 0644 $(CURDIR)/audio/audio.conf $(CURDIR)/debian/bluez/etc/bluetooth/audio.conf
 	install -D -m 0644 $(CURDIR)/network/network.conf $(CURDIR)/debian/bluez/etc/bluetooth/network.conf
+	install -D -m 0644 $(CURDIR)/serial/serial.conf $(CURDIR)/debian/bluez/etc/bluetooth/serial.conf
 	
 	# udev rules, actually upstream version is changed with
 	# sed -i 's@RUN+="/usr/sbin/hid2hci@RUN+="/lib/udev/bluez@' scripts/bluetooth-hid2hci.rules
