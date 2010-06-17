@@ -1,9 +1,18 @@
 bluez (4.66-1) unstable; urgency=low
 
   * New upstream release.
-  * Add serial.conf (Closes: #559672).
+  * Update debian/control.
+    - Add libcap-ng-dev to Build-depends. 
+  * Update debian/rules.
+    - Add serial.conf (Closes: #559672).
+    - Update configure option.
+      Remove --enable-manpages.
+      Change --enable-pcmciarules to --enable-pcmcia.
+      Add --enable-pnat, --enable-tracer, --enable-udevrules,
+          --enable-configfiles and --enable-capng.
+  * Add man file of hcitrace.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 17 Jun 2010 12:51:25 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 17 Jun 2010 21:36:29 +0900
 
 bluez (4.64-1) unstable; urgency=low
 

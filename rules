@@ -18,13 +18,16 @@ DEB_CONFIGURE_EXTRA_FLAGS := --enable-gstreamer \
                              --enable-hid2hci \
                              --enable-dfutool \
                              --enable-cups \
-                             --enable-manpages \
-                             --enable-pcmciarules \
+                             --enable-pcmcia \
                              --enable-debug \
                              --enable-hidd \
                              --enable-pand \
-                             --enable-dund
-
+                             --enable-dund \
+                             --enable-pnat \
+                             --enable-tracer \
+                             --enable-udevrules \
+                             --enable-configfiles \
+                             --enable-capng
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
