@@ -19,6 +19,7 @@ Build-Depends: debhelper (>= 7),
                libnl-dev,
                libsndfile1-dev,
                libusb-dev,
+               libcap-ng-dev
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
