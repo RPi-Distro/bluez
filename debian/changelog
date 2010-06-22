@@ -1,3 +1,29 @@
+bluez (4.66-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/control.
+    - Add libcap-ng-dev to Build-depends. 
+  * Update debian/rules.
+    - Add serial.conf (Closes: #559672).
+    - Update configure option.
+      Remove --enable-manpages.
+      Change --enable-pcmciarules to --enable-pcmcia.
+      Add --enable-pnat, --enable-tracer, --enable-udevrules,
+          --enable-configfiles and --enable-capng.
+  * Add man file of hcitrace.
+  * Update udev rule (Closes: #535075).
+    Thanks to Sjoerd Simons.
+  * Add patch 01_lower_sink_ranking.patch (Closes: #571595).
+    Thanks to Sebastian Dröge.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jun 2010 12:45:57 +0900
+
+bluez (4.64-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 15 May 2010 15:44:23 +0900
+
 bluez (4.63-2) unstable; urgency=low
 
   * Remove some contents from debian/NEWS. (Closes: #579817)
@@ -6,7 +32,6 @@ bluez (4.63-2) unstable; urgency=low
 
 bluez (4.63-1) unstable; urgency=low
 
-  * New upstream release.
   * Update debian/control.
     - Remove Filippo Giunchedi <filippo@debian.org> from uploaders.
     - bumped standards-version to 3.8.4.
