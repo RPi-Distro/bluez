@@ -11,10 +11,12 @@ bluez (4.66-1) unstable; urgency=low
       Add --enable-pnat, --enable-tracer, --enable-udevrules,
           --enable-configfiles and --enable-capng.
   * Add man file of hcitrace.
-  * Update udev rule. (Closes: #535075)
+  * Update udev rule (Closes: #535075).
     Thanks to Sjoerd Simons.
+  * Add patch 01_lower_sink_ranking.patch (Closes: #571595).
+    Thanks to Sebastian Dröge.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jun 2010 12:31:35 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jun 2010 12:45:57 +0900
 
 bluez (4.64-1) unstable; urgency=low
 
