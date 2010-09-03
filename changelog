@@ -1,3 +1,10 @@
+bluez (4.69-2) unstable; urgency=low
+
+  * Update debian/bluez.bluetooth.init (Closes: #593172).
+  * Update debian/bluez.preinst (Closes: #592982, #568301).
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 03 Sep 2010 08:43:02 +0900
+
 bluez (4.69-1) unstable; urgency=low
 
   * New upstream release (Closes: #589727).
