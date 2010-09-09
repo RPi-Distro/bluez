@@ -35,7 +35,7 @@ for requests of the bluez daemon when pairing begins.
 
 Examples of such programs are kblueplugd (kdebluetooth package) and
 bluetooth-applet (bluez-gnome or gnome-bluetooth packages). A minimal
-command-line agent is also provided by bluetooth-agent.
+command-line agent is also provided by bluez-simple-agent.
 
 Headset support
 ---------------
@@ -103,16 +103,39 @@ configured in the same way normal network devices are.
 For full details see the PAN HOWTO at
 <http://bluez.sourceforge.net/contrib/HOWTO-PAN>
 
-Keyboard and mouse support with hidd
+Keyboard and mouse support
 ++++++++++++++++++++++++++++++++++++
-The hidd daemon allows keyboards and mice to be connected to your system.
-Make sure you have hidd starting at boot as user root.
-Discover you mouse or keyboard bluetooth address (bdaddr) by running
-"hcitool scan".  You must then connect to your keyboard or mouse using hidd
---connect <bdaddr>.  On first connection, pairing is likely and you should
-press "connect" button on mice/keyboard, if any.  Mice normally have a
-preset PIN which should be in the manufacturer's documentation, try 0000.
-For keyboards, type the PIN on the Bluetooth keyboard and hit enter, and
-then supply it to the passkey agent (using a cable-attached keyboard).  In
-future your keyboard or mouse should reconnect to your computer
-automatically.  You must invoke hidd as root.
+hidd daemon is included in a bluez-compat package. 
+We use bluez-simple-agent and bluez-test-input in bluez now.
+
+1. Discover you mouse or keyboard bluetooth address (bdaddr) by running
+   "hcitool scan".
+
+2. Start bluez-simple-agent
+
+    $ bluez-simple-agent hci0 <bdaddr>
+    RequestPinCode (/org/bluez/22302/hci0/dev_00_XX_XX_XX_XX_XX)
+    Enter PIN Code: 0000 <-- Please input PIN code
+    Release
+    New device (/org/bluez/22302/hci0/dev_00_XX_XX_XX_XX_XX)
+
+    Bluetooth mouse set simple PIN code as "0000".
+    PIN code are different depending on mouse. 
+    Please check the PIN code of your mouse.
+
+3. With bluez-test-input, connected to the device.
+
+    $ bluez-test-input connect <bdaddr>
+
+NOTE: If you want to use hidd daemon, please install bluez-compat package.
+
+   You must then connect to your keyboard or mouse using 
+   "sudo hidd --connect <bdaddr>".  
+   On first connection, pairing is likely and you should
+   press "connect" button on mice/keyboard, if any.  Mice normally have a
+   preset PIN which should be in the manufacturer's documentation, try 0000.
+   For keyboards, type the PIN on the Bluetooth keyboard and hit enter, and
+   then supply it to the passkey agent 
+   (using a cable-attached keyboard. e.g. bluez-simple-agent).
+   In future your keyboard or mouse should reconnect to your computer
+   automatically.  You must invoke hidd as root.
