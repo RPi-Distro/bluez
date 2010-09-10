@@ -1,14 +1,2 @@
-test/simple-agent
-test/simple-service
 test/list-devices
 test/monitor-bluetooth
-test/test-adapter
-test/test-audio
-test/test-device
-test/test-discovery
-test/test-input
-test/test-manager
-test/test-network
-test/test-serial
-test/test-service
-test/test-telephony
