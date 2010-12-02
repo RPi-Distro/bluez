@@ -60,8 +60,8 @@ install/bluez::
 		$(CURDIR)/debian/bluez/lib/udev/bluez
 
 	# misc
-	# install -D -m 0755 $(CURDIR)/test/agent \
-	# 	$(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
+	install -D -m 0755 $(CURDIR)/test/agent \
+		$(CURDIR)/debian/bluez/usr/bin/bluetooth-agent
 	for d in $(TEST_PROGRAM_LIST) ; do \
 		install -D -m 0755 $(CURDIR)/test/$$d \
 			$(CURDIR)/debian/bluez/usr/bin/bluez-$$d ; \

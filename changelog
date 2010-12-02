@@ -1,8 +1,13 @@
-bluez (4.71-1) unstable; urgency=low
+bluez (4.81-1) experimental; urgency=low
 
   * New upstream release.
+  * Drop patches/010_udev_rules_agent.patch (Closes: ##588034).
+    Connection of bluetooth is cut off after system start, if applied this patch.
+    And this patch is not already necessary.
+  * Update debian/rules
+    - Provide again bluetooth-agent utility (Closes: #598982).
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 10 Sep 2010 12:18:27 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 02 Dec 2010 12:17:48 +0900
 
 bluez (4.70-1) unstable; urgency=low
 
