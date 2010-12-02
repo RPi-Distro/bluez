@@ -1,0 +1,31 @@
+From b2d85659223b628d17bb5f69e00d6f514761cba6 Mon Sep 17 00:00:00 2001
+From: Johan Hedberg <johan.hedberg@nokia.com>
+Date: Thu, 17 Jun 2010 21:31:32 +0300
+Subject: [PATCH 06/37] Fix missing error check to dbus_message_get_args
+
+---
+ audio/telephony-maemo6.c |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/audio/telephony-maemo6.c b/audio/telephony-maemo6.c
+index 41950be..e8b75fd 100644
+--- a/audio/telephony-maemo6.c
++++ b/audio/telephony-maemo6.c
+@@ -1311,9 +1311,12 @@ static void hal_battery_level_reply(DBusPendingCall *call, void *user_data)
+ 		goto done;
+ 	}
+ 
+-	dbus_message_get_args(reply, NULL,
++	if (!dbus_message_get_args(reply, NULL,
+ 				DBUS_TYPE_INT32, &level,
+-				DBUS_TYPE_INVALID);
++				DBUS_TYPE_INVALID)) {
++		error("Unexpected args in hald reply");
++		goto done;
++	}
+ 
+ 	*value = (int) level;
+ 
+-- 
+1.7.2.3
+

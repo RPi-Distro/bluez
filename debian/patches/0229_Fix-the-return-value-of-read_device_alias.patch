@@ -1,0 +1,27 @@
+From e4648f70c8228eac9854ed1a2c0dc398dfb777a4 Mon Sep 17 00:00:00 2001
+From: Vinicius Costa Gomes <vinicius.gomes@openbossa.org>
+Date: Fri, 2 Jul 2010 13:09:07 -0300
+Subject: [PATCH 29/37] Fix the return value of read_device_alias
+
+To mantain consistency read_device_alias must return 0 on
+success, not the number of bytes written.
+---
+ src/storage.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/src/storage.c b/src/storage.c
+index 07c1ac2..e09e257 100644
+--- a/src/storage.c
++++ b/src/storage.c
+@@ -73,7 +73,7 @@ int read_device_alias(const char *src, const char *dst, char *alias, size_t size
+ 
+ 	free(tmp);
+ 
+-	return err;
++	return err < 0 ? -EIO : 0;
+ }
+ 
+ int write_device_alias(const char *src, const char *dst, const char *alias)
+-- 
+1.7.2.3
+

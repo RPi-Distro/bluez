@@ -1,0 +1,36 @@
+From 4a4471e7e071fe8e8ae68d1b130dac6db9748fe2 Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.dentz-von@nokia.com>
+Date: Mon, 28 Jun 2010 11:20:15 +0300
+Subject: [PATCH 17/37] Fix sending authentication reply when bonding is already completed
+
+It cause errors such:
+
+2010-06-28 11:12:39.683799 > HCI Event: Auth Complete (0x06) plen 3
+    status 0x05 handle 43
+    Error: Authentication Failure
+2010-06-28 11:12:39.699344 < HCI Command: User Confirmation Request
+				Negative Reply (0x01|0x002d) plen 6
+    bdaddr 00:25:56:D0:7F:63
+2010-06-28 11:12:39.705754 > HCI Event: Command Complete (0x0e) plen 10
+    User Confirmation Request Negative Reply (0x01|0x002d) ncmd 1
+    status 0x0c bdaddr 00:25:56:D0:7F:63
+    Error: Command Disallowed
+---
+ src/device.c |    1 +
+ 1 files changed, 1 insertions(+), 0 deletions(-)
+
+diff --git a/src/device.c b/src/device.c
+index 04332c6..ea0640e 100644
+--- a/src/device.c
++++ b/src/device.c
+@@ -2075,6 +2075,7 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
+ 		agent_cancel(auth->agent);
+ 
+ 	if (status) {
++		device_cancel_authentication(device, TRUE);
+ 		device_cancel_bonding(device, status);
+ 		return;
+ 	}
+-- 
+1.7.2.3
+

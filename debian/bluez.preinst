@@ -48,7 +48,7 @@ install|upgrade)
     # now that modprobe whines remove this old conffile, will be
     # http://bugs.debian.org/523050
     base="/etc/modprobe.d/bluez"
-    rm_conffile "$base"
+    rm_conffile bluez "$base"
     if [ -e "$base.dpkg-bak" ]; then
         if [ -e "$base.conf" ]; then
             echo "$base.conf exists, not touching"

@@ -1,0 +1,57 @@
+From b5d5bf263f4034ed9e7d40500ad8815b8e45cc8c Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.dentz-von@nokia.com>
+Date: Wed, 30 Jun 2010 18:22:35 +0300
+Subject: [PATCH 27/37] core: fix emitting pairable when there could still occur an error
+
+An error could be generate by set_mode which then will make application
+to assume that we were unable to change the property, which wasn't the
+case.
+---
+ src/adapter.c |   24 +++++++++++++-----------
+ 1 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/adapter.c b/src/adapter.c
+index 5d90b46..d1fae55 100644
+--- a/src/adapter.c
++++ b/src/adapter.c
+@@ -521,6 +521,19 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
+ 	if (pairable == adapter->pairable)
+ 		goto done;
+ 
++	if (!(adapter->scan_mode & SCAN_INQUIRY))
++		goto store;
++
++	mode = (pairable && adapter->discov_timeout > 0 &&
++				adapter->discov_timeout <= 60) ?
++					MODE_LIMITED : MODE_DISCOVERABLE;
++
++	err = set_mode(adapter, mode);
++	if (err < 0 && msg)
++		return failed_strerror(msg, -err);
++
++store:
++
+ 	adapter->pairable = pairable;
+ 
+ 	write_device_pairable(&adapter->bdaddr, pairable);
+@@ -533,17 +546,6 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
+ 		adapter_set_pairable_timeout(adapter,
+ 						adapter->pairable_timeout);
+ 
+-	if (!(adapter->scan_mode & SCAN_INQUIRY))
+-		goto done;
+-
+-	mode = (pairable && adapter->discov_timeout > 0 &&
+-				adapter->discov_timeout <= 60) ?
+-					MODE_LIMITED : MODE_DISCOVERABLE;
+-
+-	err = set_mode(adapter, mode);
+-	if (err < 0 && msg)
+-		return failed_strerror(msg, -err);
+-
+ done:
+ 	return msg ? dbus_message_new_method_return(msg) : NULL;
+ }
+-- 
+1.7.2.3
+

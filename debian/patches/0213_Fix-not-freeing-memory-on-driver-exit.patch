@@ -1,0 +1,29 @@
+From ef1e62baec7833bd4a53720d1ee2bdcd91e6a705 Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.dentz-von@nokia.com>
+Date: Tue, 8 Jun 2010 10:48:24 +0300
+Subject: [PATCH 13/37] Fix not freeing memory on driver exit
+
+---
+ audio/telephony-maemo6.c |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/audio/telephony-maemo6.c b/audio/telephony-maemo6.c
+index e8b75fd..31704c3 100644
+--- a/audio/telephony-maemo6.c
++++ b/audio/telephony-maemo6.c
+@@ -1981,6 +1981,12 @@ int telephony_init(void)
+ 
+ void telephony_exit(void)
+ {
++	g_free(net.operator_name);
++	net.operator_name = NULL;
++
++	g_free(last_dialed_number);
++	last_dialed_number = NULL;
++
+ 	g_slist_foreach(calls, (GFunc) csd_call_free, NULL);
+ 	g_slist_free(calls);
+ 	calls = NULL;
+-- 
+1.7.2.3
+

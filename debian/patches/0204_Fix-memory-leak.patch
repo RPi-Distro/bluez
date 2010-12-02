@@ -1,0 +1,36 @@
+From b336e93a471f4ede121edaf822cd525c2ffc17a7 Mon Sep 17 00:00:00 2001
+From: Johan Hedberg <johan.hedberg@nokia.com>
+Date: Thu, 17 Jun 2010 09:40:56 +0300
+Subject: [PATCH 04/37] Fix memory leak
+
+---
+ audio/manager.c |    8 +++++++-
+ 1 files changed, 7 insertions(+), 1 deletions(-)
+
+diff --git a/audio/manager.c b/audio/manager.c
+index f6a98cd..5edfb18 100644
+--- a/audio/manager.c
++++ b/audio/manager.c
+@@ -351,12 +351,18 @@ static sdp_record_t *hfp_ag_record(uint8_t ch, uint32_t feat)
+ 	sdp_data_t *channel, *features;
+ 	uint8_t netid = 0x01;
+ 	uint16_t sdpfeat;
+-	sdp_data_t *network = sdp_data_alloc(SDP_UINT8, &netid);
++	sdp_data_t *network;
+ 
+ 	record = sdp_record_alloc();
+ 	if (!record)
+ 		return NULL;
+ 
++	network = sdp_data_alloc(SDP_UINT8, &netid);
++	if (!network) {
++		sdp_record_free(record);
++		return NULL;
++	}
++
+ 	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
+ 	root = sdp_list_append(0, &root_uuid);
+ 	sdp_set_browse_groups(record, root);
+-- 
+1.7.2.3
+

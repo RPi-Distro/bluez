@@ -39,6 +39,8 @@ SDPTOOL=/usr/bin/sdptool
 
 SSD_OPTIONS="--oknodo --quiet --exec $DAEMON"
 
+test -f /usr/sbin/bluetoothd || exit 0
+
 test -f /etc/default/bluetooth && . /etc/default/bluetooth
 test -f /etc/default/rcS && . /etc/default/rcS
 

@@ -1,3 +1,37 @@
+bluez (4.66-2) testing; urgency=low
+
+  * Fix init script to be a nop when the package is removed.
+    debian/bluez.bluetooth.init (Closes: #593172).
+  * Fix removal of obsolete conffile.
+    debian/bluez.preinst (Closes: #592982, #568301).
+  * Backports some pathces from upstream (Closes: #601583).
+    - 0204_Fix-memory-leak.patch
+      Fix memory leak in hfp_ag_record function.
+    - 0206_Fix-missing-error-check-to-dbus_message_get_args.patch
+      Fix missing error check to dbus_message_get_args.
+    - 0207_Fix-attempt-to-use-a-potential-negative-array-index.patch
+      Fix attempt to use a potential negative array index.
+    - 0208_Fix-sdp_get_supp_feat-function.patch
+	  Fix data allocation size to get in sdp_get_supp_feat. 
+    - 0209_Fix-unblock-removed-device.patch
+	  Fix unblock removed device.
+    - 0213_Fix-not-freeing-memory-on-driver-exit.patch
+      Fix not freeing memory on driver exit.
+    - 0214_Fix-possible-memory-leaks-on-ofono-driver.patch
+	  Fix memory leak by add address check.
+    - 0215_Fix-not-cancelling-authentication-when-bonding-fails.patch
+	  Fix not cancelling authentication when bonding fails
+    - 0217_Fix-sending-authentication-reply-when-bonding-is-alr.patch
+	  When bonding is already completed, sending authentication reply.
+    - 0218_Fix-use-of-errno-after-calling-some-function-that-co.patch
+	  Fix return erro code in device_authentication_requested function.
+    - 0227_core-fix-emitting-pairable-when-there-could-still-oc.patch
+	  Move error check code.
+    - 0229_Fix-the-return-value-of-read_device_alias.patch
+	  Fix the return value of read_device_alias function.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 04 Nov 2010 05:45:03 +0900
+
 bluez (4.66-1) unstable; urgency=low
 
   * New upstream release.

@@ -1,0 +1,30 @@
+From 2a6500b516bb7c864f810cb4bba7584bf24a246a Mon Sep 17 00:00:00 2001
+From: Luiz Augusto von Dentz <luiz.dentz-von@nokia.com>
+Date: Tue, 8 Jun 2010 11:20:15 +0300
+Subject: [PATCH 14/37] Fix possible memory leaks on ofono driver
+
+---
+ audio/telephony-ofono.c |    7 +++++--
+ 1 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/audio/telephony-ofono.c b/audio/telephony-ofono.c
+index e710ce8..9c20112 100644
+--- a/audio/telephony-ofono.c
++++ b/audio/telephony-ofono.c
+@@ -598,8 +598,11 @@ static void list_modem_reply(DBusPendingCall *call, void *user_data)
+ 
+ 		dbus_message_iter_get_basic(&sub, &modem_obj_path_local);
+ 		modem_obj_path = g_strdup(modem_obj_path_local);
+-		DBG("modem_obj_path is %p, %s\n", modem_obj_path,
+-						modem_obj_path);
++		if (modem_obj_path != NULL) {
++			DBG("modem_obj_path is %p, %s\n", modem_obj_path,
++							modem_obj_path);
++			break;
++		}
+ 		dbus_message_iter_next(&sub);
+ 	}
+ 
+-- 
+1.7.2.3
+
