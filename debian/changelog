@@ -3,7 +3,7 @@ bluez (4.84-1) experimental; urgency=low
   * New upstream release.
   * Update README.Debian.
     - Update section of Keyboard and mouse support
-	  (Closes: #599894, #535929).
+      (Closes: #599894, #535929).
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 12 Jan 2011 17:23:25 +0900
 
