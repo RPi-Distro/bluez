@@ -113,7 +113,7 @@ We use bluez-simple-agent and bluez-test-input in bluez now.
 
 2. Start bluez-simple-agent
 
-    $ bluez-simple-agent hci0 <bdaddr>
+    $ sudo bluez-simple-agent hci0 <bdaddr>
     RequestPinCode (/org/bluez/22302/hci0/dev_00_XX_XX_XX_XX_XX)
     Enter PIN Code: 0000 <-- Please input PIN code
     Release
@@ -123,9 +123,16 @@ We use bluez-simple-agent and bluez-test-input in bluez now.
     PIN code are different depending on mouse. 
     Please check the PIN code of your mouse.
 
-3. With bluez-test-input, connected to the device.
+3. With bluez-test-device, set *trusted* to the device.
 
-    $ bluez-test-input connect <bdaddr>
+    $ sudo bluez-test-device trusted <bdaddr> yet
+
+	When you did not execute this, you use bluez-test-input after suspend
+	and resume (and reboot) have to connect a device again.
+
+4. With bluez-test-input, connected to the device.
+
+    $ sudo bluez-test-input connect <bdaddr>
 
 NOTE: If you want to use hidd daemon, please install bluez-compat package.
 
