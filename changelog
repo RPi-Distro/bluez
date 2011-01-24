@@ -1,3 +1,11 @@
+bluez (4.86-1) experimental; urgency=low
+
+  * New upstream release.
+  * Update debian/rules.
+    - Enable health plugin and attrib plugin.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 24 Jan 2011 11:49:55 +0900
+
 bluez (4.84-1) experimental; urgency=low
 
   * New upstream release.
