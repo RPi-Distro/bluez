@@ -1,3 +1,9 @@
+bluez (4.87-1) experimental; urgency=low
+
+  * New upstream release.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 26 Jan 2011 07:58:27 +0900
+
 bluez (4.86-1) experimental; urgency=low
 
   * New upstream release.
