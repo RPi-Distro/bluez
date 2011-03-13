@@ -1,3 +1,9 @@
+bluez (4.89-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 05 Mar 2011 17:08:40 +0900
+
 bluez (4.87-2) unstable; urgency=low
 
   * Upload to unstable.
