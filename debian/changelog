@@ -1,6 +1,12 @@
 bluez (4.91-1) unstable; urgency=low
 
   * New upstream release.
+  * Updte debian/control
+    + Update to S-V 3.9.2: no changes needed.
+    + Remove libgstreamer0.10-dev from Build-Depends.
+      This is interpolated by libgstreamer-plugins-base0.10-dev.
+    + Remove libdbus-1-dev from Build-Depends.
+      This is interpolated by libdbus-1-dev.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 12 Apr 2011 11:50:49 +0900
 
