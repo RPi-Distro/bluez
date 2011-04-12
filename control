@@ -11,11 +11,9 @@ Build-Depends: debhelper (>= 7),
                bison,
                gstreamer-tools,
                libasound2-dev,
-               libdbus-1-dev,
                libdbus-glib-1-dev,
-               libglib2.0-dev,
-               libgstreamer0.10-dev,
-               libgstreamer-plugins-base0.10-dev,
+               libglib2.0-dev (>= 2.16),
+               libgstreamer-plugins-base0.10-dev (>= 0.10.30),
                libnl-dev,
                libsndfile1-dev,
                libusb-dev,
@@ -23,7 +21,7 @@ Build-Depends: debhelper (>= 7),
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
-Standards-Version: 3.9.1
+Standards-Version: 3.9.2
 
 Package: libbluetooth3
 Section: libs
