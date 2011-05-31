@@ -1,3 +1,9 @@
+bluez (4.93-3) unstable; urgency=low
+
+  * Fix install hid2hci to /lib/udev. 
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 31 May 2011 19:42:33 +0900
+
 bluez (4.93-2) unstable; urgency=low
 
   * Update debian/README.Debian.gz.
