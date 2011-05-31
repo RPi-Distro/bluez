@@ -1,3 +1,13 @@
+bluez (4.93-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/control.
+    - Add libudev-dev to Build-Depends.
+  * Update debian/bluetooth-dbus.conf.
+    Add policy for lp group.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 20 May 2011 10:31:07 +0900
+
 bluez (4.91-1) unstable; urgency=low
 
   * New upstream release.
