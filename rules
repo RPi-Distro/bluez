@@ -34,7 +34,7 @@ DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 TEST_PROGRAM_LIST = simple-agent simple-service test-adapter test-audio test-device \
                test-discovery test-input test-manager test-network test-serial \
-               test-service test-telephony 
+               test-service test-telephony
 
 #install/bluetooth::
 	#install -D -m 0644 $(CURDIR)/debian/bluetooth.override \
@@ -50,7 +50,7 @@ install/bluez::
 		$(CURDIR)/debian/bluez/etc/bluetooth/network.conf
 	install -D -m 0644 $(CURDIR)/serial/serial.conf \
 		$(CURDIR)/debian/bluez/etc/bluetooth/serial.conf
-	
+
 	# udev rules, actually upstream version is changed with
 	# sed -i 's@RUN+="/usr/sbin/hid2hci@RUN+="/lib/udev/bluez@'
 	#	scripts/bluetooth-hid2hci.rules
