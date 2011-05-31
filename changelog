@@ -1,3 +1,13 @@
+bluez (4.93-2) unstable; urgency=low
+
+  * Update debian/README.Debian.gz.
+    Add description of bluez-simple-agent (Closes: #488306, #384680).
+  * Update debian/bluez_agent.udev and debian/bluez.bluetooth.init.
+    Fix path of hid2hci (Closes: #628491).
+  * Add debian/patches/03_fix_udevdir.patch.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 31 May 2011 18:04:29 +0900
+
 bluez (4.93-1) unstable; urgency=low
 
   * New upstream release.
