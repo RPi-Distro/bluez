@@ -4,3 +4,4 @@ debian/tmp/etc/dbus*/*
 debian/tmp/usr/sbin/*
 debian/tmp/usr/bin/*
 debian/tmp/usr/share/man/man*
+debian/tmp/lib/udev/*
