@@ -3,6 +3,6 @@
 
 (
 	. /lib/udev/hotplug.functions
-	wait_for_file /usr/sbin/hid2hci
-	exec /usr/sbin/hid2hci "$@"
+	wait_for_file /lib/udev/hid2hci
+	exec /lib/udev/hid2hci "$@"
 ) &

@@ -26,7 +26,7 @@ DESC=bluetooth
 DAEMON=/usr/sbin/bluetoothd
 HCIATTACH=/usr/sbin/hciattach
 
-HID2HCI=/usr/sbin/hid2hci
+HID2HCI=/lib/udev/hid2hci
 HID2HCI_ENABLED=1
 HID2HCI_UNDO=1
 
