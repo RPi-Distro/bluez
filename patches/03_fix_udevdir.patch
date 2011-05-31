@@ -1,0 +1,30 @@
+# If PCMCIA enabled, udevdir value override from /lib/udev to
+# $(libexecdir)/udev.
+# Forwarded: http://marc.info/?l=linux-bluetooth&m=130682805515756
+# Origin: Debian
+# Bug-Debian: None
+# Author: Nobuhiro Iwamatsu <iwamatsu@debian.org>
+
+diff --git a/Makefile.am b/Makefile.am
+index 175f8c9..5325d6d 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -355,8 +355,6 @@ EXTRA_DIST += scripts/bluetooth.rules \
+ 		scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules
+ 
+ if PCMCIA
+-udevdir = $(libexecdir)/udev
+-
+ dist_udev_SCRIPTS = scripts/bluetooth_serial
+ endif
+ 
+--- a/Makefile.in	2011-05-31 16:39:13.000000000 +0900
++++ b/Makefile.in	2011-05-31 16:39:28.000000000 +0900
+@@ -1169,7 +1169,6 @@
+ @BCCMD_TRUE@	tools/ubcsp.c $(am__append_44)
+ @BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_45)
+ @HID2HCI_TRUE@udevdir = @UDEV_DIR@
+-@PCMCIA_TRUE@udevdir = $(libexecdir)/udev
+ @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@ @UDEV_LIBS@
+ @DFUTOOL_TRUE@tools_dfutool_SOURCES = tools/dfutool.c tools/dfu.h tools/dfu.c
+ @DFUTOOL_TRUE@tools_dfutool_LDADD = @USB_LIBS@
