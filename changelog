@@ -1,3 +1,12 @@
+bluez (4.94-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/control.
+    - Add ppc64 to Architecture.
+  * Remove debian/patches/03_fix_udevdir.patch.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 01 Jun 2011 15:30:01 +0900
+
 bluez (4.93-3) unstable; urgency=low
 
   * Fix install hid2hci to /lib/udev. 
