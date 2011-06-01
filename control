@@ -30,7 +30,7 @@ Section: libs
 Conflicts: libsdp2 (<= 1.5-2)
 Replaces: libsdp2 (<= 1.5-2)
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Description: Library to use the BlueZ Linux Bluetooth stack
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
@@ -43,7 +43,7 @@ Replaces: libsdp2-dev (<= 1.5.2)
 Depends: libbluetooth3 (= ${binary:Version}), libc6-dev | libc-dev, ${misc:Depends}
 Suggests: pkg-config
 Priority: extra
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Description: Development files for using the BlueZ Linux Bluetooth library
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
@@ -57,7 +57,7 @@ Description: Bluetooth support
  by the Bluez bluetooth stack.
 
 Package: bluez
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Depends: ${shlibs:Depends}, ${misc:Depends}, module-init-tools, udev | makedev, lsb-base, dbus, python-gobject, python-dbus
 Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
 Conflicts: bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
@@ -69,7 +69,7 @@ Description: Bluetooth tools and daemons
 
 Package: bluez-alsa
 Replaces: bluez-audio
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Depends: ${shlibs:Depends}, ${misc:Depends}, bluez
 Description: Bluetooth ALSA support
  This package contains a driver operate with the ALSA stack.
@@ -78,7 +78,7 @@ Description: Bluetooth ALSA support
  project distributed under GNU General Public License (GPL).
 
 Package: bluez-gstreamer
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Depends: ${shlibs:Depends}, ${misc:Depends}, bluez
 Replaces: bluez-audio
 Description: Bluetooth GStreamer support
@@ -88,7 +88,7 @@ Description: Bluetooth GStreamer support
  project distributed under GNU General Public License (GPL).
 
 Package: bluez-cups
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Depends: ${shlibs:Depends}, cups, ${misc:Depends}
 Description: Bluetooth printer driver for CUPS
  This package contains a driver to let CUPS print to Bluetooth-connected
@@ -98,7 +98,7 @@ Description: Bluetooth printer driver for CUPS
  project distributed under GNU General Public License (GPL).
 
 Package: bluez-pcmcia-support
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Priority: extra
 Depends: pcmciautils, ${misc:Depends}
 Recommends: setserial
@@ -110,7 +110,7 @@ Description: PCMCIA support files for BlueZ 2.0 Bluetooth tools
  project distributed under GNU General Public License (GPL).
 
 Package: bluez-compat
-Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64
+Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: BlueZ 3.x compatibility binaries
  This package provides the legacy binaries that were reminiscent of the
