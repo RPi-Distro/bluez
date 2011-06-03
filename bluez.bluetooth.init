@@ -26,21 +26,21 @@ DESC=bluetooth
 DAEMON=/usr/sbin/bluetoothd
 HCIATTACH=/usr/sbin/hciattach
 
-HID2HCI=/lib/udev/hid2hci
 HID2HCI_ENABLED=1
 HID2HCI_UNDO=1
 
 UART_CONF=/etc/bluetooth/uart
 
-RFCOMM=/usr/bin/rfcomm
 RFCOMM_NAME=rfcomm
-RFCOMM_CONF=/etc/bluetooth/rfcomm.conf
+RFCOMM=/usr/bin/$RFCOMM_NAME
+RFCOMM_CONF=/etc/bluetooth/$RFCOMM_NAME.conf
 SDPTOOL=/usr/bin/sdptool
 
 SSD_OPTIONS="--oknodo --quiet --exec $DAEMON"
 
-test -f /usr/sbin/bluetoothd || exit 0
+test -f $DAEMON || exit 0
 
+# FIXME: any of the sourced files may fail if/with syntax errors
 test -f /etc/default/bluetooth && . /etc/default/bluetooth
 test -f /etc/default/rcS && . /etc/default/rcS
 
@@ -48,36 +48,36 @@ test -f /etc/default/rcS && . /etc/default/rcS
 
 set -e
 
+# FIXME: this function is possibly a no-op
 run_sdptool()
 {
+	# declaring IFS local in this function, removes the need to
+	# save/restore it
+	local IFS o
+
 	test -x $SDPTOOL || return 1
 
+# FIXME: where does SDPTOOL_OPTIONS come from?
 	if ! test -z "$SDPTOOL_OPTIONS" ; then
-		oldifs="$IFS"
 		IFS=";"
 		for o in $SDPTOOL_OPTIONS ; do
 			#echo "execing $SDPTOOL $o"
 			IFS=" "
-			if [ "$VERBOSE" != "no" ]; then
+			if [ "$VERBOSE" != no ]; then
 				$SDPTOOL $o
 			else
 				$SDPTOOL $o >/dev/null 2>&1
 			fi
 		done
-		IFS="$oldifs"
 	fi
-
 }
 
-enable_hci_input()
+hci_input()
 {
-    log_progress_msg "switching to HID/HCI no longer done in init script, see /usr/share/doc/bluez/NEWS.Debian.gz"
+    log_progress_msg "switching to HID/HCI no longer done in init script, see /usr/share/doc/bluez/NEWS.Debian.gz" || :
 }
-
-disable_hci_input()
-{
-    log_progress_msg "switching to HID/HCI no longer done in init script, see /usr/share/doc/bluez/NEWS.Debian.gz"
-}
+alias enable_hci_input=hci_input
+alias disable_hci_input=hci_input
 
 start_uarts()
 {
@@ -93,7 +93,7 @@ start_uarts()
 
 stop_uarts()
 {
-	killall hciattach > /dev/null 2>&1 || true
+	killall ${HCIATTACH##*/} >/dev/null 2>&1 || :
 }
 
 start_rfcomm()
@@ -102,10 +102,10 @@ start_rfcomm()
 		# rfcomm must always succeed for now: users
 		# may not yet have an rfcomm-enabled kernel
                 if [ "$VERBOSE" != no ]; then
-                       log_progress_msg "rfcomm"
-                       $RFCOMM -f $RFCOMM_CONF bind all || true
+		       log_progress_msg "${RFCOMM##*/}"
+		       $RFCOMM -f $RFCOMM_CONF bind all || :
                 else
-                       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || true
+		       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || :
                 fi
 	fi
 }
@@ -114,10 +114,10 @@ stop_rfcomm()
 {
 	if [ -x $RFCOMM ] ; then
                if [ "$VERBOSE" != no ]; then
-                       log_progress_msg "rfcomm"
-                       $RFCOMM unbind all || true
+		       log_progress_msg "${RFCOMM##*/}"
+		       $RFCOMM unbind all || :
                else
-                       $RFCOMM unbind all >/dev/null 2>&1 || true
+		       $RFCOMM unbind all >/dev/null 2>&1 || :
                fi
 	fi
 }
@@ -126,41 +126,40 @@ restart_rfcomm()
 {
 	if [ -x $RFCOMM ] && [ -f $RFCOMM_CONF ] ; then
                if [ "$VERBOSE" != no ]; then
-                       log_progress_msg  "rfcomm"
-                       $RFCOMM unbind all || true
-                       $RFCOMM -f $RFCOMM_CONF bind all || true
+		       log_progress_msg  "${RFCOMM##*/}"
+		       $RFCOMM unbind all || :
+		       $RFCOMM -f $RFCOMM_CONF bind all || :
                else
-                       $RFCOMM unbind all >/dev/null 2>&1|| true
-                       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || true
+		       $RFCOMM unbind all >/dev/null 2>&1|| :
+		       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || :
                fi
 	fi
 }
 
-case "$1" in
+case $1 in
   start)
 	log_daemon_msg "Starting $DESC"
 
-	if test "$BLUETOOTH_ENABLED" = "0"; then
+	if test "$BLUETOOTH_ENABLED" = 0; then
 		log_progress_msg "disabled. see /etc/default/bluetooth"
 		log_end_msg 0
 		exit 0
 	fi
 
 	start-stop-daemon --start $SSD_OPTIONS
-	log_progress_msg "bluetoothd"
+	log_progress_msg "${DAEMON##*/}"
 
-	run_sdptool || true
+	run_sdptool || :
 
-	start_uarts || true
+	start_uarts || :
 
-	if test "$HID2HCI_ENABLED" = "1"; then
-		enable_hci_input || true
+	if test "$HID2HCI_ENABLED" = 1; then
+		enable_hci_input
 	fi
-	start_rfcomm || true
+	start_rfcomm || :
 
-	if test "$HIDD_ENABLED" = "1" ||
-			test "$PAND_ENABLED" = "1" ||
-			test "$DUND_ENABLED" = "1"; then
+	if test "$HIDD_ENABLED" = 1 ||
+		test "$PAND_ENABLED" = 1 || test "$DUND_ENABLED" = 1; then
 		log_progress_msg "compatibily daemons not started, see bluez-compat package"
 	fi
 
@@ -168,18 +167,18 @@ case "$1" in
   ;;
   stop)
 	log_daemon_msg "Stopping $DESC"
-	if test "$BLUETOOTH_ENABLED" = "0"; then
+	if test "$BLUETOOTH_ENABLED" = 0; then
 		log_progress_msg "disabled."
 		log_end_msg 0
 		exit 0
 	fi
-	stop_rfcomm || true
-	if test "$HID2HCI_UNDO" = "1"; then
-		disable_hci_input || true
+	stop_rfcomm || :
+	if test "$HID2HCI_UNDO" = 1; then
+		disable_hci_input
 	fi
 	start-stop-daemon --stop $SSD_OPTIONS
-	log_progress_msg "bluetoothd"
-	stop_uarts || true
+	log_progress_msg "${DAEMON}"
+	stop_uarts || :
 	log_end_msg 0
   ;;
   restart|force-reload)
@@ -192,7 +191,6 @@ case "$1" in
   ;;
   *)
 	N=/etc/init.d/bluetooth
-	# echo "Usage: $N {start|stop|restart|reload|force-reload|status}" >&2
 	echo "Usage: $N {start|stop|restart|force-reload|status}" >&2
 	exit 1
 	;;

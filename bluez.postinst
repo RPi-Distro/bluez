@@ -1,6 +1,10 @@
 #!/bin/sh
 # snippet from http://www.dpkg.org/dpkg/ConffileHandling
 
+set -e
+
+. /usr/share/debconf/confmodule
+
 # Move a conffile without triggering a dpkg question
 mv_conffile() {
     OLDCONFFILE="$1"
@@ -13,7 +17,6 @@ mv_conffile() {
     fi
 }
 
-set -e
 case "$1" in
     configure)
         if [ -e /etc/init.d/bluez-utils ]; then
@@ -51,3 +54,7 @@ case "$1" in
 esac
 
 #DEBHELPER#
+
+db_stop;
+
+exit 0
