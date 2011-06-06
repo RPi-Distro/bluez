@@ -1,9 +1,19 @@
-bluez (4.94-1) unstable; urgency=low
+bluez (4.94-1) unstable; urgency=medium
 
   * New upstream release.
   * Update debian/control.
     - Add ppc64 to Architecture.
+    - Add version depency of udev (Closes #628904).
   * Remove debian/patches/03_fix_udevdir.patch.
+    Applied to upstream.
+  * Update debian/bluez.bluetooth.init.
+    Applied patch from Cristian Ionescu-Idbohrn (Closes: #628491).
+  * Update debian/bluez.postinst.
+    Add abort-upgrade, abort-remove and abort-deconfigure target
+    to bluez.postinst.
+  * Add support debconf to bluez package.
+    This provides interface to add the user who using bluetooth
+	devices to the bluetooth group.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 01 Jun 2011 15:30:01 +0900
 
