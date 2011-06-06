@@ -18,15 +18,3 @@ BLUETOOTH_ENABLED=1
 # see http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=355497
 HID2HCI_ENABLED=0
 HID2HCI_UNDO=0
-
-# For SDPTOOL
-# This variable controls the options passed to sdptool on boot, useful if you
-# need to setup bluetoothd (sdpd) on boot.
-# options are ;-separated, i.e. for every ; an sdptool instance will be
-# launched
-#
-# examples:
-# SDPTOOL_OPTIONS="add --channel=3 SP" # ericsson P800 serial profile
-# SDPTOOL_OPTIONS="add --channel=8 OPUSH ; add --channel=9 FTRN" # motorola
-#                                             # object push and file transfer
-SDPTOOL_OPTIONS=""
