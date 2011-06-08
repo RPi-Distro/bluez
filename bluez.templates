@@ -1,6 +1,0 @@
-Template: bluez/users
-Type: multiselect
-Choices: ${users}
-_Description: Users to add to the bluetooth group:
- Users who should be able to use bluetooth device need to be added to the
- group "bluetooth".
