@@ -11,9 +11,6 @@ bluez (4.94-1) unstable; urgency=medium
   * Update debian/bluez.postinst.
     Add abort-upgrade, abort-remove and abort-deconfigure target
     to bluez.postinst.
-  * Add support debconf to bluez package.
-    This provides interface to add the user who using bluetooth
-	devices to the bluetooth group.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 01 Jun 2011 15:30:01 +0900
 
