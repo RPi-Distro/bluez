@@ -1,3 +1,9 @@
+bluez (4.94-2) unstable; urgency=medium
+
+  * Add udev to Replaces and Breaks field (Closes: #628904).
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 09 Jun 2011 21:48:21 +0900
+
 bluez (4.94-1) unstable; urgency=medium
 
   * New upstream release.
