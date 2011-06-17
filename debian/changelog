@@ -1,6 +1,7 @@
 bluez (4.94-2) unstable; urgency=medium
 
   * Add udev to Replaces and Breaks field (Closes: #628904).
+  * Fix typo from deamon to daemon (Closes: 629901).
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 09 Jun 2011 21:48:21 +0900
 
