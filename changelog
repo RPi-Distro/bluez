@@ -5,6 +5,8 @@ bluez (4.94-3) unstable; urgency=low
   * Update version and the install path for which libasound depended.
     Add patch/06-alsalib.patch. Thanks for Steve Langasek and Jordi Mallach.
     (Closes: #634976).
+  * Remove Andrea Veri from Uploaders.
+    Thank you for having maintained this package. (Closes: #635095)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 24 Jul 2011 18:31:59 +0900
 
