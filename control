@@ -5,15 +5,16 @@ Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth
 Uploaders: Andrea Veri <andrea.veri89@gmail.com>, Nobuhiro Iwamatsu <iwamatsu@debian.org>
 DM-Upload-Allowed: yes
 Build-Depends: debhelper (>= 7),
+               dh-autoreconf(>= 4),
                autotools-dev,
                cdbs,
                flex,
                bison,
                gstreamer-tools,
-               libasound2-dev,
+               libasound2-dev (>= 1.0.24.1),
                libdbus-glib-1-dev,
                libglib2.0-dev (>= 2.16),
-			   libgstreamer0.10-dev (>= 0.10.30),
+               libgstreamer0.10-dev (>= 0.10.30),
                libgstreamer-plugins-base0.10-dev (>= 0.10.30),
                libnl-dev,
                libsndfile1-dev,
@@ -130,7 +131,7 @@ Description: Transitional package
  BlueZ 4.x stack.
 
 Package: bluez-audio
-Depends: bluez-alsa (>= 4), bluez-gstreamer (>= 4)
+Depends: bluez-alsa (>= 4.94-3), bluez-gstreamer (>= 4)
 Architecture: all
 Description: Transitional package
  This is a transitional package to assist with moving people to the

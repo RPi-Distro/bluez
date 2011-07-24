@@ -1,3 +1,13 @@
+bluez (4.94-3) unstable; urgency=low
+
+  * Add dh-autoreconf to Build-Depends. To support dh-autoreconf,
+    update debian/control and debian/rules.
+  * Update version and the install path for which libasound depended.
+    Add patch/06-alsalib.patch. Thanks for Steve Langasek and Jordi Mallach.
+    (Closes: #634976).
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 24 Jul 2011 18:31:59 +0900
+
 bluez (4.94-2) unstable; urgency=medium
 
   * Add udev to Replaces and Breaks field (Closes: #628904).
