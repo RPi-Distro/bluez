@@ -5,7 +5,9 @@ include /usr/share/cdbs/1/rules/buildcore.mk
 include /usr/share/cdbs/1/rules/debhelper.mk
 include /usr/share/cdbs/1/rules/simple-patchsys.mk
 include /usr/share/cdbs/1/class/autotools.mk
+include /usr/share/cdbs/1/rules/autoreconf.mk
 
+DEB_DH_AUTORECONF_ARGS = "-ivf"
 DEB_UPDATE_RCD_PARAMS = "start 25 2 3 4 5 . stop 74 0 1 6 ."
 DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
 DEB_CONFIGURE_EXTRA_FLAGS := --enable-health \
