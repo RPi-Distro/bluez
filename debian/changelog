@@ -1,6 +1,9 @@
 bluez (4.96-1) unstable; urgency=low
 
   * New upstream release.
+  * Update debian/control.
+    - Updated Architecture from some architecture to linux-any.
+	  (Closes: #636545)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 04 Aug 2011 11:46:35 +0900
 
