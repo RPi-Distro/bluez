@@ -7,6 +7,9 @@ bluez (4.96-1) unstable; urgency=low
   * Drop patchsys-quilt.mk snippet: superfluous with source
     format 3.0 "(quilt)".
   * Refresh patch.
+  * Update debian/rules.
+    - Remove obsolete configure flags.
+    - Add new plugins (proximity, sap, wiimote, thermometer, dbusoob).
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 04 Aug 2011 11:46:35 +0900
 
