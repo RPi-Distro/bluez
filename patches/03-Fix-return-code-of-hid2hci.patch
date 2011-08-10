@@ -1,13 +1,7 @@
-From 244c2206d5ff0893f7500e17dc30af98ce779fec Mon Sep 17 00:00:00 2001
-From: Nobuhiro Iwamatsu <iwamatsu@nigauri.org>
-Date: Thu, 9 Jun 2011 12:54:17 +0900
-Subject: [PATCH] Fix return code of hid2hci
-
-hid2hci already return 1.
-This set 0 to default retuen code and add error code.
----
- tools/hid2hci.c |   10 ++++++++--
- 1 files changed, 8 insertions(+), 2 deletions(-)
+Description: bluez: getting a "Logitech, Inc. diNovo Edge Keyboard" working
+Author: Nobuhiro Iwamatsu <iwamatsu@debian.org>
+Origin: Nobuhiro Iwamatsu <iwamatsu@debian.org>
+Debian BTS: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=626975
 
 diff --git a/tools/hid2hci.c b/tools/hid2hci.c
 index 45a3a3d..da278cb 100644
@@ -65,5 +59,5 @@ index 45a3a3d..da278cb 100644
  		}
  		err = hid_switch_logitech(device);
 -- 
-1.7.5.3
+1.7.5.4
 
