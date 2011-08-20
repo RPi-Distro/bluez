@@ -106,7 +106,7 @@ License:
 		License: GPL version 2 or any later version
 
 On Debian GNU/Linux systems, the complete text of the GNU General Public
-License can be found in `/usr/share/common-licenses/GPL', the GNU Lesser
-General Public License can be found in `/usr/share/common-licenses/LGPL' and
+License can be found in `/usr/share/common-licenses/GPL-2', the GNU Lesser
+General Public License can be found in `/usr/share/common-licenses/LGPL-2.1' and
 the GNU Free Documentation License can be found in
 `/usr/share/common-licenses/GFDL'.
