@@ -14,7 +14,9 @@ bluez (4.96-1) unstable; urgency=low
     - Add new plugins (proximity, sap, wiimote, thermometer, dbusoob).
     - Strip and move to .install files.
   * Add usr/bin/gatttool into bluez package.
-  * Update bluez.lintian-overrides 
+  * Update bluez.lintian-overrides.
+  * Update debian/copyright.
+    Update path of license file.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 04 Aug 2011 11:46:35 +0900
 
