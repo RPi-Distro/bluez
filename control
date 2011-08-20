@@ -3,10 +3,9 @@ Section: admin
 Priority: optional
 Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth.debian.org>
 Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
-Build-Depends: debhelper (>= 8),
+Build-Depends: debhelper (>= 8.1.3), cdbs (>= 0.4.93),
                dh-autoreconf(>= 4),
                autotools-dev,
-               cdbs,
                flex,
                bison,
                gstreamer-tools,
@@ -29,7 +28,9 @@ Package: libbluetooth3
 Section: libs
 Conflicts: libsdp2 (<= 1.5-2)
 Replaces: libsdp2 (<= 1.5-2)
+Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Multi-Arch: same
 Architecture: linux-any
 Description: Library to use the BlueZ Linux Bluetooth stack
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
