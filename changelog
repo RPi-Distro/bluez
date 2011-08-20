@@ -4,7 +4,7 @@ bluez (4.96-1) unstable; urgency=low
   * Update debian/control.
     - Updated Architecture from some architecture to linux-any.
 	  (Closes: #636545)
-	- Add libreadline-dev to Build-Depends.
+    - Add libreadline-dev to Build-Depends.
   * Drop patchsys-quilt.mk snippet: superfluous with source
     format 3.0 "(quilt)".
   * Refresh patch.
