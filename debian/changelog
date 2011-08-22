@@ -3,6 +3,7 @@ bluez (4.96-1) unstable; urgency=low
   * New upstream release.
   * Add debug packages.
     bluez-dbg and libbluetooth3-dbg.
+  * Add support systemd.
   * Update debian/control.
     - Updated Architecture from some architecture to linux-any.
 	  (Closes: #636545)
