@@ -1,12 +1,12 @@
 bluez (4.96-1) unstable; urgency=low
 
   * New upstream release.
+    Applied some patch from Daniel Schaal. Thanks! (Closes: #636633)
   * Add debug packages.
     bluez-dbg and libbluetooth3-dbg.
   * Add support systemd.
   * Update debian/control.
-    - Add s390x to Architecture.
-	  (Closes: #636545)
+    - Add s390x to Architecture. (Closes: #636545)
     - Add libreadline-dev to Build-Depends.
   * Drop patchsys-quilt.mk snippet: superfluous with source
     format 3.0 "(quilt)".
