@@ -1,19 +1,6 @@
 #!/bin/sh
-# snippet from http://www.dpkg.org/dpkg/ConffileHandling
 
 set -e
-
-# Move a conffile without triggering a dpkg question
-mv_conffile() {
-    OLDCONFFILE="$1"
-    NEWCONFFILE="$2"
-
-    if [ -e "$OLDCONFFILE" ]; then
-        echo "Preserving user changes to $NEWCONFFILE ..."
-        mv -f "$NEWCONFFILE" "$NEWCONFFILE".dpkg-new
-        mv -f "$OLDCONFFILE" "$NEWCONFFILE"
-    fi
-}
 
 case "$1" in
     configure)
