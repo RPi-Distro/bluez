@@ -16,6 +16,7 @@ bluez (4.96-1) unstable; urgency=low
     - Remove obsolete configure flags.
     - Add new plugins (proximity, sap, wiimote, thermometer, dbusoob).
     - Strip and move to .install files.
+    - Add LDFLAGS=-Wl,--as-needed to configure option.
   * Add usr/bin/gatttool into bluez package.
   * Update bluez.lintian-overrides.
   * Update debian/copyright.
