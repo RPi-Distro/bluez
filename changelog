@@ -1,3 +1,10 @@
+bluez (4.96-2) unstable; urgency=low
+
+  * Add support static library of libbluetooth-dev. (Closes: #558742)
+    Don't include static library in bluez-alsa and bluez-gstreamer.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 18 Sep 2011 07:50:05 +0900
+
 bluez (4.96-1) unstable; urgency=low
 
   * New upstream release.
