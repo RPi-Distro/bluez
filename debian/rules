@@ -13,6 +13,7 @@ DEB_UPDATE_RCD_PARAMS = "start 25 2 3 4 5 . stop 74 0 1 6 ."
 DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
 DEB_CONFIGURE_EXTRA_FLAGS := LDFLAGS=-Wl,--as-needed \
                              --libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
+                             --enable-static \
                              --enable-health \
                              --enable-attrib \
                              --enable-gstreamer \
