@@ -3,7 +3,7 @@ bluez (4.96-2) unstable; urgency=low
   * Add support static library of libbluetooth-dev. (Closes: #558742)
     Don't include static library in bluez-alsa and bluez-gstreamer.
   * Fix bluez udev rules attempt to access /usr when /usr may not be mounted.
-    Thanks for anomie@users.sourceforge.net. (Closes: #639356)
+    Thanks to anomie@users.sourceforge.net. (Closes: #639356)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 18 Sep 2011 07:50:05 +0900
 
