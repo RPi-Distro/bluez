@@ -4,10 +4,10 @@ bluez (4.96-2) unstable; urgency=low
     Don't include static library in bluez-alsa and bluez-gstreamer.
   * Fix bluez udev rules attempt to access /usr when /usr may not be mounted.
     Thanks to anomie@users.sourceforge.net. (Closes: #639356)
-  * Add patches/08-0001-systemd-install-systemd-unit-files.patch.
-    This patch provides org.bluez.service file.
+  * Fix typo in debian/bluez.preinst. (Closes: #643321)
+    Thanks to Trent W. Buck.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 18 Sep 2011 07:50:05 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 28 Sep 2011 01:50:05 +0900
 
 bluez (4.96-1) unstable; urgency=low
 
