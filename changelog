@@ -6,6 +6,7 @@ bluez (4.96-2) unstable; urgency=low
     Thanks to anomie@users.sourceforge.net. (Closes: #639356)
   * Fix typo in debian/bluez.preinst. (Closes: #643321)
     Thanks to Trent W. Buck.
+  * Remove dh-autoreconf and add '-Wl,--as-needed' to LDFLAGS.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 28 Sep 2011 01:50:05 +0900
 
