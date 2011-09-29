@@ -19,7 +19,8 @@ install|upgrade)
 
   if dpkg-maintscript-helper supports mv_conffile; then
     dpkg-maintscript-helper mv_conffile \
-        /etc/dbus-1/system.d/bluetooth.conf 3.7-1 bluez -- "$@"
+      /etc/dbus-1/system.d/bluez-hcid.conf \
+      /etc/dbus-1/system.d/bluetooth.conf 3.7-1 bluez -- "$@"
 
     dpkg-maintscript-helper mv_conffile \
         /etc/modprobe.d/bluez /etc/modprobe.d/bluez.conf 4.42-1 bluez -- "$@"
