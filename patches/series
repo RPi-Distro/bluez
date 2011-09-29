@@ -3,4 +3,4 @@
 03-Fix-return-code-of-hid2hci.patch
 06-alsalib.patch
 07-fix-639356.patch
-08-0001-systemd-install-systemd-unit-files.patch
+# 08-0001-systemd-install-systemd-unit-files.patch
