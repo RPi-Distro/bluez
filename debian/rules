@@ -1,14 +1,12 @@
 #!/usr/bin/make -f
 # build rules for bluez
 
-include /usr/share/cdbs/1/rules/buildcore.mk
 include /usr/share/cdbs/1/rules/debhelper.mk
-include /usr/share/cdbs/1/rules/patchsys-quilt.mk
 include /usr/share/cdbs/1/class/autotools.mk
-include /usr/share/cdbs/1/rules/autoreconf.mk
+include /usr/share/cdbs/1/rules/patchsys-quilt.mk
 
-DEB_DH_AUTORECONF_ARGS = --as-needed
-#DEB_DH_AUTORECONF_ARGS = "-ivf"
+LDFLAGS += -Wl,--as-needed
+
 DEB_UPDATE_RCD_PARAMS = "start 25 2 3 4 5 . stop 74 0 1 6 ."
 DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
 DEB_CONFIGURE_EXTRA_FLAGS := LDFLAGS=-Wl,--as-needed \
