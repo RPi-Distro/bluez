@@ -1,3 +1,9 @@
+bluez (4.96-3) unstable; urgency=low
+
+  * Install debian/bluez-udev to /lib/udev/bluez-udev (Closes ##639356).
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 30 Sep 2011 12:35:45 +0900
+
 bluez (4.96-2) unstable; urgency=low
 
   * Add support static library of libbluetooth-dev. (Closes: #558742)
