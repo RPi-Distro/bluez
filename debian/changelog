@@ -1,6 +1,7 @@
 bluez (4.96-3) unstable; urgency=low
 
-  * Install debian/bluez-udev to /lib/udev/bluez-udev (Closes ##639356).
+  * Install debian/bluez-udev to /lib/udev/bluez-udev.
+    (Closes #639356, #643829)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 30 Sep 2011 12:35:45 +0900
 
