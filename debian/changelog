@@ -1,3 +1,11 @@
+bluez (4.97-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update debian/contorl.
+    - Add check (>= 0.9.4) to Build-Depends.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 27 Dec 2011 17:19:00 +0900
+
 bluez (4.96-3) unstable; urgency=low
 
   * Install debian/bluez-udev to /lib/udev/bluez-udev.
