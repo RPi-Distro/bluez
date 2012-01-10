@@ -8,6 +8,10 @@ bluez (4.97-1) experimental; urgency=low
       from configure.
     - Add --enable-time, --enable-alert and --enable-gatt-example to
       configure.
+  * Update bluez-cups.install.
+    Fix cups backend into multiarch path. (Closes: #645884)
+  * Update man for l2test. (Closes: #649432)
+  * Update debian/patches/06-alsalib.patch
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 27 Dec 2011 17:19:00 +0900
 
