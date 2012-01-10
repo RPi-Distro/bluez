@@ -4,12 +4,10 @@ Origin: Steve Langasek <steve.langasek@canonical.com>
 Updated by Nobuhiro Iwamatsu <iwamatsu@debian.org>
 Debian BTS: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=634976
 
-diff --git a/Makefile.am b/Makefile.am
-index 7eadf82..ba24c22 100644
---- a/Makefile.am
-+++ b/Makefile.am
-@@ -309,7 +309,7 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
- 
+--- a/Makefile.am	2011-12-26 19:08:38.000000000 +0900
++++ b/Makefile.am	2011-12-26 19:13:45.000000000 +0900
+@@ -347,7 +347,7 @@
+ 			proximity/proximity.conf
  
  if ALSA
 -alsadir = $(libdir)/alsa-lib
@@ -17,8 +15,6 @@ index 7eadf82..ba24c22 100644
  
  alsa_LTLIBRARIES = audio/libasound_module_pcm_bluetooth.la \
  				audio/libasound_module_ctl_bluetooth.la
-diff --git a/acinclude.m4 b/acinclude.m4
-index 3cb9459..6d76c0c 100644
 --- a/acinclude.m4
 +++ b/acinclude.m4
 @@ -135,6 +135,8 @@ AC_DEFUN([AC_PATH_ALSA], [
@@ -30,6 +26,3 @@ index 3cb9459..6d76c0c 100644
  ])
  
  AC_DEFUN([AC_PATH_USB], [
--- 
-1.7.5.4
-
