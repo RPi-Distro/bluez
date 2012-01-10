@@ -4,8 +4,10 @@ bluez (4.97-1) experimental; urgency=low
   * Update debian/contorl.
     - Add check (>= 0.9.8-1.1) to Build-Depends.
   * Update debian/rules.
-    Remove --enable-attrib, --enable-udevrules and --enable-configfiles 
-    from configure.
+    - Remove --enable-attrib, --enable-udevrules and --enable-configfiles 
+      from configure.
+    - Add --enable-time, --enable-alert and --enable-gatt-example to
+      configure.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 27 Dec 2011 17:19:00 +0900
 
