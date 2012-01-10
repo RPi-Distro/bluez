@@ -1,8 +1,11 @@
-bluez (4.97-1) unstable; urgency=low
+bluez (4.97-1) experimental; urgency=low
 
   * New upstream release.
   * Update debian/contorl.
-    - Add check (>= 0.9.4) to Build-Depends.
+    - Add check (>= 0.9.8-1.1) to Build-Depends.
+  * Update debian/rules.
+    Remove --enable-attrib, --enable-udevrules and --enable-configfiles 
+    from configure.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 27 Dec 2011 17:19:00 +0900
 
