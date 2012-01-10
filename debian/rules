@@ -13,7 +13,6 @@ DEB_CONFIGURE_EXTRA_FLAGS := LDFLAGS=-Wl,--as-needed \
                              --libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
                              --enable-static \
                              --enable-health \
-                             --enable-attrib \
                              --enable-gstreamer \
                              --enable-alsa \
                              --enable-usb \
@@ -30,8 +29,6 @@ DEB_CONFIGURE_EXTRA_FLAGS := LDFLAGS=-Wl,--as-needed \
                              --enable-dund \
                              --enable-pnat \
                              --enable-tracer \
-                             --enable-udevrules \
-                             --enable-configfiles \
                              --enable-capng \
                              --enable-proximity \
                              --enable-sap \
