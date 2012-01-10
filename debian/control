@@ -151,6 +151,8 @@ Description: BlueZ 3.x compatibility binaries
 Package: bluez-utils
 Depends: bluetooth
 Architecture: all
+Section: oldlibs
+Priority: extra
 Description: Transitional package
  This is a transitional package to assist with moving people to the
  BlueZ 4.x stack.
@@ -158,6 +160,8 @@ Description: Transitional package
 Package: bluez-audio
 Depends: bluez-alsa (>= 4.94-3), bluez-gstreamer (>= 4)
 Architecture: all
+Section: oldlibs
+Priority: extra
 Description: Transitional package
  This is a transitional package to assist with moving people to the
  BlueZ 4.x stack.
