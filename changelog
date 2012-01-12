@@ -1,4 +1,4 @@
-bluez (4.97-1) experimental; urgency=low
+bluez (4.97-0exp1) experimental; urgency=low
 
   * New upstream release.
   * Update debian/contorl.
@@ -13,7 +13,7 @@ bluez (4.97-1) experimental; urgency=low
   * Update man for l2test. (Closes: #649432)
   * Update debian/patches/06-alsalib.patch
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 27 Dec 2011 17:19:00 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 12 Jan 2012 02:09:49 +0900
 
 bluez (4.96-3) unstable; urgency=low
 
