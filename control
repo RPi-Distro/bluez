@@ -97,6 +97,7 @@ Description: Bluetooth tools and daemons (with debugging symbols)
 Package: bluez-alsa
 Replaces: bluez-audio
 Architecture: amd64 armel i386 ia64 mips mipsel powerpc s390 s390x sparc alpha armhf avr32 hppa m68k powerpcspe sh4 sparc64 ppc64
+Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}, bluez
 Description: Bluetooth ALSA support
  This package contains a driver operate with the ALSA stack.
