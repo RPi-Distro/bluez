@@ -75,6 +75,7 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, module-init-tool
 Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3), udev (<< 170-1)
 Conflicts: bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
 Breaks: udev (<< 170-1)
+Multi-Arch: foreign
 Description: Bluetooth tools and daemons
  This package contains tools and system daemons for using Bluetooth devices.
  .
