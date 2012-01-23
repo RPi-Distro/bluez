@@ -1,8 +1,11 @@
 bluez (4.98-1) unstable; urgency=low
 
   * New upstream release.
+  * Update debian/bluetooth-dbus.conf.
+  * Update debian/control.
+    Add Multi-Arch: foreign to bluez.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 14 Jan 2012 07:22:05 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 24 Jan 2012 05:35:09 +0900
 
 bluez (4.97-1) experimental; urgency=low
 
