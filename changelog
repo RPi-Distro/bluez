@@ -1,3 +1,11 @@
+bluez (4.98-2) unstable; urgency=low
+
+  * Provides proximity.conf by bluez. (Closes: #656889)
+    Update debian/bluez.install. proximity.conf was installed to
+    etc/bluetooth/proximity.conf
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 24 Jan 2012 13:18:01 +0900
+
 bluez (4.98-1) unstable; urgency=low
 
   * New upstream release.
