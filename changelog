@@ -1,6 +1,6 @@
 bluez (4.98-3) unstable; urgency=low
 
-  * Fix A2DP not working on default.
+  * Fix A2DP not working on default. (Closes: #659897, #657255)
     Add patches/10-audio-Fix-disabling-local-A2DP-endpoints-when-UNIX-s.patch.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 25 Feb 2012 16:49:54 +0900
