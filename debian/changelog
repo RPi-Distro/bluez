@@ -1,3 +1,10 @@
+bluez (4.98-3) unstable; urgency=low
+
+  * Fix A2DP not working on default.
+    Add patches/10-audio-Fix-disabling-local-A2DP-endpoints-when-UNIX-s.patch.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 25 Feb 2012 16:49:54 +0900
+
 bluez (4.98-2) unstable; urgency=low
 
   * Provides proximity.conf by bluez. (Closes: #656889)
