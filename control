@@ -23,7 +23,7 @@ Build-Depends: debhelper (>= 8.1.3), cdbs (>= 0.4.97), quilt,
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
-Standards-Version: 3.9.2
+Standards-Version: 3.9.3
 
 Package: libbluetooth3
 Section: libs
