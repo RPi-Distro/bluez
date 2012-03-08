@@ -1,6 +1,10 @@
-bluez (4.99-1) unreleased; urgency=low
+bluez (4.99-1) unstable; urgency=low
 
   * New upstream release.
+  * Update debian/control.
+    - Update Standards-Version to 3.9.3.
+    - Use architecture wild-card linux-any. (Closes: #662095)
+    - Update version of cdbs to >= 0.4.97.
   * Remove some patches. Applied to version 4.99.
     - 09_fix_compile_with_C++.patch
     - 10-audio-Fix-disabling-local-A2DP-endpoints-when-UNIX-s.patch
