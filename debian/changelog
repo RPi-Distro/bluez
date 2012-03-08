@@ -1,3 +1,12 @@
+bluez (4.99-1) unreleased; urgency=low
+
+  * New upstream release.
+  * Remove some patches. Applied to version 4.99.
+    - 09_fix_compile_with_C++.patch
+    - 10-audio-Fix-disabling-local-A2DP-endpoints-when-UNIX-s.patch
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 08 Mar 2012 08:01:05 +0900
+
 bluez (4.98-3) unstable; urgency=low
 
   * Fix A2DP not working on default. (Closes: #659897, #657255)

@@ -4,5 +4,3 @@
 06-alsalib.patch
 07-fix-639356.patch
 # 08-0001-systemd-install-systemd-unit-files.patch
-09_fix_compile_with_C++.patch
-10-audio-Fix-disabling-local-A2DP-endpoints-when-UNIX-s.patch
