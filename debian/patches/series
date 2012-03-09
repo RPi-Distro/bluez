@@ -4,3 +4,4 @@
 06-alsalib.patch
 07-fix-639356.patch
 # 08-0001-systemd-install-systemd-unit-files.patch
+09_fix_ftbfs_with_c99.patch
