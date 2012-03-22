@@ -1,3 +1,14 @@
+bluez (4.99-2) unstable; urgency=low
+
+  * Update debian/control.
+    - Drop obsolete python-gobject dependency. (Closes: #663744)
+      python-gi is used instead.
+    - Change module-init-tools dependency to kmod. (Closes: #663359)
+  * Fix FTBFS with -std=c99 option. (Closes: #661879)
+    Add patches/09_fix_ftbfs_with_c99.patch
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 22 Mar 2012 13:29:36 +0900
+
 bluez (4.99-1) unstable; urgency=low
 
   * New upstream release.
