@@ -6,8 +6,10 @@ bluez (4.99-2) unstable; urgency=low
     - Change module-init-tools dependency to kmod. (Closes: #663359)
   * Fix FTBFS with -std=c99 option. (Closes: #661879)
     Add patches/09_fix_ftbfs_with_c99.patch
+  * Update debian/README.Debian. (Closes: #663955)
+    Add more infomation about alsa.conf.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 22 Mar 2012 13:29:36 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 23 Mar 2012 17:51:50 +0900
 
 bluez (4.99-1) unstable; urgency=low
 

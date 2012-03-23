@@ -154,8 +154,9 @@ NOTE: If you want to use hidd daemon, please install bluez-compat package.
    In future your keyboard or mouse should reconnect to your computer
 
 Sound (alsa) support
-++++++++++++++++++++++++++++++++++++
-Note: From Bluez 4.96, you also need to add to /etc/bluetooth/audio.conf:
+-------------------------------
+Note:
+From Bluez 4.96, you also need to add to /etc/bluetooth/audio.conf:
 
 [General]
     Disable=Media
