@@ -8,6 +8,8 @@ bluez (4.99-2) unstable; urgency=low
     Add patches/09_fix_ftbfs_with_c99.patch
   * Update debian/README.Debian. (Closes: #663955)
     Add more infomation about alsa.conf.
+  * Update bluez.postint. (Closes: #663066)
+    Remove udev reload and makedev from postinst.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 23 Mar 2012 17:51:50 +0900
 
