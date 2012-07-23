@@ -1,3 +1,9 @@
+bluez (4.101-1) UNRELEASED; urgency=low
+
+  * New upstream release. Update to 4.101.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 23 Jul 2012 09:15:52 +0900
+
 bluez (4.99-2) unstable; urgency=low
 
   * Update debian/control.
