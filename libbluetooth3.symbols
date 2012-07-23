@@ -112,6 +112,7 @@ libbluetooth.so.3 libbluetooth3 #MINVER#
  lmp_featurestostr@Base 4.91
  lmp_strtover@Base 4.91
  lmp_vertostr@Base 4.91
+ sdp_add_lang_attr@Base 4.101
  sdp_append_to_buf@Base 4.91
  sdp_append_to_pdu@Base 4.91
  sdp_attr_add@Base 4.91
