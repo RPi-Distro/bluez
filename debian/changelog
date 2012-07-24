@@ -1,6 +1,11 @@
-bluez (4.101-1) UNRELEASED; urgency=low
+bluez (4.101-1) experimental; urgency=low
 
   * New upstream release. Update to 4.101.
+  * Update patches.
+    - patches/01_lower_sink_ranking.patch
+    - patches/03-Fix-return-code-of-hid2hci.patch
+  * Update debian/bluez.install.
+    Remove line for lib/udev/rules.d/97-bluetooth.rules.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 23 Jul 2012 09:15:52 +0900
 
