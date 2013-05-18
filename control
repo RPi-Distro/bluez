@@ -3,7 +3,7 @@ Section: admin
 Priority: optional
 Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth.debian.org>
 Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
-Build-Depends: debhelper (>= 9), cdbs (>= 0.4.97),
+Build-Depends: debhelper (>= 9), cdbs (>= 0.4.97), quilt,
                autotools-dev,
                flex,
                bison,
