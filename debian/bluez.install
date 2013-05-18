@@ -31,3 +31,6 @@ usr/share/man/man1/hcitool.1
 usr/share/man/man1/ciptool.1
 usr/share/man/man1/rfcomm.1
 usr/share/man/man1/rctest.1
+usr/share/man/man1/l2ping.1
+usr/share/man/man1/hid2hci.1
+usr/share/man/man8/bluetoothd.8
