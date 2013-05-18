@@ -1,3 +1,9 @@
+bluez (5.5-1~exp0) experimental; urgency=low
+
+  * New upstream release. Update to 5.5.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 19 May 2013 04:05:46 +0900
+
 bluez (4.101-1) experimental; urgency=low
 
   * New upstream release. Update to 4.101.
