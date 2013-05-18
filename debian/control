@@ -113,18 +113,6 @@ Description: Bluetooth printer driver for CUPS
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
 
-Package: bluez-pcmcia-support
-Architecture: linux-any
-Priority: extra
-Depends: pcmciautils, ${misc:Depends}
-Recommends: setserial
-Description: PCMCIA support files for BlueZ 2.0 Bluetooth tools
- This package contains files to enable PCMCIA card services to recognise
- and initialise PCMCIA Bluetooth devices.
- .
- BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
- project distributed under GNU General Public License (GPL).
-
 Package: bluez-compat
 Architecture: linux-any
 Depends: ${shlibs:Depends}, ${misc:Depends}
