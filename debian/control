@@ -101,12 +101,3 @@ Description: Bluetooth printer driver for CUPS
  .
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
-
-Package: bluez-utils
-Depends: bluetooth
-Architecture: all
-Section: oldlibs
-Priority: extra
-Description: Transitional package
- This is a transitional package to assist with moving people to the
- BlueZ 4.x stack.
