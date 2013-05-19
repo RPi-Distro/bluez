@@ -12,6 +12,7 @@ DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
 DEB_CONFIGURE_EXTRA_FLAGS := \
 	--libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
 	--enable-static \
+	--enable-pie \
 	--enable-usb \
 	--enable-tools \
 	--enable-cups \
