@@ -1,1 +1,1 @@
-usr/lib/bluez/bluetooth/bluetoothd usr/sbin/bluetoothd
+usr/lib/bluetooth/bluetoothd usr/sbin/bluetoothd

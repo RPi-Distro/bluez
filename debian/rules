@@ -1,18 +1,12 @@
 #!/usr/bin/make -f
-# build rules for bluez
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
 
-include /usr/share/cdbs/1/rules/debhelper.mk
-include /usr/share/cdbs/1/class/autotools.mk
-include /usr/share/cdbs/1/rules/patchsys-quilt.mk
-
-LDFLAGS += -Wl,--as-needed
-
-DEB_UPDATE_RCD_PARAMS = "start 25 2 3 4 5 . stop 74 0 1 6 ."
-DEB_DH_INSTALLINIT_ARGS = "--name=bluetooth"
-DEB_CONFIGURE_EXTRA_FLAGS := \
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+CONFIGURE_FLAGS := \
+	--disable-silent-rules \
 	--libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
 	--enable-static \
-	--enable-pie \
 	--enable-usb \
 	--enable-tools \
 	--enable-cups \
@@ -23,20 +17,17 @@ DEB_CONFIGURE_EXTRA_FLAGS := \
 	--enable-udev \
 	--enable-obex \
 	--enable-client \
+	--enable-experimental \
 	--disable-systemd 
 
-#	--enable-systemd 
+%:
+	dh $@
 
-DEB_DESTDIR := $(CURDIR)/debian/tmp
-# for debug pakcages
-DEB_DBG_PACKAGES = bluez-dbg libbluetooth3-dbg
+override_dh_auto_configure:
+	dh_auto_configure -- $(CONFIGURE_FLAGS)
 
-install/bluez::
-	install -D -m 0755 $(CURDIR)/debian/bluez_agent.udev \
-		$(CURDIR)/debian/bluez/lib/udev/bluez
+override_dh_installinit:
+	dh_installinit --name=bluetooth -- start 25 2 3 4 5 . stop 74 0 1 6 .
 
-binary-install/bluez::
-	install -D -m 0644 $(CURDIR)/debian/bluetooth-dbus.conf \
-		$(CURDIR)/debian/bluez/etc/dbus-1/system.d/bluetooth.conf
-	install -D -m 0755 $(CURDIR)/debian/bluez-udev \
-		$(CURDIR)/debian/bluez/lib/udev/bluez-udev
+override_dh_strip:
+	dh_strip -a --dbg-package=bluez-dbg libbluetooth3-dbg
