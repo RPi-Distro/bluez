@@ -62,7 +62,7 @@ Description: Development files for using the BlueZ Linux Bluetooth library
 Package: bluetooth
 Architecture: all
 Depends: bluez
-Recommends: bluez-cups
+Recommends: bluez-cups, bluez-obexd
 Description: Bluetooth support
  This package provides all of the different plugins supported
  by the Bluez bluetooth stack.
