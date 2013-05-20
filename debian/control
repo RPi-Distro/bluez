@@ -69,7 +69,7 @@ Description: Bluetooth support
 
 Package: bluez
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
 	kmod, udev (>= 170-1), lsb-base, dbus
 Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3),
 	bluez-audio (<= 3.36-3), udev (<< 170-1)
