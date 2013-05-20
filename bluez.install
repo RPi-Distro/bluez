@@ -3,14 +3,14 @@ profiles/input/input.conf etc/bluetooth
 profiles/audio/audio.conf etc/bluetooth
 profiles/network/network.conf etc/bluetooth
 profiles/proximity/proximity.conf etc/bluetooth
-usr/lib/bluez
+# usr/lib/*/bluez
+usr/lib/*/bluetooth/bluetoothd usr/lib/bluetooth
 usr/bin/bluetoothctl
 usr/bin/bccmd
 usr/bin/btmon
 usr/bin/rctest
 usr/bin/hciattach
 usr/bin/hciconfig
-usr/bin/hcidump
 usr/bin/hcitool
 usr/bin/sdptool
 usr/bin/ciptool
@@ -19,6 +19,7 @@ usr/bin/l2test
 usr/bin/rfcomm
 lib/udev/hid2hci
 lib/udev/rules.d/97-hid2hci.rules
+#-- for systemd
 # lib/systemd 
 # usr/lib/systemd
 # usr/share/dbus-1
@@ -26,7 +27,6 @@ usr/share/man/man1/sdptool.1
 usr/share/man/man1/bccmd.1
 usr/share/man/man1/hciattach.1
 usr/share/man/man1/hciconfig.1
-usr/share/man/man1/hcidump.1
 usr/share/man/man1/hcitool.1
 usr/share/man/man1/ciptool.1
 usr/share/man/man1/rfcomm.1
