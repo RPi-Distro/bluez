@@ -102,3 +102,21 @@ Description: Bluetooth printer driver for CUPS
  .
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
+
+Package: bluez-obexd
+Architecture: linux-any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Replaces: obxed-server (<= 0.47-2), obexd-client (<= 0.47-2)
+Conflicts: obxed-server (<= 0.47-2), obexd-client (<= 0.47-2)
+Provides: obxed-server, obexd-client
+Description: bluez obex daemon
+ This package contains a OBEX(OBject EXchange) daemon.
+ .
+ OBEX is communication protocol to facilitate the exchange of the binary
+ object between the devices.
+ .
+ This was the software that is independent as obexd, but this has been
+ integrated into BlueZ from BlueZ 5.0.
+ .
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
