@@ -3,4 +3,4 @@ debian/bluez-simple-agent.1
 debian/l2test.1
 # debian/hcitrace.1
 debian/btmon.1
-
+debian/bluetoothctl.1
