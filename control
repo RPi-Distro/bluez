@@ -15,7 +15,8 @@ Build-Depends: debhelper (>= 9), quilt,
                libudev-dev,
                libreadline-dev,
                check (>= 0.9.8-1.1),
-			   libical-dev
+			   libical-dev,
+			   systemd
 Vcs-Svn: svn://svn.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org

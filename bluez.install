@@ -20,9 +20,9 @@ usr/bin/rfcomm
 lib/udev/hid2hci
 lib/udev/rules.d/97-hid2hci.rules
 #-- for systemd
-# lib/systemd 
-# usr/lib/systemd
-# usr/share/dbus-1
+lib/systemd/system/bluetooth.service
+etc/dbus-1/system.d/bluetooth.conf
+usr/share/dbus-1/system-services/org.bluez.service
 usr/share/man/man1/sdptool.1
 usr/share/man/man1/bccmd.1
 usr/share/man/man1/hciattach.1

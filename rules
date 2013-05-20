@@ -18,7 +18,7 @@ CONFIGURE_FLAGS := \
 	--enable-obex \
 	--enable-client \
 	--enable-experimental \
-	--disable-systemd 
+	--enable-systemd 
 
 %:
 	dh $@
