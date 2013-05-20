@@ -51,7 +51,8 @@ Section: libdevel
 Provides: libbluetooth3-dev
 Conflicts: libbluetooth-dev, libsdp2-dev (<= 1.5.2), bluez-pan
 Replaces: libsdp2-dev (<= 1.5.2)
-Depends: libbluetooth3 (= ${binary:Version}), libc6-dev | libc-dev, ${misc:Depends}
+Depends: libbluetooth3 (= ${binary:Version}),
+	libc6-dev | libc-dev, ${misc:Depends}
 Suggests: pkg-config
 Priority: extra
 Architecture: linux-any
@@ -69,8 +70,10 @@ Description: Bluetooth support
 
 Package: bluez
 Architecture: linux-any
-Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}, kmod, udev (>= 170-1), lsb-base, dbus, python-gi, python-dbus
-Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3), udev (<< 170-1)
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends},
+	kmod, udev (>= 170-1), lsb-base, dbus, python-gi, python-dbus
+Replaces: bluez-input, bluez-network, bluez-serial, bluez-utils (<= 3.36-3),
+	bluez-audio (<= 3.36-3), udev (<< 170-1)
 Conflicts: bluez-utils (<= 3.36-3), bluez-audio (<= 3.36-3)
 Breaks: udev (<< 170-1)
 Multi-Arch: foreign
@@ -84,7 +87,8 @@ Package: bluez-dbg
 Section: debug
 Priority: extra
 Architecture: linux-any
-Depends: ${misc:Depends}, bluez (= ${binary:Version}), libbluetooth3-dbg (= ${binary:Version})
+Depends: ${misc:Depends}, bluez (= ${binary:Version}),
+	libbluetooth3-dbg (= ${binary:Version})
 Description: Bluetooth tools and daemons (with debugging symbols)
  This package contains tools and system daemons for using Bluetooth devices.
  .
