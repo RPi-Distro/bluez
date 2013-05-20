@@ -127,8 +127,6 @@ Description: bluez obex daemon
 Package: bluez-hcidump
 Architecture: linux-any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Replaces: bluez-hcidump (<= 2.4-1)
-Conflicts: bluez-hcidump (<= 2.4-1)
 Description: Analyses Bluetooth HCI packets
  The hcidump utility allows the monitoring of Bluetooth activity.
  It provides a disassembly of the Bluetooth traffic and can display
