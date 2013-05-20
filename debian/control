@@ -120,3 +120,19 @@ Description: bluez obex daemon
  .
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
+
+Package: bluez-hcidump
+Architecture: linux-any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Replaces: bluez-hcidump (<= 2.4-1)
+Conflicts: bluez-hcidump (<= 2.4-1)
+Description: Analyses Bluetooth HCI packets
+ The hcidump utility allows the monitoring of Bluetooth activity.
+ It provides a disassembly of the Bluetooth traffic and can display
+ packets from higher level protocols such as RFCOMM, SDP and BNEP.
+ .
+ This was the software that is independent as bluez-hcidump, but this has been
+ integrated into BlueZ from BlueZ 5.0.
+ .
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
