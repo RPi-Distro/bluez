@@ -1,42 +1,43 @@
 bluez (5.5-1~exp0) experimental; urgency=low
 
- * New upstream release. Update to 5.5. (Closes: #705519, #690749, #706986)
- * Remove unnecessary patches.
-   - patches/01_lower_sink_ranking.patch
-   - patches/02_disable_hal.patch
-   - patches/06-alsalib.patch
-   - patches/07-fix-639356.patch
-   - patches/08-0001-systemd-install-systemd-unit-files.patch
- * Update debian/control.
-   - Update Standards-Version to 3.9.4.
-   - Update version of debhelper to 9.
-   - Add bluez-hcidump, bluez-obexd and bluez-test-scripts packages.
-   - Remove bluez-utils, bluez-compat, bluez-alsa, bluez-audio,
-     bluez-pcmcia-support and bluez-gstreamer packages.
-   - Add udev, systemd and libical-dev to Build-Depends.
-   - Remove libnl-dev from Build-Depends. (Closes: #688160)
-   - Remove libsndfile1-dev from Build-Depends.
-   - Remove libasound2-dev from Build-Depends.
-   - Remove bluez-alsa from Recommends of bluetooth.
-   - Downgrade bluez-cups and bluez-obexd to Suggests. (Closes: #702081)
-   - Add ${misc:Depends} to Depends of bluetooth package. (Closes: #692550)
-   - Remove ${python:Depends} from Depends of bluez.
-   - Remove python-gi and python-dbus from Depends of bluez.
-     (Closes: #697752)
- * Move api document from bluez to libbluetooth-dev.
- * Update watch file
- * Remove unnecessary manpages.
-   - bluetooth-agent.1, bluez-simple-agent.1 and hcitrace.1.
- * Add manpage of bluetoothctl and btmon.
- * Remove bluez.lintian-overrides
- * Update debian/rules.
-   - Convert from CDBS to dh, and cleanup.
-   - Add --enable-pie to configure option.
-   - Remove --enable-test from configure.
- * Add man for btmon and update bluez.manpages
- * Update libbluetooth3.symbols
- * Add bluez.links
- * Update compat to 9.
+  * New upstream release. Update to 5.5. (Closes: #705519, #690749, #706986)
+  * Remove unnecessary patches.
+    - patches/01_lower_sink_ranking.patch
+    - patches/02_disable_hal.patch
+    - patches/06-alsalib.patch
+    - patches/07-fix-639356.patch
+    - patches/08-0001-systemd-install-systemd-unit-files.patch
+  * Update debian/control.
+    - Update Standards-Version to 3.9.4.
+    - Update version of debhelper to 9.
+    - Add bluez-hcidump, bluez-obexd and bluez-test-scripts packages.
+    - Remove bluez-utils, bluez-compat, bluez-alsa, bluez-audio,
+      bluez-pcmcia-support and bluez-gstreamer packages.
+    - Add udev, systemd and libical-dev to Build-Depends.
+    - Remove libnl-dev from Build-Depends. (Closes: #688160)
+    - Remove libsndfile1-dev from Build-Depends.
+    - Remove libasound2-dev from Build-Depends.
+    - Remove bluez-alsa from Recommends of bluetooth.
+    - Downgrade bluez-cups and bluez-obexd to Suggests. (Closes: #702081)
+    - Add ${misc:Depends} to Depends of bluetooth package. (Closes: #692550)
+    - Remove ${python:Depends} from Depends of bluez.
+    - Remove python-gi and python-dbus from Depends of bluez.
+      (Closes: #697752)
+  * Move api document from bluez to libbluetooth-dev.
+  * Update watch file
+  * Remove unnecessary manpages.
+    - bluetooth-agent.1, bluez-simple-agent.1 and hcitrace.1.
+  * Add manpage of bluetoothctl and btmon.
+  * Remove bluez.lintian-overrides
+  * Update debian/rules.
+    - Convert from CDBS to dh, and cleanup.
+    - Add --enable-pie to configure option.
+    - Remove --enable-test from configure.
+  * Add man for btmon and update bluez.manpages
+  * Update libbluetooth3.symbols
+  * Add bluez.links
+  * Update compat to 9.
+  * Update README.examples.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 19 May 2013 04:05:46 +0900
 
