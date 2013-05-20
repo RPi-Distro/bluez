@@ -16,7 +16,6 @@ DEB_CONFIGURE_EXTRA_FLAGS := \
 	--enable-usb \
 	--enable-tools \
 	--enable-cups \
-	--enable-test \
 	--enable-datafiles \
 	--enable-debug \
 	--enable-library \
@@ -32,20 +31,9 @@ DEB_DESTDIR := $(CURDIR)/debian/tmp
 # for debug pakcages
 DEB_DBG_PACKAGES = bluez-dbg libbluetooth3-dbg
 
-TEST_PROGRAM_LIST = simple-agent simple-service test-adapter test-device \
-	test-discovery test-manager test-network 
-
 install/bluez::
 	install -D -m 0755 $(CURDIR)/debian/bluez_agent.udev \
 		$(CURDIR)/debian/bluez/lib/udev/bluez
-
-	for d in $(TEST_PROGRAM_LIST) ; do \
-		install -D -m 0755 $(CURDIR)/test/$$d \
-			$(CURDIR)/debian/bluez/usr/bin/bluez-$$d ; \
-	done
-
-	install -D -m 0644 $(CURDIR)/debian/README.examples \
-		$(CURDIR)/debian/bluez/usr/share/doc/bluez/examples/README
 
 binary-install/bluez::
 	install -D -m 0644 $(CURDIR)/debian/bluetooth-dbus.conf \
