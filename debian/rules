@@ -24,6 +24,8 @@ CONFIGURE_FLAGS := \
 
 override_dh_auto_configure:
 	dh_auto_configure -- $(CONFIGURE_FLAGS)
+	sed 's/@DEB_HOST_MULTIARCH@/$(DEB_HOST_MULTIARCH)/g' \
+		debian/bluez.links.in > debian/bluez.links
 
 override_dh_installinit:
 	dh_installinit --name=bluetooth -- start 25 2 3 4 5 . stop 74 0 1 6 .
