@@ -28,7 +28,7 @@ bluez (5.5-1~exp0) experimental; urgency=low
   * Remove unnecessary manpages.
     - bluetooth-agent.1, bluez-simple-agent.1 and hcitrace.1.
   * Add manpage of bluetoothctl and btmon.
-  * Remove bluez.lintian-overrides
+  * Remove bluez.lintian-overrides and bluez_agent.udev.
   * Update debian/rules.
     - Convert from CDBS to dh, and cleanup.
     - Add --enable-pie to configure option.
@@ -38,6 +38,8 @@ bluez (5.5-1~exp0) experimental; urgency=low
   * Add bluez.links
   * Update compat to 9.
   * Update README.examples.
+  * Update bluez.bluetooth.init.
+    bluetoothd needs --background option of start-stop-daemon.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 19 May 2013 04:05:46 +0900
 
