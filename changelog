@@ -11,6 +11,7 @@ bluez (5.5-1~exp0) experimental; urgency=low
     - Update Standards-Version to 3.9.4.
     - Update version of debhelper to 9.
     - Add bluez-hcidump, bluez-obexd and bluez-test-scripts packages.
+      (Closes: #690120)
     - Remove bluez-utils, bluez-compat, bluez-alsa, bluez-audio,
       bluez-pcmcia-support and bluez-gstreamer packages.
     - Add udev, systemd and libical-dev to Build-Depends.
@@ -37,7 +38,7 @@ bluez (5.5-1~exp0) experimental; urgency=low
   * Update libbluetooth3.symbols
   * Add bluez.links
   * Update compat to 9.
-  * Update README.examples.
+  * Update README.examples. (Closes: #673191)
   * Update bluez.bluetooth.init.
     bluetoothd needs --background option of start-stop-daemon.
 
