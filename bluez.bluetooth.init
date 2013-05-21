@@ -16,6 +16,7 @@
 # LSB 3.0 compilance and enhancements by Filippo Giunchedi <filippo@debian.org>
 #
 # Updated for bluez 4.7 by Mario Limonciello <mario_limonciello@dell.com>
+# Updated for bluez 5.5 by Nobuhiro Iwamatsu <iwamatsu@debian.org>
 #
 # Note: older daemons like dund pand hidd are now shipped inside the
 # bluez-compat package
@@ -36,7 +37,11 @@ RFCOMM=/usr/bin/$RFCOMM_NAME
 RFCOMM_CONF=/etc/bluetooth/$RFCOMM_NAME.conf
 SDPTOOL=/usr/bin/sdptool
 
-SSD_OPTIONS="--oknodo --quiet --exec $DAEMON"
+# If you want to be ignore error of "org.freedesktop.hostname1",
+# please enable NOPLUGIN_OPTION.
+# NOPLUGIN_OPTION="--noplugin=hostname"
+NOPLUGIN_OPTION=""
+SSD_OPTIONS="--oknodo --quiet --exec $DAEMON -- $NOPLUGIN_OPTION"
 
 test -f $DAEMON || exit 0
 
@@ -146,7 +151,7 @@ case $1 in
 		exit 0
 	fi
 
-	start-stop-daemon --start $SSD_OPTIONS
+	start-stop-daemon --start --background $SSD_OPTIONS
 	log_progress_msg "${DAEMON##*/}"
 
 	run_sdptool || :
