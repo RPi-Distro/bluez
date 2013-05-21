@@ -17,7 +17,6 @@ CONFIGURE_FLAGS := \
 	--enable-udev \
 	--enable-obex \
 	--enable-client \
-	--enable-experimental \
 	--enable-systemd 
 
 %:
