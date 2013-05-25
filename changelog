@@ -1,6 +1,6 @@
-bluez (5.5-1~exp1) UNRELEASED; urgency=low
+bluez (5.5-1~exp1) experimental; urgency=low
 
-  * NOT RELEASED YET
+  * Fix install path of bluetoothd.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 21 May 2013 14:11:46 +0900
 
