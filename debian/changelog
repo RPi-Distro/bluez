@@ -1,3 +1,12 @@
+bluez (4.101-2) unstable; urgency=low
+
+  * Upload to unstable. (Closes: #714516)
+  * Update README.Debian.
+    - Add infomation of use RFCOMM with pnat. (Closes: #690749)
+    - Fix typo. Thanks to jidanni. (Closes: #700991)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 22 Jul 2013 12:19:37 +0900
+
 bluez (4.101-1) experimental; urgency=low
 
   * New upstream release. Update to 4.101.
@@ -8,6 +17,16 @@ bluez (4.101-1) experimental; urgency=low
     Remove line for lib/udev/rules.d/97-bluetooth.rules.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 23 Jul 2012 09:15:52 +0900
+
+bluez (4.99-3) unstable; urgency=low
+
+  * Update debian/control.
+    - Update Standards-Version to 3.9.4.
+    - Add ${misc:Depends} to Depends of bluetooth package. (Closes: #692550)
+    - Remove libnl-dev from Build-Depends. (Closes: #688160)
+    - Downgrade bluez-cups to Suggests. (Closes: #702081)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 05 Jun 2013 10:40:31 +0900
 
 bluez (4.99-2) unstable; urgency=low
 

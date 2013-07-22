@@ -132,7 +132,7 @@ We use bluez-simple-agent and bluez-test-input in bluez now.
 
 3. With bluez-test-device, set *trusted* to the device.
 
-    $ sudo bluez-test-device trusted <bdaddr> yet
+    $ sudo bluez-test-device trusted <bdaddr> yes
 
 	When you did not execute this, you use bluez-test-input after suspend
 	and resume (and reboot) have to connect a device again.
@@ -161,3 +161,14 @@ From Bluez 4.96, you also need to add to /etc/bluetooth/audio.conf:
 [General]
     Disable=Media
     Enable=Socket
+
+Using RFCOMM
+-------------------------------
+Current bluez binary is enabled pnat.
+Pnat breaks any application that tries to run an RFCOMM server.
+If you want to use RFCOMM, please add the following to /etc/bluetooth/main.conf.
+
+   DisablePlugins = pnat
+
+Please see http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=690749.
+
