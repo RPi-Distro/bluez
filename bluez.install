@@ -1,6 +1,6 @@
 src/main.conf etc/bluetooth
 profiles/input/input.conf etc/bluetooth
-profiles/audio/audio.conf etc/bluetooth
+# profiles/audio/audio.conf etc/bluetooth
 profiles/network/network.conf etc/bluetooth
 profiles/proximity/proximity.conf etc/bluetooth
 usr/lib/*/bluetooth/bluetoothd
@@ -16,8 +16,10 @@ usr/bin/ciptool
 usr/bin/l2ping
 usr/bin/l2test
 usr/bin/rfcomm
+attrib/gatttool usr/bin
 lib/udev/hid2hci
 lib/udev/rules.d/97-hid2hci.rules
+attrib/gatttool usr/bin
 #-- for systemd
 lib/systemd/system/bluetooth.service
 etc/dbus-1/system.d/bluetooth.conf

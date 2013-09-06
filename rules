@@ -17,7 +17,7 @@ CONFIGURE_FLAGS := \
 	--enable-udev \
 	--enable-obex \
 	--enable-client \
-	--enable-systemd 
+	--enable-systemd
 
 %:
 	dh $@
