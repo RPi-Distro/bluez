@@ -1,8 +1,8 @@
-bluez (5.7-1~exp0) experimental; urgency=low
+bluez (5.8-1~exp0) experimental; urgency=low
 
-  * New upstream release. Update to 5.7. 
+  * New upstream release. Update to 5.8. 
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 23 Jul 2013 08:42:11 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 06 Sep 2013 11:42:45 +0900
 
 bluez (5.5-1~exp1) experimental; urgency=low
 
