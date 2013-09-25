@@ -1,3 +1,10 @@
+bluez (4.101-3) UNRELEASED; urgency=low
+
+  * Update debian/rules.
+    - Enable gatt.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 26 Sep 2013 08:17:46 +0900
+
 bluez (4.101-2) unstable; urgency=low
 
   * Upload to unstable. (Closes: #714516)
