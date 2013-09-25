@@ -2,6 +2,8 @@ bluez (4.101-3) UNRELEASED; urgency=low
 
   * Update debian/rules.
     - Enable gatt.
+  * Update debian/control.
+    - Update verion of libglib2.0-dev to >= 2.28.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 26 Sep 2013 08:17:46 +0900
 
