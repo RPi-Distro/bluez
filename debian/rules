@@ -14,11 +14,16 @@ DEB_CONFIGURE_EXTRA_FLAGS := \
                              --enable-static \
                              --disable-hal \
                              --enable-sap \
+                             --enable-proximity \
+                             --enable-time \
+                             --enable-alert \
                              --enable-health \
                              --enable-pnat \
+                             --enable-gatt-example \
                              --enable-gstreamer \
                              --enable-alsa \
                              --enable-usb \
+                             --enable-tracer \
                              --enable-tools \
                              --enable-bccmd \
                              --enable-pcmcia \
@@ -33,6 +38,8 @@ DEB_CONFIGURE_EXTRA_FLAGS := \
                              --enable-debug \
                              --enable-dbusoob \
                              --enable-wiimote \
+                             --enable-thermometer \
+                             --enable-capng \
 							 --enable-gatt \
                              --with-systemdunitdir=/lib/systemd/system
 
