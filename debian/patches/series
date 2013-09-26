@@ -5,3 +5,15 @@
 # 07-fix-639356.patch
 # 08-0001-systemd-install-systemd-unit-files.patch
 09_fix_ftbfs_with_c99.patch
+# linux >= 3.6
+0001-hid2hci-change-subsystem-in-udev-rule-from-usb-to-us.patch
+# from upstream
+0001-Add-sixaxis-cable-pairing-plugin.patch
+0002-audio-Permit-concurrent-use-of-AG-and-HF-roles.patch
+0003-Fix-GDBus-flags-after-conversion-to-macros.patch
+0004-input-Fix-not-adding-watches-when-io-channel-is-conn.patch
+0005-network-fix-network-Connect-method-parameters.patch
+0006-network-NULL-dereference-fix.patch
+# from ubuntu
+0007-work-around-Logitech-diNovo-Edge-keyboard-firmware-i.patch
+0008-Enable-the-Gateway-and-Source-audio-profiles-by-defa.patch
