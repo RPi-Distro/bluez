@@ -1,6 +1,12 @@
 bluez (5.9-1~exp0) experimental; urgency=low
 
-  * New upstream release. Update to 5.9. 
+  * New upstream release. Update to 5.9.
+  * Update debian/rules.
+     - Add --enable-experimental to option of confiugre. (Closes: #712385)
+  * Update debian/patches.
+    - Add 0001-core-Fix-passing-timeout-when-disabling-discoverable.patch.
+    - Remove unnecessary patches.
+  * Install gatttool (Closes: #720486)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 27 Sep 2013 08:52:36 +0900
 
