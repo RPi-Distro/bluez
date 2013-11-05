@@ -1,9 +1,3 @@
-bluez (4.101-4) UNRELEASED; urgency=low
-
-  * NOT RELEASED YET
-
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 27 Sep 2013 08:49:33 +0900
-
 bluez (4.101-3) unstable; urgency=low
 
   * Update debian/rules.
