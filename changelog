@@ -1,6 +1,26 @@
 bluez (5.17-1~exp0) experimental; urgency=medium
 
-  * New upstream release. Update to 5.17.
+  * New upstream release. Update to 5.17. (Closes: #732453)
+  * debian/rules.
+    - Add '--with systemd' to dh option.
+    - Enable threads and sixaxis support at configure.
+    - Update override_dh_installinit in debian/rules.
+    - Add override_dh_systemd_enable and override_dh_systemd_start.
+      target in debian/rules.
+    - Remove old configure.
+    - Add --enable-experimental to option of confiugre. (Closes: #712385)
+    - Install gatttool (Closes: #720486)
+  * debian/bluez.bluetooth.init
+    Add function to start hci device at startup in sysvinit
+  * debian/control
+    - Add dh-systemd (>= 1.5) to Build-Depends.
+    - Update Standards-Version to 3.9.5.
+    - Remove quilt from Build-Depends.
+    - Remove libusb-dev from Build-Depends.
+    - Update libglib2.0-dev to 2.28.
+    - Update Vcs-Svn and Vcs-Browser field.
+  * Update libbluetooth3.symbols.
+  * Add 0001-work-around-Logitech-diNovo-Edge-keyboard-firmware-i.patch
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 08 Apr 2014 10:00:50 +0900
 
