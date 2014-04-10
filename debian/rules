@@ -18,6 +18,8 @@ CONFIGURE_FLAGS := \
 	--enable-obex \
 	--enable-client \
 	--enable-systemd \
+	--enable-threads \
+	--enable-sixaxis \
 	--enable-experimental
 
 %:
