@@ -29,7 +29,7 @@ override_dh_auto_configure:
 		debian/bluez.links.in > debian/bluez.links
 
 override_dh_installinit:
-	dh_installinit --name=bluetooth -- start 25 2 3 4 5 . stop 74 0 1 6 .
+	dh_installinit -pbluez --name=bluetooth --restart-after-upgrade
 
 override_dh_strip:
 	dh_strip -a --dbg-package=bluez-dbg libbluetooth3-dbg
