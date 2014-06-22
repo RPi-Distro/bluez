@@ -6,6 +6,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 CONFIGURE_FLAGS := \
 	--disable-silent-rules \
 	--libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
+	--libexec=\$${prefix}/lib/ \
 	--enable-static \
 	--enable-usb \
 	--enable-tools \
