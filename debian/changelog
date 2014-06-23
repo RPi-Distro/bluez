@@ -4,6 +4,9 @@ bluez (5.19-1~exp0) experimental; urgency=medium
   * Move bluetoothd daemon and obexd to /usr/lib/bluetooth/. (Closes: #749283)
     - Change bluez-obexd.install and bluez.install.
     - Add --libexec to CONFIGURE_FLAGS in rules.
+    - Move bluez.links.in to bluez.links, and remove DEB_HOST_MULTIARCH.
+    - Remove sed function from override_dh_auto_configure target in rules.
+    
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 21 May 2014 11:57:16 +0900
 
