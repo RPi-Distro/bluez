@@ -6,7 +6,9 @@ bluez (5.19-1~exp0) experimental; urgency=medium
     - Add --libexec to CONFIGURE_FLAGS in rules.
     - Move bluez.links.in to bluez.links, and remove DEB_HOST_MULTIARCH.
     - Remove sed function from override_dh_auto_configure target in rules.
-    
+  * Fix FTBFS on ppc64el. (Closes: 745628)
+    - Add dh-autoreconf to Build-Depends.
+    - Enable autoreconf addon for dh.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 21 May 2014 11:57:16 +0900
 
