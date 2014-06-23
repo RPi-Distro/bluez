@@ -9,6 +9,9 @@ bluez (5.19-1~exp0) experimental; urgency=medium
   * Fix FTBFS on ppc64el. (Closes: 745628)
     - Add dh-autoreconf to Build-Depends.
     - Enable autoreconf addon for dh.
+  * Install sixaxis plugin.
+    - Add path of sixaxis plugin to libbluetooth3.install and
+      libbluetooth-dev.install.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 21 May 2014 11:57:16 +0900
 
