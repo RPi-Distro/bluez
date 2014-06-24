@@ -13,7 +13,7 @@ bluez (5.19-1~exp0) experimental; urgency=medium
     - Add path of sixaxis plugin to libbluetooth3.install and
       libbluetooth-dev.install.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 21 May 2014 11:57:16 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 25 Jun 2014 01:58:30 +0900
 
 bluez (5.17-1~exp0) experimental; urgency=medium
 
