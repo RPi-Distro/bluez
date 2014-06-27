@@ -209,3 +209,4 @@ libbluetooth.so.3 libbluetooth3 #MINVER#
  sdp_uuid_to_uuid128@Base 4.91
  str2ba@Base 4.91
  strtoba@Base 4.91
+ bluetooth_plugin_desc@Base 5.20
