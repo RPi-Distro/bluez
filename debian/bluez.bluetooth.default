@@ -4,10 +4,6 @@
 # compatibility note: if this variable is _not_ found bluetooth will start
 BLUETOOTH_ENABLED=1
 
-# From bluez 5.x, each HCI device is in invalid state.
-# ACTIVE_HCI_DEVICES_ON_BOOT specifies the HCI device be activated on boot-time.
-ACTIVE_HCI_DEVICES_ON_BOOT="hci0"
-
 # This setting used to switch HID devices (e.g mouse/keyboad) to HCI mode, that
 # is you will have bluetooth functionality from your dongle instead of only
 # HID. This is accomplished for supported devices by udev in
