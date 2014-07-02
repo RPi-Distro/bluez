@@ -6,6 +6,8 @@ bluez (5.20-1~exp0) experimental; urgency=medium
   * Add 50-bluetooth-hci-auto-poweron.rules.
     This supports start hci device at startup.
   * Update libbluetooth3.symbols.
+  * Add patches/bluetooth.conf.patch.
+    This add permission of bluetooth control to user into bluetooth group.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 02 Jul 2014 11:22:04 +0900
 
