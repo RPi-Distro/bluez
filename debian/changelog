@@ -1,8 +1,13 @@
 bluez (5.20-1~exp0) experimental; urgency=medium
 
   * New upstream release. Update to 5.20.
+  * Update debian/bluez.bluetooth.init
+    Remove function to start hci device at startup in sysvinit.
+  * Add 50-bluetooth-hci-auto-poweron.rules.
+    This supports start hci device at startup.
+  * Update libbluetooth3.symbols.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 25 Jun 2014 02:30:50 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 02 Jul 2014 11:22:04 +0900
 
 bluez (5.19-1~exp0) experimental; urgency=medium
 
