@@ -1,3 +1,9 @@
+bluez (5.21-1~exp0) experimental; urgency=medium
+
+  * New upstream release. Update to 5.21.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 08 Jul 2014 07:34:03 +0900
+
 bluez (5.20-1~exp0) experimental; urgency=medium
 
   * New upstream release. Update to 5.20.
