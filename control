@@ -110,8 +110,8 @@ Description: Bluetooth printer driver for CUPS
 Package: bluez-obexd
 Architecture: linux-any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Replaces: obexd-server (<= 0.47-2), obexd-client (<= 0.47-2)
-Conflicts: obexd-server (<= 0.47-2), obexd-client (<= 0.47-2)
+Replaces: obexd-server, obexd-client
+Conflicts: obexd-server, obexd-client
 Provides: obex-server, obexd-client
 Description: bluez obex daemon
  This package contains a OBEX(OBject EXchange) daemon.
