@@ -21,8 +21,6 @@ The old sourceforge lists have been discontinued, the new lists can be found at:
 
 http://www.bluez.org/development/lists/
 
-plus a wiki at: http://wiki.bluez.org/
-
 PIN (or passkey) management
 ---------------------------
 Interaction with the local user can be required while BT connection is
