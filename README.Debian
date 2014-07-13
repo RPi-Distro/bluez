@@ -35,12 +35,31 @@ Examples of such programs are kblueplugd (kdebluetooth package) and
 bluetooth-applet (bluez-gnome or gnome-bluetooth packages). A minimal
 command-line agent is also provided by bluez-simple-agent.
 
-For example, you can execute bluez-simple-agent as follows.
+For example, you can execute bluetoothctl as follows.
 
-$ bluez-simple-agent hci0 XX:XX:XX:XX:XX:XX (Address of target device)
-RequestPinCode (/org/bluez/27392/hci0/dev_XX_XX_XX_XX_XX_XX)
-Enter PIN Code: 0000
-Release
+$ bluetoothctl                       <-- Start bluetoothctl
+[NEW] Controller XX:XX:XX:XX:XX:FE test [default]
+[bluetooth]# scan on                 <-- Scan enable
+Discovery started
+[CHG] Controller XX:XX:XX:XX:XX:FE Discovering: yes
+[NEW] Device XX:XX:XX:XX:XX:BF A device
+[bluetooth]# pair XX:XX:XX:XX:XX:BF  <-- Pairing to XX:XX:XX:XX:XX:BF
+Attempting to pair with XX:XX:XX:XX:XX:BF
+[CHG] Device XX:XX:XX:XX:XX:BF Connected: yes
+[CHG] Device XX:XX:XX:XX:XX:BF Modalias: bluetooth:v000Fp1200d1436
+[CHG] Device XX:XX:XX:XX:XX:BF UUIDs:
+	00001105-0000-1000-8000-00805f9b34fb
+	0000110a-0000-1000-8000-00805f9b34fb
+	0000110c-0000-1000-8000-00805f9b34fb
+	00001112-0000-1000-8000-00805f9b34fb
+	00001115-0000-1000-8000-00805f9b34fb
+	00001116-0000-1000-8000-00805f9b34fb
+	0000111f-0000-1000-8000-00805f9b34fb
+	0000112f-0000-1000-8000-00805f9b34fb
+	00001200-0000-1000-8000-00805f9b34fb
+[CHG] Device XX:XX:XX:XX:XX:BF Paired: yes
+Pairing successful
+[CHG] Device XX:XX:XX:XX:XX:BF Connected: no
 
 Headset support
 ---------------
