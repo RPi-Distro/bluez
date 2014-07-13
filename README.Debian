@@ -84,43 +84,74 @@ See also: http://wiki.bluez.org/wiki/HOWTO/AudioDevices
 
 Keyboard and mouse support
 ++++++++++++++++++++++++++++++++++++
-hidd daemon is included in a bluez-compat package. 
-We use bluez-simple-agent and bluez-test-input in bluez now.
+Here explain how to configure the keyboard and mouse using bluetoothctl.
 
-1. Discover you mouse or keyboard bluetooth address (bdaddr) by running
-   "hcitool scan".
+1. Start bluetoothctl.
 
-2. Start bluez-simple-agent
+  Please run the bluetoothctl. When you run, the shell of bluetoothctl starts.
 
-    $ sudo bluez-simple-agent hci0 <bdaddr>
-    RequestPinCode (/org/bluez/22302/hci0/dev_00_XX_XX_XX_XX_XX)
-    Enter PIN Code: 0000 <-- Please input PIN code
-    Release
-    New device (/org/bluez/22302/hci0/dev_00_XX_XX_XX_XX_XX)
+  $ bluetoothctl
+  [NEW] Controller XX:XX:XX:XX:XX:FE test [default]
+  [bluetooth]#
 
-    Bluetooth mouse set simple PIN code as "0000".
-    PIN code are different depending on mouse. 
-    Please check the PIN code of your mouse.
+2. Enable scan.
 
-3. With bluez-test-device, set *trusted* to the device.
+  Run the "scan on", and enable the scan mode.
+  Once enabled, HCI can search for the Bluetooth devices.
+  In the following, HCI find the XX:XX:XX:XX:XX:AA as a mouse (BT-MS01).
+  
+  [bluetooth]# scan on
+  Discovery started
+  [CHG] Controller XX:XX:XX:XX:XX:FE Discovering: yes
+  [NEW] Device XX:XX:XX:XX:XX:AA BT-MS01
+  [bluetooth]#
 
-    $ sudo bluez-test-device trusted <bdaddr> yet
+3. Pairing to device
 
-	When you did not execute this, you use bluez-test-input after suspend
-	and resume (and reboot) have to connect a device again.
+  Specify the MAC address of the device you want to pair to 'pair' command.
 
-4. With bluez-test-input, connected to the device.
+  [bluetooth]# pair XX:XX:XX:XX:XX:AA
+  Attempting to pair with XX:XX:XX:XX:XX:AA
+  [CHG] Device XX:XX:XX:XX:XX:AA Connected: yes
+  [bluetooth]#
 
-    $ sudo bluez-test-input connect <bdaddr>
+4. Set trust to device
 
-NOTE: If you want to use hidd daemon, please install bluez-compat package.
+  Specify the MAC address of the device you want to trust to 'trust' command.
 
-   You must then connect to your keyboard or mouse using 
-   "sudo hidd --connect <bdaddr>".  
-   On first connection, pairing is likely and you should
-   press "connect" button on mice/keyboard, if any.  Mice normally have a
-   preset PIN which should be in the manufacturer's documentation, try 0000.
-   For keyboards, type the PIN on the Bluetooth keyboard and hit enter, and
-   then supply it to the passkey agent 
-   (using a cable-attached keyboard. e.g. bluez-simple-agent).
-   In future your keyboard or mouse should reconnect to your computer
+  [bluetooth]# trust XX:XX:XX:XX:XX:AA
+  [CHG] Device XX:XX:XX:XX:XX:AA Trusted: yes
+  Changing XX:XX:XX:XX:XX:AA trust succeeded
+  [bluetooth]#
+
+5. Connect to device
+
+
+  Specify the MAC address of the device you want to connect to 'connect' command.
+
+  [bluetooth]# connect XX:XX:XX:XX:XX:AA
+  [CHG] Device 00:1B:DC:32:E2:19 Connected: yes
+  [CHG] Device 00:1B:DC:32:E2:19 Modalias: usb:v0111p0202d001E
+  [CHG] Device 00:1B:DC:32:E2:19 Modalias: usb:v0111p0202d001E
+  [CHG] Device 00:1B:DC:32:E2:19 UUIDs has unsupported type
+  Connection successful
+
+6. Show status of device
+
+  You can check the state of device, use the info command.
+
+  [bluetooth]# info XX:XX:XX:XX:XX:AA
+  Device XX:XX:XX:XX:XX:AA
+    Name: BT-MS01
+    Alias: BT-MS01
+    Class: 0x002580
+    Icon: input-mouse
+    Paired: yes
+    Trusted: yes
+    Blocked: no
+    Connected: yes
+    LegacyPairing: no
+    UUID: Human Interface Device... (00001124-0000-1000-8000-00805f9b34fb)
+    UUID: PnP Information (00001200-0000-1000-8000-00805f9b34fb)
+    Modalias: usb:v0111p0202d001E
+
