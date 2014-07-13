@@ -61,26 +61,11 @@ Attempting to pair with XX:XX:XX:XX:XX:BF
 Pairing successful
 [CHG] Device XX:XX:XX:XX:XX:BF Connected: no
 
-Headset support
----------------
-There's support for bluetooth headset both via ALSA and GStreamer, respectively
-via bluez-alsa and bluez-gstreamer packages.
+Sound support
+++++++++++++++++++++++++++++++++++++
 
-ALSA
-~~~~
-You might setup your headset by discovering it with gnome-bluetooth, once setup
-add the following configuration to ~/.asoundrc:
+Need update.
 
-	pcm.bluetooth {
-		   type bluetooth
-		   device <BT address>
-	}
-
-then audio can be played with supported player, e.g. mplayer:
-
-	mplayer -ao alsa:device=bluetooth
-
-See also: http://wiki.bluez.org/wiki/HOWTO/AudioDevices
 
 Keyboard and mouse support
 ++++++++++++++++++++++++++++++++++++
