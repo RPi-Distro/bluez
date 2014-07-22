@@ -5,6 +5,8 @@ bluez (5.21-2) unstable; urgency=medium
   * Add support user session of obexd. (Closes: #754675)
     Add patches/0001-obex-Use-GLib-helper-function-to-manipulate-paths.patch
     and patches/0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch.
+  * Update bluez.bluetooth.init. (Closes: #754830)
+    Remove -f option of rfcomm.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jul 2014 09:25:12 +0900
 
