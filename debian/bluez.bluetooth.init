@@ -162,11 +162,6 @@ case $1 in
 	fi
 	start_rfcomm || :
 
-	if test "$HIDD_ENABLED" = 1 ||
-		test "$PAND_ENABLED" = 1 || test "$DUND_ENABLED" = 1; then
-		log_progress_msg "compatibily daemons not started, see bluez-compat package"
-	fi
-
 	log_end_msg 0
   ;;
   stop)
