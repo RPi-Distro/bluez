@@ -1,2 +1,3 @@
 0001-work-around-Logitech-diNovo-Edge-keyboard-firmware-i.patch
 bluetooth.conf.patch
+fix_ftbfs_with_c99.patch
