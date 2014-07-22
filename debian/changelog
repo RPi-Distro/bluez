@@ -2,6 +2,9 @@ bluez (5.21-2) unstable; urgency=medium
 
   * Fix FTBFS with C99. (Closes: #755345)
     Add patches/fix_ftbfs_with_c99.patch.
+  * Add support user session of obexd. (Closes: #754675)
+    Add patches/0001-obex-Use-GLib-helper-function-to-manipulate-paths.patch
+    and patches/0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jul 2014 09:25:12 +0900
 
