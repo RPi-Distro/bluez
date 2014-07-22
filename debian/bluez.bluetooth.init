@@ -34,7 +34,6 @@ UART_CONF=/etc/bluetooth/uart
 
 RFCOMM_NAME=rfcomm
 RFCOMM=/usr/bin/$RFCOMM_NAME
-RFCOMM_CONF=/etc/bluetooth/$RFCOMM_NAME.conf
 SDPTOOL=/usr/bin/sdptool
 
 # If you want to be ignore error of "org.freedesktop.hostname1",
@@ -103,14 +102,14 @@ stop_uarts()
 
 start_rfcomm()
 {
-	if [ -x $RFCOMM ] && [ -f $RFCOMM_CONF ] ; then
+	if [ -x $RFCOMM ] ; then
 		# rfcomm must always succeed for now: users
 		# may not yet have an rfcomm-enabled kernel
                 if [ "$VERBOSE" != no ]; then
 		       log_progress_msg "${RFCOMM##*/}"
-		       $RFCOMM -f $RFCOMM_CONF bind all || :
+		       $RFCOMM bind all || :
                 else
-		       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || :
+		       $RFCOMM bind all >/dev/null 2>&1 || :
                 fi
 	fi
 }
@@ -133,10 +132,10 @@ restart_rfcomm()
                if [ "$VERBOSE" != no ]; then
 		       log_progress_msg  "${RFCOMM##*/}"
 		       $RFCOMM unbind all || :
-		       $RFCOMM -f $RFCOMM_CONF bind all || :
+		       $RFCOMM bind all || :
                else
 		       $RFCOMM unbind all >/dev/null 2>&1|| :
-		       $RFCOMM -f $RFCOMM_CONF bind all >/dev/null 2>&1 || :
+		       $RFCOMM bind all >/dev/null 2>&1 || :
                fi
 	fi
 }
