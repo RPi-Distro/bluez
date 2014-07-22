@@ -25,7 +25,7 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 DESC=bluetooth
 
 DAEMON=/usr/sbin/bluetoothd
-HCIATTACH=/usr/sbin/hciattach
+HCIATTACH=/usr/bin/hciattach
 
 HID2HCI_ENABLED=1
 HID2HCI_UNDO=1
