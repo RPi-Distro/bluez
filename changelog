@@ -7,6 +7,10 @@ bluez (5.21-2) unstable; urgency=medium
     and patches/0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch.
   * Update bluez.bluetooth.init. (Closes: #754830, #712386, #737502)
     Remove -f option of rfcomm.
+  * Remove 50-bluetooth-hci-auto-poweron.rules from bluez, and Re-enable function
+    of start hci device at startup in sysvinit. (Closes: #755274)
+  * Add patches/bluetooth.service.in.patch. This enables hci0 device before
+    start bluetoothd on systemd. 
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 22 Jul 2014 09:25:12 +0900
 
