@@ -3,3 +3,4 @@ bluetooth.conf.patch
 fix_ftbfs_with_c99.patch
 0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch
 0001-obex-Use-GLib-helper-function-to-manipulate-paths.patch
+bluetooth.service.in.patch
