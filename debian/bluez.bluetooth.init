@@ -140,30 +140,6 @@ restart_rfcomm()
 	fi
 }
 
-start_hci_dev()
-{
-	if [ -z "$ACTIVE_HCI_DEVICES_ON_BOOT" ]; then
-		log_daemon_msg "Please set to the bluetooth host device you to enable."
-		log_daemon_msg "Please see /etc/default/bluetooth."
-		log_progress_msg "No enable hci device"
-		return
-	fi
-
-	for dev in ${ACTIVE_HCI_DEVICES_ON_BOOT} ; do
-		# NOTE: use dbus.... / hci0
-		# dbus-send --system --type=method_call
-		#   --print-reply=literal dest=org.bluez /org/bluez/hci0 \
-		#   org.freedesktop.DBus.Properties.Set:org.bluez.Adapter1 \
-		#   string:Powered variant:boolean:true
-		if [ "$VERBOSE" != no ]; then
-			log_progress_msg "Enabled ${dev}"
-			hciconfig $dev up || :
-		else
-			hciconfig $dev up > /dev/null 2>&1 || :
-		fi
-	done
-}
-
 case $1 in
   start)
 	log_daemon_msg "Starting $DESC"
@@ -173,9 +149,6 @@ case $1 in
 		log_end_msg 0
 		exit 0
 	fi
-
-	# start HCI devices
-	start_hci_dev || :
 
 	start-stop-daemon --start --background $SSD_OPTIONS
 	log_progress_msg "${DAEMON##*/}"
