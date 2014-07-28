@@ -9,7 +9,7 @@ usr/bin/bccmd
 usr/bin/btmon
 usr/bin/rctest
 usr/bin/hciattach
-usr/bin/hciconfig
+usr/bin/hciconfig bin/
 usr/bin/hcitool
 usr/bin/sdptool
 usr/bin/ciptool
