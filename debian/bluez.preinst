@@ -21,7 +21,7 @@ install|upgrade)
         /etc/bluetooth/serial.conf \
         /etc/bluetooth/audio.conf; do \
             dpkg-maintscript-helper \
-                rm_conffile "${conffile}" 5.21-2 bluez -- "$@"
+                rm_conffile ${conffile} 5.21-2 bluez -- "$@"
     done
   fi
 
