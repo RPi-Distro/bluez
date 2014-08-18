@@ -32,8 +32,6 @@ HID2HCI_UNDO=1
 
 UART_CONF=/etc/bluetooth/uart
 
-RFCOMM_NAME=rfcomm
-RFCOMM=/usr/bin/$RFCOMM_NAME
 SDPTOOL=/usr/bin/sdptool
 
 # If you want to be ignore error of "org.freedesktop.hostname1",
@@ -100,46 +98,6 @@ stop_uarts()
 	killall ${HCIATTACH##*/} >/dev/null 2>&1 || :
 }
 
-start_rfcomm()
-{
-	if [ -x $RFCOMM ] ; then
-		# rfcomm must always succeed for now: users
-		# may not yet have an rfcomm-enabled kernel
-                if [ "$VERBOSE" != no ]; then
-		       log_progress_msg "${RFCOMM##*/}"
-		       $RFCOMM bind all || :
-                else
-		       $RFCOMM bind all >/dev/null 2>&1 || :
-                fi
-	fi
-}
-
-stop_rfcomm()
-{
-	if [ -x $RFCOMM ] ; then
-               if [ "$VERBOSE" != no ]; then
-		       log_progress_msg "${RFCOMM##*/}"
-		       $RFCOMM unbind all || :
-               else
-		       $RFCOMM unbind all >/dev/null 2>&1 || :
-               fi
-	fi
-}
-
-restart_rfcomm()
-{
-	if [ -x $RFCOMM ] && [ -f $RFCOMM_CONF ] ; then
-               if [ "$VERBOSE" != no ]; then
-		       log_progress_msg  "${RFCOMM##*/}"
-		       $RFCOMM unbind all || :
-		       $RFCOMM bind all || :
-               else
-		       $RFCOMM unbind all >/dev/null 2>&1|| :
-		       $RFCOMM bind all >/dev/null 2>&1 || :
-               fi
-	fi
-}
-
 case $1 in
   start)
 	log_daemon_msg "Starting $DESC"
@@ -160,7 +118,6 @@ case $1 in
 	if test "$HID2HCI_ENABLED" = 1; then
 		enable_hci_input
 	fi
-	start_rfcomm || :
 
 	log_end_msg 0
   ;;
@@ -171,7 +128,6 @@ case $1 in
 		log_end_msg 0
 		exit 0
 	fi
-	stop_rfcomm || :
 	if test "$HID2HCI_UNDO" = 1; then
 		disable_hci_input
 	fi
