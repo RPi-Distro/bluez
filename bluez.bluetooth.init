@@ -30,8 +30,6 @@ HCIATTACH=/usr/bin/hciattach
 HID2HCI_ENABLED=1
 HID2HCI_UNDO=1
 
-UART_CONF=/etc/bluetooth/uart
-
 SDPTOOL=/usr/bin/sdptool
 
 # If you want to be ignore error of "org.freedesktop.hostname1",
@@ -81,23 +79,6 @@ hci_input()
 alias enable_hci_input=hci_input
 alias disable_hci_input=hci_input
 
-start_uarts()
-{
-	[ -f $HCIATTACH ] && [ -f $UART_CONF ] || return
-	grep -v '^#' $UART_CONF | while read i; do
-               if [ "$VERBOSE" != no ]; then
-                       $HCIATTACH $i
-               else
-                       $HCIATTACH $i >/dev/null 2>&1
-               fi
-	done
-}
-
-stop_uarts()
-{
-	killall ${HCIATTACH##*/} >/dev/null 2>&1 || :
-}
-
 case $1 in
   start)
 	log_daemon_msg "Starting $DESC"
@@ -112,8 +93,6 @@ case $1 in
 	log_progress_msg "${DAEMON##*/}"
 
 	run_sdptool || :
-
-	start_uarts || :
 
 	if test "$HID2HCI_ENABLED" = 1; then
 		enable_hci_input
@@ -133,7 +112,6 @@ case $1 in
 	fi
 	start-stop-daemon --stop $SSD_OPTIONS
 	log_progress_msg "${DAEMON}"
-	stop_uarts || :
 	log_end_msg 0
   ;;
   restart|force-reload)
