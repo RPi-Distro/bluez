@@ -1,9 +1,9 @@
-bluez (5.23-1) unstable; urgency=medium
+bluez (5.23-1) unstable; urgency=high
 
   * New upstream release. Update to 5.23.
   * Add patches/change_path_of_hogsuspend.patch. (Closes: #759188, #758979)
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 21 Aug 2014 06:07:15 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 16 Sep 2014 09:01:37 +0900
 
 bluez (5.21-3) unstable; urgency=medium
 
