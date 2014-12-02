@@ -1,3 +1,11 @@
+bluez (5.23-2) unstable; urgency=medium
+
+  * debian/control.
+    - Remove Provides: obex-server, obexd-client from bluez-obexd.
+      (Closes: #771290)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 16 Sep 2014 14:17:30 +0900
+
 bluez (5.23-1) unstable; urgency=high
 
   * New upstream release. Update to 5.23.
