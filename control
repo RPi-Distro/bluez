@@ -5,7 +5,7 @@ Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth
 Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
 Build-Depends: debhelper (>= 9),
 	autotools-dev,
-	 dh-autoreconf,
+	dh-autoreconf,
 	flex,
 	bison,
 	libdbus-glib-1-dev,
@@ -17,7 +17,7 @@ Build-Depends: debhelper (>= 9),
 	libical-dev,
 	check (>= 0.9.8-1.1),
 	systemd,
-	dh-systemd (>= 1.5) 
+	dh-systemd (>= 1.5)
 Vcs-Svn: svn://anonscm.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
