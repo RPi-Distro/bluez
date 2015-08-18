@@ -31,12 +31,18 @@ libbluetooth.so.3 libbluetooth3 #MINVER#
  hci_for_each_dev@Base 4.91
  hci_get_route@Base 4.91
  hci_inquiry@Base 4.91
+ hci_le_add_resolving_list@Base 5.33
  hci_le_add_white_list@Base 4.91
+ hci_le_clear_resolving_list@Base 5.33
  hci_le_clear_white_list@Base 4.91
  hci_le_conn_update@Base 4.91
  hci_le_create_conn@Base 4.91
+ hci_le_read_remote_features@Base 5.33
+ hci_le_read_resolving_list_size@Base 5.33
  hci_le_read_white_list_size@Base 4.91
+ hci_le_rm_resolving_list@Base 5.33
  hci_le_rm_white_list@Base 4.91
+ hci_le_set_address_resolution_enable@Base 5.33
  hci_le_set_advertise_enable@Base 4.91
  hci_le_set_scan_enable@Base 4.91
  hci_le_set_scan_parameters@Base 4.91
