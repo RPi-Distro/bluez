@@ -1,6 +1,7 @@
 bluez (5.33-1) UNRELEASED; urgency=medium
 
   * Update to 5.33.
+  * Remove patches/fix_ftbfs_with_c99.patch.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 18 Aug 2015 20:59:23 +0900
 
