@@ -4,6 +4,8 @@ bluez (5.33-1) UNRELEASED; urgency=medium
   * Remove patches/fix_ftbfs_with_c99.patch.
   * Update patches/bluetooth.conf.patch and patches/change_path_of_hogsuspend.patch.
   * Update libbluetooth3.symbols.
+  * Update control.
+    - Bumped Standards-Version to 3.9.6.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 18 Aug 2015 20:59:23 +0900
 
