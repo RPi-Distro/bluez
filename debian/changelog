@@ -1,8 +1,9 @@
-bluez (5.33-1) UNRELEASED; urgency=medium
+bluez (5.33-1) unstable; urgency=medium
 
   * Update to 5.33.
   * Remove patches/fix_ftbfs_with_c99.patch.
-  * Update patches/bluetooth.conf.patch and patches/change_path_of_hogsuspend.patch.
+  * Update patches/bluetooth.conf.patch and
+    patches/change_path_of_hogsuspend.patch.
   * Update libbluetooth3.symbols.
   * Update control.
     - Bumped Standards-Version to 3.9.6.
