@@ -18,7 +18,7 @@ Build-Depends: debhelper (>= 9),
 	check (>= 0.9.8-1.1),
 	systemd,
 	dh-systemd (>= 1.5)
-Vcs-Svn: svn://anonscm.debian.org/svn/pkg-bluetooth/packages/bluez/trunk
+Vcs-Svn: svn://anonscm.debian.org/pkg-bluetooth/packages/bluez/trunk
 Vcs-Browser: http://svn.debian.org/wsvn/pkg-bluetooth/packages/bluez/trunk
 Homepage: http://www.bluez.org
 Standards-Version: 3.9.6
