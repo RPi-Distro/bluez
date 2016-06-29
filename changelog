@@ -1,3 +1,9 @@
+bluez (5.40-1) UNRELEASED; urgency=medium
+
+  * Update to 5.36.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 29 Jun 2016 22:20:09 +0900
+
 bluez (5.36-1) unstable; urgency=medium
 
   * Update to 5.36.
