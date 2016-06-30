@@ -7,6 +7,7 @@ usr/lib/bluetooth/bluetoothd
 usr/bin/bluetoothctl
 usr/bin/bccmd
 usr/bin/bluemoon
+usr/bin/btattach
 usr/bin/btmon
 usr/bin/rctest
 usr/bin/hciattach
@@ -18,7 +19,9 @@ usr/bin/hex2hcd
 usr/bin/l2ping
 usr/bin/l2test
 usr/bin/rfcomm
+usr/bin/rctest
 usr/bin/mpris-proxy
+usr/bin/sdptool
 lib/udev/hid2hci
 lib/udev/rules.d/97-hid2hci.rules
 attrib/gatttool usr/bin
@@ -27,14 +30,3 @@ debian/50-bluetooth-hci-auto-poweron.rules lib/udev/rules.d
 lib/systemd/system/bluetooth.service
 etc/dbus-1/system.d/bluetooth.conf
 usr/share/dbus-1/system-services/org.bluez.service
-usr/share/man/man1/sdptool.1
-usr/share/man/man1/bccmd.1
-usr/share/man/man1/hciattach.1
-usr/share/man/man1/hciconfig.1
-usr/share/man/man1/hcitool.1
-usr/share/man/man1/ciptool.1
-usr/share/man/man1/rfcomm.1
-usr/share/man/man1/rctest.1
-usr/share/man/man1/l2ping.1
-usr/share/man/man1/hid2hci.1
-usr/share/man/man8/bluetoothd.8
