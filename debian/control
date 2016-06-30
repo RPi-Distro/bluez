@@ -138,6 +138,15 @@ Description: Analyses Bluetooth HCI packets
  BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
  project distributed under GNU General Public License (GPL).
 
+Package: bluez-test-tools
+Architecture: linux-any
+Depends: ${shlibs:Depends}, ${misc:Depends}, bluez (= ${binary:Version})
+Description: test tools of bluez
+ This package contains test tools for using BlueZ.
+ .
+ BlueZ is the official Linux Bluetooth protocol stack. It is an Open Source
+ project distributed under GNU General Public License (GPL).
+
 Package: bluez-test-scripts
 Architecture: all
 Depends: ${misc:Depends}
