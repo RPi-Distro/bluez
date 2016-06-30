@@ -1,7 +1,8 @@
 bluez (5.40-1) UNRELEASED; urgency=medium
 
   * Update to 5.40.
-  * 
+  * Update debian/control.
+    - Bumped Standards-Version to 3.9.8.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 30 Jun 2016 11:29:37 +0900
 
