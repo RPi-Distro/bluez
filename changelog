@@ -8,6 +8,8 @@ bluez (5.40-1) UNRELEASED; urgency=medium
     - Remove --enable-usb from option of configure.
       This option does not support current version.
   * Add btattach, rctest and sdptool. (Closes: #816865)
+  * Add bluez-test-tools package. (Closes: #795350)
+    This package contains *-tester program.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 30 Jun 2016 11:29:37 +0900
 
