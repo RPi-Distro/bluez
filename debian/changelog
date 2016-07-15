@@ -1,4 +1,4 @@
-bluez (5.40-1) UNRELEASED; urgency=medium
+bluez (5.40-1~exp0) experimental; urgency=medium
 
   * Update to 5.40. (Closes: #824163, #824732)
   * Update debian/control.
