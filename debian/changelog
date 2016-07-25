@@ -9,6 +9,7 @@ bluez (5.40-1~exp0) experimental; urgency=medium
   * Add btattach, rctest and sdptool. (Closes: #816865)
   * Add bluez-test-tools package. (Closes: #795350)
     This package contains *-tester program.
+  * Update debian/copyright to DEP5 format.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 30 Jun 2016 11:29:37 +0900
 
