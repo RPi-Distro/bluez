@@ -1,6 +1,5 @@
 src/main.conf etc/bluetooth
 profiles/input/input.conf etc/bluetooth
-# profiles/audio/audio.conf etc/bluetooth
 profiles/network/network.conf etc/bluetooth
 profiles/proximity/proximity.conf etc/bluetooth
 usr/lib/bluetooth/bluetoothd
@@ -9,7 +8,6 @@ usr/bin/bccmd
 usr/bin/bluemoon
 usr/bin/btattach
 usr/bin/btmon
-usr/bin/rctest
 usr/bin/hciattach
 usr/bin/hciconfig bin/
 usr/bin/hcitool
