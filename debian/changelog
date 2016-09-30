@@ -1,3 +1,11 @@
+bluez (5.41-1) unstable; urgency=medium
+
+  * Update to 5.41.
+  * Update debian/rules.
+    - Add --list-missing option to dh_install
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 01 Oct 2016 08:17:01 +0900
+
 bluez (5.40-1~exp0) experimental; urgency=medium
 
   * Update to 5.40. (Closes: #824163, #824732)
