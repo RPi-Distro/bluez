@@ -2,7 +2,12 @@ bluez (5.41-1) unstable; urgency=medium
 
   * Update to 5.41.
   * Update debian/rules.
-    - Add --list-missing option to dh_install
+    - Add --list-missing option to dh_install.
+  * Update debian/patches
+    - Add patches/0002-autopair-Don-t-handle-the-iCade.patch.
+      iCade support by autopair.
+    - Add patches/0004-agent-Assert-possible-infinite-loop.patch.
+      Show assert if possible infinite loop.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 01 Oct 2016 08:17:01 +0900
 
