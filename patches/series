@@ -2,7 +2,6 @@
 0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch
 0001-obex-Use-GLib-helper-function-to-manipulate-paths.patch
 0002-autopair-Don-t-handle-the-iCade.patch
-0002-obexd-Return-dummy_data-instead-of-int-in-phonebook-.patch
 0004-agent-Assert-possible-infinite-loop.patch
 bluetooth.conf.patch
 main.conf.patch
