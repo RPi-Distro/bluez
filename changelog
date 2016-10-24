@@ -8,6 +8,8 @@ bluez (5.41-1) unstable; urgency=medium
       iCade support by autopair.
     - Add patches/0004-agent-Assert-possible-infinite-loop.patch.
       Show assert if possible infinite loop.
+    - Add patches/fix_udevadm_in_hid2hci.patch.
+      Change path of udevadm from /sbin to /bin.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 01 Oct 2016 08:17:01 +0900
 
