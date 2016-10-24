@@ -36,7 +36,7 @@ index 8c98c12..5d2f6f7 100644
 +	g_message ("vendor 0x%X product: 0x%X", btd_device_get_vendor (device), btd_device_get_product (device));
 +
 +	/* The iCade shouldn't use random PINs like normal keyboards */
-+	if (name != NULL &amp;&amp; strstr(name, "iCade") != NULL)
++	if (name != NULL && strstr(name, "iCade") != NULL)
 +		return 0;
  
  	/* This is a class-based pincode guesser. Ignore devices with an
