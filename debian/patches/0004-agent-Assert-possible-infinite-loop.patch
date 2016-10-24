@@ -11,12 +11,12 @@ index bcba969..b292881 100644
 --- a/src/agent.c
 +++ b/src/agent.c
 @@ -203,6 +203,8 @@ void agent_unref(struct agent *agent)
- 	if (agent-&gt;ref &gt; 0)
+ 	if (agent->ref > 0)
  		return;
  
-+	g_assert (agent-&gt;ref == 0);
++	g_assert (agent->ref == 0);
 +
- 	if (agent-&gt;request) {
+ 	if (agent->request) {
  		DBusError err;
  		agent_pincode_cb pincode_cb;
 -- 
