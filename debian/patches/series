@@ -7,3 +7,4 @@ bluetooth.conf.patch
 main.conf.patch
 change_path_of_hogsuspend.patch
 fix_udevadm_in_hid2hci.patch
+fix-typo-in-src-main.conf.patch
