@@ -1,6 +1,6 @@
 bluez (5.41-1) unstable; urgency=medium
 
-  * Update to 5.41. (Closes: #771627)
+  * Update to 5.41. (Closes: #771627, #835901)
   * Update debian/rules.
     - Add --list-missing option to dh_install.
   * Update debian/patches
