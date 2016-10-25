@@ -12,6 +12,7 @@ bluez (5.41-1) unstable; urgency=medium
       Change path of udevadm from /sbin to /bin.
     - Add patches/main.conf.patch.
       Set AutoEnable to true in Policy.
+   * Add pulseaudio-module-bluetooth to Suggests of bluez. (Closes: #815323)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 01 Oct 2016 08:17:01 +0900
 
