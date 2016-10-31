@@ -1,3 +1,9 @@
+bluez (5.43-1) unstable; urgency=medium
+
+  * Update to 5.43. (Closes: #840983)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 01 Nov 2016 07:04:47 +0900
+
 bluez (5.41-1) unstable; urgency=medium
 
   * Update to 5.41. (Closes: #771627, #835901)
