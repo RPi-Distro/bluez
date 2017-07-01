@@ -2076,8 +2076,8 @@ static const char *status_to_string(uint8_t status)
 	}
 }
 
-static gboolean avrcp_get_play_status_rsp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
+static gboolean avrcp_get_play_status_rsp(struct avctp *conn, uint8_t code,
+					uint8_t subunit, uint8_t transaction,
 					uint8_t *operands, size_t operand_count,
 					void *user_data)
 {
@@ -2140,8 +2140,8 @@ static const char *status_to_str(uint8_t status)
 	}
 }
 
-static gboolean avrcp_player_value_rsp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
+static gboolean avrcp_player_value_rsp(struct avctp *conn, uint8_t code,
+					uint8_t subunit, uint8_t transaction,
 					uint8_t *operands, size_t operand_count,
 					void *user_data)
 {
@@ -2210,8 +2210,8 @@ static void avrcp_get_current_player_value(struct avrcp *session,
 
 static gboolean avrcp_list_player_attributes_rsp(struct avctp *conn,
 					uint8_t code, uint8_t subunit,
-					uint8_t *operands, size_t operand_count,
-					void *user_data)
+					uint8_t transaction, uint8_t *operands,
+					size_t operand_count, void *user_data)
 {
 	uint8_t attrs[AVRCP_ATTRIBUTE_LAST];
 	struct avrcp *session = user_data;
@@ -2297,6 +2297,7 @@ static void avrcp_parse_attribute_list(struct avrcp_player *player,
 
 static gboolean avrcp_get_element_attributes_rsp(struct avctp *conn,
 						uint8_t code, uint8_t subunit,
+						uint8_t transaction,
 						uint8_t *operands,
 						size_t operand_count,
 						void *user_data)
@@ -2655,8 +2656,10 @@ static gboolean avrcp_set_browsed_player_rsp(struct avctp *conn,
 		uint8_t len;
 
 		len = pdu->params[i++];
+		if (!len)
+			continue;
 
-		if (i + len > operand_count || len == 0) {
+		if (i + len > operand_count) {
 			error("Invalid folder length");
 			break;
 		}
@@ -3110,7 +3113,7 @@ static gboolean avrcp_get_total_numberofitems_rsp(struct avctp *conn,
 	struct avrcp *session = user_data;
 	struct avrcp_player *player = session->controller->player;
 	struct media_player *mp = player->user_data;
-	uint32_t num_of_items;
+	uint32_t num_of_items = 0;
 
 	if (pdu == NULL)
 		return -ETIMEDOUT;
@@ -3527,8 +3530,8 @@ static void avrcp_uids_changed(struct avrcp *session, struct avrcp_header *pdu)
 	player->uid_counter = get_be16(&pdu->params[1]);
 }
 
-static gboolean avrcp_handle_event(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
+static gboolean avrcp_handle_event(struct avctp *conn, uint8_t code,
+					uint8_t subunit, uint8_t transaction,
 					uint8_t *operands, size_t operand_count,
 					void *user_data)
 {
@@ -3536,16 +3539,30 @@ static gboolean avrcp_handle_event(struct avctp *conn,
 	struct avrcp_header *pdu = (void *) operands;
 	uint8_t event;
 
-	if ((code != AVC_CTYPE_INTERIM && code != AVC_CTYPE_CHANGED) ||
-								pdu == NULL)
+	if (!pdu)
 		return FALSE;
+
+	if ((code != AVC_CTYPE_INTERIM && code != AVC_CTYPE_CHANGED)) {
+		if (pdu->params[0] == AVRCP_STATUS_ADDRESSED_PLAYER_CHANGED &&
+				code == AVC_CTYPE_REJECTED) {
+			int i;
+
+			/* Lookup event by transaction */
+			for (i = 0; i <= AVRCP_EVENT_LAST; i++) {
+				if (session->transaction_events[i] ==
+								transaction) {
+					event = i;
+					goto changed;
+				}
+			}
+		}
+		return FALSE;
+	}
 
 	event = pdu->params[0];
 
 	if (code == AVC_CTYPE_CHANGED) {
-		session->registered_events ^= (1 << event);
-		avrcp_register_notification(session, event);
-		return FALSE;
+		goto changed;
 	}
 
 	switch (event) {
@@ -3576,8 +3593,15 @@ static gboolean avrcp_handle_event(struct avctp *conn,
 	}
 
 	session->registered_events |= (1 << event);
+	session->transaction_events[event] = transaction;
 
 	return TRUE;
+
+changed:
+	session->registered_events ^= (1 << event);
+	session->transaction_events[event] = 0;
+	avrcp_register_notification(session, event);
+	return FALSE;
 }
 
 static void avrcp_register_notification(struct avrcp *session, uint8_t event)
@@ -3609,8 +3633,8 @@ static void avrcp_register_notification(struct avrcp *session, uint8_t event)
 					avrcp_handle_event, session);
 }
 
-static gboolean avrcp_get_capabilities_resp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
+static gboolean avrcp_get_capabilities_resp(struct avctp *conn, uint8_t code,
+					uint8_t subunit, uint8_t transaction,
 					uint8_t *operands, size_t operand_count,
 					void *user_data)
 {
@@ -3645,8 +3669,9 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn,
 		case AVRCP_EVENT_ADDRESSED_PLAYER_CHANGED:
 		case AVRCP_EVENT_UIDS_CHANGED:
 		case AVRCP_EVENT_AVAILABLE_PLAYERS_CHANGED:
-			/* These events above are controller specific */
-			if (!session->controller)
+			/* These events above requires a player */
+			if (!session->controller ||
+						!session->controller->player)
 				break;
 		case AVRCP_EVENT_VOLUME_CHANGED:
 			avrcp_register_notification(session, event);
@@ -3654,7 +3679,7 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn,
 		}
 	}
 
-	if (!session->controller)
+	if (!session->controller || !session->controller->player)
 		return FALSE;
 
 	if (!(events & (1 << AVRCP_EVENT_SETTINGS_CHANGED)))
@@ -3843,12 +3868,11 @@ static void controller_init(struct avrcp *session)
 	btd_service_connecting_complete(service, 0);
 
 	/* Only create player if category 1 is supported */
-	if (!(controller->features & AVRCP_FEATURE_CATEGORY_1))
-		return;
-
-	player = create_ct_player(session, 0);
-	if (player == NULL)
-		return;
+	if (controller->features & AVRCP_FEATURE_CATEGORY_1) {
+		player = create_ct_player(session, 0);
+		if (player == NULL)
+			return;
+	}
 
 	if (controller->version < 0x0103)
 		return;
@@ -4124,8 +4148,8 @@ void avrcp_unregister_player(struct avrcp_player *player)
 	player_destroy(player);
 }
 
-static gboolean avrcp_handle_set_volume(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
+static gboolean avrcp_handle_set_volume(struct avctp *conn, uint8_t code,
+					uint8_t subunit, uint8_t transaction,
 					uint8_t *operands, size_t operand_count,
 					void *user_data)
 {

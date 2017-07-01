@@ -42,6 +42,7 @@
 #include "keys.h"
 #include "sdp.h"
 #include "avctp.h"
+#include "avdtp.h"
 #include "rfcomm.h"
 #include "bnep.h"
 
@@ -99,6 +100,7 @@ struct chan_data {
 	uint8_t  ctrlid;
 	uint8_t  mode;
 	uint8_t  ext_ctrl;
+	uint8_t  seq_num;
 };
 
 static struct chan_data chan_list[MAX_CHAN];
@@ -107,10 +109,13 @@ static void assign_scid(const struct l2cap_frame *frame,
 				uint16_t scid, uint16_t psm, uint8_t ctrlid)
 {
 	int i, n = -1;
+	uint8_t seq_num = 1;
 
 	for (i = 0; i < MAX_CHAN; i++) {
-		if (n < 0 && chan_list[i].handle == 0x0000)
+		if (n < 0 && chan_list[i].handle == 0x0000) {
 			n = i;
+			continue;
+		}
 
 		if (chan_list[i].index != frame->index)
 			continue;
@@ -118,16 +123,18 @@ static void assign_scid(const struct l2cap_frame *frame,
 		if (chan_list[i].handle != frame->handle)
 			continue;
 
+		if (chan_list[i].psm == psm)
+			seq_num++;
+
+		/* Don't break on match - we still need to go through all
+		 * channels to find proper seq_num.
+		 */
 		if (frame->in) {
-			if (chan_list[i].dcid == scid) {
+			if (chan_list[i].dcid == scid)
 				n = i;
-				break;
-			}
 		} else {
-			if (chan_list[i].scid == scid) {
+			if (chan_list[i].scid == scid)
 				n = i;
-				break;
-			}
 		}
 	}
 
@@ -147,6 +154,8 @@ static void assign_scid(const struct l2cap_frame *frame,
 	chan_list[n].psm = psm;
 	chan_list[n].ctrlid = ctrlid;
 	chan_list[n].mode = 0;
+
+	chan_list[n].seq_num = seq_num;
 }
 
 static void release_scid(const struct l2cap_frame *frame, uint16_t scid)
@@ -299,6 +308,16 @@ static uint16_t get_chan(const struct l2cap_frame *frame)
 		return 0;
 
 	return i;
+}
+
+static uint8_t get_seq_num(const struct l2cap_frame *frame)
+{
+	int i = get_chan_data_index(frame);
+
+	if (i < 0)
+		return 0;
+
+	return chan_list[i].seq_num;
 }
 
 static void assign_ext_ctrl(const struct l2cap_frame *frame,
@@ -511,11 +530,88 @@ static void print_conn_result(uint16_t result)
 	case 0x0004:
 		str = "Connection refused - no resources available";
 		break;
+	case 0x0006:
+		str = "Connection refused - Invalid Source CID";
+		break;
+	case 0x0007:
+		str = "Connection refused - Source CID already allocated";
+		break;
+	default:
+		str = "Reserved";
+		break;
+	}
+
+	print_field("Result: %s (0x%4.4x)", str, le16_to_cpu(result));
+}
+
+static void print_le_conn_result(uint16_t result)
+{
+	const char *str;
+
+	switch (le16_to_cpu(result)) {
+	case 0x0000:
+		str = "Connection successful";
+		break;
+	case 0x0002:
+		str = "Connection refused - PSM not supported";
+		break;
+	case 0x0004:
+		str = "Connection refused - no resources available";
+		break;
 	case 0x0005:
-		str = "Insufficient Authentication";
+		str = "Connection refused - insufficient authentication";
 		break;
 	case 0x0006:
-		str = "Insufficient Authorization";
+		str = "Connection refused - insufficient authorization";
+		break;
+	case 0x0007:
+		str = "Connection refused - insufficient encryption key size";
+		break;
+	case 0x0008:
+		str = "Connection refused - insufficient encryption";
+		break;
+	case 0x0009:
+		str = "Connection refused - Invalid Source CID";
+		break;
+	case 0x0010:
+		str = "Connection refused - Source CID already allocated";
+		break;
+	default:
+		str = "Reserved";
+		break;
+	}
+
+	print_field("Result: %s (0x%4.4x)", str, le16_to_cpu(result));
+}
+
+static void print_create_chan_result(uint16_t result)
+{
+	const char *str;
+
+	switch (le16_to_cpu(result)) {
+	case 0x0000:
+		str = "Connection successful";
+		break;
+	case 0x0001:
+		str = "Connection pending";
+		break;
+	case 0x0002:
+		str = "Connection refused - PSM not supported";
+		break;
+	case 0x0003:
+		str = "Connection refused - security block";
+		break;
+	case 0x0004:
+		str = "Connection refused - no resources available";
+		break;
+	case 0x0005:
+		str = "Connection refused - Controller ID not supported";
+		break;
+	case 0x0006:
+		str = "Connection refused - Invalid Source CID";
+		break;
+	case 0x0007:
+		str = "Connection refused - Source CID already allocated";
 		break;
 	default:
 		str = "Reserved";
@@ -1149,7 +1245,7 @@ static void sig_create_chan_rsp(const struct l2cap_frame *frame)
 
 	print_cid("Destination", pdu->dcid);
 	print_cid("Source", pdu->scid);
-	print_conn_result(pdu->result);
+	print_create_chan_result(pdu->result);
 	print_conn_status(pdu->status);
 
 	assign_dcid(frame, le16_to_cpu(pdu->dcid), le16_to_cpu(pdu->scid));
@@ -1224,7 +1320,7 @@ static void sig_le_conn_rsp(const struct l2cap_frame *frame)
 	print_field("MTU: %u", le16_to_cpu(pdu->mtu));
 	print_field("MPS: %u", le16_to_cpu(pdu->mps));
 	print_field("Credits: %u", le16_to_cpu(pdu->credits));
-	print_conn_result(pdu->result);
+	print_le_conn_result(pdu->result);
 
 	assign_dcid(frame, le16_to_cpu(pdu->dcid), 0);
 }
@@ -1307,16 +1403,17 @@ static void l2cap_frame_init(struct l2cap_frame *frame, uint16_t index, bool in,
 				uint16_t handle, uint8_t ident,
 				uint16_t cid, const void *data, uint16_t size)
 {
-	frame->index  = index;
-	frame->in     = in;
-	frame->handle = handle;
-	frame->ident  = ident;
-	frame->cid    = cid;
-	frame->data   = data;
-	frame->size   = size;
-	frame->psm    = get_psm(frame);
-	frame->mode   = get_mode(frame);
-	frame->chan   = get_chan(frame);
+	frame->index   = index;
+	frame->in      = in;
+	frame->handle  = handle;
+	frame->ident   = ident;
+	frame->cid     = cid;
+	frame->data    = data;
+	frame->size    = size;
+	frame->psm     = get_psm(frame);
+	frame->mode    = get_mode(frame);
+	frame->chan    = get_chan(frame);
+	frame->seq_num = get_seq_num(frame);
 }
 
 static void bredr_sig_packet(uint16_t index, bool in, uint16_t handle,
@@ -3002,6 +3099,9 @@ static void l2cap_frame(uint16_t index, bool in, uint16_t handle,
 		case 0x0017:
 		case 0x001B:
 			avctp_packet(&frame);
+			break;
+		case 0x0019:
+			avdtp_packet(&frame);
 			break;
 		default:
 			packet_hexdump(data, size);

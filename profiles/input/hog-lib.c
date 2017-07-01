@@ -53,10 +53,10 @@
 
 #include "btio/btio.h"
 
-#include "android/scpp.h"
-#include "android/dis.h"
-#include "android/bas.h"
-#include "android/hog.h"
+#include "profiles/scanparam/scpp.h"
+#include "profiles/deviceinfo/dis.h"
+#include "profiles/battery/bas.h"
+#include "profiles/input/hog-lib.h"
 
 #define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
 
@@ -88,6 +88,7 @@ struct bt_hog {
 	GSList			*reports;
 	struct bt_uhid		*uhid;
 	int			uhid_fd;
+	bool			uhid_created;
 	gboolean		has_report_id;
 	uint16_t		bcdhid;
 	uint8_t			bcountrycode;
@@ -368,6 +369,20 @@ static void ccc_read_cb(guint8 status, const guint8 *pdu, guint16 len,
 	write_ccc(report->hog, report->hog->attrib, report->ccc_handle, report);
 }
 
+static const char *type_to_string(uint8_t type)
+{
+	switch (type) {
+	case HOG_REPORT_TYPE_INPUT:
+		return "input";
+	case HOG_REPORT_TYPE_OUTPUT:
+		return "output";
+	case HOG_REPORT_TYPE_FEATURE:
+		return "feature";
+	}
+
+	return NULL;
+}
+
 static void report_reference_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data)
 {
@@ -389,7 +404,9 @@ static void report_reference_cb(guint8 status, const guint8 *pdu,
 
 	report->id = pdu[1];
 	report->type = pdu[2];
-	DBG("Report ID: 0x%02x Report type: 0x%02x", pdu[1], pdu[2]);
+
+	DBG("Report 0x%04x: id 0x%02x type %s", report->decl->value_handle,
+				report->id, type_to_string(report->type));
 
 	/* Enable notifications only for Input Reports */
 	if (report->type == HOG_REPORT_TYPE_INPUT)
@@ -496,9 +513,23 @@ static void report_read_cb(guint8 status, const guint8 *pdu, guint16 len,
 	report->len = len;
 }
 
+static int report_chrc_cmp(const void *data, const void *user_data)
+{
+	const struct report *report = data;
+	const struct gatt_char *decl = user_data;
+
+	return report->decl->handle - decl->handle;
+}
+
 static struct report *report_new(struct bt_hog *hog, struct gatt_char *chr)
 {
 	struct report *report;
+	GSList *l;
+
+	/* Skip if report already exists */
+	l = g_slist_find_custom(hog->reports, chr, report_chrc_cmp);
+	if (l)
+		return l->data;
 
 	report = g_new0(struct report, 1);
 	report->hog = hog;
@@ -939,6 +970,8 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	destroy_gatt_req(req);
 
+	DBG("HoG inspecting report map");
+
 	if (status != 0) {
 		error("Report Map read failed: %s", att_ecode2str(status));
 		return;
@@ -1006,6 +1039,10 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	bt_uhid_register(hog->uhid, UHID_FEATURE, get_feature, hog);
 	bt_uhid_register(hog->uhid, UHID_GET_REPORT, get_report, hog);
 	bt_uhid_register(hog->uhid, UHID_SET_REPORT, set_report, hog);
+
+	hog->uhid_created = true;
+
+	DBG("HoG created uHID device");
 }
 
 static void info_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -1084,6 +1121,8 @@ static void char_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 
 	destroy_gatt_req(req);
 
+	DBG("HoG inspecting characteristics");
+
 	if (status != 0) {
 		const char *str = att_ecode2str(status);
 		DBG("Discover all characteristics failed: %s", str);
@@ -1116,6 +1155,7 @@ static void char_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 			report = report_new(hog, chr);
 			discover_report(hog, hog->attrib, start, end, report);
 		} else if (bt_uuid_cmp(&uuid, &report_map_uuid) == 0) {
+			DBG("HoG discovering report map");
 			read_char(hog, hog->attrib, chr->value_handle,
 						report_map_read_cb, hog);
 			discover_external(hog, hog->attrib, start, end, hog);
@@ -1299,8 +1339,6 @@ static void hog_attach_bas(struct bt_hog *hog, struct gatt_primary *primary)
 	struct bt_bas *instance;
 
 	instance = bt_bas_new(primary);
-	if (!instance)
-		return;
 
 	bt_bas_attach(instance, hog->attrib);
 	queue_push_head(hog->bas, instance);
@@ -1406,7 +1444,8 @@ bool bt_hog_attach(struct bt_hog *hog, void *gatt)
 		bt_hog_attach(instance, gatt);
 	}
 
-	if (hog->reports == NULL) {
+	if (!hog->uhid_created) {
+		DBG("HoG discovering characteristics");
 		discover_char(hog, hog->attrib, primary->range.start,
 						primary->range.end, NULL,
 						char_discovered_cb, hog);

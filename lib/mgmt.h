@@ -515,6 +515,21 @@ struct mgmt_rp_remove_advertising {
 	uint8_t instance;
 } __packed;
 
+#define MGMT_OP_GET_ADV_SIZE_INFO	0x0040
+struct mgmt_cp_get_adv_size_info {
+	uint8_t  instance;
+	uint32_t flags;
+} __packed;
+#define MGMT_GET_ADV_SIZE_INFO_SIZE	5
+struct mgmt_rp_get_adv_size_info {
+	uint8_t  instance;
+	uint32_t flags;
+	uint8_t  max_adv_data_len;
+	uint8_t  max_scan_rsp_len;
+} __packed;
+
+#define MGMT_OP_START_LIMITED_DISCOVERY	0x0041
+
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
 	uint16_t opcode;
@@ -792,6 +807,8 @@ static const char *mgmt_op[] = {
 	"Read Advertising Features",
 	"Add Advertising",
 	"Remove Advertising",
+	"Get Advertising Size Information",		/* 0x0040 */
+	"Start Limited Discovery",
 };
 
 static const char *mgmt_ev[] = {
@@ -803,7 +820,7 @@ static const char *mgmt_ev[] = {
 	"Index Removed",
 	"New Settings",
 	"Class of Device Changed",
-	"Local Name Changed",		/* 0x0008 */
+	"Local Name Changed",				/* 0x0008 */
 	"New Link Key",
 	"New Long Term Key",
 	"Device Connected",
@@ -811,7 +828,7 @@ static const char *mgmt_ev[] = {
 	"Connect Failed",
 	"PIN Code Request",
 	"User Confirm Request",
-	"User Passkey Request",		/* 0x0010 */
+	"User Passkey Request",				/* 0x0010 */
 	"Authentication Failed",
 	"Device Found",
 	"Discovering",
@@ -819,7 +836,7 @@ static const char *mgmt_ev[] = {
 	"Device Unblocked",
 	"Device Unpaired",
 	"Passkey Notify",
-	"New Identity Resolving Key",
+	"New Identity Resolving Key",			/* 0x0018 */
 	"New Signature Resolving Key",
 	"Device Added",
 	"Device Removed",
@@ -827,7 +844,7 @@ static const char *mgmt_ev[] = {
 	"Unconfigured Index Added",
 	"Unconfigured Index Removed",
 	"New Configuration Options",
-	"Extended Index Added",
+	"Extended Index Added",				/* 0x0020 */
 	"Extended Index Removed",
 	"Local Out Of Band Extended Data Updated",
 	"Advertising Added",

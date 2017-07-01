@@ -1,8 +1,10 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
-import argparse
 import dbus
-import gobject
+try:
+  from gi.repository import GObject
+except ImportError:
+  import gobject as GObject
 import sys
 
 from dbus.mainloop.glib import DBusGMainLoop
@@ -111,7 +113,7 @@ def hr_msrmt_changed_cb(iface, changed_props, invalidated_props):
 
 def start_client():
     # Read the Body Sensor Location value and print it asynchronously.
-    body_snsr_loc_chrc[0].ReadValue(reply_handler=body_sensor_val_cb,
+    body_snsr_loc_chrc[0].ReadValue({}, reply_handler=body_sensor_val_cb,
                                     error_handler=generic_error_cb,
                                     dbus_interface=GATT_CHRC_IFACE)
 
@@ -149,7 +151,7 @@ def process_chrc(chrc_path):
     return True
 
 
-def process_hr_service(service_path):
+def process_hr_service(service_path, chrc_paths):
     service = bus.get_object(BLUEZ_SERVICE_NAME, service_path)
     service_props = service.GetAll(GATT_SERVICE_IFACE,
                                    dbus_interface=DBUS_PROP_IFACE)
@@ -157,11 +159,11 @@ def process_hr_service(service_path):
     uuid = service_props['UUID']
 
     if uuid != HR_SVC_UUID:
-        print('Service is not a Heart Rate Service: ' + uuid)
         return False
 
+    print('Heart Rate Service found: ' + service_path)
+
     # Process the characteristics.
-    chrc_paths = service_props['Characteristics']
     for chrc_path in chrc_paths:
         process_chrc(chrc_path)
 
@@ -181,33 +183,36 @@ def interfaces_removed_cb(object_path, interfaces):
 
 
 def main():
-    # Prase the service path from the arguments.
-    parser = argparse.ArgumentParser(
-            description='D-Bus Heart Rate Service client example')
-    parser.add_argument('service_path', metavar='<service-path>',
-                        type=dbus.ObjectPath, nargs=1,
-                        help='GATT service object path')
-    args = parser.parse_args()
-    service_path = args.service_path[0]
-
     # Set up the main loop.
     DBusGMainLoop(set_as_default=True)
     global bus
     bus = dbus.SystemBus()
     global mainloop
-    mainloop = gobject.MainLoop()
+    mainloop = GObject.MainLoop()
 
     om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, '/'), DBUS_OM_IFACE)
     om.connect_to_signal('InterfacesRemoved', interfaces_removed_cb)
 
-    try:
-        if not process_hr_service(service_path):
-            sys.exit(1)
-    except dbus.DBusException as e:
-        print e.message
-        sys.exit(1)
+    objects = om.GetManagedObjects()
+    chrcs = []
 
-    print 'Heart Rate Service ready'
+    for path, interfaces in objects.items():
+        if GATT_CHRC_IFACE not in interfaces.keys():
+            continue
+        chrcs.append(path)
+
+    for path, interfaces in objects.items():
+        if GATT_SERVICE_IFACE not in interfaces.keys():
+            continue
+
+        chrc_paths = [d for d in chrcs if d.startswith(path + "/")]
+
+        if process_hr_service(path, chrc_paths):
+            break
+
+    if not hr_service:
+        print('No Heart Rate Service found')
+        sys.exit(1)
 
     start_client()
 

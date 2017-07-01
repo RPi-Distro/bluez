@@ -258,7 +258,8 @@ static DBusHandlerResult process_message(DBusConnection *connection,
 
 	reply = method->function(connection, message, iface_user_data);
 
-	if (method->flags & G_DBUS_METHOD_FLAG_NOREPLY) {
+	if (method->flags & G_DBUS_METHOD_FLAG_NOREPLY ||
+					dbus_message_get_no_reply(message)) {
 		if (reply != NULL)
 			dbus_message_unref(reply);
 		return DBUS_HANDLER_RESULT_HANDLED;
@@ -634,10 +635,18 @@ static gboolean g_dbus_args_have_signature(const GDBusArgInfo *args,
 
 static void add_pending(struct generic_data *data)
 {
-	if (data->process_id > 0)
-		return;
+	guint old_id = data->process_id;
 
 	data->process_id = g_idle_add(process_changes, data);
+
+	if (old_id > 0) {
+		/*
+		 * If the element already had an old idler, remove the old one,
+		 * no need to re-add it to the pending list.
+		 */
+		g_source_remove(old_id);
+		return;
+	}
 
 	pending = g_slist_append(pending, data);
 }

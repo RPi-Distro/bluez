@@ -80,7 +80,7 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:9:18
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:12:18
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -118,7 +118,8 @@ shared_sources = src/shared/io.h src/shared/timeout.h \
 			src/shared/gatt-client.h src/shared/gatt-client.c \
 			src/shared/gatt-server.h src/shared/gatt-server.c \
 			src/shared/gatt-db.h src/shared/gatt-db.c \
-			src/shared/gap.h src/shared/gap.c
+			src/shared/gap.h src/shared/gap.c \
+			src/shared/tty.h
 
 src_libshared_glib_la_SOURCES = $(shared_sources) \
 				src/shared/io-glib.c \
@@ -163,6 +164,7 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			$(attrib_sources) $(btio_sources) \
 			src/bluetooth.ver \
 			src/main.c src/log.h src/log.c \
+			src/backtrace.h src/backtrace.c \
 			src/systemd.h src/systemd.c \
 			src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
@@ -189,7 +191,7 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 src_bluetoothd_LDADD = lib/libbluetooth-internal.la \
 			gdbus/libgdbus-internal.la \
 			src/libshared-glib.la \
-			@GLIB_LIBS@ @DBUS_LIBS@ -ldl -lrt
+			@BACKTRACE_LIBS@ @GLIB_LIBS@ @DBUS_LIBS@ -ldl -lrt
 src_bluetoothd_LDFLAGS = $(AM_LDFLAGS) -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/bluetooth.ver
 
@@ -259,6 +261,8 @@ EXTRA_DIST += doc/obex-api.txt doc/obex-agent-api.txt
 
 EXTRA_DIST += doc/pics-opp.txt doc/pixit-opp.txt \
 		doc/pts-opp.txt
+
+EXTRA_DIST += doc/btsnoop.txt
 
 EXTRA_DIST += tools/magic.btsnoop
 
@@ -399,10 +403,10 @@ unit_tests += unit/test-hog
 
 unit_test_hog_SOURCES = unit/test-hog.c \
 			$(btio_sources) \
-			android/hog.h android/hog.c \
-			android/scpp.h android/scpp.c \
-			android/bas.h android/bas.c \
-			android/dis.h android/dis.c \
+			profiles/input/hog-lib.h profiles/input/hog-lib.c \
+			profiles/scanparam/scpp.h profiles/scanparam/scpp.c \
+			profiles/battery/bas.h profiles/battery/bas.c \
+			profiles/deviceinfo/dis.h profiles/deviceinfo/dis.c \
 			src/log.h src/log.c \
 			attrib/att.h attrib/att.c \
 			attrib/gatt.h attrib/gatt.c \

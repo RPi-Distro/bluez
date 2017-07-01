@@ -139,7 +139,7 @@ static void data_callback(int fd, uint32_t events, void *user_data)
 
 		flags = get_flags_from_opcode(opcode);
 		if (flags != 0xff)
-			btsnoop_write(snoop, tv, flags, monitor_buf, pktlen);
+			btsnoop_write(snoop, tv, flags, 0, monitor_buf, pktlen);
 	}
 }
 
@@ -148,7 +148,7 @@ static int open_monitor(const char *path)
 	struct sockaddr_hci addr;
 	int opt = 1;
 
-	snoop = btsnoop_create(path, BTSNOOP_TYPE_HCI);
+	snoop = btsnoop_create(path, BTSNOOP_FORMAT_HCI);
 	if (!snoop)
 		return -1;
 

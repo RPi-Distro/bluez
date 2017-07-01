@@ -87,6 +87,7 @@
 #define COLOR_PHY_PACKET		COLOR_BLUE
 
 static time_t time_offset = ((time_t) -1);
+static int priority_level = BTSNOOP_PRIORITY_INFO;
 static unsigned long filter_mask = 0;
 static bool index_filter = false;
 static uint16_t index_number = 0;
@@ -157,6 +158,17 @@ void packet_add_filter(unsigned long filter)
 void packet_del_filter(unsigned long filter)
 {
 	filter_mask &= ~filter;
+}
+
+void packet_set_priority(const char *priority)
+{
+	if (!priority)
+		return;
+
+	if (!strcasecmp(priority, "debug"))
+		priority_level = BTSNOOP_PRIORITY_DEBUG;
+	else
+		priority_level = atoi(priority);
 }
 
 void packet_select_index(uint16_t index)
@@ -245,7 +257,7 @@ static void print_packet(struct timeval *tv, struct ucred *cred,
 			pos += n;
 	}
 
-	n = sprintf(line + pos, "%c %s", ident, label);
+	n = sprintf(line + pos, "%c %s", ident, label ? label : "");
 	if (n > 0) {
 		pos += n;
 		len += n;
@@ -255,7 +267,8 @@ static void print_packet(struct timeval *tv, struct ucred *cred,
 		int extra_len = extra ? strlen(extra) : 0;
 		int max_len = col - len - extra_len - ts_len - 3;
 
-		n = snprintf(line + pos, max_len + 1, ": %s", text);
+		n = snprintf(line + pos, max_len + 1, "%s%s",
+						label ? ": " : "", text);
 		if (n > max_len) {
 			line[pos + max_len - 1] = '.';
 			line[pos + max_len - 2] = '.';
@@ -1857,7 +1870,9 @@ static void print_randomizer_p256(const uint8_t *randomizer)
 
 static void print_pk256(const char *label, const uint8_t *key)
 {
-	print_hex_field(label, key, 64);
+	print_field("%s:", label);
+	print_hex_field("  X", &key[0], 32);
+	print_hex_field("  Y", &key[32], 32);
 }
 
 static void print_dhkey(const uint8_t *dhkey)
@@ -3689,8 +3704,10 @@ void packet_monitor(struct timeval *tv, struct ucred *cred,
 {
 	const struct btsnoop_opcode_new_index *ni;
 	const struct btsnoop_opcode_index_info *ii;
+	const struct btsnoop_opcode_user_logging *ul;
 	char str[18], extra_str[24];
 	uint16_t manufacturer;
+	const char *ident;
 
 	if (index_filter && index_number != index)
 		return;
@@ -3774,6 +3791,16 @@ void packet_monitor(struct timeval *tv, struct ucred *cred,
 			manufacturer = UNKNOWN_MANUFACTURER;
 
 		packet_vendor_diag(tv, index, manufacturer, data, size);
+		break;
+	case BTSNOOP_OPCODE_SYSTEM_NOTE:
+		packet_system_note(tv, cred, index, data);
+		break;
+	case BTSNOOP_OPCODE_USER_LOGGING:
+		ul = data;
+		ident = ul->ident_len ? data + sizeof(*ul) : NULL;
+
+		packet_user_logging(tv, cred, index, ul->priority, ident,
+					data + sizeof(*ul) + ul->ident_len);
 		break;
 	default:
 		sprintf(extra_str, "(code %d len %d)", opcode, size);
@@ -8350,23 +8377,17 @@ struct subevent_data {
 static void print_subevent(const struct subevent_data *subevent_data,
 					const void *data, uint8_t size)
 {
-	const char *subevent_color, *subevent_str;
+	const char *subevent_color;
 
-	if (subevent_data) {
-		if (subevent_data->func)
-			subevent_color = COLOR_HCI_EVENT;
-		else
-			subevent_color = COLOR_HCI_EVENT_UNKNOWN;
-		subevent_str = subevent_data->str;
-	} else {
+	if (subevent_data->func)
+		subevent_color = COLOR_HCI_EVENT;
+	else
 		subevent_color = COLOR_HCI_EVENT_UNKNOWN;
-		subevent_str = "Unknown";
-	}
 
-	print_indent(6, subevent_color, "", subevent_str, COLOR_OFF,
+	print_indent(6, subevent_color, "", subevent_data->str, COLOR_OFF,
 					" (0x%2.2x)", subevent_data->subevent);
 
-	if (!subevent_data || !subevent_data->func) {
+	if (!subevent_data->func) {
 		packet_hexdump(data, size);
 		return;
 	}
@@ -8417,8 +8438,15 @@ static const struct subevent_data le_meta_event_table[] = {
 static void le_meta_event_evt(const void *data, uint8_t size)
 {
 	uint8_t subevent = *((const uint8_t *) data);
-	const struct subevent_data *subevent_data = NULL;
+	struct subevent_data unknown;
+	const struct subevent_data *subevent_data = &unknown;
 	int i;
+
+	unknown.subevent = subevent;
+	unknown.str = "Unknown";
+	unknown.func = NULL;
+	unknown.size = 0;
+	unknown.fixed = true;
 
 	for (i = 0; le_meta_event_table[i].str; i++) {
 		if (le_meta_event_table[i].subevent == subevent) {
@@ -8446,6 +8474,7 @@ static void vendor_evt(const void *data, uint8_t size)
 			vendor_data.str = vendor_str;
 		} else
 			vendor_data.str = vnd->str;
+		vendor_data.subevent = subevent;
 		vendor_data.func = vnd->evt_func;
 		vendor_data.size = vnd->evt_size;
 		vendor_data.fixed = vnd->evt_fixed;
@@ -8686,6 +8715,72 @@ void packet_vendor_diag(struct timeval *tv, uint16_t index,
 		packet_hexdump(data, size);
 		break;
 	}
+}
+
+void packet_system_note(struct timeval *tv, struct ucred *cred,
+					uint16_t index, const void *message)
+{
+	print_packet(tv, cred, index, '=', COLOR_INFO, "Note", message, NULL);
+}
+
+void packet_user_logging(struct timeval *tv, struct ucred *cred,
+					uint16_t index, uint8_t priority,
+					const char *ident, const char *message)
+{
+	char pid_str[128];
+	const char *label;
+	const char *color;
+
+	if (priority > priority_level)
+		return;
+
+	switch (priority) {
+	case BTSNOOP_PRIORITY_ERR:
+		color = COLOR_ERROR;
+		break;
+	case BTSNOOP_PRIORITY_WARNING:
+		color = COLOR_WARN;
+		break;
+	case BTSNOOP_PRIORITY_INFO:
+		color = COLOR_INFO;
+		break;
+	case BTSNOOP_PRIORITY_DEBUG:
+		color = COLOR_DEBUG;
+		break;
+	default:
+		color = COLOR_WHITE_BG;
+		break;
+	}
+
+	if (cred) {
+		char *path = alloca(24);
+		char line[128];
+		FILE *fp;
+
+		snprintf(path, 23, "/proc/%u/comm", cred->pid);
+
+		fp = fopen(path, "re");
+		if (fp) {
+			if (fgets(line, sizeof(line), fp)) {
+				line[strcspn(line, "\r\n")] = '\0';
+				snprintf(pid_str, sizeof(pid_str), "%s[%u]",
+							line, cred->pid);
+			} else
+				snprintf(pid_str, sizeof(pid_str), "%u",
+								cred->pid);
+			fclose(fp);
+		} else
+			snprintf(pid_str, sizeof(pid_str), "%u", cred->pid);
+
+		label = pid_str;
+        } else {
+		if (ident)
+			label = ident;
+		else
+			label = "Message";
+	}
+
+	print_packet(tv, cred, index, '=', color, label, message, NULL);
 }
 
 void packet_hci_command(struct timeval *tv, struct ucred *cred, uint16_t index,

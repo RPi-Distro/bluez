@@ -23,6 +23,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include <dbus/dbus.h>
 
@@ -71,9 +72,6 @@ struct service {
 	bt_uuid_t uuid;
 	char *path;
 	struct queue *chrcs;
-	bool chrcs_ready;
-	struct queue *pending_ext_props;
-	guint idle_id;
 };
 
 struct characteristic {
@@ -194,33 +192,17 @@ static gboolean descriptor_value_exists(const GDBusPropertyTable *property,
 	return ret;
 }
 
-static bool parse_value_arg(DBusMessage *msg, uint8_t **value,
-							size_t *value_len)
+static int parse_value_arg(DBusMessageIter *iter, uint8_t **value, int *len)
 {
-	DBusMessageIter iter, array;
-	uint8_t *val;
-	int len;
+	DBusMessageIter array;
 
-	if (!dbus_message_iter_init(msg, &iter))
-		return false;
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
+		return -EINVAL;
 
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
-		return false;
+	dbus_message_iter_recurse(iter, &array);
+	dbus_message_iter_get_fixed_array(&array, value, len);
 
-	dbus_message_iter_recurse(&iter, &array);
-	dbus_message_iter_get_fixed_array(&array, &val, &len);
-	dbus_message_iter_next(&iter);
-
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_INVALID)
-		return false;
-
-	if (len < 0)
-		return false;
-
-	*value = val;
-	*value_len = len;
-
-	return true;
+	return 0;
 }
 
 typedef bool (*async_dbus_op_complete_t)(void *data);
@@ -393,12 +375,60 @@ fail:
 	return;
 }
 
+static int parse_options(DBusMessageIter *iter, uint16_t *offset)
+{
+	DBusMessageIter dict;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
+		return -EINVAL;
+
+	dbus_message_iter_recurse(iter, &dict);
+
+	while (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_DICT_ENTRY) {
+		const char *key;
+		DBusMessageIter value, entry;
+		int var;
+
+		dbus_message_iter_recurse(&dict, &entry);
+		dbus_message_iter_get_basic(&entry, &key);
+
+		dbus_message_iter_next(&entry);
+		dbus_message_iter_recurse(&entry, &value);
+
+		var = dbus_message_iter_get_arg_type(&value);
+		if (strcasecmp(key, "offset") == 0) {
+			if (var != DBUS_TYPE_UINT16)
+				return -EINVAL;
+			dbus_message_iter_get_basic(&value, offset);
+		}
+	}
+
+	return 0;
+}
+
+static unsigned int read_value(struct bt_gatt_client *gatt, uint16_t handle,
+				bt_gatt_client_read_callback_t callback,
+				struct async_dbus_op *op)
+{
+	if (op->offset)
+		return bt_gatt_client_read_long_value(gatt, handle, op->offset,
+							callback,
+							async_dbus_op_ref(op),
+							async_dbus_op_unref);
+	else
+		return bt_gatt_client_read_value(gatt, handle, callback,
+							async_dbus_op_ref(op),
+							async_dbus_op_unref);
+}
+
 static DBusMessage *descriptor_read_value(DBusConnection *conn,
 					DBusMessage *msg, void *user_data)
 {
 	struct descriptor *desc = user_data;
 	struct bt_gatt_client *gatt = desc->chrc->service->client->gatt;
+	DBusMessageIter iter;
 	struct async_dbus_op *op;
+	uint16_t offset = 0;
 
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
@@ -406,17 +436,17 @@ static DBusMessage *descriptor_read_value(DBusConnection *conn,
 	if (desc->read_id)
 		return btd_error_in_progress(msg);
 
-	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		return btd_error_failed(msg, "Failed to initialize request");
+	dbus_message_iter_init(msg, &iter);
 
+	if (parse_options(&iter, &offset))
+		return btd_error_invalid_args(msg);
+
+	op = new0(struct async_dbus_op, 1);
 	op->msg = dbus_message_ref(msg);
 	op->data = desc;
+	op->offset = offset;
 
-	desc->read_id = bt_gatt_client_read_value(gatt, desc->handle,
-							desc_read_cb,
-							async_dbus_op_ref(op),
-							async_dbus_op_unref);
+	desc->read_id = read_value(gatt, desc->handle, desc_read_cb, op);
 	if (desc->read_id)
 		return NULL;
 
@@ -456,7 +486,6 @@ done:
 	g_dbus_send_message(btd_get_dbus_connection(), reply);
 }
 
-
 static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 {
 	write_result_cb(success, false, att_ecode, user_data);
@@ -465,22 +494,21 @@ static void write_cb(bool success, uint8_t att_ecode, void *user_data)
 static unsigned int start_long_write(DBusMessage *msg, uint16_t handle,
 					struct bt_gatt_client *gatt,
 					bool reliable, const uint8_t *value,
-					size_t value_len, void *data,
+					size_t value_len, uint16_t offset,
+					void *data,
 					async_dbus_op_complete_t complete)
 {
 	struct async_dbus_op *op;
 	unsigned int id;
 
 	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		return false;
-
 	op->msg = dbus_message_ref(msg);
 	op->data = data;
 	op->complete = complete;
+	op->offset = offset;
 
-	id = bt_gatt_client_write_long_value(gatt, reliable, handle,
-							0, value, value_len,
+	id = bt_gatt_client_write_long_value(gatt, reliable, handle, offset,
+							value, value_len,
 							write_result_cb, op,
 							async_dbus_op_free);
 
@@ -500,9 +528,6 @@ static unsigned int start_write_request(DBusMessage *msg, uint16_t handle,
 	unsigned int id;
 
 	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		return false;
-
 	op->msg = dbus_message_ref(msg);
 	op->data = data;
 	op->complete = complete;
@@ -534,8 +559,10 @@ static DBusMessage *descriptor_write_value(DBusConnection *conn,
 {
 	struct descriptor *desc = user_data;
 	struct bt_gatt_client *gatt = desc->chrc->service->client->gatt;
+	DBusMessageIter iter;
 	uint8_t *value = NULL;
-	size_t value_len = 0;
+	int value_len = 0;
+	uint16_t offset = 0;
 
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
@@ -543,7 +570,12 @@ static DBusMessage *descriptor_write_value(DBusConnection *conn,
 	if (desc->write_id)
 		return btd_error_in_progress(msg);
 
-	if (!parse_value_arg(msg, &value, &value_len))
+	dbus_message_iter_init(msg, &iter);
+
+	if (parse_value_arg(&iter, &value, &value_len))
+		return btd_error_invalid_args(msg);
+
+	if (parse_options(&iter, &offset))
 		return btd_error_invalid_args(msg);
 
 	/*
@@ -558,15 +590,15 @@ static DBusMessage *descriptor_write_value(DBusConnection *conn,
 	 * Based on the value length and the MTU, either use a write or a long
 	 * write.
 	 */
-	if (value_len <= (unsigned) bt_gatt_client_get_mtu(gatt) - 3)
+	if (value_len <= bt_gatt_client_get_mtu(gatt) - 3 && !offset)
 		desc->write_id = start_write_request(msg, desc->handle,
 							gatt, value,
 							value_len, desc,
 							desc_write_complete);
 	else
-		desc->write_id = start_long_write(msg, desc->handle,
-							gatt, false, value,
-							value_len, desc,
+		desc->write_id = start_long_write(msg, desc->handle, gatt,
+							false, value,
+							value_len, offset, desc,
 							desc_write_complete);
 
 	if (!desc->write_id)
@@ -586,13 +618,15 @@ static const GDBusPropertyTable descriptor_properties[] = {
 };
 
 static const GDBusMethodTable descriptor_methods[] = {
-	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ReadValue", NULL,
-						GDBUS_ARGS({ "value", "ay" }),
-						descriptor_read_value) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ReadValue",
+					GDBUS_ARGS({ "options", "a{sv}" }),
+					GDBUS_ARGS({ "value", "ay" }),
+					descriptor_read_value) },
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("WriteValue",
-						GDBUS_ARGS({ "value", "ay" }),
-						NULL,
-						descriptor_write_value) },
+					GDBUS_ARGS({ "value", "ay" },
+						{ "options", "a{sv}" }),
+					NULL,
+					descriptor_write_value) },
 	{ }
 };
 
@@ -610,9 +644,6 @@ static struct descriptor *descriptor_create(struct gatt_db_attribute *attr,
 	struct descriptor *desc;
 
 	desc = new0(struct descriptor, 1);
-	if (!desc)
-		return NULL;
-
 	desc->chrc = chrc;
 	desc->attr = attr;
 	desc->handle = gatt_db_attribute_get_handle(attr);
@@ -719,6 +750,15 @@ static gboolean characteristic_get_notifying(const GDBusPropertyTable *property,
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &notifying);
 
 	return TRUE;
+}
+
+static gboolean
+characteristic_notifying_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct characteristic *chrc = data;
+
+	return (chrc->props & BT_GATT_CHRC_PROP_NOTIFY ||
+				chrc->props & BT_GATT_CHRC_PROP_INDICATE);
 }
 
 struct chrc_prop_data {
@@ -843,7 +883,9 @@ static DBusMessage *characteristic_read_value(DBusConnection *conn,
 {
 	struct characteristic *chrc = user_data;
 	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	DBusMessageIter iter;
 	struct async_dbus_op *op;
+	uint16_t offset = 0;
 
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
@@ -851,17 +893,17 @@ static DBusMessage *characteristic_read_value(DBusConnection *conn,
 	if (chrc->read_id)
 		return btd_error_in_progress(msg);
 
-	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		return btd_error_failed(msg, "Failed to initialize request");
+	dbus_message_iter_init(msg, &iter);
 
+	if (parse_options(&iter, &offset))
+		return btd_error_invalid_args(msg);
+
+	op = new0(struct async_dbus_op, 1);
 	op->msg = dbus_message_ref(msg);
 	op->data = chrc;
+	op->offset = offset;
 
-	chrc->read_id = bt_gatt_client_read_value(gatt, chrc->value_handle,
-							chrc_read_cb,
-							async_dbus_op_ref(op),
-							async_dbus_op_unref);
+	chrc->read_id = read_value(gatt, chrc->value_handle, chrc_read_cb, op);
 	if (chrc->read_id)
 		return NULL;
 
@@ -888,9 +930,11 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 {
 	struct characteristic *chrc = user_data;
 	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	DBusMessageIter iter;
 	uint8_t *value = NULL;
-	size_t value_len = 0;
+	int value_len = 0;
 	bool supported = false;
+	uint16_t offset = 0;
 
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
@@ -898,7 +942,12 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 	if (chrc->write_id)
 		return btd_error_in_progress(msg);
 
-	if (!parse_value_arg(msg, &value, &value_len))
+	dbus_message_iter_init(msg, &iter);
+
+	if (parse_value_arg(&iter, &value, &value_len))
+		return btd_error_invalid_args(msg);
+
+	if (parse_options(&iter, &offset))
 		return btd_error_invalid_args(msg);
 
 	/*
@@ -915,7 +964,7 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 	if ((chrc->ext_props & BT_GATT_CHRC_EXT_PROP_RELIABLE_WRITE)) {
 		supported = true;
 		chrc->write_id = start_long_write(msg, chrc->value_handle, gatt,
-						true, value, value_len,
+						true, value, value_len, offset,
 						chrc, chrc_write_complete);
 		if (chrc->write_id)
 			return NULL;
@@ -929,7 +978,7 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 		if (!mtu)
 			return btd_error_failed(msg, "No ATT transport");
 
-		if (value_len <= (unsigned) mtu - 3)
+		if (value_len <= mtu - 3 && !offset)
 			chrc->write_id = start_write_request(msg,
 						chrc->value_handle,
 						gatt, value, value_len,
@@ -937,7 +986,7 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 		else
 			chrc->write_id = start_long_write(msg,
 						chrc->value_handle, gatt,
-						false, value, value_len,
+						false, value, value_len, offset,
 						chrc, chrc_write_complete);
 
 		if (chrc->write_id)
@@ -1045,9 +1094,6 @@ static struct notify_client *notify_client_create(struct characteristic *chrc,
 	struct notify_client *client;
 
 	client = new0(struct notify_client, 1);
-	if (!client)
-		return NULL;
-
 	client->chrc = chrc;
 	client->owner = strdup(owner);
 	if (!client->owner) {
@@ -1193,9 +1239,6 @@ static DBusMessage *characteristic_start_notify(DBusConnection *conn,
 	}
 
 	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		goto fail;
-
 	op->data = client;
 	op->msg = dbus_message_ref(msg);
 
@@ -1226,9 +1269,6 @@ static DBusMessage *characteristic_stop_notify(DBusConnection *conn,
 	const char *sender = dbus_message_get_sender(msg);
 	struct notify_client *client;
 
-	if (!chrc->notifying)
-		return btd_error_failed(msg, "Not notifying");
-
 	client = queue_remove_if(chrc->notify_clients, match_notify_sender,
 							(void *) sender);
 	if (!client)
@@ -1243,31 +1283,6 @@ static DBusMessage *characteristic_stop_notify(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
-static void append_desc_path(void *data, void *user_data)
-{
-	struct descriptor *desc = data;
-	DBusMessageIter *array = user_data;
-
-	dbus_message_iter_append_basic(array, DBUS_TYPE_OBJECT_PATH,
-								&desc->path);
-}
-
-static gboolean characteristic_get_descriptors(
-					const GDBusPropertyTable *property,
-					DBusMessageIter *iter, void *data)
-{
-	struct characteristic *chrc = data;
-	DBusMessageIter array;
-
-	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "o", &array);
-
-	queue_foreach(chrc->descs, append_desc_path, &array);
-
-	dbus_message_iter_close_container(iter, &array);
-
-	return TRUE;
-}
-
 static const GDBusPropertyTable characteristic_properties[] = {
 	{ "UUID", "s", characteristic_get_uuid, NULL, NULL,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
@@ -1276,27 +1291,28 @@ static const GDBusPropertyTable characteristic_properties[] = {
 	{ "Value", "ay", characteristic_get_value, NULL,
 					characteristic_value_exists,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
-	{ "Notifying", "b", characteristic_get_notifying, NULL, NULL,
+	{ "Notifying", "b", characteristic_get_notifying, NULL,
+					characteristic_notifying_exists,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ "Flags", "as", characteristic_get_flags, NULL, NULL,
-					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
-	{ "Descriptors", "ao", characteristic_get_descriptors, NULL, NULL,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
 
 static const GDBusMethodTable characteristic_methods[] = {
-	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ReadValue", NULL,
-						GDBUS_ARGS({ "value", "ay" }),
-						characteristic_read_value) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("ReadValue",
+					GDBUS_ARGS({ "options", "a{sv}" }),
+					GDBUS_ARGS({ "value", "ay" }),
+					characteristic_read_value) },
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("WriteValue",
-						GDBUS_ARGS({ "value", "ay" }),
-						NULL,
-						characteristic_write_value) },
+					GDBUS_ARGS({ "value", "ay" },
+						{ "options", "a{sv}" }),
+					NULL,
+					characteristic_write_value) },
 	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("StartNotify", NULL, NULL,
-						characteristic_start_notify) },
+					characteristic_start_notify) },
 	{ GDBUS_EXPERIMENTAL_METHOD("StopNotify", NULL, NULL,
-						characteristic_stop_notify) },
+					characteristic_stop_notify) },
 	{ }
 };
 
@@ -1320,27 +1336,15 @@ static struct characteristic *characteristic_create(
 	bt_uuid_t uuid;
 
 	chrc = new0(struct characteristic, 1);
-	if (!chrc)
-		return NULL;
-
 	chrc->descs = queue_new();
-	if (!chrc->descs) {
-		free(chrc);
-		return NULL;
-	}
-
 	chrc->notify_clients = queue_new();
-	if (!chrc->notify_clients) {
-		queue_destroy(chrc->descs, NULL);
-		free(chrc);
-		return NULL;
-	}
-
 	chrc->service = service;
 
 	gatt_db_attribute_get_char_data(attr, &chrc->handle,
 							&chrc->value_handle,
-							&chrc->props, &uuid);
+							&chrc->props,
+							&chrc->ext_props,
+							&uuid);
 
 	chrc->attr = gatt_db_get_attribute(service->client->db,
 							chrc->value_handle);
@@ -1439,39 +1443,12 @@ static gboolean service_get_primary(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
-static void append_chrc_path(void *data, void *user_data)
-{
-	struct characteristic *chrc = data;
-	DBusMessageIter *array = user_data;
-
-	dbus_message_iter_append_basic(array, DBUS_TYPE_OBJECT_PATH,
-								&chrc->path);
-}
-
-static gboolean service_get_characteristics(const GDBusPropertyTable *property,
-					DBusMessageIter *iter, void *data)
-{
-	struct service *service = data;
-	DBusMessageIter array;
-
-	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "o", &array);
-
-	if (service->chrcs_ready)
-		queue_foreach(service->chrcs, append_chrc_path, &array);
-
-	dbus_message_iter_close_container(iter, &array);
-
-	return TRUE;
-}
-
 static const GDBusPropertyTable service_properties[] = {
 	{ "UUID", "s", service_get_uuid, NULL, NULL,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ "Device", "o", service_get_device, NULL, NULL,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ "Primary", "b", service_get_primary, NULL, NULL,
-					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
-	{ "Characteristics", "ao", service_get_characteristics, NULL, NULL,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
@@ -1481,7 +1458,6 @@ static void service_free(void *data)
 	struct service *service = data;
 
 	queue_destroy(service->chrcs, NULL);  /* List should be empty here */
-	queue_destroy(service->pending_ext_props, NULL);
 	g_free(service->path);
 	free(service);
 }
@@ -1494,22 +1470,7 @@ static struct service *service_create(struct gatt_db_attribute *attr,
 	bt_uuid_t uuid;
 
 	service = new0(struct service, 1);
-	if (!service)
-		return NULL;
-
 	service->chrcs = queue_new();
-	if (!service->chrcs) {
-		free(service);
-		return NULL;
-	}
-
-	service->pending_ext_props = queue_new();
-	if (!service->pending_ext_props) {
-		queue_destroy(service->chrcs, NULL);
-		free(service);
-		return NULL;
-	}
-
 	service->client = client;
 
 	gatt_db_attribute_get_service_data(attr, &service->start_handle,
@@ -1552,27 +1513,10 @@ static void unregister_service(void *data)
 
 	DBG("Removing GATT service: %s", service->path);
 
-	if (service->idle_id)
-		g_source_remove(service->idle_id);
-
 	queue_remove_all(service->chrcs, NULL, NULL, unregister_characteristic);
 
 	g_dbus_unregister_interface(btd_get_dbus_connection(), service->path,
 							GATT_SERVICE_IFACE);
-}
-
-static void notify_chrcs(struct service *service)
-{
-
-	if (service->chrcs_ready ||
-				!queue_isempty(service->pending_ext_props))
-		return;
-
-	service->chrcs_ready = true;
-
-	g_dbus_emit_property_changed(btd_get_dbus_connection(), service->path,
-							GATT_SERVICE_IFACE,
-							"Characteristics");
 }
 
 struct export_data {
@@ -1596,46 +1540,6 @@ static void export_desc(struct gatt_db_attribute *attr, void *user_data)
 	}
 
 	queue_push_tail(charac->descs, desc);
-}
-
-static void read_ext_props_cb(bool success, uint8_t att_ecode,
-					const uint8_t *value, uint16_t length,
-					void *user_data)
-{
-	struct characteristic *chrc = user_data;
-	struct service *service = chrc->service;
-
-	if (!success) {
-		error("Failed to obtain extended properties - error: 0x%02x",
-								att_ecode);
-		return;
-	}
-
-	if (!value || length != 2) {
-		error("Malformed extended properties value");
-		return;
-	}
-
-	chrc->ext_props = get_le16(value);
-	if (chrc->ext_props)
-		g_dbus_emit_property_changed(btd_get_dbus_connection(),
-						chrc->path,
-						GATT_CHARACTERISTIC_IFACE,
-						"Flags");
-
-	queue_remove(service->pending_ext_props, chrc);
-
-	notify_chrcs(service);
-}
-
-static void read_ext_props(void *data, void *user_data)
-{
-	struct characteristic *chrc = data;
-
-	bt_gatt_client_read_value(chrc->service->client->gatt,
-							chrc->ext_props_handle,
-							read_ext_props_cb,
-							chrc, NULL);
 }
 
 static bool create_descriptors(struct gatt_db_attribute *attr,
@@ -1671,9 +1575,6 @@ static void export_char(struct gatt_db_attribute *attr, void *user_data)
 
 	queue_push_tail(service->chrcs, charac);
 
-	if (charac->ext_props_handle)
-		queue_push_tail(service->pending_ext_props, charac);
-
 	return;
 
 fail:
@@ -1690,22 +1591,7 @@ static bool create_characteristics(struct gatt_db_attribute *attr,
 
 	gatt_db_service_foreach_char(attr, export_char, &data);
 
-	if (data.failed)
-		return false;
-
-	/* Obtain extended properties */
-	queue_foreach(service->pending_ext_props, read_ext_props, NULL);
-
-	return true;
-}
-
-static gboolean set_chrcs_ready(gpointer user_data)
-{
-	struct service *service = user_data;
-
-	notify_chrcs(service);
-
-	return FALSE;
+	return !data.failed;
 }
 
 static void export_service(struct gatt_db_attribute *attr, void *user_data)
@@ -1727,18 +1613,16 @@ static void export_service(struct gatt_db_attribute *attr, void *user_data)
 	}
 
 	queue_push_tail(client->services, service);
-
-	/*
-	 * Asynchronously update the "Characteristics" property of the service.
-	 * If there are any pending reads to obtain the value of the "Extended
-	 * Properties" descriptor then wait until they are complete.
-	 */
-	if (!service->chrcs_ready && queue_isempty(service->pending_ext_props))
-		service->idle_id = g_idle_add(set_chrcs_ready, service);
 }
 
 static void create_services(struct btd_gatt_client *client)
 {
+	/* Don't attempt to create any objects if experimental is disabled */
+	if (!(g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL)) {
+		info("GATT service objects disabled");
+		return;
+	}
+
 	DBG("Exporting objects for GATT services: %s", client->devaddr);
 
 	gatt_db_foreach_service(client->db, NULL, export_service, client);
@@ -1757,22 +1641,8 @@ struct btd_gatt_client *btd_gatt_client_new(struct btd_device *device)
 		return NULL;
 
 	client = new0(struct btd_gatt_client, 1);
-	if (!client)
-		return NULL;
-
 	client->services = queue_new();
-	if (!client->services) {
-		free(client);
-		return NULL;
-	}
-
 	client->all_notify_clients = queue_new();
-	if (!client->all_notify_clients) {
-		queue_destroy(client->services, NULL);
-		free(client);
-		return NULL;
-	}
-
 	client->device = device;
 	ba2str(device_get_address(device), client->devaddr);
 
@@ -1802,9 +1672,6 @@ static void register_notify(void *data, void *user_data)
 	DBG("Re-register subscribed notification client");
 
 	op = new0(struct async_dbus_op, 1);
-	if (!op)
-		goto fail;
-
 	op->data = notify_client;
 
 	notify_client->notify_id = bt_gatt_client_register_notify(client->gatt,
@@ -1816,11 +1683,10 @@ static void register_notify(void *data, void *user_data)
 
 	async_dbus_op_free(op);
 
-fail:
 	DBG("Failed to re-register notification client");
 
-	queue_remove(notify_client->chrc->notify_clients, client);
-	queue_remove(client->all_notify_clients, client);
+	queue_remove(notify_client->chrc->notify_clients, notify_client);
+	queue_remove(client->all_notify_clients, notify_client);
 
 	notify_client_free(notify_client);
 }
@@ -1831,8 +1697,14 @@ void btd_gatt_client_ready(struct btd_gatt_client *client)
 		return;
 
 	if (!client->gatt) {
-		error("GATT client not initialized");
-		return;
+		struct bt_gatt_client *gatt;
+
+		gatt = btd_device_get_gatt_client(client->device);
+		client->gatt = bt_gatt_client_clone(gatt);
+		if (!client->gatt) {
+			error("GATT client not initialized");
+			return;
+		}
 	}
 
 	client->ready = true;
@@ -1855,7 +1727,7 @@ void btd_gatt_client_connected(struct btd_gatt_client *client)
 	DBG("Device connected.");
 
 	bt_gatt_client_unref(client->gatt);
-	client->gatt = bt_gatt_client_ref(gatt);
+	client->gatt = bt_gatt_client_clone(gatt);
 
 	/*
 	 * Services have already been created before. Re-enable notifications
@@ -1906,47 +1778,6 @@ static void clear_notify_id(void *data, void *user_data)
 	client->notify_id = 0;
 }
 
-static void cancel_desc_ops(void *data, void *user_data)
-{
-	struct descriptor *desc = data;
-	struct bt_gatt_client *gatt = user_data;
-
-	if (desc->read_id) {
-		bt_gatt_client_cancel(gatt, desc->read_id);
-		desc->read_id = 0;
-	}
-
-	if (desc->write_id) {
-		bt_gatt_client_cancel(gatt, desc->write_id);
-		desc->write_id = 0;
-	}
-}
-
-static void cancel_chrc_ops(void *data, void *user_data)
-{
-	struct characteristic *chrc = data;
-	struct bt_gatt_client *gatt = user_data;
-
-	if (chrc->read_id) {
-		bt_gatt_client_cancel(gatt, chrc->read_id);
-		chrc->read_id = 0;
-	}
-
-	if (chrc->write_id) {
-		bt_gatt_client_cancel(gatt, chrc->write_id);
-		chrc->write_id = 0;
-	}
-
-	queue_foreach(chrc->descs, cancel_desc_ops, user_data);
-}
-
-static void cancel_ops(void *data, void *user_data)
-{
-	struct service *service = data;
-
-	queue_foreach(service->chrcs, cancel_chrc_ops, user_data);
-}
-
 void btd_gatt_client_disconnected(struct btd_gatt_client *client)
 {
 	if (!client || !client->gatt)
@@ -1960,7 +1791,6 @@ void btd_gatt_client_disconnected(struct btd_gatt_client *client)
 	 * done.
 	 */
 	queue_foreach(client->all_notify_clients, clear_notify_id, NULL);
-	queue_foreach(client->services, cancel_ops, client->gatt);
 
 	bt_gatt_client_unref(client->gatt);
 	client->gatt = NULL;

@@ -27,6 +27,8 @@ monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
 				monitor/l2cap.h monitor/l2cap.c \
 				monitor/sdp.h monitor/sdp.c \
 				monitor/avctp.h monitor/avctp.c \
+				monitor/avdtp.h monitor/avdtp.c \
+				monitor/a2dp.h monitor/a2dp.c \
 				monitor/rfcomm.h monitor/rfcomm.c \
 				monitor/bnep.h monitor/bnep.c \
 				monitor/uuid.h monitor/uuid.c \
@@ -34,7 +36,8 @@ monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
 				monitor/keys.h monitor/keys.c \
 				monitor/analyze.h monitor/analyze.c \
 				monitor/intel.h monitor/intel.c \
-				monitor/broadcom.h monitor/broadcom.c
+				monitor/broadcom.h monitor/broadcom.c \
+				monitor/tty.h
 monitor_btmon_LDADD = lib/libbluetooth-internal.la \
 				src/libshared-mainloop.la @UDEV_LIBS@
 endif
@@ -248,10 +251,12 @@ EXTRA_DIST += tools/hid2hci.1
 endif
 
 if EXPERIMENTAL
+bin_PROGRAMS += tools/btattach
+
 noinst_PROGRAMS += tools/bdaddr tools/avinfo tools/avtest \
 			tools/scotest tools/amptest tools/hwdb \
 			tools/hcieventmask tools/hcisecfilter \
-			tools/btinfo tools/btattach \
+			tools/btinfo \
 			tools/btsnoop tools/btproxy \
 			tools/btiotest tools/bneptest tools/mcaptest \
 			tools/cltest tools/oobtest tools/seq2bseq \
@@ -294,7 +299,7 @@ tools_mcaptest_SOURCES = tools/mcaptest.c \
 				btio/btio.h btio/btio.c \
 				src/log.c src/log.h \
 				profiles/health/mcap.h profiles/health/mcap.c
-tools_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
+tools_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@ -lrt
 
 tools_bneptest_SOURCES = tools/bneptest.c \
 				btio/btio.h btio/btio.c \
@@ -328,7 +333,11 @@ tools_btgatt_server_SOURCES = tools/btgatt-server.c src/uuid-helper.c
 tools_btgatt_server_LDADD = src/libshared-mainloop.la \
 						lib/libbluetooth-internal.la
 
+dist_man_MANS += tools/btattach.1
+
 EXTRA_DIST += tools/bdaddr.1
+else
+EXTRA_DIST += tools/btattach.1
 endif
 
 if READLINE

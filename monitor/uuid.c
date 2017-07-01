@@ -31,7 +31,7 @@
 
 #include "uuid.h"
 
-static struct {
+static const struct {
 	uint16_t uuid;
 	const char *str;
 } uuid16_table[] = {
@@ -161,7 +161,15 @@ static struct {
 	{ 0x181b, "Body Composition"				},
 	{ 0x181c, "User Data"					},
 	{ 0x181d, "Weight Scale"				},
-	/* 0x181e to 0x27ff undefined */
+	{ 0x181e, "Bond Management"				},
+	{ 0x181f, "Continuous Glucose Monitoring"		},
+	{ 0x1820, "Internet Protocol Support"			},
+	{ 0x1821, "Indoor Positioning"				},
+	{ 0x1822, "Pulse Oximeter"				},
+	{ 0x1823, "HTTP Proxy"					},
+	{ 0x1824, "Transport Discovery"				},
+	{ 0x1825, "Object Transfer"				},
+	/* 0x1824 to 0x27ff undefined */
 	{ 0x2800, "Primary Service"				},
 	{ 0x2801, "Secondary Service"				},
 	{ 0x2802, "Include"					},
@@ -334,6 +342,43 @@ static struct {
 	{ 0x2aa1, "Magnetic Flux Density - 3D"			},
 	{ 0x2aa2, "Language"					},
 	{ 0x2aa3, "Barometric Pressure Trend"			},
+	{ 0x2aa4, "Bond Management Control Point"		},
+	{ 0x2aa5, "Bond Management Feature"			},
+	{ 0x2aa6, "Central Address Resolution"			},
+	{ 0x2aa7, "CGM Measurement"				},
+	{ 0x2aa8, "CGM Feature"					},
+	{ 0x2aa9, "CGM Status"					},
+	{ 0x2aaa, "CGM Session Start Time"			},
+	{ 0x2aab, "CGM Session Run Time"			},
+	{ 0x2aac, "CGM Specific Ops Control Point"		},
+	{ 0x2aad, "Indoor Positioning Configuration"		},
+	{ 0x2aae, "Latitude"					},
+	{ 0x2aaf, "Longitude"					},
+	{ 0x2ab0, "Local North Coordinate"			},
+	{ 0x2ab1, "Local East Coordinate"			},
+	{ 0x2ab2, "Floor Number"				},
+	{ 0x2ab3, "Altitude"					},
+	{ 0x2ab4, "Uncertainty"					},
+	{ 0x2ab5, "Location Name"				},
+	{ 0x2ab6, "URI"						},
+	{ 0x2ab7, "HTTP Headers"				},
+	{ 0x2ab8, "HTTP Status Code"				},
+	{ 0x2ab9, "HTTP Entity Body"				},
+	{ 0x2aba, "HTTP Control Point"				},
+	{ 0x2abb, "HTTPS Security"				},
+	{ 0x2abc, "TDS Control Point"				},
+	{ 0x2abd, "OTS Feature"					},
+	{ 0x2abe, "Object Name"					},
+	{ 0x2abf, "Object Type"					},
+	{ 0x2ac0, "Object Size"					},
+	{ 0x2ac1, "Object First-Created"			},
+	{ 0x2ac2, "Object Last-Modified"			},
+	{ 0x2ac3, "Object ID"					},
+	{ 0x2ac4, "Object Properties"				},
+	{ 0x2ac5, "Object Action Control Point"			},
+	{ 0x2ac6, "Object List Control Point"			},
+	{ 0x2ac7, "Object List Filter"				},
+	{ 0x2ac8, "Object Changed"				},
 	/* vendor defined */
 	{ 0xfeff, "GN Netcom"					},
 	{ 0xfefe, "GN ReSound A/S"				},
@@ -455,9 +500,68 @@ static struct {
 	{ 0xfe8a, "Apple, Inc."					},
 	{ 0xfe89, "B&O Play A/S"				},
 	{ 0xfe88, "SALTO SYSTEMS S.L."				},
+	{ 0xfe87, "Qingdao Yeelink Information Technology Co., Ltd. ( 青岛亿联客信息技术有限公司 )"	},
+	{ 0xfe86, "HUAWEI Technologies Co., Ltd. ( 华为技术有限公司 )"					},
+	{ 0xfe85, "RF Digital Corp"				},
+	{ 0xfe84, "RF Digital Corp"				},
+	{ 0xfe83, "Blue Bite"					},
+	{ 0xfe82, "Medtronic Inc."				},
+	{ 0xfe81, "Medtronic Inc."				},
+	{ 0xfe80, "Doppler Lab"					},
+	{ 0xfe7f, "Doppler Lab"					},
+	{ 0xfe7e, "Awear Solutions Ltd"				},
+	{ 0xfe7d, "Aterica Health Inc."				},
+	{ 0xfe7c, "Stollmann E+V GmbH"				},
+	{ 0xfe7b, "Orion Labs, Inc."				},
+	{ 0xfe7a, "Bragi GmbH"					},
+	{ 0xfe79, "Zebra Technologies"				},
+	{ 0xfe78, "Hewlett-Packard Company"			},
+	{ 0xfe77, "Hewlett-Packard Company"			},
+	{ 0xfe76, "TangoMe"					},
+	{ 0xfe75, "TangoMe"					},
+	{ 0xfe74, "unwire"					},
+	{ 0xfe73, "St. Jude Medical, Inc."			},
+	{ 0xfe72, "St. Jude Medical, Inc."			},
+	{ 0xfe71, "Plume Design Inc"				},
+	{ 0xfe70, "Beijing Jingdong Century Trading Co., Ltd."	},
+	{ 0xfe6f, "LINE Corporation"				},
+	{ 0xfe6e, "The University of Tokyo"			},
+	{ 0xfe6d, "The University of Tokyo"			},
+	{ 0xfe6c, "TASER International, Inc."			},
+	{ 0xfe6b, "TASER International, Inc."			},
+	{ 0xfe6a, "Kontakt Micro-Location Sp. z o.o."		},
+	{ 0xfe69, "Qualcomm Life Inc"				},
+	{ 0xfe68, "Qualcomm Life Inc"				},
+	{ 0xfe67, "Lab Sensor Solutions"			},
+	{ 0xfe66, "Intel Corporation"				},
 	/* SDO defined */
 	{ 0xfffe, "Alliance for Wireless Power (A4WP)"		},
 	{ 0xfffd, "Fast IDentity Online Alliance (FIDO)"	},
+	{ }
+};
+
+static const struct {
+	const char *uuid;
+	const char *str;
+} uuid128_table[] = {
+	{ "a3c87500-8ed3-4bdf-8a39-a01bebede295",
+		"Eddystone Configuration Service"			},
+	{ "a3c87501-8ed3-4bdf-8a39-a01bebede295", "Capabilities"	},
+	{ "a3c87502-8ed3-4bdf-8a39-a01bebede295", "Active Slot"		},
+	{ "a3c87503-8ed3-4bdf-8a39-a01bebede295",
+		"Advertising Interval"					},
+	{ "a3c87504-8ed3-4bdf-8a39-a01bebede295", "Radio Tx Power"	},
+	{ "a3c87505-8ed3-4bdf-8a39-a01bebede295",
+		"(Advanced) Advertised Tx Power"			},
+	{ "a3c87506-8ed3-4bdf-8a39-a01bebede295", "Lock State"		},
+	{ "a3c87507-8ed3-4bdf-8a39-a01bebede295", "Unlock"		},
+	{ "a3c87508-8ed3-4bdf-8a39-a01bebede295", "Public ECDH Key"	},
+	{ "a3c87509-8ed3-4bdf-8a39-a01bebede295", "EID Identity Key"	},
+	{ "a3c8750a-8ed3-4bdf-8a39-a01bebede295", "ADV Slot Data"	},
+	{ "a3c8750b-8ed3-4bdf-8a39-a01bebede295",
+		"(Advanced) Factory reset"				},
+	{ "a3c8750c-8ed3-4bdf-8a39-a01bebede295",
+		"(Advanced) Remain Connectable"				},
 	{ }
 };
 
@@ -489,12 +593,18 @@ const char *uuid128_to_str(const unsigned char *uuid)
 const char *uuidstr_to_str(const char *uuid)
 {
 	uint32_t val;
+	int i;
 
 	if (!uuid)
 		return NULL;
 
 	if (strlen(uuid) != 36)
 		return NULL;
+
+	for (i = 0; uuid128_table[i].str; i++) {
+		if (strcasecmp(uuid128_table[i].uuid, uuid) == 0)
+			return uuid128_table[i].str;
+	}
 
 	if (strncasecmp(uuid + 8, "-0000-1000-8000-00805f9b34fb", 28))
 		return "Vendor specific";

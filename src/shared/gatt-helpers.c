@@ -56,9 +56,6 @@ static struct bt_gatt_result *result_create(uint8_t opcode, const void *pdu,
 	struct bt_gatt_result *result;
 
 	result = new0(struct bt_gatt_result, 1);
-	if (!result)
-		return NULL;
-
 	result->pdu = malloc(pdu_len);
 	if (!result->pdu) {
 		free(result);
@@ -110,7 +107,7 @@ unsigned int bt_gatt_result_service_count(struct bt_gatt_result *result)
 		return 0;
 
 	if (result->opcode != BT_ATT_OP_READ_BY_GRP_TYPE_RSP &&
-			result->opcode != BT_ATT_OP_FIND_BY_TYPE_VAL_RSP)
+			result->opcode != BT_ATT_OP_FIND_BY_TYPE_RSP)
 		return 0;
 
 	return result_element_count(result);
@@ -345,7 +342,7 @@ bool bt_gatt_iter_next_service(struct bt_gatt_iter *iter,
 		*end_handle = get_le16(pdu_ptr + 2);
 		convert_uuid_le(pdu_ptr + 4, iter->result->data_len - 4, uuid);
 		break;
-	case BT_ATT_OP_FIND_BY_TYPE_VAL_RSP:
+	case BT_ATT_OP_FIND_BY_TYPE_RSP:
 		*start_handle = get_le16(pdu_ptr);
 		*end_handle = get_le16(pdu_ptr + 2);
 
@@ -549,9 +546,6 @@ unsigned int bt_gatt_exchange_mtu(struct bt_att *att, uint16_t client_rx_mtu,
 		return false;
 
 	op = new0(struct mtu_op, 1);
-	if (!op)
-		return false;
-
 	op->att = att;
 	op->client_rx_mtu = client_rx_mtu;
 	op->callback = callback;
@@ -753,7 +747,7 @@ static void find_by_type_val_cb(uint8_t opcode, const void *pdu,
 	/* PDU must contain 4 bytes and it must be a multiple of 4, where each
 	 * 4 bytes contain the 16-bit attribute and group end handles.
 	 */
-	if (opcode != BT_ATT_OP_FIND_BY_TYPE_VAL_RSP || !pdu || !length ||
+	if (opcode != BT_ATT_OP_FIND_BY_TYPE_RSP || !pdu || !length ||
 								length % 4) {
 		success = false;
 		goto done;
@@ -791,7 +785,7 @@ static void find_by_type_val_cb(uint8_t opcode, const void *pdu,
 		put_le16(op->service_type, pdu + 4);
 		bt_uuid_to_le(&op->uuid, pdu + 6);
 
-		op->id = bt_att_send(op->att, BT_ATT_OP_FIND_BY_TYPE_VAL_REQ,
+		op->id = bt_att_send(op->att, BT_ATT_OP_FIND_BY_TYPE_REQ,
 						pdu, sizeof(pdu),
 						find_by_type_val_cb,
 						bt_gatt_request_ref(op),
@@ -823,9 +817,6 @@ static struct bt_gatt_request *discover_services(struct bt_att *att,
 		return NULL;
 
 	op = new0(struct bt_gatt_request, 1);
-	if (!op)
-		return NULL;
-
 	op->att = att;
 	op->start_handle = start;
 	op->end_handle = end;
@@ -864,7 +855,7 @@ static struct bt_gatt_request *discover_services(struct bt_att *att,
 		put_le16(op->service_type, pdu + 4);
 		bt_uuid_to_le(&op->uuid, pdu + 6);
 
-		op->id = bt_att_send(att, BT_ATT_OP_FIND_BY_TYPE_VAL_REQ,
+		op->id = bt_att_send(att, BT_ATT_OP_FIND_BY_TYPE_REQ,
 						pdu, sizeof(pdu),
 						find_by_type_val_cb,
 						bt_gatt_request_ref(op),
@@ -924,9 +915,6 @@ static struct read_incl_data *new_read_included(struct bt_gatt_result *res)
 	struct read_incl_data *data;
 
 	data = new0(struct read_incl_data, 1);
-	if (!data)
-		return NULL;
-
 	data->op = bt_gatt_request_ref(res->op);
 	data->result = res;
 
@@ -1161,9 +1149,6 @@ struct bt_gatt_request *bt_gatt_discover_included_services(struct bt_att *att,
 		return false;
 
 	op = new0(struct bt_gatt_request, 1);
-	if (!op)
-		return false;
-
 	op->att = att;
 	op->callback = callback;
 	op->user_data = user_data;
@@ -1278,9 +1263,6 @@ struct bt_gatt_request *bt_gatt_discover_characteristics(struct bt_att *att,
 		return false;
 
 	op = new0(struct bt_gatt_request, 1);
-	if (!op)
-		return false;
-
 	op->att = att;
 	op->callback = callback;
 	op->user_data = user_data;
@@ -1388,9 +1370,6 @@ bool bt_gatt_read_by_type(struct bt_att *att, uint16_t start, uint16_t end,
 		return false;
 
 	op = new0(struct bt_gatt_request, 1);
-	if (!op)
-		return false;
-
 	op->att = att;
 	op->callback = callback;
 	op->user_data = user_data;
@@ -1512,9 +1491,6 @@ struct bt_gatt_request *bt_gatt_discover_descriptors(struct bt_att *att,
 		return false;
 
 	op = new0(struct bt_gatt_request, 1);
-	if (!op)
-		return false;
-
 	op->att = att;
 	op->callback = callback;
 	op->user_data = user_data;

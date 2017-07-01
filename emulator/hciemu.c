@@ -427,6 +427,22 @@ const uint8_t *hciemu_get_client_bdaddr(struct hciemu *hciemu)
 	return btdev_get_bdaddr(hciemu->client_dev);
 }
 
+uint8_t hciemu_get_master_scan_enable(struct hciemu *hciemu)
+{
+	if (!hciemu || !hciemu->master_dev)
+		return 0;
+
+	return btdev_get_scan_enable(hciemu->master_dev);
+}
+
+uint8_t hciemu_get_master_le_scan_enable(struct hciemu *hciemu)
+{
+	if (!hciemu || !hciemu->master_dev)
+		return 0;
+
+	return btdev_get_le_scan_enable(hciemu->master_dev);
+}
+
 bool hciemu_add_master_post_command_hook(struct hciemu *hciemu,
 			hciemu_command_func_t function, void *user_data)
 {

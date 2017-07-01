@@ -1,3 +1,42 @@
+ver 5.40:
+	Fix issue with not storing GATT attributes.
+	Fix issue with optional GATT notifications.
+	Fix issue with reading GATT extended properties.
+	Fix issue with GATT device name properties.
+	Fix issue with previously paired devices.
+	Fix issue with handling device removal.
+	Fix issue with profile connection handling.
+	Add support for TTY monitor protocol.
+
+ver 5.39:
+	Fix issue with missing uHID kernel support.
+	Fix issue with GATT reliable write handling.
+	Fix issue with GATT service changed handling.
+	Fix issue with GATT execute write handling.
+	Fix issue with AVRCP player event handling.
+	Fix issue with AVRCP controller handling.
+	Fix issue with AVDTP connection handling.
+	Fix issue with AVDTP error handling.
+
+ver 5.38:
+	Fix issue with stack overflow and UUID handling.
+	Fix issue with ObjectManager interface and GATT.
+	Fix issue with GATT database and error handling.
+	Fix issue with GATT client notifications.
+	Fix issue with GATT object ordering.
+	Fix issue with GATT default MTU exchange.
+	Fix issue with device attribute clearing.
+	Fix issue with AVRCP capabilities request.
+
+ver 5.37:
+	Fix issue with registering external profiles.
+	Fix issue with connecting external profiles.
+	Fix issue with GATT service changed handling.
+	Fix issue with not emitting GattServices update.
+	Convert to unified HID over GATT profile support.
+	Convert to KeyboardDisplay as default IO capability.
+	Install btattach utility by default.
+
 ver 5.36:
 	Fix issue with PBAP headers for size query.
 	Fix issue with AVRCP current player handling.

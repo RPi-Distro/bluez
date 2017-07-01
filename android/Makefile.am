@@ -28,10 +28,13 @@ android_bluetoothd_SOURCES = android/main.c \
 				src/eir.h src/eir.c \
 				android/bluetooth.h android/bluetooth.c \
 				android/hidhost.h android/hidhost.c \
-				android/scpp.h android/scpp.c \
-				android/dis.h android/dis.c \
-				android/bas.h android/bas.c \
-				android/hog.h android/hog.c \
+				profiles/scanparam/scpp.h \
+				profiles/scanparam/scpp.c \
+				profiles/deviceinfo/dis.h \
+				profiles/deviceinfo/dis.c \
+				profiles/battery/bas.h profiles/battery/bas.c \
+				profiles/input/hog-lib.h \
+				profiles/input/hog-lib.c \
 				android/ipc-common.h \
 				android/ipc.h android/ipc.c \
 				android/avdtp.h android/avdtp.c \

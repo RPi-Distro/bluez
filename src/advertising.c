@@ -500,7 +500,7 @@ static DBusMessage *refresh_advertisement(struct advertisement *ad)
 		return btd_error_failed(ad->reg, "Failed");
 	}
 
-	cp->flags = flags;
+	cp->flags = htobl(flags);
 	cp->instance = ad->instance;
 	cp->adv_data_len = adv_data_len;
 	memcpy(cp->data, adv_data, adv_data_len);
@@ -591,9 +591,6 @@ static struct advertisement *advertisement_create(DBusConnection *conn,
 		return NULL;
 
 	ad = new0(struct advertisement, 1);
-	if (!ad)
-		return NULL;
-
 	ad->client = g_dbus_client_new_full(conn, sender, path, path);
 	if (!ad->client)
 		goto fail;
@@ -765,9 +762,6 @@ advertising_manager_create(struct btd_adapter *adapter)
 	struct btd_advertising *manager;
 
 	manager = new0(struct btd_advertising, 1);
-	if (!manager)
-		return NULL;
-
 	manager->adapter = adapter;
 
 	manager->mgmt = mgmt_new_default();
