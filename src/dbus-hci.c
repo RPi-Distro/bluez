@@ -556,9 +556,19 @@ void hcid_dbus_inquiry_complete(bdaddr_t *local)
 	if (found_device_req_name(adapter) == 0)
 		return;
 
+	state = adapter_get_state(adapter);
+
+	/*
+	 * workaround to identify situation when there is no devices around
+	 * but periodic inquiry is active.
+	 */
+	if (!(state & STD_INQUIRY) && !(state & PERIODIC_INQUIRY)) {
+		state |= PERIODIC_INQUIRY;
+		adapter_set_state(adapter, state);
+	}
+
 	/* reset the discover type to be able to handle D-Bus and non D-Bus
 	 * requests */
-	state = adapter_get_state(adapter);
 	state &= ~STD_INQUIRY;
 	state &= ~PERIODIC_INQUIRY;
 	adapter_set_state(adapter, state);
@@ -625,55 +635,6 @@ static char *extract_eir_name(uint8_t *data, uint8_t *type)
 	return NULL;
 }
 
-static void append_dict_valist(DBusMessageIter *iter,
-					const char *first_key,
-					va_list var_args)
-{
-	DBusMessageIter dict;
-	const char *key;
-	int type;
-	void *val;
-
-	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
-			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
-			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
-
-	key = first_key;
-	while (key) {
-		type = va_arg(var_args, int);
-		val = va_arg(var_args, void *);
-		dict_append_entry(&dict, key, type, val);
-		key = va_arg(var_args, char *);
-	}
-
-	dbus_message_iter_close_container(iter, &dict);
-}
-
-static void emit_device_found(const char *path, const char *address,
-				const char *first_key, ...)
-{
-	DBusMessage *signal;
-	DBusMessageIter iter;
-	va_list var_args;
-
-	signal = dbus_message_new_signal(path, ADAPTER_INTERFACE,
-					"DeviceFound");
-	if (!signal) {
-		error("Unable to allocate new %s.DeviceFound signal",
-				ADAPTER_INTERFACE);
-		return;
-	}
-	dbus_message_iter_init_append(signal, &iter);
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &address);
-
-	va_start(var_args, first_key);
-	append_dict_valist(&iter, first_key, var_args);
-	va_end(var_args);
-
-	g_dbus_send_message(connection, signal);
-}
-
 void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 				int8_t rssi, uint8_t *data)
 {
@@ -681,14 +642,11 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	struct btd_adapter *adapter;
 	struct btd_device *device;
 	char local_addr[18], peer_addr[18], *alias, *name, *tmp_name;
-	const char *real_alias;
-	const char *path, *icon, *paddr = peer_addr;
 	struct remote_dev_info *dev, match;
-	dbus_int16_t tmp_rssi = rssi;
-	dbus_bool_t paired, legacy = TRUE;
 	uint8_t name_type = 0x00;
 	name_status_t name_status;
 	int state;
+	dbus_bool_t legacy;
 
 	ba2str(local, local_addr);
 	ba2str(peer, peer_addr);
@@ -698,17 +656,10 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		return;
 	}
 
-	if (device)
-		paired = device_is_paired(device);
-	else
-		paired = FALSE;
-
 	write_remote_class(local, peer, class);
 
-	if (data) {
+	if (data)
 		write_remote_eir(local, peer, data);
-		legacy = FALSE;
-	}
 
 	/*
 	 * workaround to identify situation when the daemon started and
@@ -720,17 +671,20 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		state |= PERIODIC_INQUIRY;
 		adapter_set_state(adapter, state);
 	}
-	/* Out of range list update */
-	if (adapter_get_state(adapter) & PERIODIC_INQUIRY)
-		adapter_remove_oor_device(adapter, peer_addr);
+
+	legacy = (data == NULL);
 
 	memset(&match, 0, sizeof(struct remote_dev_info));
 	bacpy(&match.bdaddr, peer);
 	match.name_status = NAME_SENT;
 	/* if found: don't send the name again */
 	dev = adapter_search_found_devices(adapter, &match);
-	if (dev)
+	if (dev) {
+		adapter_update_found_devices(adapter, peer, rssi, class,
+						NULL, NULL, legacy,
+						NAME_NOT_REQUIRED);
 		return;
+	}
 
 	/* the inquiry result can be triggered by NON D-Bus client */
 	if (adapter_get_state(adapter) & RESOLVE_NAME)
@@ -762,37 +716,13 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		}
 	}
 
-	if (!alias) {
-		real_alias = NULL;
-
-		if (!name) {
-			alias = g_strdup(peer_addr);
-			g_strdelimit(alias, ":", '-');
-		} else
-			alias = g_strdup(name);
-	} else
-		real_alias = alias;
-
-	path = adapter_get_path(adapter);
-	icon = class_to_icon(class);
-
-	emit_device_found(path, paddr,
-				"Address", DBUS_TYPE_STRING, &paddr,
-				"Class", DBUS_TYPE_UINT32, &class,
-				"Icon", DBUS_TYPE_STRING, &icon,
-				"RSSI", DBUS_TYPE_INT16, &tmp_rssi,
-				"Name", DBUS_TYPE_STRING, &name,
-				"Alias", DBUS_TYPE_STRING, &alias,
-				"LegacyPairing", DBUS_TYPE_BOOLEAN, &legacy,
-				"Paired", DBUS_TYPE_BOOLEAN, &paired,
-				NULL);
 
 	if (name && name_type != 0x08)
 		name_status = NAME_SENT;
 
 	/* add in the list to track name sent/pending */
-	adapter_add_found_device(adapter, peer, rssi, class, real_alias,
-					name_status);
+	adapter_update_found_devices(adapter, peer, rssi, class, name, alias,
+					legacy, name_status);
 
 	g_free(name);
 	g_free(alias);
@@ -845,37 +775,9 @@ void hcid_dbus_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 
 	dev_info = adapter_search_found_devices(adapter, &match);
 	if (dev_info) {
-		const char *adapter_path = adapter_get_path(adapter);
-		const char *icon = class_to_icon(dev_info->class);
-		const char *alias, *paddr = dstaddr;
-		dbus_int16_t rssi = dev_info->rssi;
-		dbus_bool_t legacy, paired;
-
-		if (dev_info->alias)
-			alias = dev_info->alias;
-		else
-			alias = name;
-
-		if (read_remote_eir(local, peer, NULL) < 0)
-			legacy = TRUE;
-		else
-			legacy = FALSE;
-
-		if (device)
-			paired = device_is_paired(device);
-		else
-			paired = FALSE;
-
-		emit_device_found(adapter_path, dstaddr,
-				"Address", DBUS_TYPE_STRING, &paddr,
-				"Class", DBUS_TYPE_UINT32, &dev_info->class,
-				"Icon", DBUS_TYPE_STRING, &icon,
-				"RSSI", DBUS_TYPE_INT16, &rssi,
-				"Name", DBUS_TYPE_STRING, &name,
-				"Alias", DBUS_TYPE_STRING, &alias,
-				"LegacyPairing", DBUS_TYPE_BOOLEAN, &legacy,
-				"Paired", DBUS_TYPE_BOOLEAN, &paired,
-				NULL);
+		g_free(dev_info->name);
+		dev_info->name = g_strdup(name);
+		adapter_emit_device_found(adapter, dev_info);
 	}
 
 	if (device)
@@ -902,6 +804,7 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	struct btd_device *device;
 	struct btd_adapter *adapter;
 	uint8_t local_auth = 0xff, remote_auth, new_key_type;
+	gboolean bonding;
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return -ENODEV;
@@ -913,6 +816,7 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 
 	get_auth_requirements(local, peer, &local_auth);
 	remote_auth = device_get_auth(device);
+	bonding = device_is_bonding(device, NULL);
 
 	debug("local auth 0x%02x and remote auth 0x%02x",
 					local_auth, remote_auth);
@@ -941,7 +845,10 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 			return err;
 		}
 
-		device_set_temporary(device, FALSE);
+		/* If not the initiator consider the device permanent otherwise
+		 * wait to service discover to complete */
+		if (!bonding)
+			device_set_temporary(device, FALSE);
 	}
 
 	/* If this is not the first link key set a flag so a subsequent auth
@@ -951,7 +858,7 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 
 	if (!device_is_connected(device))
 		device_set_secmode3_conn(device, TRUE);
-	else if (!device_is_bonding(device, NULL) && old_key_type == 0xff)
+	else if (!bonding && old_key_type == 0xff)
 		hcid_dbus_bonding_process_complete(local, peer, 0);
 
 	return 0;
@@ -1019,7 +926,7 @@ int set_service_classes(int dd, const uint8_t *cls, uint8_t value)
 	if (hci_write_class_of_dev(dd, dev_class, HCI_REQ_TIMEOUT) < 0) {
 		int err = -errno;
 		error("Can't write class of device: %s (%d)",
-							strerror(err), err);
+						strerror(errno), errno);
 		return err;
 	}
 
@@ -1039,7 +946,7 @@ int set_major_and_minor_class(int dd, const uint8_t *cls,
 	if (hci_write_class_of_dev(dd, dev_class, HCI_REQ_TIMEOUT) < 0) {
 		int err = -errno;
 		error("Can't write class of device: %s (%d)",
-							strerror(err), err);
+						strerror(errno), errno);
 		return err;
 	}
 
@@ -1389,15 +1296,15 @@ int cancel_discovery(struct btd_adapter *adapter)
 	if (dev) {
 		if (remote_name_cancel(dd, &dev->bdaddr,
 							HCI_REQ_TIMEOUT) < 0) {
-			error("Read remote name cancel failed: %s, (%d)",
-					strerror(errno), errno);
 			err = -errno;
+			error("Read remote name cancel failed: %s, (%d)",
+						strerror(errno), errno);
 		}
 	} else {
 		if (inquiry_cancel(dd, HCI_REQ_TIMEOUT) < 0) {
-			error("Inquiry cancel failed:%s (%d)",
-					strerror(errno), errno);
 			err = -errno;
+			error("Inquiry cancel failed:%s (%d)",
+						strerror(errno), errno);
 		}
 	}
 
@@ -1447,19 +1354,19 @@ int cancel_periodic_discovery(struct btd_adapter *adapter)
 	dev = adapter_search_found_devices(adapter, &match);
 	if (dev) {
 		if (remote_name_cancel(dd, &dev->bdaddr,
-							HCI_REQ_TIMEOUT) < 0) {
-			error("Read remote name cancel failed: %s, (%d)",
-					strerror(errno), errno);
+						HCI_REQ_TIMEOUT) < 0) {
 			err = -errno;
+			error("Read remote name cancel failed: %s, (%d)",
+						strerror(errno), errno);
 		}
 	}
 
 	/* ovewrite err if necessary: stop periodic inquiry has higher
 	 * priority */
 	if (periodic_inquiry_exit(dd, HCI_REQ_TIMEOUT) < 0) {
-		error("Periodic Inquiry exit failed:%s (%d)",
-				strerror(errno), errno);
 		err = -errno;
+		error("Periodic Inquiry exit failed:%s (%d)",
+						strerror(errno), errno);
 	}
 
 	hci_close_dev(dd);

@@ -33,6 +33,8 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
+@CONFIGFILES_TRUE@@HID2HCI_TRUE@am__append_1 = bluetooth-hid2hci.rules
+@CONFIGFILES_TRUE@@PCMCIARULES_TRUE@am__append_2 = bluetooth-serial.rules
 subdir = scripts
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -189,11 +191,13 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-@PCMCIARULES_TRUE@rulesdir = $(sysconfdir)/udev
-@PCMCIARULES_TRUE@rules_DATA = bluetooth.rules
+@CONFIGFILES_TRUE@rulesdir = $(sysconfdir)/udev
+@CONFIGFILES_TRUE@rules_DATA = $(am__append_1) $(am__append_2)
 @PCMCIARULES_TRUE@udevdir = $(libexecdir)/udev
 @PCMCIARULES_TRUE@udev_SCRIPTS = bluetooth_serial
-EXTRA_DIST = bluetooth.rules bluetooth_serial bluetooth.init bluetooth.default
+EXTRA_DIST = bluetooth.init bluetooth.default bluetooth-hid2hci.rules \
+				bluetooth-serial.rules bluetooth_serial
+
 MAINTAINERCLEANFILES = Makefile.in
 all: all-am
 

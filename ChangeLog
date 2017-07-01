@@ -1,3 +1,71 @@
+ver 4.40:
+	Add telephony driver for oFono telephony stack.
+	Add support for Dell specific HID proxy switching.
+	Add support for running hid2hci from udev.
+	Add mapping for AVRCP Play and Pause to dedicated key codes.
+	Fix AVRCP keycodes to better match existing X keymap support.
+	Fix various quoting issues within telephony support.
+	Fix memory allocation issue when generating PDUs for SDP.
+	Fix race condition on device removal.
+	Fix non-cancelable issue with CreateDevice method.
+	Fix non-working CancelDiscovery method call.
+
+ver 4.39:
+	Add workaround for dealing with unknown inquiry complete.
+	Fix discovering when using software scheduler.
+	Fix wrong NoInputNoOutput IO capability string.
+	Fix race condition with agent during pairing.
+	Fix agent cancellation for security mode 3 acceptor failure.
+	Fix temporary flag removal when device creation fails.
+	Fix hciattach to use ppoll instead of poll.
+	Fix service class update when adapter is down.
+	Fix service classes race condition during startup.
+	Fix release of audio client before freeing the device.
+
+ver 4.38:
+	Add support for builtin plugins.
+	Add framework for adapter operations.
+	Add constants for Enhanced Retransmission modes.
+	Fix HCI socket leak in device_remove_bonding.
+	Fix various format string issues.
+	Fix crashes with various free functions.
+	Fix issues with Headset and A2DP drivers to load again.
+	Fix sending AVRCP button released passthrough messages
+	Fix bug which prevent input devices to work after restart.
+	Fix issue with interpretation of UUID-128 as channel.
+
+ver 4.37:
+	Add version value for Bluetooth 3.0 devices.
+	Add additional L2CAP extended feature mask bits.
+	Add support for loading plugins in priority order.
+	Add support for more detailed usage of disconnect watches.
+	Add support for AVRCP volume control.
+	Add saturated clipping of SBC decoder output to 16-bit.
+	Fix potentially infinite recursion of adapter_up.
+	Fix SCO handling in the case of an incoming call.
+	Fix input service to use confirm callback.
+	Fix cleanup of temporary device entries from storage.
+
+ver 4.36:
+	Add proper tracking of AVCTP connect attempts.
+	Add support to channel pattern in Serial interface.
+	Fix A2DP sink crash if removing device while connecting.
+	Fix error handling if HFP indicators aren't initialized.
+	Fix segfault while handling an incoming SCO connection.
+	Fix Serial.Disconnect to abort connection attempt.
+
+ver 4.35:
+	Add support for Handsfree profile headset role.
+	Add additional checks for open SEIDs from clients.
+	Fix device removal while audio IPC client is connected.
+	Fix device removal when an authorization request is pending.
+	Fix incoming AVDTP connect while authorization in progress.
+	Fix disconnection timers for audio support.
+	Fix various potential NULL pointer deferences.
+	Fix callheld indicator value for multiple calls.
+	Fix voice number type usage.
+	Fix GDBus watch handling.
+
 ver 4.34:
 	Add support for version checks of plugins.
 	Add support for class property on adapter interface.

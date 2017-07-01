@@ -56,7 +56,8 @@ am_bluetoothd_OBJECTS = main.$(OBJEXT) security.$(OBJEXT) \
 	error.$(OBJEXT) manager.$(OBJEXT) adapter.$(OBJEXT) \
 	device.$(OBJEXT) dbus-common.$(OBJEXT) dbus-hci.$(OBJEXT)
 bluetoothd_OBJECTS = $(am_bluetoothd_OBJECTS)
-bluetoothd_DEPENDENCIES = $(top_builddir)/common/libhelper.a
+bluetoothd_DEPENDENCIES = $(top_builddir)/common/libhelper.a \
+	$(top_builddir)/plugins/libbuiltin.la
 bluetoothd_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
 	$(bluetoothd_LDFLAGS) $(LDFLAGS) -o $@
@@ -235,6 +236,7 @@ bluetoothd_SOURCES = main.c security.c hcid.h sdpd.h \
 	device.h device.c dbus-common.c dbus-common.h dbus-hci.h dbus-hci.c
 
 bluetoothd_LDADD = $(top_builddir)/common/libhelper.a \
+			$(top_builddir)/plugins/libbuiltin.la \
 			@GDBUS_LIBS@ @GLIB_LIBS@ @DBUS_LIBS@ @BLUEZ_LIBS@ -ldl
 
 bluetoothd_LDFLAGS = -Wl,--export-dynamic
@@ -243,7 +245,7 @@ bluetoothd_LDFLAGS = -Wl,--export-dynamic
 AM_CFLAGS = @BLUEZ_CFLAGS@ @DBUS_CFLAGS@ @GLIB_CFLAGS@ @GDBUS_CFLAGS@ \
 						-DPLUGINDIR=\""$(plugindir)"\"
 
-INCLUDES = -I$(top_srcdir)/common
+INCLUDES = -I$(top_srcdir)/common -I$(top_builddir)/plugins
 @MANPAGES_TRUE@man_MANS = bluetoothd.8
 EXTRA_DIST = bluetooth.conf bluetoothd.8 main.conf
 MAINTAINERCLEANFILES = Makefile.in

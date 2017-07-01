@@ -173,6 +173,9 @@ static DBusConnection *connection = NULL;
 
 static GSList *calls = NULL;
 
+/* Reference count for determining the call indicator status */
+static GSList *active_calls = NULL;
+
 static char *msisdn = NULL;	/* Subscriber number */
 static char *vmbx = NULL;	/* Voice mailbox number */
 
@@ -237,6 +240,23 @@ static struct csd_call *find_call(const char *path)
 		struct csd_call *call = l->data;
 
 		if (g_str_equal(call->object_path, path))
+			return call;
+	}
+
+	return NULL;
+}
+
+static struct csd_call *find_non_held_call(void)
+{
+	GSList *l;
+
+	for (l = calls; l != NULL; l = l->next) {
+		struct csd_call *call = l->data;
+
+		if (call->status == CSD_CALL_STATUS_IDLE)
+			continue;
+
+		if (call->status != CSD_CALL_STATUS_HOLD)
 			return call;
 	}
 
@@ -410,6 +430,17 @@ static int call_transfer(void)
 	return 0;
 }
 
+static int number_type(const char *number)
+{
+	if (number == NULL)
+		return NUMBER_TYPE_TELEPHONY;
+
+	if (number[0] == '+' || strncmp(number, "00", 2) == 0)
+		return NUMBER_TYPE_INTERNATIONAL;
+
+	return NUMBER_TYPE_TELEPHONY;
+}
+
 void telephony_device_connected(void *telephony_device)
 {
 	struct csd_call *coming;
@@ -420,10 +451,10 @@ void telephony_device_connected(void *telephony_device)
 	if (coming) {
 		if (find_call_with_status(CSD_CALL_STATUS_ACTIVE))
 			telephony_call_waiting_ind(coming->number,
-							NUMBER_TYPE_TELEPHONY);
+						number_type(coming->number));
 		else
 			telephony_incoming_call_ind(coming->number,
-							NUMBER_TYPE_TELEPHONY);
+						number_type(coming->number));
 	}
 }
 
@@ -624,7 +655,7 @@ void telephony_subscriber_number_req(void *telephony_device)
 	debug("telephony-maemo: subscriber number request");
 	if (msisdn)
 		telephony_subscriber_number_ind(msisdn,
-						NUMBER_TYPE_TELEPHONY,
+						number_type(msisdn),
 						SUBSCRIBER_SERVICE_VOICE);
 	telephony_subscriber_number_rsp(telephony_device, CME_ERROR_NONE);
 }
@@ -691,7 +722,7 @@ void telephony_list_current_calls_req(void *telephony_device)
 		telephony_list_current_call_ind(i, direction, status,
 						CALL_MODE_VOICE, multiparty,
 						call->number,
-						NUMBER_TYPE_TELEPHONY);
+						number_type(call->number));
 	}
 
 	telephony_list_current_calls_rsp(telephony_device, CME_ERROR_NONE);
@@ -861,10 +892,10 @@ static void handle_incoming_call(DBusMessage *msg)
 
 	if (find_call_with_status(CSD_CALL_STATUS_ACTIVE))
 		telephony_call_waiting_ind(call->number,
-						NUMBER_TYPE_TELEPHONY);
+						number_type(call->number));
 	else
 		telephony_incoming_call_ind(call->number,
-						NUMBER_TYPE_TELEPHONY);
+						number_type(call->number));
 }
 
 static void handle_outgoing_call(DBusMessage *msg)
@@ -901,7 +932,7 @@ static void handle_outgoing_call(DBusMessage *msg)
 
 static void handle_call_status(DBusMessage *msg, const char *call_path)
 {
-	struct csd_call *call, *active_call;
+	struct csd_call *call;
 	dbus_uint32_t status, cause_type, cause;
 
 	if (!dbus_message_get_args(msg, NULL,
@@ -928,7 +959,7 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 	debug("Call %s changed from %s to %s", call_path,
 		call_status_str[call->status], call_status_str[status]);
 
-	active_call = find_call_with_status(CSD_CALL_STATUS_ACTIVE);
+	call->status = (int) status;
 
 	switch (status) {
 	case CSD_CALL_STATUS_IDLE:
@@ -938,9 +969,7 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 							EV_CALLSETUP_INACTIVE);
 			if (!call->originating)
 				telephony_calling_stopped_ind();
-		} else
-			telephony_update_indicator(maemo_indicators, "call",
-							EV_CALL_INACTIVE);
+		}
 
 		g_free(call->number);
 		call->number = NULL;
@@ -973,10 +1002,6 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 	case CSD_CALL_STATUS_ACTIVE:
 		if (call->on_hold) {
 			call->on_hold = FALSE;
-			/* Set the status already here since otherwise
-			 * find_call_with_status will match this call even
-			 * though it shouldn't */
-			call->status = (int) status;
 			if (find_call_with_status(CSD_CALL_STATUS_HOLD))
 				telephony_update_indicator(maemo_indicators,
 							"callheld",
@@ -986,8 +1011,11 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 							"callheld",
 							EV_CALLHELD_NONE);
 		} else {
-			telephony_update_indicator(maemo_indicators, "call",
-							EV_CALL_ACTIVE);
+			active_calls = g_slist_prepend(active_calls, call);
+			if (g_slist_length(active_calls) == 1)
+				telephony_update_indicator(maemo_indicators,
+								"call",
+								EV_CALL_ACTIVE);
 			telephony_update_indicator(maemo_indicators,
 							"callsetup",
 							EV_CALLSETUP_INACTIVE);
@@ -997,14 +1025,17 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 		}
 		break;
 	case CSD_CALL_STATUS_MO_RELEASE:
-		break;
 	case CSD_CALL_STATUS_MT_RELEASE:
+		active_calls = g_slist_remove(active_calls, call);
+		if (g_slist_length(active_calls) == 0)
+			telephony_update_indicator(maemo_indicators, "call",
+							EV_CALL_INACTIVE);
 		break;
 	case CSD_CALL_STATUS_HOLD_INITIATED:
 		break;
 	case CSD_CALL_STATUS_HOLD:
 		call->on_hold = TRUE;
-		if (active_call && active_call != call)
+		if (find_non_held_call())
 			telephony_update_indicator(maemo_indicators,
 							"callheld",
 							EV_CALLHELD_MULTIPLE);
@@ -1019,10 +1050,6 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 		break;
 	case CSD_CALL_STATUS_TERMINATED:
 		if (call->on_hold) {
-			/* Set the status already here since otherwise
-			 * find_call_with_status will match this call even
-			 * though it shouldn't */
-			call->status = (int) status;
 			if (!find_call_with_status(CSD_CALL_STATUS_HOLD))
 				telephony_update_indicator(maemo_indicators,
 								"callheld",
@@ -1035,8 +1062,6 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 		error("Unknown call status %u", status);
 		break;
 	}
-
-	call->status = (int) status;
 }
 
 static void get_operator_name_reply(DBusPendingCall *pending_call,
@@ -1051,7 +1076,7 @@ static void get_operator_name_reply(DBusPendingCall *pending_call,
 
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, reply)) {
-		error("%s get_operator_name failed: %s, %s",
+		error("get_operator_name failed: %s, %s",
 			err.name, err.message);
 		dbus_error_free(&err);
 		goto done;
@@ -1471,8 +1496,8 @@ static void signal_strength_reply(DBusPendingCall *call, void *user_data)
 					DBUS_TYPE_BYTE, &rssi_in_dbm,
 					DBUS_TYPE_INT32, &net_err,
 					DBUS_TYPE_INVALID)) {
-		error("Unable to parse signal_strength reply:",
-				err.name, err.message);
+		error("Unable to parse signal_strength reply: %s, %s",
+							err.name, err.message);
 		dbus_error_free(&err);
 		return;
 	}
@@ -1533,8 +1558,8 @@ static void registration_status_reply(DBusPendingCall *call, void *user_data)
 					DBUS_TYPE_BYTE, &supported_services,
 					DBUS_TYPE_INT32, &net_err,
 					DBUS_TYPE_INVALID)) {
-		error("Unable to parse registration_status_change reply:",
-				err.name, err.message);
+		error("Unable to parse registration_status_change reply:"
+					" %s, %s", err.name, err.message);
 		dbus_error_free(&err);
 		return;
 	}

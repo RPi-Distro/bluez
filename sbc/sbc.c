@@ -360,7 +360,7 @@ static void sbc_calculate_bits(const struct sbc_frame *frame, int (*bits)[8])
  *  -4   Bitpool value out of bounds
  */
 static int sbc_unpack_frame(const uint8_t *data, struct sbc_frame *frame,
-				size_t len)
+								size_t len)
 {
 	unsigned int consumed;
 	/* Will copy the parts of the header that are relevant to crc
@@ -522,7 +522,7 @@ static int sbc_unpack_frame(const uint8_t *data, struct sbc_frame *frame,
 }
 
 static void sbc_decoder_init(struct sbc_decoder_state *state,
-				const struct sbc_frame *frame)
+					const struct sbc_frame *frame)
 {
 	int i, ch;
 
@@ -532,6 +532,16 @@ static void sbc_decoder_init(struct sbc_decoder_state *state,
 	for (ch = 0; ch < 2; ch++)
 		for (i = 0; i < frame->subbands * 2; i++)
 			state->offset[ch][i] = (10 * i + 10);
+}
+
+static SBC_ALWAYS_INLINE int16_t sbc_clip16(int32_t s)
+{
+	if (s > 0x7FFF)
+		return 0x7FFF;
+	else if (s < -0x8000)
+		return -0x8000;
+	else
+		return s;
 }
 
 static inline void sbc_synthesize_four(struct sbc_decoder_state *state,
@@ -562,7 +572,7 @@ static inline void sbc_synthesize_four(struct sbc_decoder_state *state,
 		k = (i + 4) & 0xf;
 
 		/* Store in output, Q0 */
-		frame->pcm_sample[ch][blk * 4 + i] = SCALE4_STAGED1(
+		frame->pcm_sample[ch][blk * 4 + i] = sbc_clip16(SCALE4_STAGED1(
 			MULA(v[offset[i] + 0], sbc_proto_4_40m0[idx + 0],
 			MULA(v[offset[k] + 1], sbc_proto_4_40m1[idx + 0],
 			MULA(v[offset[i] + 2], sbc_proto_4_40m0[idx + 1],
@@ -572,7 +582,7 @@ static inline void sbc_synthesize_four(struct sbc_decoder_state *state,
 			MULA(v[offset[i] + 6], sbc_proto_4_40m0[idx + 3],
 			MULA(v[offset[k] + 7], sbc_proto_4_40m1[idx + 3],
 			MULA(v[offset[i] + 8], sbc_proto_4_40m0[idx + 4],
-			MUL( v[offset[k] + 9], sbc_proto_4_40m1[idx + 4])))))))))));
+			MUL( v[offset[k] + 9], sbc_proto_4_40m1[idx + 4]))))))))))));
 	}
 }
 
@@ -607,8 +617,8 @@ static inline void sbc_synthesize_eight(struct sbc_decoder_state *state,
 	for (idx = 0, i = 0; i < 8; i++, idx += 5) {
 		k = (i + 8) & 0xf;
 
-		/* Store in output */
-		frame->pcm_sample[ch][blk * 8 + i] = SCALE8_STAGED1( // Q0
+		/* Store in output, Q0 */
+		frame->pcm_sample[ch][blk * 8 + i] = sbc_clip16(SCALE8_STAGED1(
 			MULA(state->V[ch][offset[i] + 0], sbc_proto_8_80m0[idx + 0],
 			MULA(state->V[ch][offset[k] + 1], sbc_proto_8_80m1[idx + 0],
 			MULA(state->V[ch][offset[i] + 2], sbc_proto_8_80m0[idx + 1],
@@ -618,12 +628,12 @@ static inline void sbc_synthesize_eight(struct sbc_decoder_state *state,
 			MULA(state->V[ch][offset[i] + 6], sbc_proto_8_80m0[idx + 3],
 			MULA(state->V[ch][offset[k] + 7], sbc_proto_8_80m1[idx + 3],
 			MULA(state->V[ch][offset[i] + 8], sbc_proto_8_80m0[idx + 4],
-			MUL( state->V[ch][offset[k] + 9], sbc_proto_8_80m1[idx + 4])))))))))));
+			MUL( state->V[ch][offset[k] + 9], sbc_proto_8_80m1[idx + 4]))))))))))));
 	}
 }
 
 static int sbc_synthesize_audio(struct sbc_decoder_state *state,
-				struct sbc_frame *frame)
+						struct sbc_frame *frame)
 {
 	int ch, blk;
 
@@ -648,7 +658,7 @@ static int sbc_synthesize_audio(struct sbc_decoder_state *state,
 }
 
 static int sbc_analyze_audio(struct sbc_encoder_state *state,
-				struct sbc_frame *frame)
+						struct sbc_frame *frame)
 {
 	int ch, blk;
 	int16_t *x;
@@ -732,9 +742,9 @@ static int sbc_analyze_audio(struct sbc_encoder_state *state,
  * -99 not implemented
  */
 
-static SBC_ALWAYS_INLINE int sbc_pack_frame_internal(
-	uint8_t *data, struct sbc_frame *frame, size_t len,
-	int frame_subbands, int frame_channels)
+static SBC_ALWAYS_INLINE int sbc_pack_frame_internal(uint8_t *data,
+					struct sbc_frame *frame, size_t len,
+					int frame_subbands, int frame_channels)
 {
 	/* Bitstream writer starts from the fourth byte */
 	uint8_t *data_ptr = data + 4;
@@ -921,7 +931,7 @@ static int sbc_pack_frame(uint8_t *data, struct sbc_frame *frame, size_t len)
 }
 
 static void sbc_encoder_init(struct sbc_encoder_state *state,
-				const struct sbc_frame *frame)
+					const struct sbc_frame *frame)
 {
 	memset(&state->X, 0, sizeof(state->X));
 	state->position = (SBC_X_BUFFER_SIZE - frame->subbands * 9) & ~7;
@@ -973,13 +983,13 @@ int sbc_init(sbc_t *sbc, unsigned long flags)
 	return 0;
 }
 
-int sbc_parse(sbc_t *sbc, void *input, int input_len)
+ssize_t sbc_parse(sbc_t *sbc, const void *input, size_t input_len)
 {
 	return sbc_decode(sbc, input, input_len, NULL, 0, NULL);
 }
 
-int sbc_decode(sbc_t *sbc, void *input, int input_len, void *output,
-		int output_len, int *written)
+ssize_t sbc_decode(sbc_t *sbc, const void *input, size_t input_len,
+			void *output, size_t output_len, size_t *written)
 {
 	struct sbc_priv *priv;
 	char *ptr;
@@ -1020,7 +1030,7 @@ int sbc_decode(sbc_t *sbc, void *input, int input_len, void *output,
 
 	ptr = output;
 
-	if (output_len < samples * priv->frame.channels * 2)
+	if (output_len < (size_t) (samples * priv->frame.channels * 2))
 		samples = output_len / (priv->frame.channels * 2);
 
 	for (i = 0; i < samples; i++) {
@@ -1044,8 +1054,8 @@ int sbc_decode(sbc_t *sbc, void *input, int input_len, void *output,
 	return framelen;
 }
 
-int sbc_encode(sbc_t *sbc, void *input, int input_len, void *output,
-		int output_len, int *written)
+ssize_t sbc_encode(sbc_t *sbc, const void *input, size_t input_len,
+			void *output, size_t output_len, size_t *written)
 {
 	struct sbc_priv *priv;
 	int framelen, samples;
@@ -1133,7 +1143,7 @@ void sbc_finish(sbc_t *sbc)
 	memset(sbc, 0, sizeof(sbc_t));
 }
 
-int sbc_get_frame_length(sbc_t *sbc)
+size_t sbc_get_frame_length(sbc_t *sbc)
 {
 	int ret;
 	uint8_t subbands, channels, blocks, joint, bitpool;
@@ -1159,7 +1169,7 @@ int sbc_get_frame_length(sbc_t *sbc)
 	return ret;
 }
 
-int sbc_get_frame_duration(sbc_t *sbc)
+unsigned sbc_get_frame_duration(sbc_t *sbc)
 {
 	uint8_t subbands, blocks;
 	uint16_t frequency;
@@ -1197,7 +1207,7 @@ int sbc_get_frame_duration(sbc_t *sbc)
 	return (1000000 * blocks * subbands) / frequency;
 }
 
-uint16_t sbc_get_codesize(sbc_t *sbc)
+size_t sbc_get_codesize(sbc_t *sbc)
 {
 	uint16_t subbands, channels, blocks;
 	struct sbc_priv *priv;

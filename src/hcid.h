@@ -42,6 +42,8 @@
 #define MODE_LIMITED		0x03
 #define MODE_UNKNOWN		0xff
 
+#define HCID_DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
+
 /* Timeout for hci_send_req (milliseconds) */
 #define HCI_REQ_TIMEOUT		5000
 
@@ -57,16 +59,26 @@ struct main_opts {
 	uint16_t	link_policy;
 	gboolean	remember_powered;
 	gboolean	reverse_sdp;
+	gboolean	name_resolv;
 
 	uint8_t		scan;
 	uint8_t		mode;
-	uint8_t		inqmode;
+	uint8_t		discov_interval;
 	char		deviceid[15]; /* FIXME: */
 
 	int		sock;
 };
 
+enum {
+	HCID_SET_NAME,
+	HCID_SET_CLASS,
+	HCID_SET_PAGETO,
+	HCID_SET_DISCOVTO,
+};
+
 extern struct main_opts main_opts;
+
+char *expand_name(char *dst, int size, char *str, int dev_id);
 
 void hci_req_queue_remove(int dev_id, bdaddr_t *dba);
 

@@ -15,6 +15,7 @@
 @SET_MAKE@
 
 
+
 VPATH = @srcdir@
 pkgdatadir = $(datadir)/@PACKAGE@
 pkglibdir = $(libdir)/@PACKAGE@
@@ -51,7 +52,7 @@ am__vpath_adj = case $$p in \
   esac;
 am__strip_dir = `echo $$p | sed -e 's|^.*/||'`;
 am__installdirs = "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" \
-	"$(DESTDIR)$(plugindir)"
+	"$(DESTDIR)$(plugindir)" "$(DESTDIR)$(alsaconfdir)"
 alsaLTLIBRARIES_INSTALL = $(INSTALL)
 gstreamerLTLIBRARIES_INSTALL = $(INSTALL)
 pluginLTLIBRARIES_INSTALL = $(INSTALL)
@@ -148,6 +149,8 @@ DIST_SOURCES = $(am__audio_la_SOURCES_DIST) \
 	$(am__libasound_module_pcm_bluetooth_la_SOURCES_DIST) \
 	$(am__libgstbluetooth_la_SOURCES_DIST) $(libipc_la_SOURCES) \
 	ipctest.c
+alsaconfDATA_INSTALL = $(INSTALL_DATA)
+DATA = $(alsaconf_DATA)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -306,6 +309,8 @@ BUILT_SOURCES = telephony.c
 @ALSA_TRUE@@AUDIOPLUGIN_TRUE@libasound_module_ctl_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_ctl_.*
 @ALSA_TRUE@@AUDIOPLUGIN_TRUE@libasound_module_ctl_bluetooth_la_LIBADD = @BLUEZ_LIBS@ @ALSA_LIBS@
 @ALSA_TRUE@@AUDIOPLUGIN_TRUE@libasound_module_ctl_bluetooth_la_CFLAGS = @ALSA_CFLAGS@ @BLUEZ_CFLAGS@
+@ALSA_TRUE@@AUDIOPLUGIN_TRUE@@CONFIGFILES_TRUE@alsaconfdir = $(sysconfdir)/alsa
+@ALSA_TRUE@@AUDIOPLUGIN_TRUE@@CONFIGFILES_TRUE@alsaconf_DATA = bluetooth.conf
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamerdir = $(libdir)/gstreamer-0.10
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamer_LTLIBRARIES = libgstbluetooth.la
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@libgstbluetooth_la_SOURCES = gstbluetooth.c \
@@ -333,7 +338,9 @@ AM_CFLAGS = -fvisibility=hidden @SBC_CFLAGS@ \
 
 CLEANFILES = $(BUILT_SOURCES)
 INCLUDES = -I$(top_srcdir)/common -I$(top_srcdir)/src
-EXTRA_DIST = audio.conf asound.conf telephony-dummy.c telephony-maemo.c
+EXTRA_DIST = audio.conf telephony-dummy.c telephony-maemo.c telephony-ofono.c \
+		bluetooth.conf
+
 MAINTAINERCLEANFILES = Makefile.in
 all: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) all-am
@@ -630,6 +637,23 @@ mostlyclean-libtool:
 
 clean-libtool:
 	-rm -rf .libs _libs
+install-alsaconfDATA: $(alsaconf_DATA)
+	@$(NORMAL_INSTALL)
+	test -z "$(alsaconfdir)" || $(MKDIR_P) "$(DESTDIR)$(alsaconfdir)"
+	@list='$(alsaconf_DATA)'; for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  f=$(am__strip_dir) \
+	  echo " $(alsaconfDATA_INSTALL) '$$d$$p' '$(DESTDIR)$(alsaconfdir)/$$f'"; \
+	  $(alsaconfDATA_INSTALL) "$$d$$p" "$(DESTDIR)$(alsaconfdir)/$$f"; \
+	done
+
+uninstall-alsaconfDATA:
+	@$(NORMAL_UNINSTALL)
+	@list='$(alsaconf_DATA)'; for p in $$list; do \
+	  f=$(am__strip_dir) \
+	  echo " rm -f '$(DESTDIR)$(alsaconfdir)/$$f'"; \
+	  rm -f "$(DESTDIR)$(alsaconfdir)/$$f"; \
+	done
 
 ID: $(HEADERS) $(SOURCES) $(LISP) $(TAGS_FILES)
 	list='$(SOURCES) $(HEADERS) $(LISP) $(TAGS_FILES)'; \
@@ -707,9 +731,9 @@ distdir: $(DISTFILES)
 check-am: all-am
 check: $(BUILT_SOURCES)
 	$(MAKE) $(AM_MAKEFLAGS) check-am
-all-am: Makefile $(LTLIBRARIES) $(PROGRAMS)
+all-am: Makefile $(LTLIBRARIES) $(PROGRAMS) $(DATA)
 installdirs:
-	for dir in "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" "$(DESTDIR)$(plugindir)"; do \
+	for dir in "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" "$(DESTDIR)$(plugindir)" "$(DESTDIR)$(alsaconfdir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: $(BUILT_SOURCES)
@@ -763,8 +787,8 @@ info: info-am
 
 info-am:
 
-install-data-am: install-alsaLTLIBRARIES install-gstreamerLTLIBRARIES \
-	install-pluginLTLIBRARIES
+install-data-am: install-alsaLTLIBRARIES install-alsaconfDATA \
+	install-gstreamerLTLIBRARIES install-pluginLTLIBRARIES
 
 install-dvi: install-dvi-am
 
@@ -800,8 +824,8 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-alsaLTLIBRARIES uninstall-gstreamerLTLIBRARIES \
-	uninstall-pluginLTLIBRARIES
+uninstall-am: uninstall-alsaLTLIBRARIES uninstall-alsaconfDATA \
+	uninstall-gstreamerLTLIBRARIES uninstall-pluginLTLIBRARIES
 
 .MAKE: install-am install-strip
 
@@ -811,16 +835,17 @@ uninstall-am: uninstall-alsaLTLIBRARIES uninstall-gstreamerLTLIBRARIES \
 	clean-pluginLTLIBRARIES ctags distclean distclean-compile \
 	distclean-generic distclean-libtool distclean-tags distdir dvi \
 	dvi-am html html-am info info-am install \
-	install-alsaLTLIBRARIES install-am install-data \
-	install-data-am install-dvi install-dvi-am install-exec \
-	install-exec-am install-gstreamerLTLIBRARIES install-html \
-	install-html-am install-info install-info-am install-man \
-	install-pdf install-pdf-am install-pluginLTLIBRARIES \
-	install-ps install-ps-am install-strip installcheck \
-	installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
-	tags uninstall uninstall-alsaLTLIBRARIES uninstall-am \
+	install-alsaLTLIBRARIES install-alsaconfDATA install-am \
+	install-data install-data-am install-dvi install-dvi-am \
+	install-exec install-exec-am install-gstreamerLTLIBRARIES \
+	install-html install-html-am install-info install-info-am \
+	install-man install-pdf install-pdf-am \
+	install-pluginLTLIBRARIES install-ps install-ps-am \
+	install-strip installcheck installcheck-am installdirs \
+	maintainer-clean maintainer-clean-generic mostlyclean \
+	mostlyclean-compile mostlyclean-generic mostlyclean-libtool \
+	pdf pdf-am ps ps-am tags uninstall uninstall-alsaLTLIBRARIES \
+	uninstall-alsaconfDATA uninstall-am \
 	uninstall-gstreamerLTLIBRARIES uninstall-pluginLTLIBRARIES
 
 

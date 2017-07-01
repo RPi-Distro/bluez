@@ -307,6 +307,7 @@ struct avdtp_server {
 	bdaddr_t src;
 	GIOChannel *io;
 	GSList *seps;
+	GSList *sessions;
 };
 
 struct avdtp_local_sep {
@@ -398,7 +399,6 @@ struct avdtp {
 };
 
 static GSList *servers = NULL;
-static GSList *sessions = NULL;
 
 static GSList *avdtp_callbacks = NULL;
 
@@ -457,17 +457,18 @@ static const char *avdtp_statestr(avdtp_state_t state)
 
 static gboolean try_send(int sk, void *data, size_t len)
 {
-	gboolean ret;
+	int err;
 
-	ret = send(sk, data, len, 0);
+	do {
+		err = send(sk, data, len, 0);
+	} while (err < 0 && errno == EINTR);
 
-	if (ret < 0)
-		ret = -errno;
-	else if ((size_t) ret != len)
-		ret = -EIO;
-
-	if (ret < 0) {
-		error("try_send: %s (%d)", strerror(-ret), -ret);
+	if (err < 0) {
+		error("send: %s (%d)", strerror(errno), errno);
+		return FALSE;
+	} else if ((size_t) err != len) {
+		error("try_send: complete buffer not sent (%d/%zu bytes)",
+								err, len);
 		return FALSE;
 	}
 
@@ -511,7 +512,7 @@ static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
 	cont_fragments = (len - (session->omtu - sizeof(start))) /
 					(session->omtu - sizeof(cont)) + 1;
 
-	debug("avdtp_send: %u bytes split into %d fragments", len,
+	debug("avdtp_send: %zu bytes split into %d fragments", len,
 							cont_fragments + 1);
 
 	/* Send the start packet */
@@ -529,7 +530,7 @@ static gboolean avdtp_send(struct avdtp *session, uint8_t transaction,
 	if (!try_send(sock, session->buf, session->omtu))
 		return FALSE;
 
-	debug("avdtp_send: first packet with %d bytes sent",
+	debug("avdtp_send: first packet with %zu bytes sent",
 						session->omtu - sizeof(start));
 
 	sent = session->omtu - sizeof(start);
@@ -614,7 +615,7 @@ static gboolean disconnect_timeout(gpointer user_data)
 	stream_setup = session->stream_setup;
 	session->stream_setup = FALSE;
 
-	dev = manager_get_device(&session->server->src, &session->dst);
+	dev = manager_get_device(&session->server->src, &session->dst, FALSE);
 
 	if (dev && dev->sink && stream_setup)
 		sink_setup_stream(dev->sink, session);
@@ -711,7 +712,7 @@ static void avdtp_set_state(struct avdtp *session,
 	session->state = new_state;
 
 	avdtp_get_peers(session, &src, &dst);
-	dev = manager_get_device(&src, &dst);
+	dev = manager_get_device(&src, &dst, FALSE);
 	if (dev == NULL) {
 		error("avdtp_set_state(): no matching audio device");
 		return;
@@ -856,6 +857,12 @@ static void avdtp_sep_set_state(struct avdtp *session,
 	struct avdtp_stream *stream = sep->stream;
 	avdtp_state_t old_state;
 	struct avdtp_error err, *err_ptr = NULL;
+	GSList *l;
+
+	if (!stream) {
+		error("Error changing sep state: stream not available");
+		return;
+	}
 
 	if (sep->state == state) {
 		avdtp_error_init(&err, AVDTP_ERROR_ERRNO, EIO);
@@ -871,13 +878,9 @@ static void avdtp_sep_set_state(struct avdtp *session,
 	old_state = sep->state;
 	sep->state = state;
 
-	if (stream) {
-		GSList *l;
-		for (l = stream->callbacks; l != NULL; l = g_slist_next(l)) {
-			struct stream_callback *cb = l->data;
-			cb->cb(stream, old_state, state, err_ptr,
-					cb->user_data);
-		}
+	for (l = stream->callbacks; l != NULL; l = g_slist_next(l)) {
+		struct stream_callback *cb = l->data;
+		cb->cb(stream, old_state, state, err_ptr, cb->user_data);
 	}
 
 	switch (state) {
@@ -983,13 +986,10 @@ static void connection_lost(struct avdtp *session, int err)
 
 void avdtp_unref(struct avdtp *session)
 {
+	struct avdtp_server *server;
+
 	if (!session)
 		return;
-
-	if (!g_slist_find(sessions, session)) {
-		error("avdtp_unref: trying to unref a unknown session");
-		return;
-	}
 
 	session->ref--;
 
@@ -1013,13 +1013,15 @@ void avdtp_unref(struct avdtp *session)
 	if (session->ref > 0)
 		return;
 
+	server = session->server;
+
 	debug("avdtp_unref(%p): freeing session and removing from list",
 			session);
 
 	if (session->dc_timer)
 		remove_disconnect_timer(session);
 
-	sessions = g_slist_remove(sessions, session);
+	server->sessions = g_slist_remove(server->sessions, session);
 
 	if (session->req)
 		pending_req_free(session->req);
@@ -1221,7 +1223,7 @@ static gboolean avdtp_setconf_cmd(struct avdtp *session, uint8_t transaction,
 	}
 
 	avdtp_get_peers(session, &src, &dst);
-	dev = manager_get_device(&src, &dst);
+	dev = manager_get_device(&src, &dst, FALSE);
 	if (!dev) {
 		error("Unable to get a audio device object");
 		goto failed;
@@ -1650,7 +1652,7 @@ static enum avdtp_parse_result avdtp_parse_data(struct avdtp *session,
 	switch (header->packet_type) {
 	case AVDTP_PKT_TYPE_SINGLE:
 		if (size < sizeof(*single)) {
-			error("Received too small single packet (%d bytes)", size);
+			error("Received too small single packet (%zu bytes)", size);
 			return PARSE_ERROR;
 		}
 		if (session->in.active) {
@@ -1671,7 +1673,7 @@ static enum avdtp_parse_result avdtp_parse_data(struct avdtp *session,
 		break;
 	case AVDTP_PKT_TYPE_START:
 		if (size < sizeof(*start)) {
-			error("Received too small start packet (%d bytes)", size);
+			error("Received too small start packet (%zu bytes)", size);
 			return PARSE_ERROR;
 		}
 		if (session->in.active) {
@@ -1692,7 +1694,7 @@ static enum avdtp_parse_result avdtp_parse_data(struct avdtp *session,
 		break;
 	case AVDTP_PKT_TYPE_CONTINUE:
 		if (size < sizeof(struct avdtp_continue_header)) {
-			error("Received too small continue packet (%d bytes)",
+			error("Received too small continue packet (%zu bytes)",
 									size);
 			return PARSE_ERROR;
 		}
@@ -1715,7 +1717,7 @@ static enum avdtp_parse_result avdtp_parse_data(struct avdtp *session,
 		break;
 	case AVDTP_PKT_TYPE_END:
 		if (size < sizeof(struct avdtp_continue_header)) {
-			error("Received too small end packet (%d bytes)", size);
+			error("Received too small end packet (%zu bytes)", size);
 			return PARSE_ERROR;
 		}
 		if (!session->in.active) {
@@ -1785,7 +1787,7 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 	}
 
 	if (size < sizeof(struct avdtp_common_header)) {
-		error("Received too small packet (%d bytes)", size);
+		error("Received too small packet (%zu bytes)", size);
 		goto failed;
 	}
 
@@ -1873,14 +1875,14 @@ failed:
 	return FALSE;
 }
 
-static struct avdtp *find_session(const bdaddr_t *src, const bdaddr_t *dst)
+static struct avdtp *find_session(GSList *list, const bdaddr_t *dst)
 {
 	GSList *l;
 
-	for (l = sessions; l != NULL; l = g_slist_next(l)) {
+	for (l = list; l != NULL; l = g_slist_next(l)) {
 		struct avdtp *s = l->data;
 
-		if (bacmp(src, &s->server->src) || bacmp(dst, &s->dst))
+		if (bacmp(dst, &s->dst))
 			continue;
 
 		return s;
@@ -1891,12 +1893,17 @@ static struct avdtp *find_session(const bdaddr_t *src, const bdaddr_t *dst)
 
 static struct avdtp *avdtp_get_internal(const bdaddr_t *src, const bdaddr_t *dst)
 {
+	struct avdtp_server *server;
 	struct avdtp *session;
 
 	assert(src != NULL);
 	assert(dst != NULL);
 
-	session = find_session(src, dst);
+	server = find_server(servers, src);
+	if (server == NULL)
+		return NULL;
+
+	session = find_session(server->sessions, dst);
 	if (session) {
 		if (session->pending_auth)
 			return NULL;
@@ -1906,7 +1913,7 @@ static struct avdtp *avdtp_get_internal(const bdaddr_t *src, const bdaddr_t *dst
 
 	session = g_new0(struct avdtp, 1);
 
-	session->server = find_server(servers, src);
+	session->server = server;
 	bacpy(&session->dst, dst);
 	session->ref = 1;
 	/* We don't use avdtp_set_state() here since this isn't a state change
@@ -1914,7 +1921,7 @@ static struct avdtp *avdtp_get_internal(const bdaddr_t *src, const bdaddr_t *dst
 	session->state = AVDTP_SESSION_STATE_DISCONNECTED;
 	session->auto_dc = TRUE;
 
-	sessions = g_slist_append(sessions, session);
+	server->sessions = g_slist_append(server->sessions, session);
 
 	return session;
 }
@@ -1936,11 +1943,6 @@ static void avdtp_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	struct avdtp *session = user_data;
 	char address[18];
 	GError *gerr = NULL;
-
-	if (!g_slist_find(sessions, session)) {
-		debug("avdtp_connect_cb: session got removed");
-		return;
-	}
 
 	if (err) {
 		error("%s", err->message);
@@ -2043,7 +2045,6 @@ static void auth_cb(DBusError *derr, void *user_data)
 
 static void avdtp_confirm_cb(GIOChannel *chan, gpointer data)
 {
-	int sk;
 	struct avdtp *session;
 	struct audio_device *dev;
 	char address[18];
@@ -2065,8 +2066,8 @@ static void avdtp_confirm_cb(GIOChannel *chan, gpointer data)
 	debug("AVDTP: incoming connect from %s", address);
 
 	session = avdtp_get_internal(&src, &dst);
-
-	sk = g_io_channel_unix_get_fd(chan);
+	if (!session)
+		goto drop;
 
 	if (session->pending_open && session->pending_open->open_acp) {
 		if (!bt_io_accept(chan, avdtp_connect_cb, session, NULL, NULL))
@@ -2079,10 +2080,15 @@ static void avdtp_confirm_cb(GIOChannel *chan, gpointer data)
 		goto drop;
 	}
 
-	dev = manager_get_device(&src, &dst);
+	dev = manager_get_device(&src, &dst, FALSE);
 	if (!dev) {
-		error("Unable to get audio device object for %s", address);
-		goto drop;
+		dev = manager_get_device(&src, &dst, TRUE);
+		if (!dev) {
+			error("Unable to get audio device object for %s",
+					address);
+			goto drop;
+		}
+		btd_device_add_uuid(dev->btd_dev, ADVANCED_AUDIO_UUID);
 	}
 
 	session->io = g_io_channel_ref(chan);
@@ -2660,10 +2666,14 @@ static gboolean avdtp_parse_rej(struct avdtp *session,
 
 gboolean avdtp_is_connected(const bdaddr_t *src, const bdaddr_t *dst)
 {
+	struct avdtp_server *server;
 	struct avdtp *session;
 
-	session = find_session(src, dst);
+	server = find_server(servers, src);
+	if (!server)
+		return FALSE;
 
+	session = find_session(server->sessions, dst);
 	if (!session)
 		return FALSE;
 
@@ -3210,15 +3220,11 @@ int avdtp_unregister_sep(struct avdtp_local_sep *sep)
 	if (!sep)
 		return -EINVAL;
 
-	if (sep->info.inuse)
-		return -EBUSY;
-
 	server = sep->server;
 	server->seps = g_slist_remove(server->seps, sep);
 
 	if (sep->stream)
-		avdtp_sep_set_state(sep->stream->session, sep,
-							AVDTP_STATE_IDLE);
+		release_stream(sep->stream, sep->stream->session);
 
 	g_free(sep);
 
@@ -3346,10 +3352,17 @@ int avdtp_init(const bdaddr_t *src, GKeyFile *config)
 void avdtp_exit(const bdaddr_t *src)
 {
 	struct avdtp_server *server;
+	GSList *l;
 
 	server = find_server(servers, src);
 	if (!server)
 		return;
+
+	for (l = server->sessions; l; l = l->next) {
+		struct avdtp *session = l->data;
+
+		connection_lost(session, -ECONNABORTED);
+	}
 
 	servers = g_slist_remove(servers, server);
 

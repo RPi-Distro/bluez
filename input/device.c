@@ -54,6 +54,7 @@
 #include "../src/manager.h"
 #include "../src/dbus-common.h"
 #include "adapter.h"
+#include "../src/device.h"
 
 #include "device.h"
 #include "error.h"
@@ -88,7 +89,9 @@ struct input_device {
 	bdaddr_t		src;
 	bdaddr_t		dst;
 	uint32_t		handle;
+	guint			dc_id;
 	char			*name;
+	struct btd_device	*device;
 	GSList			*connections;
 };
 
@@ -150,7 +153,11 @@ static void input_conn_free(struct input_conn *iconn)
 
 static void input_device_free(struct input_device *idev)
 {
+	if (idev->dc_id)
+		device_remove_disconnect_watch(idev->device, idev->dc_id);
+
 	dbus_connection_unref(idev->conn);
+	btd_device_unref(idev->device);
 	g_free(idev->name);
 	g_free(idev->path);
 	g_free(idev);
@@ -419,6 +426,9 @@ static gboolean intr_watch_cb(GIOChannel *chan, GIOCondition cond, gpointer data
 	emit_property_changed(idev->conn, idev->path, INPUT_DEVICE_INTERFACE,
 				"Connected", DBUS_TYPE_BOOLEAN, &connected);
 
+	device_remove_disconnect_watch(idev->device, idev->dc_id);
+	idev->dc_id = 0;
+
 	iconn->intr_watch = 0;
 
 	g_io_channel_unref(iconn->intr_io);
@@ -647,9 +657,6 @@ static int hidp_add_connection(const struct input_device *idev,
 			error("bt_acl_encrypt(): %s(%d)", strerror(-err), -err);
 			goto cleanup;
 		}
-
-		/* Link already encrypted - reset error */
-		err = 0;
 	}
 
 	if (req->vendor == 0x054c && req->product == 0x0268) {
@@ -666,6 +673,125 @@ cleanup:
 	g_free(req);
 
 	return err;
+}
+
+static int is_connected(struct input_conn *iconn)
+{
+	struct input_device *idev = iconn->idev;
+	struct fake_input *fake = iconn->fake;
+	struct hidp_conninfo ci;
+	int ctl;
+
+	/* Fake input */
+	if (fake)
+		return fake->flags & FI_FLAG_CONNECTED;
+
+	/* Standard HID */
+	ctl = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HIDP);
+	if (ctl < 0)
+		return 0;
+
+	memset(&ci, 0, sizeof(ci));
+	bacpy(&ci.bdaddr, &idev->dst);
+	if (ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) {
+		close(ctl);
+		return 0;
+	}
+
+	close(ctl);
+
+	if (ci.state != BT_CONNECTED)
+		return 0;
+	else
+		return 1;
+}
+
+static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
+{
+	struct input_device *idev = iconn->idev;
+	struct fake_input *fake = iconn->fake;
+	struct hidp_conndel_req req;
+	struct hidp_conninfo ci;
+	int ctl, err;
+
+	/* Fake input disconnect */
+	if (fake) {
+		err = fake->disconnect(iconn);
+		if (err == 0)
+			fake->flags &= ~FI_FLAG_CONNECTED;
+		return err;
+	}
+
+	/* Standard HID disconnect */
+	if (iconn->intr_io)
+		g_io_channel_shutdown(iconn->intr_io, TRUE, NULL);
+	if (iconn->ctrl_io)
+		g_io_channel_shutdown(iconn->ctrl_io, TRUE, NULL);
+
+	ctl = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HIDP);
+	if (ctl < 0) {
+		error("Can't open HIDP control socket");
+		return -errno;
+	}
+
+	memset(&ci, 0, sizeof(ci));
+	bacpy(&ci.bdaddr, &idev->dst);
+	if ((ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) ||
+				(ci.state != BT_CONNECTED)) {
+		errno = ENOTCONN;
+		goto fail;
+	}
+
+	memset(&req, 0, sizeof(req));
+	bacpy(&req.bdaddr, &idev->dst);
+	req.flags = flags;
+	if (ioctl(ctl, HIDPCONNDEL, &req) < 0) {
+		error("Can't delete the HID device: %s(%d)",
+				strerror(errno), errno);
+		goto fail;
+	}
+
+	close(ctl);
+
+	return 0;
+
+fail:
+	err = errno;
+	close(ctl);
+	errno = err;
+
+	return -err;
+}
+
+static int disconnect(struct input_device *idev, uint32_t flags)
+{
+	struct input_conn *iconn = NULL;
+	GSList *l;
+
+	for (l = idev->connections; l; l = l->next) {
+		iconn = l->data;
+
+		if (is_connected(iconn))
+			break;
+	}
+
+	if (!iconn)
+		return ENOTCONN;
+
+	return connection_disconnect(iconn, flags);
+}
+
+static void disconnect_cb(struct btd_device *device, gboolean removal,
+				void *user_data)
+{
+	struct input_device *idev = user_data;
+	int flags;
+
+	info("Input: disconnect %s", idev->path);
+
+	flags = removal ? (1 << HIDP_VIRTUAL_CABLE_UNPLUG) : 0;
+
+	disconnect(idev, flags);
 }
 
 static int input_device_connected(struct input_device *idev,
@@ -691,6 +817,9 @@ static int input_device_connected(struct input_device *idev,
 	connected = TRUE;
 	emit_property_changed(idev->conn, idev->path, INPUT_DEVICE_INTERFACE,
 				"Connected", DBUS_TYPE_BOOLEAN, &connected);
+
+	idev->dc_id = device_add_disconnect_watch(idev->device, disconnect_cb,
+							idev, NULL);
 
 	return 0;
 }
@@ -803,116 +932,10 @@ static int fake_disconnect(struct input_conn *iconn)
 	return 0;
 }
 
-static int is_connected(struct input_conn *iconn)
-{
-	struct input_device *idev = iconn->idev;
-	struct fake_input *fake = iconn->fake;
-	struct hidp_conninfo ci;
-	int ctl;
-
-	/* Fake input */
-	if (fake)
-		return fake->flags & FI_FLAG_CONNECTED;
-
-	/* Standard HID */
-	ctl = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HIDP);
-	if (ctl < 0)
-		return 0;
-
-	memset(&ci, 0, sizeof(ci));
-	bacpy(&ci.bdaddr, &idev->dst);
-	if (ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) {
-		close(ctl);
-		return 0;
-	}
-
-	close(ctl);
-
-	if (ci.state != BT_CONNECTED)
-		return 0;
-	else
-		return 1;
-}
-
-static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
-{
-	struct input_device *idev = iconn->idev;
-	struct fake_input *fake = iconn->fake;
-	struct hidp_conndel_req req;
-	struct hidp_conninfo ci;
-	int ctl, err;
-
-	/* Fake input disconnect */
-	if (fake) {
-		err = fake->disconnect(iconn);
-		if (err == 0)
-			fake->flags &= ~FI_FLAG_CONNECTED;
-		return err;
-	}
-
-	/* Standard HID disconnect */
-	if (iconn->intr_io)
-		g_io_channel_shutdown(iconn->intr_io, TRUE, NULL);
-	if (iconn->ctrl_io)
-		g_io_channel_shutdown(iconn->ctrl_io, TRUE, NULL);
-
-	ctl = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HIDP);
-	if (ctl < 0) {
-		error("Can't open HIDP control socket");
-		return -errno;
-	}
-
-	memset(&ci, 0, sizeof(ci));
-	bacpy(&ci.bdaddr, &idev->dst);
-	if ((ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) ||
-				(ci.state != BT_CONNECTED)) {
-		errno = ENOTCONN;
-		goto fail;
-	}
-
-	memset(&req, 0, sizeof(req));
-	bacpy(&req.bdaddr, &idev->dst);
-	req.flags = flags;
-	if (ioctl(ctl, HIDPCONNDEL, &req) < 0) {
-		error("Can't delete the HID device: %s(%d)",
-				strerror(errno), errno);
-		goto fail;
-	}
-
-	close(ctl);
-
-	return 0;
-
-fail:
-	err = errno;
-	close(ctl);
-	errno = err;
-
-	return -err;
-}
-
-static int disconnect(struct input_device *idev, uint32_t flags)
-{
-	struct input_conn *iconn = NULL;
-	GSList *l;
-
-	for (l = idev->connections; l; l = l->next) {
-		iconn = l->data;
-
-		if (is_connected(iconn))
-			break;
-	}
-
-	if (!iconn)
-		return ENOTCONN;
-
-	return connection_disconnect(iconn, flags);
-}
-
 /*
  * Input Device methods
  */
-static DBusMessage *device_connect(DBusConnection *conn,
+static DBusMessage *input_device_connect(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	struct input_device *idev = data;
@@ -968,7 +991,7 @@ static DBusMessage *create_errno_message(DBusMessage *msg, int err)
 							strerror(err));
 }
 
-static DBusMessage *device_disconnect(DBusConnection *conn,
+static DBusMessage *input_device_disconnect(DBusConnection *conn,
 						DBusMessage *msg, void *data)
 {
 	struct input_device *idev = data;
@@ -988,8 +1011,6 @@ static void device_unregister(void *data)
 	debug("Unregistered interface %s on path %s", INPUT_DEVICE_INTERFACE,
 								idev->path);
 
-	/* Disconnect if applied */
-	disconnect(idev, (1 << HIDP_VIRTUAL_CABLE_UNPLUG));
 	devices = g_slist_remove(devices, idev);
 	input_device_free(idev);
 }
@@ -1001,7 +1022,7 @@ static gint connected_cmp(gpointer a, gpointer b)
 	return !is_connected(iconn);
 }
 
-static DBusMessage *device_get_properties(DBusConnection *conn,
+static DBusMessage *input_device_get_properties(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
 	struct input_device *idev = data;
@@ -1032,10 +1053,10 @@ static DBusMessage *device_get_properties(DBusConnection *conn,
 }
 
 static GDBusMethodTable device_methods[] = {
-	{ "Connect",		"",	"",	device_connect,
+	{ "Connect",		"",	"",	input_device_connect,
 						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	device_disconnect	},
-	{ "GetProperties",	"",	"a{sv}",device_get_properties },
+	{ "Disconnect",		"",	"",	input_device_disconnect	},
+	{ "GetProperties",	"",	"a{sv}",input_device_get_properties },
 	{ }
 };
 
@@ -1045,8 +1066,9 @@ static GDBusSignalTable device_signals[] = {
 };
 
 static struct input_device *input_device_new(DBusConnection *conn,
-					const char *path, const bdaddr_t *src,
-					const bdaddr_t *dst, const uint32_t handle)
+					struct btd_device *device, const char *path,
+					const bdaddr_t *src, const bdaddr_t *dst,
+					const uint32_t handle)
 {
 	struct input_device *idev;
 	char name[249], src_addr[18], dst_addr[18];
@@ -1054,6 +1076,7 @@ static struct input_device *input_device_new(DBusConnection *conn,
 	idev = g_new0(struct input_device, 1);
 	bacpy(&idev->src, src);
 	bacpy(&idev->dst, dst);
+	idev->device = btd_device_ref(device);
 	idev->path = g_strdup(path);
 	idev->conn = dbus_connection_ref(conn);
 	idev->handle = handle;
@@ -1093,16 +1116,17 @@ static struct input_conn *input_conn_new(struct input_device *idev,
 	return iconn;
 }
 
-int input_device_register(DBusConnection *conn, const char *path,
-			const bdaddr_t *src, const bdaddr_t *dst,
-			const char *uuid, uint32_t handle, int timeout)
+int input_device_register(DBusConnection *conn, struct btd_device *device,
+			const char *path, const bdaddr_t *src,
+			const bdaddr_t *dst, const char *uuid,
+			uint32_t handle, int timeout)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, path, src, dst, handle);
+		idev = input_device_new(conn, device, path, src, dst, handle);
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
@@ -1117,15 +1141,16 @@ int input_device_register(DBusConnection *conn, const char *path,
 	return 0;
 }
 
-int fake_input_register(DBusConnection *conn, const char *path, bdaddr_t *src,
-			bdaddr_t *dst, const char *uuid, uint8_t channel)
+int fake_input_register(DBusConnection *conn, struct btd_device *device,
+			const char *path, bdaddr_t *src, bdaddr_t *dst,
+			const char *uuid, uint8_t channel)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, path, src, dst, 0);
+		idev = input_device_new(conn, device, path, src, dst, 0);
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
@@ -1188,6 +1213,32 @@ int input_device_unregister(const char *path, const char *uuid)
 	return 0;
 }
 
+static int input_device_connadd(struct input_device *idev,
+				struct input_conn *iconn)
+{
+	int err;
+
+	err = input_device_connected(idev, iconn);
+	if (err < 0)
+		goto error;
+
+	return 0;
+
+error:
+	if (iconn->ctrl_io) {
+		g_io_channel_shutdown(iconn->ctrl_io, FALSE, NULL);
+		g_io_channel_unref(iconn->ctrl_io);
+		iconn->ctrl_io = NULL;
+	}
+	if (iconn->intr_io) {
+		g_io_channel_shutdown(iconn->intr_io, FALSE, NULL);
+		g_io_channel_unref(iconn->intr_io);
+		iconn->intr_io = NULL;
+	}
+
+	return err;
+}
+
 int input_device_set_channel(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 								GIOChannel *io)
 {
@@ -1214,6 +1265,9 @@ int input_device_set_channel(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 		break;
 	}
 
+	if (iconn->intr_io && iconn->ctrl_io)
+		input_device_connadd(idev, iconn);
+
 	return 0;
 }
 
@@ -1236,39 +1290,4 @@ int input_device_close_channels(const bdaddr_t *src, const bdaddr_t *dst)
 		g_io_channel_shutdown(iconn->ctrl_io, TRUE, NULL);
 
 	return 0;
-}
-
-int input_device_connadd(const bdaddr_t *src, const bdaddr_t *dst)
-{
-	struct input_device *idev;
-	struct input_conn *iconn;
-	int err;
-
-	idev = find_device(src, dst);
-	if (!idev)
-		return -ENOENT;
-
-	iconn = find_connection(idev->connections, "hid");
-	if (!iconn)
-		return -ENOENT;
-
-	err = input_device_connected(idev, iconn);
-	if (err < 0)
-		goto error;
-
-	return 0;
-
-error:
-	if (iconn->ctrl_io) {
-		g_io_channel_shutdown(iconn->ctrl_io, FALSE, NULL);
-		g_io_channel_unref(iconn->ctrl_io);
-		iconn->ctrl_io = NULL;
-	}
-	if (iconn->intr_io) {
-		g_io_channel_shutdown(iconn->intr_io, FALSE, NULL);
-		g_io_channel_unref(iconn->intr_io);
-		iconn->intr_io = NULL;
-	}
-
-	return err;
 }

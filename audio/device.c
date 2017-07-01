@@ -45,14 +45,18 @@
 
 #include "logging.h"
 #include "textfile.h"
+#include "../src/adapter.h"
+#include "../src/device.h"
 
 #include "error.h"
 #include "ipc.h"
 #include "dbus-common.h"
 #include "device.h"
+#include "unix.h"
 #include "avdtp.h"
 #include "control.h"
 #include "headset.h"
+#include "gateway.h"
 #include "sink.h"
 
 #define AUDIO_INTERFACE "org.bluez.Audio"
@@ -93,6 +97,8 @@ static void device_free(struct audio_device *dev)
 
 	if (dev->conn)
 		dbus_connection_unref(dev->conn);
+
+	btd_device_unref(dev->btd_dev);
 
 	if (priv) {
 		if (priv->control_timer)
@@ -149,6 +155,7 @@ static void device_set_state(struct audio_device *dev, audio_state_t new_state)
 		reply = dbus_message_new_method_return(priv->dc_req);
 		dbus_message_unref(priv->dc_req);
 		priv->dc_req = NULL;
+		g_dbus_send_message(dev->conn, reply);
 	}
 
 	if (priv->conn_req && new_state != AUDIO_STATE_CONNECTING) {
@@ -161,10 +168,8 @@ static void device_set_state(struct audio_device *dev, audio_state_t new_state)
 							"Connecting failed");
 		dbus_message_unref(priv->conn_req);
 		priv->conn_req = NULL;
-	}
-
-	if (reply)
 		g_dbus_send_message(dev->conn, reply);
+	}
 
 	emit_property_changed(dev->conn, dev->path,
 				AUDIO_INTERFACE, "State",
@@ -257,7 +262,7 @@ static gboolean headset_connect_timeout(gpointer user_data)
 	dev->priv->headset_timer = 0;
 
 	if (dev->headset)
-		headset_config_stream(dev, NULL, NULL);
+		headset_config_stream(dev, FALSE, NULL, NULL);
 
 	return FALSE;
 }
@@ -321,9 +326,16 @@ static void device_sink_cb(struct audio_device *dev,
 		}
 		if (priv->hs_state == HEADSET_STATE_DISCONNECTED)
 			device_set_state(dev, AUDIO_STATE_DISCONNECTED);
-		else if (old_state == AVDTP_SESSION_STATE_CONNECTING &&
-				priv->hs_state == HEADSET_STATE_CONNECTED)
-			device_set_state(dev, AUDIO_STATE_CONNECTED);
+		else if (old_state == SINK_STATE_CONNECTING) {
+			switch (priv->hs_state) {
+			case HEADSET_STATE_CONNECTED:
+			case HEADSET_STATE_PLAY_IN_PROGRESS:
+			case HEADSET_STATE_PLAYING:
+				device_set_state(dev, AUDIO_STATE_CONNECTED);
+			default:
+				break;
+			}
+		}
 		break;
 	case SINK_STATE_CONNECTING:
 		device_remove_avdtp_timer(dev);
@@ -392,7 +404,8 @@ static void device_headset_cb(struct audio_device *dev,
 		if (priv->sink_state == AVDTP_SESSION_STATE_DISCONNECTED)
 			device_set_state(dev, AUDIO_STATE_DISCONNECTED);
 		else if (old_state == HEADSET_STATE_CONNECT_IN_PROGRESS &&
-				priv->sink_state == SINK_STATE_CONNECTED)
+				(priv->sink_state == SINK_STATE_CONNECTED ||
+				priv->sink_state == SINK_STATE_PLAYING))
 			device_set_state(dev, AUDIO_STATE_CONNECTED);
 		break;
 	case HEADSET_STATE_CONNECT_IN_PROGRESS:
@@ -401,7 +414,9 @@ static void device_headset_cb(struct audio_device *dev,
 			device_set_state(dev, AUDIO_STATE_CONNECTING);
 		break;
 	case HEADSET_STATE_CONNECTED:
-		if (old_state == HEADSET_STATE_PLAYING)
+		if (old_state == HEADSET_STATE_CONNECTED ||
+				old_state == HEADSET_STATE_PLAY_IN_PROGRESS ||
+				old_state == HEADSET_STATE_PLAYING)
 			break;
 		if (dev->auto_connect) {
 			if (!dev->sink)
@@ -437,7 +452,7 @@ static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 	dev->auto_connect = TRUE;
 
 	if (dev->headset)
-		headset_config_stream(dev, NULL, NULL);
+		headset_config_stream(dev, FALSE, NULL, NULL);
 	else if (dev->sink) {
 		struct avdtp *session = avdtp_get(&dev->src, &dev->dst);
 
@@ -534,6 +549,7 @@ static GDBusSignalTable dev_signals[] = {
 };
 
 struct audio_device *audio_device_register(DBusConnection *conn,
+					struct btd_device *device,
 					const char *path, const bdaddr_t *src,
 					const bdaddr_t *dst)
 {
@@ -544,6 +560,7 @@ struct audio_device *audio_device_register(DBusConnection *conn,
 
 	dev = g_new0(struct audio_device, 1);
 
+	dev->btd_dev = btd_device_ref(device);
 	dev->path = g_strdup(path);
 	bacpy(&dev->dst, dst);
 	bacpy(&dev->src, src);
@@ -602,12 +619,17 @@ gboolean audio_device_is_connected(struct audio_device *dev,
 	else if (!strcmp(interface, AUDIO_CONTROL_INTERFACE) && dev->control &&
 			control_is_active(dev))
 		return TRUE;
+	else if (!strcmp(interface, AUDIO_GATEWAY_INTERFACE) && dev->gateway &&
+			gateway_is_connected(dev))
+		return TRUE;
 
 	return FALSE;
 }
 
 void audio_device_unregister(struct audio_device *device)
 {
+	unix_device_removed(device);
+
 	if (device->headset)
 		headset_unregister(device);
 
@@ -616,6 +638,9 @@ void audio_device_unregister(struct audio_device *device)
 
 	if (device->control)
 		control_unregister(device);
+
+	g_dbus_unregister_interface(device->conn, device->path,
+						AUDIO_INTERFACE);
 
 	device_free(device);
 }

@@ -49,7 +49,9 @@ struct remote_dev_info {
 	bdaddr_t bdaddr;
 	int8_t rssi;
 	uint32_t class;
+	char *name;
 	char *alias;
+	dbus_bool_t legacy;
 	name_status_t name_status;
 };
 
@@ -71,8 +73,7 @@ int adapter_start(struct btd_adapter *adapter);
 
 int adapter_stop(struct btd_adapter *adapter);
 
-int adapter_update(struct btd_adapter *adapter, uint8_t cls,
-						gboolean starting);
+int adapter_update(struct btd_adapter *adapter, uint8_t cls);
 
 int adapter_get_class(struct btd_adapter *adapter, uint8_t *cls);
 
@@ -104,14 +105,17 @@ const gchar *adapter_get_path(struct btd_adapter *adapter);
 void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_set_state(struct btd_adapter *adapter, int state);
 int adapter_get_state(struct btd_adapter *adapter);
+gboolean adapter_is_ready(struct btd_adapter *adapter);
 struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter,
 						struct remote_dev_info *match);
-int adapter_add_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-				int8_t rssi, uint32_t class, const char *alias,
+void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+				int8_t rssi, uint32_t class, const char *name,
+				const char *alias, gboolean legacy,
 				name_status_t name_status);
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
+void adapter_emit_device_found(struct btd_adapter *adapter,
+				struct remote_dev_info *dev);
 void adapter_update_oor_devices(struct btd_adapter *adapter);
-void adapter_remove_oor_device(struct btd_adapter *adapter, char *peer_addr);
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
 void adapter_name_changed(struct btd_adapter *adapter, const char *name);
 struct agent *adapter_get_agent(struct btd_adapter *adapter);
@@ -141,3 +145,20 @@ const char *btd_adapter_any_request_path(void);
 void btd_adapter_any_release_path(void);
 gboolean adapter_is_pairable(struct btd_adapter *adapter);
 gboolean adapter_powering_down(struct btd_adapter *adapter);
+
+
+struct btd_adapter_ops {
+	int (*setup) (void);
+	void (*cleanup) (void);
+	int (*start) (int index);
+	int (*stop) (int index);
+	int (*set_powered) (int index, gboolean powered);
+	int (*set_connectable) (int index);
+	int (*set_discoverable) (int index);
+	int (*set_limited_discoverable) (int index, const uint8_t *cls,
+						gboolean limited);
+};
+
+int btd_register_adapter_ops(struct btd_adapter_ops *btd_adapter_ops);
+void btd_adapter_cleanup_ops();
+int adapter_ops_setup();

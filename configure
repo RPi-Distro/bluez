@@ -2530,7 +2530,7 @@ fi
 
 # Define the identity of the package.
  PACKAGE=bluez
- VERSION=4.34
+ VERSION=4.40
 
 
 cat >>confdefs.h <<_ACEOF

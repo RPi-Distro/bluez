@@ -334,6 +334,7 @@ static void do_listen(void (*handler)(int sk))
 	}
 
 	/* Bind to local address */
+	memset(&addr, 0, sizeof(addr));
 	addr.l2_family = AF_BLUETOOTH;
 	bacpy(&addr.l2_bdaddr, &bdaddr);
 	addr.l2_psm = htobs(psm);
@@ -825,7 +826,7 @@ static void info_request(char *svr)
 	l2cap_info_req *req = (l2cap_info_req *) (buf + L2CAP_CMD_HDR_SIZE);
 	l2cap_info_rsp *rsp = (l2cap_info_rsp *) (buf + L2CAP_CMD_HDR_SIZE);
 	uint16_t mtu;
-	uint32_t mask;
+	uint32_t channels, mask = 0x0000;
 	struct sockaddr_l2 addr;
 	int sk, err;
 
@@ -855,7 +856,7 @@ static void info_request(char *svr)
 
 	memset(buf, 0, sizeof(buf));
 	cmd->code  = L2CAP_INFO_REQ;
-	cmd->ident = 42;
+	cmd->ident = 141;
 	cmd->len   = htobs(2);
 	req->type  = htobs(0x0001);
 
@@ -882,7 +883,7 @@ static void info_request(char *svr)
 
 	memset(buf, 0, sizeof(buf));
 	cmd->code  = L2CAP_INFO_REQ;
-	cmd->ident = 42;
+	cmd->ident = 142;
 	cmd->len   = htobs(2);
 	req->type  = htobs(0x0002);
 
@@ -907,9 +908,52 @@ static void info_request(char *svr)
 			printf("  Retransmission mode\n");
 		if (mask & 0x04)
 			printf("  Bi-directional QoS\n");
+		if (mask & 0x08)
+			printf("  Enhanced Retransmission mode\n");
+		if (mask & 0x10)
+			printf("  Streaming mode\n");
+		if (mask & 0x20)
+			printf("  FCS Option\n");
+		if (mask & 0x40)
+			printf("  Extended Flow Specification\n");
+		if (mask & 0x80)
+			printf("  Fixed Channels\n");
+		if (mask & 0x0100)
+			printf("  Extended Window Size\n");
+		if (mask & 0x0200)
+			printf("  Unicast Connectionless Data Reception\n");
 		break;
 	case 0x0001:
 		printf("Extended feature mask is not supported\n");
+		break;
+	}
+
+	if (!(mask & 0x80))
+		goto failed;
+
+	memset(buf, 0, sizeof(buf));
+	cmd->code  = L2CAP_INFO_REQ;
+	cmd->ident = 143;
+	cmd->len   = htobs(2);
+	req->type  = htobs(0x0003);
+
+	if (send(sk, buf, L2CAP_CMD_HDR_SIZE + L2CAP_INFO_REQ_SIZE, 0) < 0) {
+		perror("Can't send info request");
+		goto failed;
+	}
+
+	err = recv(sk, buf, L2CAP_CMD_HDR_SIZE + L2CAP_INFO_RSP_SIZE + 8, 0);
+	if (err < 0) {
+		perror("Can't receive info response");
+		goto failed;
+	}
+
+	switch (btohs(rsp->result)) {
+	case 0x0000:
+		channels = btohl(bt_get_unaligned((uint32_t *) rsp->data));
+		printf("Fixed channels list is 0x%04x\n", channels);
+	case 0x0001:
+		printf("Fixed channels list is not supported\n");
 		break;
 	}
 
@@ -1112,7 +1156,10 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'X':
-			rfcmode = atoi(optarg);
+			if (strcasecmp(optarg, "ertm") == 0)
+				rfcmode = L2CAP_MODE_ERTM;
+			else
+				rfcmode = atoi(optarg);
 			break;
 
 		case 'R':
