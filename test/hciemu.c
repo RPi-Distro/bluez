@@ -58,9 +58,13 @@ struct vhci_device {
 	uint8_t		features[8];
 	uint8_t		name[248];
 	uint8_t		dev_class[3];
+	uint8_t		scan_enable;
+	uint8_t		ssp_mode;
 	uint8_t		inq_mode;
 	uint8_t		eir_fec;
 	uint8_t		eir_data[HCI_MAX_EIR_LENGTH];
+	uint8_t		le_mode;
+	uint8_t		le_simul;
 	uint16_t	acl_cnt;
 	bdaddr_t	bdaddr;
 	int		dev_fd;
@@ -218,6 +222,40 @@ static struct vhci_conn *conn_get_by_bdaddr(bdaddr_t *ba)
 			return vconn[i];
 
 	return NULL;
+}
+
+static void reset_vdev(void)
+{
+	/* Device settings */
+	vdev.features[0] = 0xff;
+	vdev.features[1] = 0xff;
+	vdev.features[2] = 0x8f;
+	vdev.features[3] = 0xfe;
+	vdev.features[4] = 0x9b;
+	vdev.features[5] = 0xf9;
+	vdev.features[6] = 0x00;
+	vdev.features[7] = 0x80;
+
+	vdev.features[4] |= 0x40;	/* LE Supported */
+	vdev.features[6] |= 0x01;	/* Extended Inquiry Response */
+	vdev.features[6] |= 0x02;	/* BR/EDR and LE */
+	vdev.features[6] |= 0x08;	/* Secure Simple Pairing */
+
+	memset(vdev.name, 0, sizeof(vdev.name));
+	strncpy((char *) vdev.name, "BlueZ (Virtual HCI)",
+							sizeof(vdev.name) - 1);
+
+	vdev.dev_class[0] = 0x00;
+	vdev.dev_class[1] = 0x00;
+	vdev.dev_class[2] = 0x00;
+
+	vdev.scan_enable = 0x00;
+	vdev.ssp_mode = 0x00;
+	vdev.inq_mode = 0x00;
+	vdev.eir_fec = 0x00;
+	memset(vdev.eir_data, 0, sizeof(vdev.eir_data));
+	vdev.le_mode = 0x00;
+	vdev.le_simul = 0x00;
 }
 
 static void command_status(uint16_t ogf, uint16_t ocf, uint8_t status)
@@ -398,8 +436,9 @@ static void num_completed_pkts(struct vhci_conn *conn)
 						strerror(errno), errno);
 }
 
-static int scan_enable(uint8_t *data)
+static uint8_t scan_enable(uint8_t *data)
 {
+#if 0
 	struct epoll_event scan_event;
 	struct sockaddr_in sa;
 	bdaddr_t ba;
@@ -456,6 +495,9 @@ static int scan_enable(uint8_t *data)
 failed:
 	close(sk);
 	return 1;
+#endif
+
+	return data[0];
 }
 
 static void accept_connection(uint8_t *data)
@@ -576,8 +618,6 @@ do_connect:
 
 static void hci_link_control(uint16_t ocf, int plen, uint8_t *data)
 {
-	uint8_t status;
-
 	const uint16_t ogf = OGF_LINK_CTL;
 
 	switch (ocf) {
@@ -597,32 +637,31 @@ static void hci_link_control(uint16_t ocf, int plen, uint8_t *data)
 		break;
 
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
 
 static void hci_link_policy(uint16_t ocf, int plen, uint8_t *data)
 {
-	uint8_t status;
-
 	const uint16_t ogf = OGF_INFO_PARAM;
 
 	switch (ocf) {
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
 
 static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 {
+	read_scan_enable_rp se;
 	read_local_name_rp ln;
 	read_class_of_dev_rp cd;
 	read_inquiry_mode_rp im;
 	read_ext_inquiry_response_rp ir;
+	read_simple_pairing_mode_rp pm;
+	read_le_host_supported_rp hs;
 	uint8_t status;
 
 	const uint16_t ogf = OGF_HOST_CTL;
@@ -630,6 +669,7 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 	switch (ocf) {
 	case OCF_RESET:
 		status = 0x00;
+		reset_vdev();
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
@@ -656,8 +696,15 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
+	case OCF_READ_SCAN_ENABLE:
+		se.status = 0x00;
+		se.enable = vdev.scan_enable;
+		command_complete(ogf, ocf, sizeof(se), &se);
+		break;
+
 	case OCF_WRITE_SCAN_ENABLE:
-		status = scan_enable(data);
+		status = 0x00;
+		vdev.scan_enable = scan_enable(data);
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
@@ -709,9 +756,34 @@ static void hci_host_control(uint16_t ocf, int plen, uint8_t *data)
 		command_complete(ogf, ocf, 1, &status);
 		break;
 
-	default:
-		status = 0x01;
+	case OCF_READ_SIMPLE_PAIRING_MODE:
+		pm.status = 0x00;
+		pm.mode = vdev.ssp_mode;
+		command_complete(ogf, ocf, sizeof(pm), &pm);
+		break;
+
+	case OCF_WRITE_SIMPLE_PAIRING_MODE:
+		status = 0x00;
+		vdev.ssp_mode = data[0];
 		command_complete(ogf, ocf, 1, &status);
+		break;
+
+	case OCF_READ_LE_HOST_SUPPORTED:
+		hs.status = 0x00;
+		hs.le = vdev.le_mode;
+		hs.simul = vdev.le_simul;
+		command_complete(ogf, ocf, sizeof(hs), &hs);
+		break;
+
+	case OCF_WRITE_LE_HOST_SUPPORTED:
+		status = 0x00;
+		vdev.le_mode = data[0];
+		vdev.le_simul = data[1];
+		command_complete(ogf, ocf, 1, &status);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -723,17 +795,16 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 	read_local_ext_features_rp ef;
 	read_buffer_size_rp bs;
 	read_bd_addr_rp ba;
-	uint8_t status;
 
 	const uint16_t ogf = OGF_INFO_PARAM;
 
 	switch (ocf) {
 	case OCF_READ_LOCAL_VERSION:
 		lv.status = 0x00;
-		lv.hci_ver = 0x03;
+		lv.hci_ver = 0x06;
 		lv.hci_rev = htobs(0x0000);
-		lv.lmp_ver = 0x03;
-		lv.manufacturer = htobs(29);
+		lv.lmp_ver = 0x06;
+		lv.manufacturer = htobs(63);
 		lv.lmp_subver = htobs(0x0000);
 		command_complete(ogf, ocf, sizeof(lv), &lv);
 		break;
@@ -748,8 +819,15 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 		ef.status = 0x00;
 		if (*data == 0) {
 			ef.page_num = 0;
-			ef.max_page_num = 0;
+			ef.max_page_num = 1;
 			memcpy(ef.features, vdev.features, 8);
+		} else if (*data == 1) {
+			ef.page_num = 1;
+			ef.max_page_num = 1;
+			memset(ef.features, 0, 8);
+			ef.features[0] |= (!!vdev.ssp_mode << 0);
+			ef.features[0] |= (!!vdev.le_mode << 1);
+			ef.features[0] |= (!!vdev.le_simul << 2);
 		} else {
 			ef.page_num = *data;
 			ef.max_page_num = 0;
@@ -774,8 +852,7 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 		break;
 
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -783,7 +860,6 @@ static void hci_info_param(uint16_t ocf, int plen, uint8_t *data)
 static void hci_status_param(uint16_t ocf, int plen, uint8_t *data)
 {
 	read_local_amp_info_rp ai;
-	uint8_t status;
 
 	const uint16_t ogf = OGF_STATUS_PARAM;
 
@@ -804,8 +880,27 @@ static void hci_status_param(uint16_t ocf, int plen, uint8_t *data)
 		break;
 
 	default:
-		status = 0x01;
-		command_complete(ogf, ocf, 1, &status);
+		command_status(ogf, ocf, 0x01);
+		break;
+	}
+}
+
+static void hci_le_control(uint16_t ocf, int plen, uint8_t *data)
+{
+	le_read_buffer_size_rp bs;
+
+	const uint16_t ogf = OGF_LE_CTL;
+
+	switch (ocf) {
+	case OCF_LE_READ_BUFFER_SIZE:
+		bs.status = 0;
+		bs.pkt_len = htobs(VHCI_ACL_MTU);
+		bs.max_pkt = htobs(VHCI_ACL_MAX_PKT);
+		command_complete(ogf, ocf, sizeof(bs), &bs);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -842,6 +937,14 @@ static void hci_command(uint8_t *data)
 
 	case OGF_STATUS_PARAM:
 		hci_status_param(ocf, ch->plen, ptr);
+		break;
+
+	case OGF_LE_CTL:
+		hci_le_control(ocf, ch->plen, ptr);
+		break;
+
+	default:
+		command_status(ogf, ocf, 0x01);
 		break;
 	}
 }
@@ -1134,27 +1237,7 @@ int main(int argc, char *argv[])
 		goto close_device;
 	}
 
-	/* Device settings */
-	vdev.features[0] = 0xff;
-	vdev.features[1] = 0xff;
-	vdev.features[2] = 0x8f;
-	vdev.features[3] = 0xfe;
-	vdev.features[4] = 0x9b;
-	vdev.features[5] = 0xf9;
-	vdev.features[6] = 0x01;
-	vdev.features[7] = 0x80;
-
-	memset(vdev.name, 0, sizeof(vdev.name));
-	strncpy((char *) vdev.name, "BlueZ (Virtual HCI)",
-							sizeof(vdev.name) - 1);
-
-	vdev.dev_class[0] = 0x00;
-	vdev.dev_class[1] = 0x00;
-	vdev.dev_class[2] = 0x00;
-
-	vdev.inq_mode = 0x00;
-	vdev.eir_fec = 0x00;
-	memset(vdev.eir_data, 0, sizeof(vdev.eir_data));
+	reset_vdev();
 
 	vdev.dev_fd = device_fd;
 	vdev.dd = dd;

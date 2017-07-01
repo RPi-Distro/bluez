@@ -43,7 +43,7 @@ bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3) \
 	$(am__EXEEXT_4) $(am__EXEEXT_5) $(am__EXEEXT_6) \
 	$(am__EXEEXT_7)
 sbin_PROGRAMS = src/bluetoothd$(EXEEXT) $(am__EXEEXT_14) \
-	$(am__EXEEXT_15) $(am__EXEEXT_16) $(am__EXEEXT_17)
+	$(am__EXEEXT_15) $(am__EXEEXT_16)
 noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 	$(am__EXEEXT_11) $(am__EXEEXT_13)
 @SBC_TRUE@am__append_1 = sbc/libsbc.la
@@ -162,7 +162,8 @@ DIST_COMMON = README $(am__configure_deps) \
 
 @TOOLS_TRUE@am__append_48 = tools/hciattach tools/hciconfig
 @TOOLS_TRUE@am__append_49 = tools/avinfo tools/ppporc \
-@TOOLS_TRUE@	tools/hcieventmask tools/hcisecfilter mgmt/btmgmt
+@TOOLS_TRUE@	tools/hcieventmask tools/hcisecfilter mgmt/btmgmt \
+@TOOLS_TRUE@	monitor/btmon emulator/btvirt
 @READLINE_TRUE@@TOOLS_TRUE@am__append_50 = attrib/gatttool
 @TOOLS_TRUE@am__append_51 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_TRUE@			tools/hciattach.8 tools/hciconfig.8 \
@@ -172,43 +173,42 @@ DIST_COMMON = README $(am__configure_deps) \
 @TOOLS_FALSE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_FALSE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TRACER_TRUE@am__append_53 = tracer/hcitrace
-@BCCMD_TRUE@am__append_54 = tools/bccmd
-@BCCMD_TRUE@@USB_TRUE@am__append_55 = tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__append_56 = @USB_LIBS@
-@BCCMD_TRUE@am__append_57 = tools/bccmd.8
-@BCCMD_FALSE@am__append_58 = tools/bccmd.8
+@BCCMD_TRUE@am__append_53 = tools/bccmd
+@BCCMD_TRUE@@USB_TRUE@am__append_54 = tools/csr_usb.c
+@BCCMD_TRUE@@USB_TRUE@am__append_55 = @USB_LIBS@
+@BCCMD_TRUE@am__append_56 = tools/bccmd.8
+@BCCMD_FALSE@am__append_57 = tools/bccmd.8
 @HID2HCI_TRUE@udev_PROGRAMS = tools/hid2hci$(EXEEXT)
-@HID2HCI_TRUE@am__append_59 = tools/hid2hci.8
-@HID2HCI_FALSE@am__append_60 = tools/hid2hci.8
-@DFUTOOL_TRUE@am__append_61 = tools/dfutool
-@DFUTOOL_TRUE@am__append_62 = tools/dfutool.1
-@DFUTOOL_FALSE@am__append_63 = tools/dfutool.1
-@USB_TRUE@am__append_64 = tools/dfubabel tools/avctrl
+@HID2HCI_TRUE@am__append_58 = tools/hid2hci.8
+@HID2HCI_FALSE@am__append_59 = tools/hid2hci.8
+@DFUTOOL_TRUE@am__append_60 = tools/dfutool
+@DFUTOOL_TRUE@am__append_61 = tools/dfutool.1
+@DFUTOOL_FALSE@am__append_62 = tools/dfutool.1
+@USB_TRUE@am__append_63 = tools/dfubabel tools/avctrl
 @CUPS_TRUE@cups_PROGRAMS = cups/bluetooth$(EXEEXT)
-@TEST_TRUE@am__append_65 = test/hciemu
-@TEST_TRUE@am__append_66 = test/l2test test/rctest
-@TEST_TRUE@am__append_67 = test/gaptest test/sdptest test/scotest \
+@TEST_TRUE@am__append_64 = test/hciemu
+@TEST_TRUE@am__append_65 = test/l2test test/rctest
+@TEST_TRUE@am__append_66 = test/gaptest test/sdptest test/scotest \
 @TEST_TRUE@	test/attest test/hstest test/avtest test/ipctest \
 @TEST_TRUE@	test/lmptest test/bdaddr test/agent test/btiotest \
 @TEST_TRUE@	test/test-textfile test/uuidtest test/mpris-player \
 @TEST_TRUE@	$(unit_tests)
-@TEST_TRUE@am__append_68 = test/rctest.1 test/hciemu.1
-@TEST_TRUE@am__append_69 = test/bdaddr.8
-@TEST_FALSE@am__append_70 = test/rctest.1 test/hciemu.1 test/bdaddr.8
-@HIDD_TRUE@am__append_71 = compat/hidd
-@HIDD_TRUE@am__append_72 = compat/hidd.1
-@HIDD_FALSE@am__append_73 = compat/hidd.1
-@PAND_TRUE@am__append_74 = compat/pand
-@PAND_TRUE@am__append_75 = compat/pand.1
-@PAND_FALSE@am__append_76 = compat/pand.1
-@DUND_TRUE@am__append_77 = compat/dund
-@DUND_TRUE@am__append_78 = compat/dund.1
-@DUND_FALSE@am__append_79 = compat/dund.1
-@DATAFILES_TRUE@@HID2HCI_TRUE@am__append_80 = scripts/bluetooth-hid2hci.rules
-@DATAFILES_TRUE@@PCMCIA_TRUE@am__append_81 = scripts/bluetooth-serial.rules
-@MCAP_TRUE@am__append_82 = -I$(builddir)/health
-@TEST_TRUE@am__append_83 = $(unit_test_eir_OBJECTS)
+@TEST_TRUE@am__append_67 = test/rctest.1 test/hciemu.1
+@TEST_TRUE@am__append_68 = test/bdaddr.8
+@TEST_FALSE@am__append_69 = test/rctest.1 test/hciemu.1 test/bdaddr.8
+@HIDD_TRUE@am__append_70 = compat/hidd
+@HIDD_TRUE@am__append_71 = compat/hidd.1
+@HIDD_FALSE@am__append_72 = compat/hidd.1
+@PAND_TRUE@am__append_73 = compat/pand
+@PAND_TRUE@am__append_74 = compat/pand.1
+@PAND_FALSE@am__append_75 = compat/pand.1
+@DUND_TRUE@am__append_76 = compat/dund
+@DUND_TRUE@am__append_77 = compat/dund.1
+@DUND_FALSE@am__append_78 = compat/dund.1
+@DATAFILES_TRUE@@HID2HCI_TRUE@am__append_79 = scripts/bluetooth-hid2hci.rules
+@DATAFILES_TRUE@@PCMCIA_TRUE@am__append_80 = scripts/bluetooth-serial.rules
+@MCAP_TRUE@am__append_81 = -I$(builddir)/health
+@TEST_TRUE@am__append_82 = $(unit_test_eir_OBJECTS)
 TESTS = $(am__EXEEXT_12)
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -401,7 +401,8 @@ sbc_libsbc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @SBC_TRUE@@SNDFILE_TRUE@am__EXEEXT_9 = sbc/sbctester$(EXEEXT)
 @TOOLS_TRUE@am__EXEEXT_10 = tools/avinfo$(EXEEXT) \
 @TOOLS_TRUE@	tools/ppporc$(EXEEXT) tools/hcieventmask$(EXEEXT) \
-@TOOLS_TRUE@	tools/hcisecfilter$(EXEEXT) mgmt/btmgmt$(EXEEXT)
+@TOOLS_TRUE@	tools/hcisecfilter$(EXEEXT) mgmt/btmgmt$(EXEEXT) \
+@TOOLS_TRUE@	monitor/btmon$(EXEEXT) emulator/btvirt$(EXEEXT)
 @USB_TRUE@am__EXEEXT_11 = tools/dfubabel$(EXEEXT) \
 @USB_TRUE@	tools/avctrl$(EXEEXT)
 @TEST_TRUE@am__EXEEXT_12 = unit/test-eir$(EXEEXT)
@@ -415,14 +416,13 @@ sbc_libsbc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @TEST_TRUE@	$(am__EXEEXT_12)
 @TOOLS_TRUE@am__EXEEXT_14 = tools/hciattach$(EXEEXT) \
 @TOOLS_TRUE@	tools/hciconfig$(EXEEXT)
-@TRACER_TRUE@am__EXEEXT_15 = tracer/hcitrace$(EXEEXT)
-@BCCMD_TRUE@am__EXEEXT_16 = tools/bccmd$(EXEEXT)
-@TEST_TRUE@am__EXEEXT_17 = test/hciemu$(EXEEXT)
+@BCCMD_TRUE@am__EXEEXT_15 = tools/bccmd$(EXEEXT)
+@TEST_TRUE@am__EXEEXT_16 = test/hciemu$(EXEEXT)
 PROGRAMS = $(bin_PROGRAMS) $(cups_PROGRAMS) $(noinst_PROGRAMS) \
 	$(sbin_PROGRAMS) $(udev_PROGRAMS)
 am__attrib_gatttool_SOURCES_DIST = attrib/gatttool.c attrib/att.c \
 	attrib/gatt.c attrib/gattrib.c btio/btio.c attrib/gatttool.h \
-	attrib/interactive.c attrib/utils.c
+	attrib/interactive.c attrib/utils.c src/log.c
 @READLINE_TRUE@@TOOLS_TRUE@am_attrib_gatttool_OBJECTS =  \
 @READLINE_TRUE@@TOOLS_TRUE@	attrib/gatttool.$(OBJEXT) \
 @READLINE_TRUE@@TOOLS_TRUE@	attrib/att.$(OBJEXT) \
@@ -430,7 +430,8 @@ am__attrib_gatttool_SOURCES_DIST = attrib/gatttool.c attrib/att.c \
 @READLINE_TRUE@@TOOLS_TRUE@	attrib/gattrib.$(OBJEXT) \
 @READLINE_TRUE@@TOOLS_TRUE@	btio/btio.$(OBJEXT) \
 @READLINE_TRUE@@TOOLS_TRUE@	attrib/interactive.$(OBJEXT) \
-@READLINE_TRUE@@TOOLS_TRUE@	attrib/utils.$(OBJEXT)
+@READLINE_TRUE@@TOOLS_TRUE@	attrib/utils.$(OBJEXT) \
+@READLINE_TRUE@@TOOLS_TRUE@	src/log.$(OBJEXT)
 attrib_gatttool_OBJECTS = $(am_attrib_gatttool_OBJECTS)
 @READLINE_TRUE@@TOOLS_TRUE@attrib_gatttool_DEPENDENCIES =  \
 @READLINE_TRUE@@TOOLS_TRUE@	lib/libbluetooth-private.la
@@ -468,10 +469,33 @@ am__objects_3 = gdbus/mainloop.$(OBJEXT) gdbus/watch.$(OBJEXT) \
 @CUPS_TRUE@	cups/spp.$(OBJEXT) cups/hcrp.$(OBJEXT)
 cups_bluetooth_OBJECTS = $(am_cups_bluetooth_OBJECTS)
 @CUPS_TRUE@cups_bluetooth_DEPENDENCIES = lib/libbluetooth-private.la
-am__mgmt_btmgmt_SOURCES_DIST = mgmt/main.c
-@TOOLS_TRUE@am_mgmt_btmgmt_OBJECTS = mgmt/main.$(OBJEXT)
+am__emulator_btvirt_SOURCES_DIST = emulator/main.c monitor/bt.h \
+	monitor/mainloop.h monitor/mainloop.c emulator/server.h \
+	emulator/server.c emulator/vhci.h emulator/vhci.c \
+	emulator/btdev.h emulator/btdev.c
+@TOOLS_TRUE@am_emulator_btvirt_OBJECTS = emulator/main.$(OBJEXT) \
+@TOOLS_TRUE@	monitor/mainloop.$(OBJEXT) \
+@TOOLS_TRUE@	emulator/server.$(OBJEXT) emulator/vhci.$(OBJEXT) \
+@TOOLS_TRUE@	emulator/btdev.$(OBJEXT)
+emulator_btvirt_OBJECTS = $(am_emulator_btvirt_OBJECTS)
+emulator_btvirt_LDADD = $(LDADD)
+am__mgmt_btmgmt_SOURCES_DIST = mgmt/main.c src/glib-helper.c
+@TOOLS_TRUE@am_mgmt_btmgmt_OBJECTS = mgmt/main.$(OBJEXT) \
+@TOOLS_TRUE@	src/glib-helper.$(OBJEXT)
 mgmt_btmgmt_OBJECTS = $(am_mgmt_btmgmt_OBJECTS)
 @TOOLS_TRUE@mgmt_btmgmt_DEPENDENCIES = lib/libbluetooth-private.la
+am__monitor_btmon_SOURCES_DIST = monitor/main.c monitor/bt.h \
+	monitor/mainloop.h monitor/mainloop.c monitor/hcidump.h \
+	monitor/hcidump.c monitor/btsnoop.h monitor/btsnoop.c \
+	monitor/control.h monitor/control.c monitor/packet.h \
+	monitor/packet.c
+@TOOLS_TRUE@am_monitor_btmon_OBJECTS = monitor/main.$(OBJEXT) \
+@TOOLS_TRUE@	monitor/mainloop.$(OBJEXT) \
+@TOOLS_TRUE@	monitor/hcidump.$(OBJEXT) \
+@TOOLS_TRUE@	monitor/btsnoop.$(OBJEXT) \
+@TOOLS_TRUE@	monitor/control.$(OBJEXT) monitor/packet.$(OBJEXT)
+monitor_btmon_OBJECTS = $(am_monitor_btmon_OBJECTS)
+@TOOLS_TRUE@monitor_btmon_DEPENDENCIES = lib/libbluetooth-private.la
 am__sbc_sbcdec_SOURCES_DIST = sbc/sbcdec.c sbc/formats.h
 @SBC_TRUE@am_sbc_sbcdec_OBJECTS = sbc/sbcdec.$(OBJEXT)
 sbc_sbcdec_OBJECTS = $(am_sbc_sbcdec_OBJECTS)
@@ -806,9 +830,6 @@ am__tools_sdptool_SOURCES_DIST = tools/sdptool.c src/sdp-xml.h \
 @TOOLS_TRUE@	src/sdp-xml.$(OBJEXT)
 tools_sdptool_OBJECTS = $(am_tools_sdptool_OBJECTS)
 @TOOLS_TRUE@tools_sdptool_DEPENDENCIES = lib/libbluetooth-private.la
-am__tracer_hcitrace_SOURCES_DIST = tracer/main.c
-@TRACER_TRUE@am_tracer_hcitrace_OBJECTS = tracer/main.$(OBJEXT)
-tracer_hcitrace_OBJECTS = $(am_tracer_hcitrace_OBJECTS)
 am__unit_test_eir_SOURCES_DIST = unit/test-eir.c src/eir.c \
 	src/glib-helper.c
 @TEST_TRUE@am_unit_test_eir_OBJECTS =  \
@@ -869,7 +890,8 @@ SOURCES = $(audio_libtelephony_a_SOURCES) $(sap_libsap_a_SOURCES) \
 	$(plugins_external_dummy_la_SOURCES) $(sbc_libsbc_la_SOURCES) \
 	$(attrib_gatttool_SOURCES) $(compat_dund_SOURCES) \
 	$(compat_hidd_SOURCES) $(compat_pand_SOURCES) \
-	$(cups_bluetooth_SOURCES) $(mgmt_btmgmt_SOURCES) \
+	$(cups_bluetooth_SOURCES) $(emulator_btvirt_SOURCES) \
+	$(mgmt_btmgmt_SOURCES) $(monitor_btmon_SOURCES) \
 	$(sbc_sbcdec_SOURCES) $(sbc_sbcenc_SOURCES) sbc/sbcinfo.c \
 	sbc/sbctester.c $(src_bluetoothd_SOURCES) \
 	$(nodist_src_bluetoothd_SOURCES) test/agent.c test/attest.c \
@@ -885,7 +907,7 @@ SOURCES = $(audio_libtelephony_a_SOURCES) $(sap_libsap_a_SOURCES) \
 	tools/hcisecfilter.c $(tools_hcitool_SOURCES) tools/hid2hci.c \
 	tools/l2ping.c tools/ppporc.c $(tools_rfcomm_SOURCES) \
 	$(EXTRA_tools_rfcomm_SOURCES) $(tools_sdptool_SOURCES) \
-	$(tracer_hcitrace_SOURCES) $(unit_test_eir_SOURCES)
+	$(unit_test_eir_SOURCES)
 DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__sap_libsap_a_SOURCES_DIST) \
 	$(am__audio_libasound_module_ctl_bluetooth_la_SOURCES_DIST) \
@@ -900,8 +922,11 @@ DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__compat_hidd_SOURCES_DIST) \
 	$(am__compat_pand_SOURCES_DIST) \
 	$(am__cups_bluetooth_SOURCES_DIST) \
-	$(am__mgmt_btmgmt_SOURCES_DIST) $(am__sbc_sbcdec_SOURCES_DIST) \
-	$(am__sbc_sbcenc_SOURCES_DIST) sbc/sbcinfo.c sbc/sbctester.c \
+	$(am__emulator_btvirt_SOURCES_DIST) \
+	$(am__mgmt_btmgmt_SOURCES_DIST) \
+	$(am__monitor_btmon_SOURCES_DIST) \
+	$(am__sbc_sbcdec_SOURCES_DIST) $(am__sbc_sbcenc_SOURCES_DIST) \
+	sbc/sbcinfo.c sbc/sbctester.c \
 	$(am__src_bluetoothd_SOURCES_DIST) test/agent.c test/attest.c \
 	test/avtest.c $(am__test_bdaddr_SOURCES_DIST) \
 	$(am__test_btiotest_SOURCES_DIST) test/gaptest.c test/hciemu.c \
@@ -919,7 +944,6 @@ DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__tools_rfcomm_SOURCES_DIST) \
 	$(am__EXTRA_tools_rfcomm_SOURCES_DIST) \
 	$(am__tools_sdptool_SOURCES_DIST) \
-	$(am__tracer_hcitrace_SOURCES_DIST) \
 	$(am__unit_test_eir_SOURCES_DIST)
 man1dir = $(mandir)/man1
 man8dir = $(mandir)/man8
@@ -1104,9 +1128,9 @@ AM_MAKEFLAGS = --no-print-directory
 lib_LTLIBRARIES = lib/libbluetooth.la
 noinst_LIBRARIES = $(am__append_10) $(am__append_14)
 noinst_LTLIBRARIES = lib/libbluetooth-private.la $(am__append_1)
-dist_man_MANS = $(am__append_51) $(am__append_57) $(am__append_59) \
-	$(am__append_62) $(am__append_68) $(am__append_72) \
-	$(am__append_75) $(am__append_78)
+dist_man_MANS = $(am__append_51) $(am__append_56) $(am__append_58) \
+	$(am__append_61) $(am__append_67) $(am__append_71) \
+	$(am__append_74) $(am__append_77)
 dist_noinst_MANS = 
 CLEANFILES = $(builtin_files) tools/lexer.c tools/parser.c \
 	tools/parser.h $(rules_DATA)
@@ -1117,9 +1141,9 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	audio/telephony-ofono.c audio/telephony-maemo6.c \
 	sap/sap-dummy.c sap/sap-u8500.c proximity/proximity.conf \
 	audio/bluetooth.conf $(am__append_52) tools/rfcomm.conf \
-	$(am__append_58) $(am__append_60) $(am__append_63) \
-	tools/dfubabel.1 tools/avctrl.8 $(am__append_69) \
-	$(am__append_70) test/apitest test/sap-client test/hsplay \
+	$(am__append_57) $(am__append_59) $(am__append_62) \
+	tools/dfubabel.1 tools/avctrl.8 $(am__append_68) \
+	$(am__append_69) test/apitest test/sap-client test/hsplay \
 	test/hsmicro test/dbusdef.py test/monitor-bluetooth \
 	test/list-devices test/test-discovery test/test-manager \
 	test/test-adapter test/test-device test/test-service \
@@ -1130,8 +1154,8 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	test/test-serial-proxy test/test-thermometer test/test-health \
 	test/test-health-sink test/service-record.dtd \
 	test/service-did.xml test/service-spp.xml test/service-opp.xml \
-	test/service-ftp.xml $(am__append_73) $(am__append_76) \
-	$(am__append_79) scripts/bluetooth.rules \
+	test/service-ftp.xml $(am__append_72) $(am__append_75) \
+	$(am__append_78) scripts/bluetooth.rules \
 	scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules \
 	doc/manager-api.txt doc/adapter-api.txt doc/device-api.txt \
 	doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
@@ -1154,14 +1178,14 @@ plugindir = $(libdir)/bluetooth/plugins
 plugin_LTLIBRARIES = $(am__append_45)
 lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h lib/uuid.h \
-		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
+		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h lib/a2mp.h
 
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 BUILT_SOURCES = $(local_headers) src/builtin.h
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 14:5:11
+lib_libbluetooth_la_LDFLAGS = -version-info 15:0:12
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 lib_libbluetooth_private_la_SOURCES = $(lib_libbluetooth_la_SOURCES)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
@@ -1323,25 +1347,34 @@ man_MANS = src/bluetoothd.8
 @TOOLS_TRUE@tools_avinfo_LDADD = lib/libbluetooth-private.la
 @TOOLS_TRUE@tools_ppporc_LDADD = lib/libbluetooth-private.la
 @TOOLS_TRUE@tools_hcieventmask_LDADD = lib/libbluetooth-private.la
-@TOOLS_TRUE@mgmt_btmgmt_SOURCES = mgmt/main.c
-@TOOLS_TRUE@mgmt_btmgmt_LDADD = lib/libbluetooth-private.la
+@TOOLS_TRUE@mgmt_btmgmt_SOURCES = mgmt/main.c src/glib-helper.c
+@TOOLS_TRUE@mgmt_btmgmt_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@
+@TOOLS_TRUE@monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
+@TOOLS_TRUE@					monitor/mainloop.h monitor/mainloop.c \
+@TOOLS_TRUE@					monitor/hcidump.h monitor/hcidump.c \
+@TOOLS_TRUE@					monitor/btsnoop.h monitor/btsnoop.c \
+@TOOLS_TRUE@					monitor/control.h monitor/control.c \
+@TOOLS_TRUE@					monitor/packet.h monitor/packet.c
+
+@TOOLS_TRUE@monitor_btmon_LDADD = lib/libbluetooth-private.la
+@TOOLS_TRUE@emulator_btvirt_SOURCES = emulator/main.c monitor/bt.h \
+@TOOLS_TRUE@					monitor/mainloop.h monitor/mainloop.c \
+@TOOLS_TRUE@					emulator/server.h emulator/server.c \
+@TOOLS_TRUE@					emulator/vhci.h emulator/vhci.c \
+@TOOLS_TRUE@					emulator/btdev.h emulator/btdev.c
+
 @READLINE_TRUE@@TOOLS_TRUE@attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
 @READLINE_TRUE@@TOOLS_TRUE@				attrib/gattrib.c btio/btio.c \
 @READLINE_TRUE@@TOOLS_TRUE@				attrib/gatttool.h attrib/interactive.c \
-@READLINE_TRUE@@TOOLS_TRUE@				attrib/utils.c
+@READLINE_TRUE@@TOOLS_TRUE@				attrib/utils.c src/log.c
 
 @READLINE_TRUE@@TOOLS_TRUE@attrib_gatttool_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @READLINE_LIBS@
-@TRACER_TRUE@tracer_hcitrace_SOURCES = tracer/main.c
-@TRACER_TRUE@tracer_hcitrace_LDADD = lib/libbluetooth-private.la \
-@TRACER_TRUE@				@GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@
-
-@TRACER_TRUE@tracer_hcitrace_DEPENDENCIES = lib/libbluetooth-private.la
 @BCCMD_TRUE@tools_bccmd_SOURCES = tools/bccmd.c tools/csr.h \
 @BCCMD_TRUE@	tools/csr.c tools/csr_hci.c tools/csr_h4.c \
 @BCCMD_TRUE@	tools/csr_3wire.c tools/csr_bcsp.c tools/ubcsp.h \
-@BCCMD_TRUE@	tools/ubcsp.c $(am__append_55)
+@BCCMD_TRUE@	tools/ubcsp.c $(am__append_54)
 @BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth-private.la \
-@BCCMD_TRUE@	$(am__append_56)
+@BCCMD_TRUE@	$(am__append_55)
 @DATAFILES_TRUE@@PCMCIA_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@ @UDEV_LIBS@
@@ -1391,8 +1424,8 @@ man_MANS = src/bluetoothd.8
 
 @DUND_TRUE@compat_dund_LDADD = lib/libbluetooth-private.la
 @DATAFILES_TRUE@rulesdir = @UDEV_DIR@/rules.d
-@DATAFILES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_80) \
-@DATAFILES_TRUE@	$(am__append_81)
+@DATAFILES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_79) \
+@DATAFILES_TRUE@	$(am__append_80)
 @DATAFILES_TRUE@@PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
 @DATAFILES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
 AM_YFLAGS = -d
@@ -1400,8 +1433,8 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 	-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
 	-I$(srcdir)/attrib -I$(srcdir)/btio -I$(srcdir)/tools \
-	-I$(builddir)/tools $(am__append_82)
-unit_objects = $(am__append_83)
+	-I$(builddir)/tools -I$(srcdir)/monitor $(am__append_81)
+unit_objects = $(am__append_82)
 @TEST_FALSE@unit_tests = 
 @TEST_TRUE@unit_tests = unit/test-eir
 @TEST_TRUE@unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/glib-helper.c
@@ -1932,6 +1965,13 @@ attrib/interactive.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
 attrib/utils.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
+src/$(am__dirstamp):
+	@$(MKDIR_P) src
+	@: > src/$(am__dirstamp)
+src/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) src/$(DEPDIR)
+	@: > src/$(DEPDIR)/$(am__dirstamp)
+src/log.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 attrib/gatttool$(EXEEXT): $(attrib_gatttool_OBJECTS) $(attrib_gatttool_DEPENDENCIES) attrib/$(am__dirstamp)
 	@rm -f attrib/gatttool$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(attrib_gatttool_OBJECTS) $(attrib_gatttool_LDADD) $(LIBS)
@@ -1949,12 +1989,6 @@ compat/dun.$(OBJEXT): compat/$(am__dirstamp) \
 	compat/$(DEPDIR)/$(am__dirstamp)
 compat/msdun.$(OBJEXT): compat/$(am__dirstamp) \
 	compat/$(DEPDIR)/$(am__dirstamp)
-src/$(am__dirstamp):
-	@$(MKDIR_P) src
-	@: > src/$(am__dirstamp)
-src/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) src/$(DEPDIR)
-	@: > src/$(DEPDIR)/$(am__dirstamp)
 src/textfile.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 compat/dund$(EXEEXT): $(compat_dund_OBJECTS) $(compat_dund_DEPENDENCIES) compat/$(am__dirstamp)
@@ -2005,6 +2039,31 @@ cups/hcrp.$(OBJEXT): cups/$(am__dirstamp) \
 cups/bluetooth$(EXEEXT): $(cups_bluetooth_OBJECTS) $(cups_bluetooth_DEPENDENCIES) cups/$(am__dirstamp)
 	@rm -f cups/bluetooth$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(cups_bluetooth_OBJECTS) $(cups_bluetooth_LDADD) $(LIBS)
+emulator/$(am__dirstamp):
+	@$(MKDIR_P) emulator
+	@: > emulator/$(am__dirstamp)
+emulator/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) emulator/$(DEPDIR)
+	@: > emulator/$(DEPDIR)/$(am__dirstamp)
+emulator/main.$(OBJEXT): emulator/$(am__dirstamp) \
+	emulator/$(DEPDIR)/$(am__dirstamp)
+monitor/$(am__dirstamp):
+	@$(MKDIR_P) monitor
+	@: > monitor/$(am__dirstamp)
+monitor/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) monitor/$(DEPDIR)
+	@: > monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/mainloop.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+emulator/server.$(OBJEXT): emulator/$(am__dirstamp) \
+	emulator/$(DEPDIR)/$(am__dirstamp)
+emulator/vhci.$(OBJEXT): emulator/$(am__dirstamp) \
+	emulator/$(DEPDIR)/$(am__dirstamp)
+emulator/btdev.$(OBJEXT): emulator/$(am__dirstamp) \
+	emulator/$(DEPDIR)/$(am__dirstamp)
+emulator/btvirt$(EXEEXT): $(emulator_btvirt_OBJECTS) $(emulator_btvirt_DEPENDENCIES) emulator/$(am__dirstamp)
+	@rm -f emulator/btvirt$(EXEEXT)
+	$(AM_V_CCLD)$(LINK) $(emulator_btvirt_OBJECTS) $(emulator_btvirt_LDADD) $(LIBS)
 mgmt/$(am__dirstamp):
 	@$(MKDIR_P) mgmt
 	@: > mgmt/$(am__dirstamp)
@@ -2013,9 +2072,24 @@ mgmt/$(DEPDIR)/$(am__dirstamp):
 	@: > mgmt/$(DEPDIR)/$(am__dirstamp)
 mgmt/main.$(OBJEXT): mgmt/$(am__dirstamp) \
 	mgmt/$(DEPDIR)/$(am__dirstamp)
+src/glib-helper.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
 mgmt/btmgmt$(EXEEXT): $(mgmt_btmgmt_OBJECTS) $(mgmt_btmgmt_DEPENDENCIES) mgmt/$(am__dirstamp)
 	@rm -f mgmt/btmgmt$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(mgmt_btmgmt_OBJECTS) $(mgmt_btmgmt_LDADD) $(LIBS)
+monitor/main.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/hcidump.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/btsnoop.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/control.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/packet.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/btmon$(EXEEXT): $(monitor_btmon_OBJECTS) $(monitor_btmon_DEPENDENCIES) monitor/$(am__dirstamp)
+	@rm -f monitor/btmon$(EXEEXT)
+	$(AM_V_CCLD)$(LINK) $(monitor_btmon_OBJECTS) $(monitor_btmon_LDADD) $(LIBS)
 sbc/sbcdec.$(OBJEXT): sbc/$(am__dirstamp) \
 	sbc/$(DEPDIR)/$(am__dirstamp)
 sbc/sbcdec$(EXEEXT): $(sbc_sbcdec_OBJECTS) $(sbc_sbcdec_DEPENDENCIES) sbc/$(am__dirstamp)
@@ -2503,17 +2577,6 @@ src/sdp-xml.$(OBJEXT): src/$(am__dirstamp) \
 tools/sdptool$(EXEEXT): $(tools_sdptool_OBJECTS) $(tools_sdptool_DEPENDENCIES) tools/$(am__dirstamp)
 	@rm -f tools/sdptool$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(tools_sdptool_OBJECTS) $(tools_sdptool_LDADD) $(LIBS)
-tracer/$(am__dirstamp):
-	@$(MKDIR_P) tracer
-	@: > tracer/$(am__dirstamp)
-tracer/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) tracer/$(DEPDIR)
-	@: > tracer/$(DEPDIR)/$(am__dirstamp)
-tracer/main.$(OBJEXT): tracer/$(am__dirstamp) \
-	tracer/$(DEPDIR)/$(am__dirstamp)
-tracer/hcitrace$(EXEEXT): $(tracer_hcitrace_OBJECTS) $(tracer_hcitrace_DEPENDENCIES) tracer/$(am__dirstamp)
-	@rm -f tracer/hcitrace$(EXEEXT)
-	$(AM_V_CCLD)$(LINK) $(tracer_hcitrace_OBJECTS) $(tracer_hcitrace_LDADD) $(LIBS)
 unit/$(am__dirstamp):
 	@$(MKDIR_P) unit
 	@: > unit/$(am__dirstamp)
@@ -2641,6 +2704,10 @@ mostlyclean-compile:
 	-rm -f cups/main.$(OBJEXT)
 	-rm -f cups/sdp.$(OBJEXT)
 	-rm -f cups/spp.$(OBJEXT)
+	-rm -f emulator/btdev.$(OBJEXT)
+	-rm -f emulator/main.$(OBJEXT)
+	-rm -f emulator/server.$(OBJEXT)
+	-rm -f emulator/vhci.$(OBJEXT)
 	-rm -f gdbus/bluetoothd-mainloop.$(OBJEXT)
 	-rm -f gdbus/bluetoothd-object.$(OBJEXT)
 	-rm -f gdbus/bluetoothd-polkit.$(OBJEXT)
@@ -2669,6 +2736,12 @@ mostlyclean-compile:
 	-rm -f lib/uuid.$(OBJEXT)
 	-rm -f lib/uuid.lo
 	-rm -f mgmt/main.$(OBJEXT)
+	-rm -f monitor/btsnoop.$(OBJEXT)
+	-rm -f monitor/control.$(OBJEXT)
+	-rm -f monitor/hcidump.$(OBJEXT)
+	-rm -f monitor/main.$(OBJEXT)
+	-rm -f monitor/mainloop.$(OBJEXT)
+	-rm -f monitor/packet.$(OBJEXT)
 	-rm -f network/bluetoothd-common.$(OBJEXT)
 	-rm -f network/bluetoothd-connection.$(OBJEXT)
 	-rm -f network/bluetoothd-main.$(OBJEXT)
@@ -2742,6 +2815,8 @@ mostlyclean-compile:
 	-rm -f src/bluetoothd-sdpd-service.$(OBJEXT)
 	-rm -f src/bluetoothd-storage.$(OBJEXT)
 	-rm -f src/bluetoothd-textfile.$(OBJEXT)
+	-rm -f src/glib-helper.$(OBJEXT)
+	-rm -f src/log.$(OBJEXT)
 	-rm -f src/oui.$(OBJEXT)
 	-rm -f src/sdp-xml.$(OBJEXT)
 	-rm -f src/textfile.$(OBJEXT)
@@ -2801,7 +2876,6 @@ mostlyclean-compile:
 	-rm -f tools/rfcomm.$(OBJEXT)
 	-rm -f tools/sdptool.$(OBJEXT)
 	-rm -f tools/ubcsp.$(OBJEXT)
-	-rm -f tracer/main.$(OBJEXT)
 	-rm -f unit/unit_test_eir-test-eir.$(OBJEXT)
 
 distclean-compile:
@@ -2869,6 +2943,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@cups/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@cups/$(DEPDIR)/sdp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@cups/$(DEPDIR)/spp.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@emulator/$(DEPDIR)/btdev.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@emulator/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@emulator/$(DEPDIR)/server.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@emulator/$(DEPDIR)/vhci.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/bluetoothd-mainloop.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/bluetoothd-object.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/bluetoothd-polkit.Po@am__quote@
@@ -2893,6 +2971,12 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@lib/$(DEPDIR)/sdp.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@lib/$(DEPDIR)/uuid.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@mgmt/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/btsnoop.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/control.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/hcidump.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/mainloop.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/packet.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/bluetoothd-common.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/bluetoothd-connection.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/bluetoothd-main.Po@am__quote@
@@ -2959,6 +3043,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-sdpd-service.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-storage.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-textfile.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/glib-helper.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/log.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/oui.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/sdp-xml.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/textfile.Po@am__quote@
@@ -3018,7 +3104,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/rfcomm.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/sdptool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/ubcsp.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@tracer/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@unit/$(DEPDIR)/unit_test_eir-test-eir.Po@am__quote@
 
 .c.o:
@@ -4839,14 +4924,15 @@ clean-libtool:
 	-rm -rf audio/.libs audio/_libs
 	-rm -rf compat/.libs compat/_libs
 	-rm -rf cups/.libs cups/_libs
+	-rm -rf emulator/.libs emulator/_libs
 	-rm -rf lib/.libs lib/_libs
 	-rm -rf mgmt/.libs mgmt/_libs
+	-rm -rf monitor/.libs monitor/_libs
 	-rm -rf plugins/.libs plugins/_libs
 	-rm -rf sbc/.libs sbc/_libs
 	-rm -rf src/.libs src/_libs
 	-rm -rf test/.libs test/_libs
 	-rm -rf tools/.libs tools/_libs
-	-rm -rf tracer/.libs tracer/_libs
 	-rm -rf unit/.libs unit/_libs
 
 distclean-libtool:
@@ -5439,6 +5525,8 @@ distclean-generic:
 	-rm -f compat/$(am__dirstamp)
 	-rm -f cups/$(DEPDIR)/$(am__dirstamp)
 	-rm -f cups/$(am__dirstamp)
+	-rm -f emulator/$(DEPDIR)/$(am__dirstamp)
+	-rm -f emulator/$(am__dirstamp)
 	-rm -f gdbus/$(DEPDIR)/$(am__dirstamp)
 	-rm -f gdbus/$(am__dirstamp)
 	-rm -f health/$(DEPDIR)/$(am__dirstamp)
@@ -5449,6 +5537,8 @@ distclean-generic:
 	-rm -f lib/$(am__dirstamp)
 	-rm -f mgmt/$(DEPDIR)/$(am__dirstamp)
 	-rm -f mgmt/$(am__dirstamp)
+	-rm -f monitor/$(DEPDIR)/$(am__dirstamp)
+	-rm -f monitor/$(am__dirstamp)
 	-rm -f network/$(DEPDIR)/$(am__dirstamp)
 	-rm -f network/$(am__dirstamp)
 	-rm -f plugins/$(DEPDIR)/$(am__dirstamp)
@@ -5471,8 +5561,6 @@ distclean-generic:
 	-rm -f time/$(am__dirstamp)
 	-rm -f tools/$(DEPDIR)/$(am__dirstamp)
 	-rm -f tools/$(am__dirstamp)
-	-rm -f tracer/$(DEPDIR)/$(am__dirstamp)
-	-rm -f tracer/$(am__dirstamp)
 	-rm -f unit/$(DEPDIR)/$(am__dirstamp)
 	-rm -f unit/$(am__dirstamp)
 	-test -z "$(DISTCLEANFILES)" || rm -f $(DISTCLEANFILES)
@@ -5496,7 +5584,7 @@ clean-am: clean-alsaLTLIBRARIES clean-binPROGRAMS clean-cupsPROGRAMS \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf alert/$(DEPDIR) attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) mgmt/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) time/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR) unit/$(DEPDIR)
+	-rm -rf alert/$(DEPDIR) attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) mgmt/$(DEPDIR) monitor/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) time/$(DEPDIR) tools/$(DEPDIR) unit/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -5550,7 +5638,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf alert/$(DEPDIR) attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) mgmt/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) time/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR) unit/$(DEPDIR)
+	-rm -rf alert/$(DEPDIR) attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) mgmt/$(DEPDIR) monitor/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) time/$(DEPDIR) tools/$(DEPDIR) unit/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

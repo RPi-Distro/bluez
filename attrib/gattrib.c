@@ -31,6 +31,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/uuid.h>
 
+#include "log.h"
 #include "att.h"
 #include "btio.h"
 #include "gattrib.h"
@@ -50,9 +51,7 @@ struct _GAttrib {
 	guint next_cmd_id;
 	guint next_evt_id;
 	GDestroyNotify destroy;
-	GAttribDisconnectFunc disconnect;
 	gpointer destroy_user_data;
-	gpointer disc_user_data;
 };
 
 struct command {
@@ -147,6 +146,8 @@ GAttrib *g_attrib_ref(GAttrib *attrib)
 
 	g_atomic_int_inc(&attrib->refs);
 
+	DBG("%p: ref=%d", attrib, attrib->refs);
+
 	return attrib;
 }
 
@@ -190,10 +191,11 @@ static void attrib_destroy(GAttrib *attrib)
 	if (attrib->write_watch > 0)
 		g_source_remove(attrib->write_watch);
 
-	if (attrib->read_watch > 0) {
+	if (attrib->read_watch > 0)
 		g_source_remove(attrib->read_watch);
+
+	if (attrib->io)
 		g_io_channel_unref(attrib->io);
-	}
 
 	g_free(attrib->buf);
 
@@ -205,10 +207,16 @@ static void attrib_destroy(GAttrib *attrib)
 
 void g_attrib_unref(GAttrib *attrib)
 {
+	gboolean ret;
+
 	if (!attrib)
 		return;
 
-	if (g_atomic_int_dec_and_test(&attrib->refs) == FALSE)
+	ret = g_atomic_int_dec_and_test(&attrib->refs);
+
+	DBG("%p: ref=%d", attrib, attrib->refs);
+
+	if (ret == FALSE)
 		return;
 
 	attrib_destroy(attrib);
@@ -220,18 +228,6 @@ GIOChannel *g_attrib_get_channel(GAttrib *attrib)
 		return NULL;
 
 	return attrib->io;
-}
-
-gboolean g_attrib_set_disconnect_function(GAttrib *attrib,
-		GAttribDisconnectFunc disconnect, gpointer user_data)
-{
-	if (attrib == NULL)
-		return FALSE;
-
-	attrib->disconnect = disconnect;
-	attrib->disc_user_data = user_data;
-
-	return TRUE;
 }
 
 gboolean g_attrib_set_destroy_function(GAttrib *attrib,
@@ -264,12 +260,8 @@ static gboolean can_write_data(GIOChannel *io, GIOCondition cond,
 	gsize len;
 	GIOStatus iostat;
 
-	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
-		if (attrib->disconnect)
-			attrib->disconnect(attrib->disc_user_data);
-
+	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
 		return FALSE;
-	}
 
 	cmd = g_queue_peek_head(attrib->queue);
 	if (cmd == NULL)
@@ -328,8 +320,6 @@ static gboolean received_data(GIOChannel *io, GIOCondition cond, gpointer data)
 
 	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
 		attrib->read_watch = 0;
-		if (attrib->disconnect)
-			attrib->disconnect(attrib->disc_user_data);
 		return FALSE;
 	}
 

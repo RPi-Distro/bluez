@@ -63,6 +63,7 @@ extern "C" {
 #define BT_SECURITY	4
 struct bt_security {
 	uint8_t level;
+	uint8_t key_size;
 };
 #define BT_SECURITY_SDP		0
 #define BT_SECURITY_LOW		1
@@ -75,6 +76,33 @@ struct bt_security {
 
 #define BT_FLUSHABLE_OFF	0
 #define BT_FLUSHABLE_ON		1
+
+#define BT_CHANNEL_POLICY	10
+
+/* BR/EDR only (default policy)
+ *   AMP controllers cannot be used.
+ *   Channel move requests from the remote device are denied.
+ *   If the L2CAP channel is currently using AMP, move the channel to BR/EDR.
+ */
+#define BT_CHANNEL_POLICY_BREDR_ONLY		0
+
+/* BR/EDR Preferred
+ *   Allow use of AMP controllers.
+ *   If the L2CAP channel is currently on AMP, move it to BR/EDR.
+ *   Channel move requests from the remote device are allowed.
+ */
+#define BT_CHANNEL_POLICY_BREDR_PREFERRED	1
+
+/* AMP Preferred
+ *   Allow use of AMP controllers
+ *   If the L2CAP channel is currently on BR/EDR and AMP controller
+ *     resources are available, initiate a channel move to AMP.
+ *   Channel move requests from the remote device are allowed.
+ *   If the L2CAP socket has not been connected yet, try to create
+ *     and configure the channel directly on an AMP controller rather
+ *     than BR/EDR.
+ */
+#define BT_CHANNEL_POLICY_AMP_PREFERRED		2
 
 /* Connection and socket states */
 enum {
@@ -113,7 +141,7 @@ enum {
 ({						\
 	struct __attribute__((packed)) {	\
 		typeof(*(ptr)) __v;		\
-	} *__p = (void *) (ptr);		\
+	} *__p = (typeof(__p)) (ptr);		\
 	__p->__v;				\
 })
 
@@ -121,69 +149,69 @@ enum {
 do {						\
 	struct __attribute__((packed)) {	\
 		typeof(*(ptr)) __v;		\
-	} *__p = (void *) (ptr);		\
+	} *__p = (typeof(__p)) (ptr);		\
 	__p->__v = (val);			\
 } while(0)
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-static inline uint64_t bt_get_le64(void *ptr)
+static inline uint64_t bt_get_le64(const void *ptr)
 {
-	return bt_get_unaligned((uint64_t *) ptr);
+	return bt_get_unaligned((const uint64_t *) ptr);
 }
 
-static inline uint64_t bt_get_be64(void *ptr)
+static inline uint64_t bt_get_be64(const void *ptr)
 {
-	return bswap_64(bt_get_unaligned((uint64_t *) ptr));
+	return bswap_64(bt_get_unaligned((const uint64_t *) ptr));
 }
 
-static inline uint32_t bt_get_le32(void *ptr)
+static inline uint32_t bt_get_le32(const void *ptr)
 {
-	return bt_get_unaligned((uint32_t *) ptr);
+	return bt_get_unaligned((const uint32_t *) ptr);
 }
 
-static inline uint32_t bt_get_be32(void *ptr)
+static inline uint32_t bt_get_be32(const void *ptr)
 {
-	return bswap_32(bt_get_unaligned((uint32_t *) ptr));
+	return bswap_32(bt_get_unaligned((const uint32_t *) ptr));
 }
 
-static inline uint16_t bt_get_le16(void *ptr)
+static inline uint16_t bt_get_le16(const void *ptr)
 {
-	return bt_get_unaligned((uint16_t *) ptr);
+	return bt_get_unaligned((const uint16_t *) ptr);
 }
 
-static inline uint16_t bt_get_be16(void *ptr)
+static inline uint16_t bt_get_be16(const void *ptr)
 {
-	return bswap_16(bt_get_unaligned((uint16_t *) ptr));
+	return bswap_16(bt_get_unaligned((const uint16_t *) ptr));
 }
 #elif __BYTE_ORDER == __BIG_ENDIAN
-static inline uint64_t bt_get_le64(void *ptr)
+static inline uint64_t bt_get_le64(const void *ptr)
 {
-	return bswap_64(bt_get_unaligned((uint64_t *) ptr));
+	return bswap_64(bt_get_unaligned((const uint64_t *) ptr));
 }
 
-static inline uint64_t bt_get_be64(void *ptr)
+static inline uint64_t bt_get_be64(const void *ptr)
 {
-	return bt_get_unaligned((uint64_t *) ptr);
+	return bt_get_unaligned((const uint64_t *) ptr);
 }
 
-static inline uint32_t bt_get_le32(void *ptr)
+static inline uint32_t bt_get_le32(const void *ptr)
 {
-	return bswap_32(bt_get_unaligned((uint32_t *) ptr));
+	return bswap_32(bt_get_unaligned((const uint32_t *) ptr));
 }
 
-static inline uint32_t bt_get_be32(void *ptr)
+static inline uint32_t bt_get_be32(const void *ptr)
 {
-	return bt_get_unaligned((uint32_t *) ptr);
+	return bt_get_unaligned((const uint32_t *) ptr);
 }
 
-static inline uint16_t bt_get_le16(void *ptr)
+static inline uint16_t bt_get_le16(const void *ptr)
 {
-	return bswap_16(bt_get_unaligned((uint16_t *) ptr));
+	return bswap_16(bt_get_unaligned((const uint16_t *) ptr));
 }
 
-static inline uint16_t bt_get_be16(void *ptr)
+static inline uint16_t bt_get_be16(const void *ptr)
 {
-	return bt_get_unaligned((uint16_t *) ptr);
+	return bt_get_unaligned((const uint16_t *) ptr);
 }
 #else
 #error "Unknown byte order"

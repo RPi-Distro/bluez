@@ -138,10 +138,11 @@ static int confirm_reply(struct btd_adapter *adapter,
 				struct btd_device *device, gboolean success)
 {
 	bdaddr_t bdaddr;
+	addr_type_t type;
 
-	device_get_address(device, &bdaddr, NULL);
+	device_get_address(device, &bdaddr, &type);
 
-	return btd_adapter_confirm_reply(adapter, &bdaddr, success);
+	return btd_adapter_confirm_reply(adapter, &bdaddr, type, success);
 }
 
 static void confirm_cb(struct agent *agent, DBusError *err, void *user_data)
@@ -159,13 +160,14 @@ static void passkey_cb(struct agent *agent, DBusError *err, uint32_t passkey,
 	struct btd_device *device = user_data;
 	struct btd_adapter *adapter = device_get_adapter(device);
 	bdaddr_t bdaddr;
+	addr_type_t type;
 
-	device_get_address(device, &bdaddr, NULL);
+	device_get_address(device, &bdaddr, &type);
 
 	if (err)
 		passkey = INVALID_PASSKEY;
 
-	btd_adapter_passkey_reply(adapter, &bdaddr, passkey);
+	btd_adapter_passkey_reply(adapter, &bdaddr, type, passkey);
 }
 
 int btd_event_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
@@ -247,9 +249,8 @@ static void update_lastused(bdaddr_t *sba, bdaddr_t *dba)
 }
 
 void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, addr_type_t type,
-					uint32_t class, int8_t rssi,
-					uint8_t confirm_name, uint8_t *data,
-					uint8_t data_len)
+					int8_t rssi, uint8_t confirm_name,
+					uint8_t *data, uint8_t data_len)
 {
 	struct btd_adapter *adapter;
 
@@ -260,12 +261,11 @@ void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, addr_type_t type,
 	}
 
 	update_lastseen(local, peer);
-	write_remote_class(local, peer, class);
 
 	if (data)
-		write_remote_eir(local, peer, data);
+		write_remote_eir(local, peer, data, data_len);
 
-	adapter_update_found_devices(adapter, peer, type, class, rssi,
+	adapter_update_found_devices(adapter, peer, type, rssi,
 						confirm_name, data, data_len);
 }
 
@@ -345,6 +345,56 @@ void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, char *name)
 		device_set_name(device, name);
 }
 
+static char *buf2str(uint8_t *data, int datalen)
+{
+	char *buf;
+	int i;
+
+	buf = g_try_new0(char, (datalen * 2) + 1);
+	if (buf == NULL)
+		return NULL;
+
+	for (i = 0; i < datalen; i++)
+		sprintf(buf + (i * 2), "%2.2x", data[i]);
+
+	return buf;
+}
+
+static int store_longtermkey(bdaddr_t *local, bdaddr_t *peer,
+				addr_type_t addr_type, 	unsigned char *key,
+				uint8_t master, uint8_t authenticated,
+				uint8_t enc_size, uint16_t ediv, uint8_t rand[8])
+{
+	GString *newkey;
+	char *val, *str;
+	int err;
+
+	val = buf2str(key, 16);
+	if (val == NULL)
+		return -ENOMEM;
+
+	newkey = g_string_new(val);
+	g_free(val);
+
+	g_string_append_printf(newkey, " %d %d %d %d %d ", addr_type,
+					authenticated, master, enc_size, ediv);
+
+	str = buf2str(rand, 8);
+	if (str == NULL) {
+		g_string_free(newkey, TRUE);
+		return -ENOMEM;
+	}
+
+	newkey = g_string_append(newkey, str);
+	g_free(str);
+
+	err = write_longtermkeys(local, peer, newkey->str);
+
+	g_string_free(newkey, TRUE);
+
+	return err;
+}
+
 int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 				uint8_t *key, uint8_t key_type,
 				uint8_t pin_length)
@@ -370,7 +420,32 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	return ret;
 }
 
-void btd_event_conn_complete(bdaddr_t *local, bdaddr_t *peer)
+int btd_event_ltk_notify(bdaddr_t *local, bdaddr_t *peer, addr_type_t addr_type,
+					uint8_t *key, uint8_t master,
+					uint8_t authenticated, uint8_t enc_size,
+					uint16_t ediv, 	uint8_t rand[8])
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+	int ret;
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
+		return -ENODEV;
+
+	ret = store_longtermkey(local, peer, addr_type, key, master,
+					authenticated, enc_size, ediv, rand);
+	if (ret == 0) {
+		device_set_bonded(device, TRUE);
+
+		if (device_is_temporary(device))
+			device_set_temporary(device, FALSE);
+	}
+
+	return ret;
+}
+
+void btd_event_conn_complete(bdaddr_t *local, bdaddr_t *peer, addr_type_t type,
+						char *name, uint8_t *dev_class)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -380,7 +455,12 @@ void btd_event_conn_complete(bdaddr_t *local, bdaddr_t *peer)
 
 	update_lastused(local, peer);
 
+	device_set_addr_type(device, type);
+
 	adapter_add_connection(adapter, device);
+
+	if (name != NULL)
+		btd_event_remote_name(local, peer, name);
 }
 
 void btd_event_conn_failed(bdaddr_t *local, bdaddr_t *peer, uint8_t status)
@@ -430,7 +510,8 @@ void btd_event_device_blocked(bdaddr_t *local, bdaddr_t *peer)
 	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
 		return;
 
-	device_block(conn, device, TRUE);
+	if (device)
+		device_block(conn, device, TRUE);
 }
 
 void btd_event_device_unblocked(bdaddr_t *local, bdaddr_t *peer)
@@ -443,7 +524,25 @@ void btd_event_device_unblocked(bdaddr_t *local, bdaddr_t *peer)
 	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
 		return;
 
-	device_unblock(conn, device, FALSE, TRUE);
+	if (device)
+		device_unblock(conn, device, FALSE, TRUE);
+}
+
+void btd_event_device_unpaired(bdaddr_t *local, bdaddr_t *peer)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+	DBusConnection *conn = get_dbus_connection();
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
+		return;
+
+	device_set_temporary(device, TRUE);
+
+	if (device_is_connected(device))
+		device_request_disconnect(device, NULL);
+	else
+		adapter_remove_device(conn, adapter, device, TRUE);
 }
 
 /* Section reserved to device HCI callbacks */

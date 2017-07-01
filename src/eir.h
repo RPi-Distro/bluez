@@ -22,6 +22,19 @@
  *
  */
 
+#define EIR_FLAGS                   0x01  /* flags */
+#define EIR_UUID16_SOME             0x02  /* 16-bit UUID, more available */
+#define EIR_UUID16_ALL              0x03  /* 16-bit UUID, all listed */
+#define EIR_UUID32_SOME             0x04  /* 32-bit UUID, more available */
+#define EIR_UUID32_ALL              0x05  /* 32-bit UUID, all listed */
+#define EIR_UUID128_SOME            0x06  /* 128-bit UUID, more available */
+#define EIR_UUID128_ALL             0x07  /* 128-bit UUID, all listed */
+#define EIR_NAME_SHORT              0x08  /* shortened local name */
+#define EIR_NAME_COMPLETE           0x09  /* complete local name */
+#define EIR_TX_POWER                0x0A  /* transmit power level */
+#define EIR_CLASS_OF_DEV            0x0D  /* Class of Device */
+#define EIR_DEVICE_ID               0x10  /* device ID */
+
 struct uuid_info {
 	uuid_t uuid;
 	uint8_t svc_hint;
@@ -31,6 +44,7 @@ struct eir_data {
 	GSList *services;
 	int flags;
 	char *name;
+	uint8_t dev_class[3];
 	gboolean name_complete;
 };
 
@@ -40,4 +54,8 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 			uint16_t did_product, uint16_t did_version,
 			GSList *uuids, uint8_t *data);
 
-gboolean eir_has_complete_name(uint8_t *data, size_t len);
+gboolean eir_has_data_type(uint8_t *data, size_t len, uint8_t type);
+
+size_t eir_append_data(uint8_t *eir, size_t eir_len, uint8_t type,
+						uint8_t *data, size_t data_len);
+size_t eir_length(uint8_t *eir, size_t maxlen);

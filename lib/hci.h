@@ -276,7 +276,9 @@ enum {
 #define LMP_EXT_FEAT	0x80
 
 /* Extended LMP features */
-#define LMP_HOST_LE	0x02
+#define LMP_HOST_SSP		0x01
+#define LMP_HOST_LE		0x02
+#define LMP_HOST_LE_BREDR	0x04
 
 /* Link policies */
 #define HCI_LP_RSWITCH	0x0001
@@ -292,6 +294,16 @@ enum {
 #define HCI_LM_TRUSTED	0x0008
 #define HCI_LM_RELIABLE	0x0010
 #define HCI_LM_SECURE	0x0020
+
+/* Link Key types */
+#define HCI_LK_COMBINATION		0x00
+#define HCI_LK_LOCAL_UNIT		0x01
+#define HCI_LK_REMOTE_UNIT		0x02
+#define HCI_LK_DEBUG_COMBINATION	0x03
+#define HCI_LK_UNAUTH_COMBINATION	0x04
+#define HCI_LK_AUTH_COMBINATION		0x05
+#define HCI_LK_CHANGED_COMBINATION	0x06
+#define HCI_LK_INVALID			0xFF
 
 /* -----  HCI Commands ----- */
 
@@ -1238,6 +1250,14 @@ typedef struct {
 	uint8_t		status;
 } __attribute__ ((packed)) write_best_effort_flush_timeout_rp;
 #define WRITE_BEST_EFFORT_FLUSH_TIMEOUT_RP_SIZE 1
+
+#define OCF_READ_LE_HOST_SUPPORTED	0x006C
+typedef struct {
+	uint8_t		status;
+	uint8_t		le;
+	uint8_t		simul;
+} __attribute__ ((packed)) read_le_host_supported_rp;
+#define READ_LE_HOST_SUPPORTED_RP_SIZE 3
 
 #define OCF_WRITE_LE_HOST_SUPPORTED	0x006D
 typedef struct {
@@ -2269,6 +2289,7 @@ struct sockaddr_hci {
 
 #define HCI_CHANNEL_RAW		0
 #define HCI_CHANNEL_CONTROL	1
+#define HCI_CHANNEL_MONITOR	2
 
 struct hci_filter {
 	uint32_t type_mask;

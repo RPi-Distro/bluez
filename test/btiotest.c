@@ -33,6 +33,7 @@
 #include "btio.h"
 
 #define DEFAULT_ACCEPT_TIMEOUT 2
+static gint opt_update_sec = 0;
 
 struct io_data {
 	guint ref;
@@ -94,6 +95,32 @@ static gboolean disconn_timeout(gpointer user_data)
 	return FALSE;
 }
 
+static void update_sec_level(struct io_data *data)
+{
+	GError *err = NULL;
+	int sec_level;
+
+	if (!bt_io_get(data->io, data->type, &err,
+					BT_IO_OPT_SEC_LEVEL, &sec_level,
+					BT_IO_OPT_INVALID)) {
+		printf("bt_io_get(OPT_SEC_LEVEL): %s\n", err->message);
+		g_clear_error(&err);
+		return;
+	}
+
+	printf("sec_level=%d\n", sec_level);
+
+	if (opt_update_sec == sec_level)
+		return;
+
+	if (!bt_io_set(data->io, data->type, &err,
+					BT_IO_OPT_SEC_LEVEL, opt_update_sec,
+					BT_IO_OPT_INVALID)) {
+		printf("bt_io_set(OPT_SEC_LEVEL): %s\n", err->message);
+		g_clear_error(&err);
+	}
+}
+
 static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 {
 	struct io_data *data = user_data;
@@ -135,6 +162,19 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 			printf("imtu=%u, omtu=%u\n", imtu, omtu);
 	}
 
+	if (data->type == BT_IO_L2CAP) {
+		uint8_t key_size;
+
+		if (!bt_io_get(io, data->type, &err,
+					BT_IO_OPT_KEY_SIZE, &key_size,
+					BT_IO_OPT_INVALID)) {
+			printf("Unable to get L2CAP Key size: %s\n",
+								err->message);
+			g_clear_error(&err);
+		} else
+			printf("key_size=%u\n", key_size);
+	}
+
 	if (data->disconn == 0) {
 		g_io_channel_shutdown(io, TRUE, NULL);
 		printf("Disconnected\n");
@@ -153,6 +193,10 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 
 
 	io_data_ref(data);
+
+	if (opt_update_sec > 0)
+		update_sec_level(data);
+
 	cond = G_IO_NVAL | G_IO_HUP | G_IO_ERR;
 	g_io_add_watch_full(io, G_PRIORITY_DEFAULT, cond, io_watch, data,
 					(GDestroyNotify) io_data_unref);
@@ -171,6 +215,9 @@ static gboolean confirm_timeout(gpointer user_data)
 	printf("Accepting connection\n");
 
 	io_data_ref(data);
+
+	if (opt_update_sec > 0)
+		update_sec_level(data);
 
 	if (!bt_io_accept(data->io, connect_cb, data,
 				(GDestroyNotify) io_data_unref, NULL)) {
@@ -225,8 +272,8 @@ static void confirm_cb(GIOChannel *io, gpointer user_data)
 }
 
 static void l2cap_connect(const char *src, const char *dst, uint16_t psm,
-						gint disconn, gint sec,
-						gint prio)
+						uint16_t cid, gint disconn,
+						gint sec, gint prio)
 {
 	struct io_data *data;
 	GError *err = NULL;
@@ -242,6 +289,7 @@ static void l2cap_connect(const char *src, const char *dst, uint16_t psm,
 						BT_IO_OPT_SOURCE, src,
 						BT_IO_OPT_DEST, dst,
 						BT_IO_OPT_PSM, psm,
+						BT_IO_OPT_CID, cid,
 						BT_IO_OPT_SEC_LEVEL, sec,
 						BT_IO_OPT_PRIORITY, prio,
 						BT_IO_OPT_INVALID);
@@ -251,6 +299,7 @@ static void l2cap_connect(const char *src, const char *dst, uint16_t psm,
 						&err,
 						BT_IO_OPT_DEST, dst,
 						BT_IO_OPT_PSM, psm,
+						BT_IO_OPT_CID, cid,
 						BT_IO_OPT_SEC_LEVEL, sec,
 						BT_IO_OPT_PRIORITY, prio,
 						BT_IO_OPT_INVALID);
@@ -470,6 +519,7 @@ static gint opt_accept = DEFAULT_ACCEPT_TIMEOUT;
 static gint opt_sec = 0;
 static gboolean opt_master = FALSE;
 static gint opt_priority = 0;
+static gint opt_cid = 0;
 
 static GMainLoop *main_loop;
 
@@ -478,12 +528,16 @@ static GOptionEntry options[] = {
 				"RFCOMM channel" },
 	{ "psm", 'p', 0, G_OPTION_ARG_INT, &opt_psm,
 				"L2CAP PSM" },
+	{ "cid", 'j', 0, G_OPTION_ARG_INT, &opt_cid,
+				"L2CAP CID" },
 	{ "sco", 's', 0, G_OPTION_ARG_NONE, &opt_sco,
 				"Use SCO" },
 	{ "defer", 'd', 0, G_OPTION_ARG_NONE, &opt_defer,
 				"Use DEFER_SETUP for incoming connections" },
 	{ "sec-level", 'S', 0, G_OPTION_ARG_INT, &opt_sec,
 				"Security level" },
+	{ "update-sec-level", 'U', 0, G_OPTION_ARG_INT, &opt_update_sec,
+				"Update security level" },
 	{ "dev", 'i', 0, G_OPTION_ARG_STRING, &opt_dev,
 				"Which HCI device to use" },
 	{ "reject", 'r', 0, G_OPTION_ARG_INT, &opt_reject,
@@ -518,15 +572,14 @@ int main(int argc, char *argv[])
 
 	g_option_context_free(context);
 
-	printf("accept=%d, reject=%d, discon=%d, defer=%d, sec=%d, prio=%d\n",
-		opt_accept, opt_reject, opt_disconn, opt_defer, opt_sec,
-		opt_priority);
+	printf("accept=%d, reject=%d, discon=%d, defer=%d, sec=%d,"
+		" update_sec=%d, prio=%d\n", opt_accept, opt_reject,
+		opt_disconn, opt_defer, opt_sec, opt_update_sec, opt_priority);
 
-	if (opt_psm) {
+	if (opt_psm || opt_cid) {
 		if (argc > 1)
-			l2cap_connect(opt_dev, argv[1], opt_psm,
-							opt_disconn, opt_sec,
-							opt_priority);
+			l2cap_connect(opt_dev, argv[1], opt_psm, opt_cid,
+					opt_disconn, opt_sec, opt_priority);
 		else
 			l2cap_listen(opt_dev, opt_psm, opt_defer, opt_reject,
 					opt_disconn, opt_accept, opt_sec,
