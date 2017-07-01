@@ -649,6 +649,7 @@ static hci_map ver_map[] = {
 	{ "2.1",	0x04 },
 	{ "3.0",	0x05 },
 	{ "4.0",	0x06 },
+	{ "4.1",	0x07 },
 	{ NULL }
 };
 
@@ -670,6 +671,21 @@ char *lmp_vertostr(unsigned int ver)
 int lmp_strtover(char *str, unsigned int *ver)
 {
 	return hci_str2uint(ver_map, str, ver);
+}
+
+static hci_map pal_map[] = {
+	{ "3.0",	0x01 },
+	{ NULL }
+};
+
+char *pal_vertostr(unsigned int ver)
+{
+	return hci_uint2str(pal_map, ver);
+}
+
+int pal_strtover(char *str, unsigned int *ver)
+{
+	return hci_str2uint(pal_map, str, ver);
 }
 
 /* LMP features mapping */

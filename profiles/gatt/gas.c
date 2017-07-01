@@ -32,20 +32,21 @@
 #include <errno.h>
 
 #include <glib.h>
-#include <btio/btio.h>
 
+#include "btio/btio.h"
 #include "lib/uuid.h"
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/shared/util.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
-#include "attio.h"
+#include "src/attio.h"
 #include "attrib/gatt.h"
-#include "log.h"
-#include "textfile.h"
+#include "src/log.h"
+#include "src/textfile.h"
 
 /* Generic Attribute/Access Service */
 struct gas {
@@ -165,7 +166,7 @@ static void gap_appearance_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 	atval = list->data[0] + 2; /* skip handle value */
-	app = att_get_u16(atval);
+	app = get_le16(atval);
 
 	DBG("GAP Appearance: 0x%04x", app);
 
@@ -177,6 +178,7 @@ done:
 
 static void indication_cb(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
+	uint8_t bdaddr_type;
 	struct gas *gas = user_data;
 	uint16_t start, end, olen;
 	size_t plen;
@@ -187,8 +189,8 @@ static void indication_cb(const uint8_t *pdu, uint16_t len, gpointer user_data)
 		return;
 	}
 
-	start = att_get_u16(&pdu[3]);
-	end = att_get_u16(&pdu[5]);
+	start = get_le16(&pdu[3]);
+	end = get_le16(&pdu[5]);
 
 	DBG("Service Changed start: 0x%04X end: 0x%04X", start, end);
 
@@ -197,7 +199,8 @@ static void indication_cb(const uint8_t *pdu, uint16_t len, gpointer user_data)
 	olen = enc_confirmation(opdu, plen);
 	g_attrib_send(gas->attrib, 0, opdu, olen, NULL, NULL, NULL);
 
-	if (device_is_bonded(gas->device) == FALSE) {
+	bdaddr_type = btd_device_get_bdaddr_type(gas->device);
+	if (!device_is_bonded(gas->device, bdaddr_type)) {
 		DBG("Ignoring Service Changed: device is not bonded");
 		return;
 	}
@@ -230,7 +233,7 @@ static void write_ccc(GAttrib *attrib, uint16_t handle, gpointer user_data)
 {
 	uint8_t value[2];
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_IND_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_IND_BIT, value);
 	gatt_write_char(attrib, handle, value, sizeof(value), ccc_written_cb,
 								user_data);
 }
@@ -261,8 +264,8 @@ static void gatt_descriptors_cb(guint8 status, const guint8 *pdu, guint16 len,
 		uint8_t *value;
 
 		value = list->data[i];
-		ccc = att_get_u16(value);
-		uuid16 = att_get_u16(&value[2]);
+		ccc = get_le16(value);
+		uuid16 = get_le16(&value[2]);
 		DBG("CCC: 0x%04x UUID: 0x%04x", ccc, uuid16);
 		write_ccc(gas->attrib, ccc, user_data);
 	}
@@ -271,8 +274,8 @@ done:
 	att_data_list_free(list);
 }
 
-static void gatt_characteristic_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void gatt_characteristic_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	struct gas *gas = user_data;
 	struct gatt_char *chr;
@@ -294,7 +297,8 @@ static void gatt_characteristic_cb(GSList *characteristics, guint8 status,
 	}
 
 	gas->changed_handle = chr->value_handle;
-	gatt_find_info(gas->attrib, start, end, gatt_descriptors_cb, gas);
+	gatt_discover_char_desc(gas->attrib, start, end, gatt_descriptors_cb,
+									gas);
 }
 
 static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,

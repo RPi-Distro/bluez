@@ -30,11 +30,11 @@
 #include <bluetooth/bluetooth.h>
 #include <glib.h>
 
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "log.h"
-#include "storage.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/log.h"
+#include "src/storage.h"
 
 /*
  * Nintendo Wii Remote devices require the bdaddr of the host as pin input for
@@ -59,18 +59,21 @@
  */
 
 static uint16_t wii_ids[][2] = {
-	{ 0x057e, 0x0306 },
-	{ 0x057e, 0x0330 },
+	{ 0x057e, 0x0306 },		/* 1st gen */
+	{ 0x054c, 0x0306 },		/* LEGO wiimote */
+	{ 0x057e, 0x0330 },		/* 2nd gen */
 };
 
 static const char *wii_names[] = {
-	"Nintendo RVL-CNT-01",
-	"Nintendo RVL-CNT-01-TR",
-	"Nintendo RVL-WBC-01",
+	"Nintendo RVL-CNT-01",		/* 1st gen */
+	"Nintendo RVL-CNT-01-TR",	/* 2nd gen */
+	"Nintendo RVL-CNT-01-UC",	/* Wii U Pro Controller */
+	"Nintendo RVL-WBC-01",		/* Balance Board */
 };
 
 static ssize_t wii_pincb(struct btd_adapter *adapter, struct btd_device *device,
-			char *pinbuf, gboolean *display, unsigned int attempt)
+						char *pinbuf, bool *display,
+						unsigned int attempt)
 {
 	uint16_t vendor, product;
 	char addr[18], name[25];
@@ -87,7 +90,6 @@ static ssize_t wii_pincb(struct btd_adapter *adapter, struct btd_device *device,
 	product = btd_device_get_product(device);
 
 	device_get_name(device, name, sizeof(name));
-	name[sizeof(name) - 1] = 0;
 
 	for (i = 0; i < G_N_ELEMENTS(wii_ids); ++i) {
 		if (vendor == wii_ids[i][0] && product == wii_ids[i][1])
@@ -103,7 +105,7 @@ static ssize_t wii_pincb(struct btd_adapter *adapter, struct btd_device *device,
 
 found:
 	DBG("Forcing fixed pin on detected wiimote %s", addr);
-	memcpy(pinbuf, adapter_get_address(adapter), 6);
+	memcpy(pinbuf, btd_adapter_get_address(adapter), 6);
 	return 6;
 }
 

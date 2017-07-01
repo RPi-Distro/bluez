@@ -57,11 +57,30 @@
 #define AVC_ROOT_MENU			0x09
 #define AVC_CONTENTS_MENU		0x0b
 #define AVC_FAVORITE_MENU		0x0c
+#define AVC_EXIT			0x0d
+#define AVC_ON_DEMAND_MENU		0x0e
+#define AVC_APPS_MENU			0x0f
+#define AVC_0				0x20
+#define AVC_1				0x21
+#define AVC_2				0x22
+#define AVC_3				0x23
+#define AVC_4				0x24
+#define AVC_5				0x25
+#define AVC_6				0x26
+#define AVC_7				0x27
+#define AVC_8				0x28
+#define AVC_9				0x29
+#define AVC_DOT				0x2a
 #define AVC_ENTER			0x2b
 #define AVC_CHANNEL_UP			0x30
 #define AVC_CHANNEL_DOWN		0x31
+#define AVC_CHANNEL_PREVIOUS		0x32
 #define AVC_INPUT_SELECT		0x34
+#define AVC_INFO			0x35
 #define AVC_HELP			0x36
+#define AVC_PAGE_UP			0x37
+#define AVC_PAGE_DOWN			0x38
+#define AVC_LOCK			0x3a
 #define AVC_POWER			0x40
 #define AVC_VOLUME_UP			0x41
 #define AVC_VOLUME_DOWN			0x42
@@ -75,10 +94,20 @@
 #define AVC_EJECT			0x4a
 #define AVC_FORWARD			0x4b
 #define AVC_BACKWARD			0x4c
+#define AVC_LIST			0x4d
 #define AVC_F1				0x71
 #define AVC_F2				0x72
 #define AVC_F3				0x73
 #define AVC_F4				0x74
+#define AVC_F5				0x75
+#define AVC_F6				0x76
+#define AVC_F7				0x77
+#define AVC_F8				0x78
+#define AVC_F9				0x79
+#define AVC_RED				0x7a
+#define AVC_GREEN			0x7b
+#define AVC_BLUE			0x7c
+#define AVC_YELLOW			0x7c
 
 struct avctp;
 
@@ -90,9 +119,10 @@ typedef enum {
 	AVCTP_STATE_BROWSING_CONNECTED
 } avctp_state_t;
 
-typedef void (*avctp_state_cb) (struct audio_device *dev,
+typedef void (*avctp_state_cb) (struct btd_device *dev,
 				avctp_state_t old_state,
-				avctp_state_t new_state);
+				avctp_state_t new_state,
+				void *user_data);
 
 typedef bool (*avctp_passthrough_cb) (struct avctp *session,
 					uint8_t op, bool pressed,
@@ -112,14 +142,15 @@ typedef size_t (*avctp_browsing_pdu_cb) (struct avctp *session,
 					uint8_t *operands, size_t operand_count,
 					void *user_data);
 
-unsigned int avctp_add_state_cb(struct audio_device *dev, avctp_state_cb cb);
+unsigned int avctp_add_state_cb(struct btd_device *dev, avctp_state_cb cb,
+							void *user_data);
 gboolean avctp_remove_state_cb(unsigned int id);
 
 int avctp_register(struct btd_adapter *adapter, gboolean master);
 void avctp_unregister(struct btd_adapter *adapter);
 
-struct avctp *avctp_connect(struct audio_device *device);
-struct avctp *avctp_get(struct audio_device *device);
+struct avctp *avctp_connect(struct btd_device *device);
+struct avctp *avctp_get(struct btd_device *device);
 bool avctp_is_initiator(struct avctp *session);
 int avctp_connect_browsing(struct avctp *session);
 void avctp_disconnect(struct avctp *session);

@@ -24,22 +24,20 @@
 
 #include <stdbool.h>
 
-#include "log.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
+#include "src/log.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
 
 #include "manager.h"
 #include "server.h"
 
 static int sap_server_probe(struct btd_profile *p, struct btd_adapter *adapter)
 {
-	const char *path = adapter_get_path(adapter);
+	DBG("path %s", adapter_get_path(adapter));
 
-	DBG("path %s", path);
-
-	return sap_server_register(path, adapter_get_address(adapter));
+	return sap_server_register(adapter);
 }
 
 static void sap_server_remove(struct btd_profile *p,

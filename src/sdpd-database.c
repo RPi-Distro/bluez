@@ -28,19 +28,14 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
-#include <errno.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/l2cap.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
 #include "sdpd.h"
 #include "log.h"
-#include "adapter.h"
 
 static sdp_list_t *service_db;
 static sdp_list_t *access_db;
@@ -172,7 +167,6 @@ void sdp_svcdb_set_collectable(sdp_record_t *record, int sock)
  */
 void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec)
 {
-	struct btd_adapter *adapter;
 	sdp_access_t *dev;
 
 	SDPDBG("Adding rec : 0x%lx", (long) rec);
@@ -188,15 +182,6 @@ void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec)
 	dev->handle = rec->handle;
 
 	access_db = sdp_list_insert_sorted(access_db, dev, access_sort);
-
-	if (bacmp(device, BDADDR_ANY) == 0) {
-		adapter_foreach(adapter_service_insert, rec);
-		return;
-	}
-
-	adapter = adapter_find(device);
-	if (adapter)
-		adapter_service_insert(adapter, rec);
 }
 
 static sdp_list_t *record_locate(uint32_t handle)
@@ -268,13 +253,6 @@ int sdp_record_remove(uint32_t handle)
 
 	a = p->data;
 
-	if (bacmp(&a->device, BDADDR_ANY) != 0) {
-		struct btd_adapter *adapter = adapter_find(&a->device);
-		if (adapter)
-			adapter_service_remove(adapter, r);
-	} else
-		adapter_foreach(adapter_service_remove, r);
-
 	access_db = sdp_list_remove(access_db, a);
 	access_free(a);
 
@@ -317,27 +295,4 @@ uint32_t sdp_next_handle(void)
 		handle++;
 
 	return handle;
-}
-
-void sdp_init_services_list(bdaddr_t *device)
-{
-	sdp_list_t *p;
-
-	DBG("");
-
-	for (p = access_db; p != NULL; p = p->next) {
-		sdp_access_t *access = p->data;
-		sdp_record_t *rec;
-
-		if (bacmp(BDADDR_ANY, &access->device))
-			continue;
-
-		rec = sdp_record_find(access->handle);
-		if (rec == NULL)
-			continue;
-
-		SDPDBG("adding record with handle %x", access->handle);
-
-		adapter_foreach(adapter_service_insert, rec);
-	}
 }

@@ -30,12 +30,13 @@
 
 #include <glib.h>
 #include <gdbus/gdbus.h>
-#include <btio/btio.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/rfcomm.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+
+#include "btio/btio.h"
 
 #include "log.h"
 #include "transport.h"
@@ -407,7 +408,6 @@ static guint bluetooth_connect(const char *source, const char *destination,
 	session->port = port;
 	session->user_data = user_data;
 
-	session->service = g_strdup(service);
 	str2ba(destination, &session->dst);
 	str2ba(source, &session->src);
 
@@ -416,6 +416,7 @@ static guint bluetooth_connect(const char *source, const char *destination,
 		return 0;
 	}
 
+	session->service = g_strdup(service);
 	sessions = g_slist_prepend(sessions, session);
 
 	return session->id;

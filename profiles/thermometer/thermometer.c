@@ -30,16 +30,17 @@
 #include <gdbus/gdbus.h>
 
 #include "lib/uuid.h"
-#include "plugin.h"
-#include "dbus-common.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
-#include "error.h"
-#include "log.h"
+#include "src/plugin.h"
+#include "src/dbus-common.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/shared/util.h"
+#include "src/error.h"
+#include "src/log.h"
 #include "attrib/gattrib.h"
-#include "attio.h"
+#include "src/attio.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
 
@@ -361,7 +362,7 @@ static void proc_measurement(struct thermometer *t, const uint8_t *pdu,
 		return;
 	}
 
-	raw = att_get_u32(pdu);
+	raw = get_le32(pdu);
 	m.mant = raw & 0x00FFFFFF;
 	m.exp = ((int32_t) raw) >> 24;
 
@@ -382,7 +383,7 @@ static void proc_measurement(struct thermometer *t, const uint8_t *pdu,
 			return;
 		}
 
-		ts.tm_year = att_get_u16(pdu) - 1900;
+		ts.tm_year = get_le16(pdu) - 1900;
 		ts.tm_mon = *(pdu + 2) - 1;
 		ts.tm_mday = *(pdu + 3);
 		ts.tm_hour = *(pdu + 4);
@@ -466,7 +467,7 @@ static void interval_ind_handler(const uint8_t *pdu, uint16_t len,
 		return;
 	}
 
-	interval = att_get_u16(pdu + 3);
+	interval = get_le16(pdu + 3);
 	change_property(t, "Interval", &interval);
 
 	opdu = g_attrib_get_buffer(t->attrib, &plen);
@@ -501,8 +502,8 @@ static void valid_range_desc_cb(guint8 status, const guint8 *pdu, guint16 len,
 		return;
 	}
 
-	min = att_get_u16(&value[0]);
-	max = att_get_u16(&value[2]);
+	min = get_le16(&value[0]);
+	max = get_le16(&value[2]);
 
 	if (min == 0 || min > max) {
 		DBG("Invalid range");
@@ -568,7 +569,7 @@ static void process_thermometer_desc(struct characteristic *ch, uint16_t uuid,
 		return;
 	}
 
-	att_put_u16(val, atval);
+	put_le16(val, atval);
 	gatt_write_char(ch->t->attrib, handle, atval, sizeof(atval),
 							write_ccc_cb, msg);
 }
@@ -599,8 +600,8 @@ static void discover_desc_cb(guint8 status, const guint8 *pdu, guint16 len,
 		uint16_t handle, uuid;
 
 		value = list->data[i];
-		handle = att_get_u16(value);
-		uuid = att_get_u16(value + 2);
+		handle = get_le16(value);
+		uuid = get_le16(value + 2);
 
 		process_thermometer_desc(ch, uuid, handle);
 	}
@@ -633,7 +634,7 @@ static void discover_desc(struct thermometer *t, struct gatt_char *c,
 	ch->t = t;
 	memcpy(ch->uuid, c->uuid, sizeof(c->uuid));
 
-	gatt_find_info(t->attrib, start, end, discover_desc_cb, ch);
+	gatt_discover_char_desc(t->attrib, start, end, discover_desc_cb, ch);
 }
 
 static void read_temp_type_cb(guint8 status, const guint8 *pdu, guint16 len,
@@ -689,7 +690,7 @@ static void read_interval_cb(guint8 status, const guint8 *pdu, guint16 len,
 		return;
 	}
 
-	interval = att_get_u16(&value[0]);
+	interval = get_le16(&value[0]);
 	change_property(t, "Interval", &interval);
 }
 
@@ -720,12 +721,12 @@ static void process_thermometer_char(struct thermometer *t,
 
 		gatt_read_char(t->attrib, c->value_handle, read_interval_cb, t);
 
-		if (c->properties & ATT_CHAR_PROPER_WRITE) {
+		if (c->properties & GATT_CHR_PROP_WRITE) {
 			t->interval_val_handle = c->value_handle;
 			need_desc = true;
 		}
 
-		if (c->properties & ATT_CHAR_PROPER_INDICATE) {
+		if (c->properties & GATT_CHR_PROP_INDICATE) {
 			t->attio_interval_id = g_attrib_register(t->attrib,
 					ATT_OP_HANDLE_IND, c->value_handle,
 					interval_ind_handler, t, NULL);
@@ -737,8 +738,8 @@ static void process_thermometer_char(struct thermometer *t,
 	}
 }
 
-static void configure_thermometer_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void configure_thermometer_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	struct thermometer *t = user_data;
 	GSList *l;
@@ -789,7 +790,7 @@ static void enable_final_measurement(gpointer data, gpointer user_data)
 	if (t->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_IND_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_IND_BIT, value);
 	msg = g_strdup("Enable Temperature Measurement indications");
 
 	gatt_write_char(t->attrib, handle, value, sizeof(value),
@@ -806,7 +807,7 @@ static void enable_intermediate_measurement(gpointer data, gpointer user_data)
 	if (t->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
 	msg = g_strdup("Enable Intermediate Temperature notifications");
 
 	gatt_write_char(t->attrib, handle, value, sizeof(value),
@@ -823,7 +824,7 @@ static void disable_final_measurement(gpointer data, gpointer user_data)
 	if (t->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(0x0000, value);
+	put_le16(0x0000, value);
 	msg = g_strdup("Disable Temperature Measurement indications");
 
 	gatt_write_char(t->attrib, handle, value, sizeof(value),
@@ -840,7 +841,7 @@ static void disable_intermediate_measurement(gpointer data, gpointer user_data)
 	if (t->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(0x0000, value);
+	put_le16(0x0000, value);
 	msg = g_strdup("Disable Intermediate Temperature notifications");
 
 	gatt_write_char(t->attrib, handle, value, sizeof(value),
@@ -1070,7 +1071,7 @@ static void property_set_interval(const GDBusPropertyTable *property,
 		return;
 	}
 
-	att_put_u16(val, &atval[0]);
+	put_le16(val, &atval[0]);
 
 	interval_data = g_new0(struct tmp_interval_data, 1);
 	interval_data->thermometer = t;

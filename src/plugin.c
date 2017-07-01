@@ -33,11 +33,11 @@
 #include <bluetooth/bluetooth.h>
 
 #include <glib.h>
-#include <btio/btio.h>
 
-#include "plugin.h"
-#include "log.h"
-#include "hcid.h"
+#include "btio/btio.h"
+#include "src/plugin.h"
+#include "src/log.h"
+#include "src/hcid.h"
 
 static GSList *plugins = NULL;
 
@@ -110,7 +110,7 @@ static gboolean enable_plugin(const char *name, char **cli_enable,
 	return TRUE;
 }
 
-#include "builtin.h"
+#include "src/builtin.h"
 
 gboolean plugin_init(const char *enable, const char *disable)
 {
@@ -195,9 +195,16 @@ gboolean plugin_init(const char *enable, const char *disable)
 start:
 	for (list = plugins; list; list = list->next) {
 		struct bluetooth_plugin *plugin = list->data;
+		int err;
 
-		if (plugin->desc->init() < 0) {
-			error("Failed to init %s plugin", plugin->desc->name);
+		err = plugin->desc->init();
+		if (err < 0) {
+			if (err == -ENOSYS)
+				warn("System does not support %s plugin",
+							plugin->desc->name);
+			else
+				error("Failed to init %s plugin",
+							plugin->desc->name);
 			continue;
 		}
 

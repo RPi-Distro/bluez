@@ -28,19 +28,16 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <string.h>
 #include <limits.h>
-#include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include <netinet/in.h>
+#include "src/shared/util.h"
 
 #include "sdpd.h"
 #include "log.h"
@@ -179,7 +176,7 @@ static int extract_des(uint8_t *buf, int len, sdp_list_t **svcReqSeq, uint8_t *p
 				struct attrid *aid;
 				aid = malloc(sizeof(struct attrid));
 				aid->dtd = dataType;
-				aid->uint16 = bt_get_be16(p);
+				aid->uint16 = get_be16(p);
 				pElem = (char *) aid;
 			} else {
 				uint16_t tmp;
@@ -187,7 +184,7 @@ static int extract_des(uint8_t *buf, int len, sdp_list_t **svcReqSeq, uint8_t *p
 				memcpy(&tmp, p, sizeof(tmp));
 
 				pElem = malloc(sizeof(uint16_t));
-				bt_put_be16(tmp, pElem);
+				put_be16(tmp, pElem);
 			}
 			p += sizeof(uint16_t);
 			seqlen += sizeof(uint16_t);
@@ -206,7 +203,7 @@ static int extract_des(uint8_t *buf, int len, sdp_list_t **svcReqSeq, uint8_t *p
 				struct attrid *aid;
 				aid = malloc(sizeof(struct attrid));
 				aid->dtd = dataType;
-				aid->uint32 = bt_get_be32(p);
+				aid->uint32 = get_be32(p);
 
 				pElem = (char *) aid;
 			} else {
@@ -215,7 +212,7 @@ static int extract_des(uint8_t *buf, int len, sdp_list_t **svcReqSeq, uint8_t *p
 				memcpy(&tmp, p, sizeof(tmp));
 
 				pElem = malloc(sizeof(uint32_t));
-				bt_put_be32(tmp, pElem);
+				put_be32(tmp, pElem);
 			}
 			p += sizeof(uint32_t);
 			seqlen += sizeof(uint32_t);
@@ -397,7 +394,7 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 		goto done;
 	}
 
-	expected = bt_get_be16(pdata);
+	expected = get_be16(pdata);
 
 	SDPDBG("Expected count: %d", expected);
 	SDPDBG("Bytes scanned : %d", scanned);
@@ -422,13 +419,13 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 
 	/* total service record count = 0 */
 	pTotalRecordCount = pdata;
-	bt_put_be16(0, pdata);
+	put_be16(0, pdata);
 	pdata += sizeof(uint16_t);
 	buf->data_size += sizeof(uint16_t);
 
 	/* current service record count = 0 */
 	pCurrentRecordCount = pdata;
-	bt_put_be16(0, pdata);
+	put_be16(0, pdata);
 	pdata += sizeof(uint16_t);
 	buf->data_size += sizeof(uint16_t);
 
@@ -445,7 +442,7 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 			if (sdp_match_uuid(pattern, rec->pattern) > 0 &&
 					sdp_check_access(rec->handle, &req->device)) {
 				rsp_count++;
-				bt_put_be32(rec->handle, pdata);
+				put_be32(rec->handle, pdata);
 				pdata += sizeof(uint32_t);
 				handleSize += sizeof(uint32_t);
 			}
@@ -454,8 +451,8 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 		SDPDBG("Match count: %d", rsp_count);
 
 		buf->data_size += handleSize;
-		bt_put_be16(rsp_count, pTotalRecordCount);
-		bt_put_be16(rsp_count, pCurrentRecordCount);
+		put_be16(rsp_count, pTotalRecordCount);
+		put_be16(rsp_count, pCurrentRecordCount);
 
 		if (rsp_count > actual) {
 			/* cache the rsp and generate a continuation state */
@@ -484,7 +481,7 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 			if (pCache) {
 				pCacheBuffer = pCache->data;
 				/* get the rsp_count from the cached buffer */
-				rsp_count = bt_get_be16(pCacheBuffer);
+				rsp_count = get_be16(pCacheBuffer);
 
 				/* get index of the last sdp_record_t sent */
 				lastIndex = cstate->cStateValue.lastIndexSent;
@@ -520,8 +517,8 @@ static int service_search_req(sdp_req_t *req, sdp_buf_t *buf)
 		}
 
 		buf->data_size += handleSize;
-		bt_put_be16(rsp_count, pTotalRecordCount);
-		bt_put_be16(i - lastIndex, pCurrentRecordCount);
+		put_be16(rsp_count, pTotalRecordCount);
+		put_be16(i - lastIndex, pCurrentRecordCount);
 
 		if (i == rsp_count) {
 			/* set "null" continuationState */
@@ -651,7 +648,7 @@ static int service_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 		goto done;
 	}
 
-	handle = bt_get_be32(pdata);
+	handle = get_be32(pdata);
 
 	pdata += sizeof(uint32_t);
 	data_left -= sizeof(uint32_t);
@@ -661,7 +658,7 @@ static int service_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 		goto done;
 	}
 
-	max_rsp_size = bt_get_be16(pdata);
+	max_rsp_size = get_be16(pdata);
 
 	pdata += sizeof(uint16_t);
 	data_left -= sizeof(uint16_t);
@@ -777,7 +774,7 @@ done:
 		return status;
 
 	/* set attribute list byte count */
-	bt_put_be16(buf->data_size - cstate_size, buf->data);
+	put_be16(buf->data_size - cstate_size, buf->data);
 	buf->data_size += sizeof(uint16_t);
 	return 0;
 }
@@ -818,7 +815,7 @@ static int service_search_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 		goto done;
 	}
 
-	max = bt_get_be16(pdata);
+	max = get_be16(pdata);
 
 	pdata += sizeof(uint16_t);
 	data_left -= sizeof(uint16_t);
@@ -948,7 +945,7 @@ static int service_search_attr_req(sdp_req_t *req, sdp_buf_t *buf)
 
 	if (!status) {
 		/* set attribute list byte count */
-		bt_put_be16(buf->data_size - cstate_size, buf->data);
+		put_be16(buf->data_size - cstate_size, buf->data);
 		buf->data_size += sizeof(uint16_t);
 	}
 
@@ -1032,7 +1029,7 @@ static void process_request(sdp_req_t *req)
 send_rsp:
 	if (status) {
 		rsphdr->pdu_id = SDP_ERROR_RSP;
-		bt_put_be16(status, rsp.data);
+		put_be16(status, rsp.data);
 		rsp.data_size = sizeof(uint16_t);
 	}
 

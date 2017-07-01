@@ -30,25 +30,27 @@
 #include <errno.h>
 
 #include <glib.h>
-#include <adapter.h>
 
 #include <dbus/dbus.h>
 #include <gdbus/gdbus.h>
 
-#include "log.h"
+#include "src/log.h"
 
 #include "lib/uuid.h"
-#include "dbus-common.h"
-#include "error.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
-#include "hcid.h"
+#include "src/dbus-common.h"
+#include "src/error.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/shared/util.h"
+#include "src/hcid.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
 #include "attrib/att-database.h"
-#include "attrib-server.h"
+#include "src/attrib-server.h"
+
 #include "reporter.h"
 #include "linkloss.h"
 #include "immalert.h"
@@ -116,19 +118,19 @@ static void register_tx_power(struct btd_adapter *adapter)
 
 	/* Primary service definition */
 	bt_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
-	att_put_u16(TX_POWER_SVC_UUID, &atval[0]);
+	put_le16(TX_POWER_SVC_UUID, &atval[0]);
 	attrib_db_add(adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 2);
 
 	/* Power level characteristic */
 	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
-	atval[0] = ATT_CHAR_PROPER_READ | ATT_CHAR_PROPER_NOTIFY;
-	att_put_u16(h + 1, &atval[1]);
-	att_put_u16(POWER_LEVEL_CHR_UUID, &atval[3]);
+	atval[0] = GATT_CHR_PROP_READ | GATT_CHR_PROP_NOTIFY;
+	put_le16(h + 1, &atval[1]);
+	put_le16(POWER_LEVEL_CHR_UUID, &atval[3]);
 	attrib_db_add(adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 5);
 
 	/* Power level value */
 	bt_uuid16_create(&uuid, POWER_LEVEL_CHR_UUID);
-	att_put_u8(0x00, &atval[0]);
+	atval[0] = 0x00;
 	attrib_db_add(adapter, h++, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 1);
 
 	/* Client characteristic configuration */

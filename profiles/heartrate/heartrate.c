@@ -30,18 +30,19 @@
 #include <gdbus/gdbus.h>
 
 #include "lib/uuid.h"
-#include "plugin.h"
-#include "adapter.h"
-#include "dbus-common.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
-#include "error.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/dbus-common.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/shared/util.h"
+#include "src/service.h"
+#include "src/error.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
-#include "attio.h"
-#include "log.h"
+#include "src/attio.h"
+#include "src/log.h"
 
 #define HEART_RATE_INTERFACE		"org.bluez.HeartRate1"
 #define HEART_RATE_MANAGER_INTERFACE	"org.bluez.HeartRateManager1"
@@ -324,7 +325,7 @@ static void process_measurement(struct heartrate *hr, const uint8_t *pdu,
 			return;
 		}
 
-		m.value = att_get_u16(pdu);
+		m.value = get_le16(pdu);
 		pdu += 2;
 		len -= 2;
 	} else {
@@ -345,7 +346,7 @@ static void process_measurement(struct heartrate *hr, const uint8_t *pdu,
 		}
 
 		m.has_energy = TRUE;
-		m.energy = att_get_u16(pdu);
+		m.energy = get_le16(pdu);
 		pdu += 2;
 		len -= 2;
 	}
@@ -362,7 +363,7 @@ static void process_measurement(struct heartrate *hr, const uint8_t *pdu,
 		m.interval = g_new(uint16_t, m.num_interval);
 
 		for (i = 0; i < m.num_interval; pdu += 2, i++)
-			m.interval[i] = att_get_u16(pdu);
+			m.interval[i] = get_le16(pdu);
 	}
 
 	if (flags & SENSOR_CONTACT_SUPPORT) {
@@ -418,8 +419,8 @@ static void discover_ccc_cb(guint8 status, const guint8 *pdu,
 		uint8_t attr_val[2];
 
 		value = list->data[i];
-		handle = att_get_u16(value);
-		uuid = att_get_u16(value + 2);
+		handle = get_le16(value);
+		uuid = get_le16(value + 2);
 
 		if (uuid != GATT_CLIENT_CHARAC_CFG_UUID)
 			continue;
@@ -427,10 +428,10 @@ static void discover_ccc_cb(guint8 status, const guint8 *pdu,
 		hr->measurement_ccc_handle = handle;
 
 		if (g_slist_length(hr->hradapter->watchers) == 0) {
-			att_put_u16(0x0000, attr_val);
+			put_le16(0x0000, attr_val);
 			msg = g_strdup("Disable measurement");
 		} else {
-			att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, attr_val);
+			put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, attr_val);
 			msg = g_strdup("Enable measurement");
 		}
 
@@ -461,10 +462,10 @@ static void discover_measurement_ccc(struct heartrate *hr,
 		return;
 	}
 
-	gatt_find_info(hr->attrib, start, end, discover_ccc_cb, hr);
+	gatt_discover_char_desc(hr->attrib, start, end, discover_ccc_cb, hr);
 }
 
-static void discover_char_cb(GSList *chars, guint8 status, gpointer user_data)
+static void discover_char_cb(uint8_t status, GSList *chars, void *user_data)
 {
 	struct heartrate *hr = user_data;
 
@@ -510,7 +511,7 @@ static void enable_measurement(gpointer data, gpointer user_data)
 	if (hr->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
 	msg = g_strdup("Enable measurement");
 
 	gatt_write_char(hr->attrib, handle, value, sizeof(value),
@@ -527,7 +528,7 @@ static void disable_measurement(gpointer data, gpointer user_data)
 	if (hr->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(0x0000, value);
+	put_le16(0x0000, value);
 	msg = g_strdup("Disable measurement");
 
 	gatt_write_char(hr->attrib, handle, value, sizeof(value),
@@ -730,8 +731,6 @@ static int heartrate_adapter_register(struct btd_adapter *adapter)
 	hradapter = g_new0(struct heartrate_adapter, 1);
 	hradapter->adapter = adapter;
 
-	heartrate_adapters = g_slist_prepend(heartrate_adapters, hradapter);
-
 	if (!g_dbus_register_interface(btd_get_dbus_connection(),
 						adapter_get_path(adapter),
 						HEART_RATE_MANAGER_INTERFACE,
@@ -743,6 +742,8 @@ static int heartrate_adapter_register(struct btd_adapter *adapter)
 		destroy_heartrate_adapter(hradapter);
 		return -EIO;
 	}
+
+	heartrate_adapters = g_slist_prepend(heartrate_adapters, hradapter);
 
 	return 0;
 }

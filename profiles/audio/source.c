@@ -38,30 +38,24 @@
 #include <dbus/dbus.h>
 #include <gdbus/gdbus.h>
 
-#include "log.h"
+#include "src/log.h"
 
-#include "../src/adapter.h"
-#include "../src/device.h"
-#include "../src/service.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/service.h"
+#include "src/error.h"
+#include "src/dbus-common.h"
 
-#include "device.h"
 #include "avdtp.h"
 #include "media.h"
 #include "a2dp.h"
-#include "error.h"
-#include "manager.h"
 #include "source.h"
-#include "dbus-common.h"
-
-#define STREAM_SETUP_RETRY_TIMER 2
 
 struct source {
-	struct audio_device *dev;
 	struct btd_service *service;
 	struct avdtp *session;
 	struct avdtp_stream *stream;
 	unsigned int cb_id;
-	guint retry_id;
 	avdtp_session_state_t session_state;
 	avdtp_state_t stream_state;
 	source_state_t state;
@@ -72,7 +66,7 @@ struct source {
 
 struct source_state_callback {
 	source_state_cb cb;
-	struct audio_device *dev;
+	struct btd_service *service;
 	void *user_data;
 	unsigned int id;
 };
@@ -86,24 +80,24 @@ static char *str_state[] = {
 	"SOURCE_STATE_PLAYING",
 };
 
-static void source_set_state(struct audio_device *dev, source_state_t new_state)
+static void source_set_state(struct source *source, source_state_t new_state)
 {
-	struct source *source = dev->source;
+	struct btd_device *dev = btd_service_get_device(source->service);
 	source_state_t old_state = source->state;
 	GSList *l;
 
 	source->state = new_state;
 
-	DBG("State changed %s: %s -> %s", device_get_path(dev->btd_dev),
+	DBG("State changed %s: %s -> %s", device_get_path(dev),
 				str_state[old_state], str_state[new_state]);
 
 	for (l = source_callbacks; l != NULL; l = l->next) {
 		struct source_state_callback *cb = l->data;
 
-		if (cb->dev != dev)
+		if (cb->service != source->service)
 			continue;
 
-		cb->cb(dev, old_state, new_state, cb->user_data);
+		cb->cb(source->service, old_state, new_state, cb->user_data);
 	}
 
 	if (new_state != SOURCE_STATE_DISCONNECTED)
@@ -115,19 +109,19 @@ static void source_set_state(struct audio_device *dev, source_state_t new_state)
 	}
 }
 
-static void avdtp_state_callback(struct audio_device *dev,
-					struct avdtp *session,
+static void avdtp_state_callback(struct btd_device *dev, struct avdtp *session,
 					avdtp_session_state_t old_state,
-					avdtp_session_state_t new_state)
+					avdtp_session_state_t new_state,
+					void *user_data)
 {
-	struct source *source = dev->source;
+	struct source *source = user_data;
 
 	switch (new_state) {
 	case AVDTP_SESSION_STATE_DISCONNECTED:
-		source_set_state(dev, SOURCE_STATE_DISCONNECTED);
+		source_set_state(source, SOURCE_STATE_DISCONNECTED);
 		break;
 	case AVDTP_SESSION_STATE_CONNECTING:
-		source_set_state(dev, SOURCE_STATE_CONNECTING);
+		source_set_state(source, SOURCE_STATE_CONNECTING);
 		break;
 	case AVDTP_SESSION_STATE_CONNECTED:
 		break;
@@ -142,8 +136,8 @@ static void stream_state_changed(struct avdtp_stream *stream,
 					struct avdtp_error *err,
 					void *user_data)
 {
-	struct audio_device *dev = user_data;
-	struct source *source = dev->source;
+	struct btd_service *service = user_data;
+	struct source *source = btd_service_get_user_data(service);
 
 	if (err)
 		return;
@@ -153,7 +147,7 @@ static void stream_state_changed(struct avdtp_stream *stream,
 		btd_service_disconnecting_complete(source->service, 0);
 
 		if (source->disconnect_id > 0) {
-			a2dp_cancel(dev, source->disconnect_id);
+			a2dp_cancel(source->disconnect_id);
 			source->disconnect_id = 0;
 		}
 
@@ -165,10 +159,11 @@ static void stream_state_changed(struct avdtp_stream *stream,
 		source->cb_id = 0;
 		break;
 	case AVDTP_STATE_OPEN:
-		source_set_state(dev, SOURCE_STATE_CONNECTED);
+		btd_service_connecting_complete(source->service, 0);
+		source_set_state(source, SOURCE_STATE_CONNECTED);
 		break;
 	case AVDTP_STATE_STREAMING:
-		source_set_state(dev, SOURCE_STATE_PLAYING);
+		source_set_state(source, SOURCE_STATE_PLAYING);
 		break;
 	case AVDTP_STATE_CONFIGURED:
 	case AVDTP_STATE_CLOSING:
@@ -180,31 +175,6 @@ static void stream_state_changed(struct avdtp_stream *stream,
 	source->stream_state = new_state;
 }
 
-static gboolean stream_setup_retry(gpointer user_data)
-{
-	struct source *source = user_data;
-	int err;
-
-	source->retry_id = 0;
-
-	if (source->stream_state >= AVDTP_STATE_OPEN) {
-		DBG("Stream successfully created, after XCASE connect:connect");
-		err = 0;
-	} else {
-		DBG("Stream setup failed, after XCASE connect:connect");
-		err = -EIO;
-	}
-
-	btd_service_connecting_complete(source->service, err);
-
-	if (source->connect_id > 0) {
-		a2dp_cancel(source->dev, source->connect_id);
-		source->connect_id = 0;
-	}
-
-	return FALSE;
-}
-
 static void stream_setup_complete(struct avdtp *session, struct a2dp_sep *sep,
 					struct avdtp_stream *stream,
 					struct avdtp_error *err, void *user_data)
@@ -213,24 +183,16 @@ static void stream_setup_complete(struct avdtp *session, struct a2dp_sep *sep,
 
 	source->connect_id = 0;
 
-	if (stream) {
-		DBG("Stream successfully created");
-		btd_service_connecting_complete(source->service, 0);
+	if (stream)
 		return;
-	}
 
 	avdtp_unref(source->session);
 	source->session = NULL;
 	if (avdtp_error_category(err) == AVDTP_ERRNO
-			&& avdtp_error_posix_errno(err) != EHOSTDOWN) {
-		DBG("connect:connect XCASE detected");
-		source->retry_id = g_timeout_add_seconds(STREAM_SETUP_RETRY_TIMER,
-							stream_setup_retry,
-							source);
-	} else {
-		DBG("Stream setup failed : %s", avdtp_strerror(err));
+				&& avdtp_error_posix_errno(err) != EHOSTDOWN)
+		btd_service_connecting_complete(source->service, -EAGAIN);
+	else
 		btd_service_connecting_complete(source->service, -EIO);
-	}
 }
 
 static void select_complete(struct avdtp *session, struct a2dp_sep *sep,
@@ -262,41 +224,42 @@ static void discovery_complete(struct avdtp *session, GSList *seps, struct avdtp
 				void *user_data)
 {
 	struct source *source = user_data;
-	int id;
+	int id, perr;
 
 	if (err) {
 		avdtp_unref(source->session);
 		source->session = NULL;
 		if (avdtp_error_category(err) == AVDTP_ERRNO
 				&& avdtp_error_posix_errno(err) != EHOSTDOWN) {
-			DBG("connect:connect XCASE detected");
-			source->retry_id =
-				g_timeout_add_seconds(STREAM_SETUP_RETRY_TIMER,
-							stream_setup_retry,
-							source);
+			perr = -EAGAIN;
 		} else
-			goto failed;
-		return;
+			perr = -EIO;
+		goto failed;
 	}
 
 	DBG("Discovery complete");
 
 	id = a2dp_select_capabilities(source->session, AVDTP_SEP_TYPE_SOURCE, NULL,
 						select_complete, source);
-	if (id == 0)
+	if (id == 0) {
+		perr = -EIO;
 		goto failed;
+	}
 
 	source->connect_id = id;
 	return;
 
 failed:
-	btd_service_connecting_complete(source->service, -EIO);
+	btd_service_connecting_complete(source->service, perr);
 	avdtp_unref(source->session);
 	source->session = NULL;
 }
 
-gboolean source_setup_stream(struct source *source, struct avdtp *session)
+gboolean source_setup_stream(struct btd_service *service,
+							struct avdtp *session)
 {
+	struct source *source = btd_service_get_user_data(service);
+
 	if (source->connect_id > 0 || source->disconnect_id > 0)
 		return FALSE;
 
@@ -312,12 +275,12 @@ gboolean source_setup_stream(struct source *source, struct avdtp *session)
 	return TRUE;
 }
 
-int source_connect(struct audio_device *dev)
+int source_connect(struct btd_service *service)
 {
-	struct source *source = dev->source;
+	struct source *source = btd_service_get_user_data(service);
 
 	if (!source->session)
-		source->session = avdtp_get(dev);
+		source->session = avdtp_get(btd_service_get_device(service));
 
 	if (!source->session) {
 		DBG("Unable to get a session");
@@ -330,7 +293,7 @@ int source_connect(struct audio_device *dev)
 	if (source->stream_state >= AVDTP_STATE_OPEN)
 		return -EALREADY;
 
-	if (!source_setup_stream(source, NULL)) {
+	if (!source_setup_stream(service, NULL)) {
 		DBG("Failed to create a stream");
 		return -EIO;
 	}
@@ -340,9 +303,9 @@ int source_connect(struct audio_device *dev)
 	return 0;
 }
 
-static void source_free(struct audio_device *dev)
+static void source_free(struct btd_service *service)
 {
-	struct source *source = dev->source;
+	struct source *source = btd_service_get_user_data(service);
 
 	if (source->cb_id)
 		avdtp_stream_remove_cb(source->session, source->stream,
@@ -353,55 +316,55 @@ static void source_free(struct audio_device *dev)
 
 	if (source->connect_id > 0) {
 		btd_service_connecting_complete(source->service, -ECANCELED);
-		a2dp_cancel(dev, source->connect_id);
+		a2dp_cancel(source->connect_id);
 		source->connect_id = 0;
 	}
 
 	if (source->disconnect_id > 0) {
 		btd_service_disconnecting_complete(source->service, -ECANCELED);
-		a2dp_cancel(dev, source->disconnect_id);
+		a2dp_cancel(source->disconnect_id);
 		source->disconnect_id = 0;
 	}
-
-	if (source->retry_id)
-		g_source_remove(source->retry_id);
 
 	avdtp_remove_state_cb(source->avdtp_callback_id);
 	btd_service_unref(source->service);
 
 	g_free(source);
-	dev->source = NULL;
 }
 
-void source_unregister(struct audio_device *dev)
+void source_unregister(struct btd_service *service)
 {
-	DBG("%s", device_get_path(dev->btd_dev));
+	struct btd_device *dev = btd_service_get_device(service);
 
-	source_free(dev);
+	DBG("%s", device_get_path(dev));
+
+	source_free(service);
 }
 
-struct source *source_init(struct audio_device *dev,
-						struct btd_service *service)
+int source_init(struct btd_service *service)
 {
+	struct btd_device *dev = btd_service_get_device(service);
 	struct source *source;
 
-	DBG("%s", device_get_path(dev->btd_dev));
+	DBG("%s", device_get_path(dev));
 
 	source = g_new0(struct source, 1);
 
-	source->dev = dev;
 	source->service = btd_service_ref(service);
 
 	source->avdtp_callback_id = avdtp_add_state_cb(dev,
-							avdtp_state_callback);
+							avdtp_state_callback,
+							source);
 
-	return source;
+	btd_service_set_user_data(service, source);
+
+	return 0;
 }
 
-gboolean source_new_stream(struct audio_device *dev, struct avdtp *session,
+gboolean source_new_stream(struct btd_service *service, struct avdtp *session,
 				struct avdtp_stream *stream)
 {
-	struct source *source = dev->source;
+	struct source *source = btd_service_get_user_data(service);
 
 	if (source->stream)
 		return FALSE;
@@ -412,24 +375,21 @@ gboolean source_new_stream(struct audio_device *dev, struct avdtp *session,
 	source->stream = stream;
 
 	source->cb_id = avdtp_stream_add_cb(session, stream,
-						stream_state_changed, dev);
+						stream_state_changed, service);
 
 	return TRUE;
 }
 
-int source_disconnect(struct audio_device *dev, gboolean shutdown)
+int source_disconnect(struct btd_service *service)
 {
-	struct source *source = dev->source;
+	struct source *source = btd_service_get_user_data(service);
 
 	if (!source->session)
 		return -ENOTCONN;
 
-	if (shutdown)
-		avdtp_set_device_disconnect(source->session, TRUE);
-
 	/* cancel pending connect */
 	if (source->connect_id > 0) {
-		a2dp_cancel(dev, source->connect_id);
+		a2dp_cancel(source->connect_id);
 		source->connect_id = 0;
 		btd_service_connecting_complete(source->service, -ECANCELED);
 
@@ -449,15 +409,15 @@ int source_disconnect(struct audio_device *dev, gboolean shutdown)
 	return avdtp_close(source->session, source->stream, FALSE);
 }
 
-unsigned int source_add_state_cb(struct audio_device *dev, source_state_cb cb,
-								void *user_data)
+unsigned int source_add_state_cb(struct btd_service *service,
+					source_state_cb cb, void *user_data)
 {
 	struct source_state_callback *state_cb;
 	static unsigned int id = 0;
 
 	state_cb = g_new(struct source_state_callback, 1);
 	state_cb->cb = cb;
-	state_cb->dev = dev;
+	state_cb->service = service;
 	state_cb->user_data = user_data;
 	state_cb->id = ++id;
 

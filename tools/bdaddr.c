@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <getopt.h>
+#include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
@@ -36,7 +37,7 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
 
-#include "oui.h"
+#include "src/oui.h"
 
 static int transient = 0;
 
@@ -56,7 +57,6 @@ static int generic_reset_device(int dd)
 typedef struct {
 	bdaddr_t	bdaddr;
 } __attribute__ ((packed)) ericsson_write_bd_addr_cp;
-#define ERICSSON_WRITE_BD_ADDR_CP_SIZE 6
 
 static int ericsson_write_bd_addr(int dd, bdaddr_t *bdaddr)
 {
@@ -70,7 +70,7 @@ static int ericsson_write_bd_addr(int dd, bdaddr_t *bdaddr)
 	rq.ogf    = OGF_VENDOR_CMD;
 	rq.ocf    = OCF_ERICSSON_WRITE_BD_ADDR;
 	rq.cparam = &cp;
-	rq.clen   = ERICSSON_WRITE_BD_ADDR_CP_SIZE;
+	rq.clen   = sizeof(cp);
 	rq.rparam = NULL;
 	rq.rlen   = 0;
 
@@ -86,7 +86,6 @@ typedef struct {
 	uint8_t		flash_length;
 	uint8_t		flash_data[253];
 } __attribute__ ((packed)) ericsson_store_in_flash_cp;
-#define ERICSSON_STORE_IN_FLASH_CP_SIZE 255
 
 static int ericsson_store_in_flash(int dd, uint8_t user_id, uint8_t flash_length, uint8_t *flash_data)
 {
@@ -103,7 +102,7 @@ static int ericsson_store_in_flash(int dd, uint8_t user_id, uint8_t flash_length
 	rq.ogf    = OGF_VENDOR_CMD;
 	rq.ocf    = OCF_ERICSSON_STORE_IN_FLASH;
 	rq.cparam = &cp;
-	rq.clen   = ERICSSON_STORE_IN_FLASH_CP_SIZE;
+	rq.clen   = sizeof(cp);
 	rq.rparam = NULL;
 	rq.rlen   = 0;
 
@@ -198,7 +197,6 @@ static int csr_reset_device(int dd)
 typedef struct {
 	bdaddr_t	bdaddr;
 } __attribute__ ((packed)) ti_write_bd_addr_cp;
-#define TI_WRITE_BD_ADDR_CP_SIZE 6
 
 static int ti_write_bd_addr(int dd, bdaddr_t *bdaddr)
 {
@@ -212,7 +210,7 @@ static int ti_write_bd_addr(int dd, bdaddr_t *bdaddr)
 	rq.ogf    = OGF_VENDOR_CMD;
 	rq.ocf    = OCF_TI_WRITE_BD_ADDR;
 	rq.cparam = &cp;
-	rq.clen   = TI_WRITE_BD_ADDR_CP_SIZE;
+	rq.clen   = sizeof(cp);
 	rq.rparam = NULL;
 	rq.rlen   = 0;
 
@@ -226,7 +224,6 @@ static int ti_write_bd_addr(int dd, bdaddr_t *bdaddr)
 typedef struct {
 	bdaddr_t	bdaddr;
 } __attribute__ ((packed)) bcm_write_bd_addr_cp;
-#define BCM_WRITE_BD_ADDR_CP_SIZE 6
 
 static int bcm_write_bd_addr(int dd, bdaddr_t *bdaddr)
 {
@@ -240,7 +237,7 @@ static int bcm_write_bd_addr(int dd, bdaddr_t *bdaddr)
 	rq.ogf    = OGF_VENDOR_CMD;
 	rq.ocf    = OCF_BCM_WRITE_BD_ADDR;
 	rq.cparam = &cp;
-	rq.clen   = BCM_WRITE_BD_ADDR_CP_SIZE;
+	rq.clen   = sizeof(cp);
 	rq.rparam = NULL;
 	rq.rlen   = 0;
 
@@ -254,7 +251,6 @@ static int bcm_write_bd_addr(int dd, bdaddr_t *bdaddr)
 typedef struct {
 	bdaddr_t	bdaddr;
 } __attribute__ ((packed)) zeevo_write_bd_addr_cp;
-#define ZEEVO_WRITE_BD_ADDR_CP_SIZE 6
 
 static int zeevo_write_bd_addr(int dd, bdaddr_t *bdaddr)
 {
@@ -268,13 +264,37 @@ static int zeevo_write_bd_addr(int dd, bdaddr_t *bdaddr)
 	rq.ogf    = OGF_VENDOR_CMD;
 	rq.ocf    = OCF_ZEEVO_WRITE_BD_ADDR;
 	rq.cparam = &cp;
-	rq.clen   = ZEEVO_WRITE_BD_ADDR_CP_SIZE;
+	rq.clen   = sizeof(cp);
 	rq.rparam = NULL;
 	rq.rlen   = 0;
 
 	if (hci_send_req(dd, &rq, 1000) < 0)
 		return -1;
 
+	return 0;
+}
+
+#define OCF_MRVL_WRITE_BD_ADDR		0x0022
+typedef struct {
+	uint8_t		parameter_id;
+	uint8_t		bdaddr_len;
+	bdaddr_t	bdaddr;
+} __attribute__ ((packed)) mrvl_write_bd_addr_cp;
+
+static int mrvl_write_bd_addr(int dd, bdaddr_t *bdaddr)
+{
+	mrvl_write_bd_addr_cp cp;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.parameter_id = 0xFE;
+	cp.bdaddr_len = 6;
+	bacpy(&cp.bdaddr, bdaddr);
+
+	if (hci_send_cmd(dd, OGF_VENDOR_CMD, OCF_MRVL_WRITE_BD_ADDR,
+							sizeof(cp), &cp) < 0)
+		return -1;
+
+	sleep(1);
 	return 0;
 }
 
@@ -295,6 +315,7 @@ static struct {
 	{ 18,		zeevo_write_bd_addr,	NULL			},
 	{ 48,		st_write_bd_addr,	generic_reset_device	},
 	{ 57,		ericsson_write_bd_addr,	generic_reset_device	},
+	{ 72,		mrvl_write_bd_addr,	generic_reset_device	},
 	{ 65535,	NULL,			NULL			},
 };
 

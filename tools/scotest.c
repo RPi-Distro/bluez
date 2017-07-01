@@ -40,6 +40,8 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sco.h>
 
+#include "src/shared/util.h"
+
 /* Test modes */
 enum {
 	SEND,
@@ -58,6 +60,7 @@ static long data_size = 672;
 static bdaddr_t bdaddr;
 
 static int defer_setup = 0;
+static int voice = 0;
 
 static float tv2fl(struct timeval tv)
 {
@@ -88,6 +91,20 @@ static int do_connect(char *svr)
 		syslog(LOG_ERR, "Can't bind socket: %s (%d)",
 							strerror(errno), errno);
 		goto error;
+	}
+
+	if (voice) {
+		struct bt_voice opts;
+
+		/* SCO voice setting */
+		memset(&opts, 0, sizeof(opts));
+		opts.setting = voice;
+		if (setsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &opts, sizeof(opts)) < 0) {
+			syslog(LOG_ERR,
+				"Can't set voice socket option: %s (%d)",
+				strerror(errno), errno);
+			goto error;
+		}
 	}
 
 	/* Connect to remote device */
@@ -229,10 +246,18 @@ error:
 
 static void dump_mode(int sk)
 {
+	struct bt_voice opts;
 	int len;
 
+	/* SCO voice setting */
+	memset(&opts, 0, sizeof(opts));
+	opts.setting = voice;
+	if (setsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &opts, sizeof(opts)) < 0)
+		syslog(LOG_ERR, "Can't set socket options: %s (%d)",
+							strerror(errno), errno);
+
 	if (defer_setup) {
-		len = read(sk, buf, sizeof(buf));
+		len = read(sk, buf, data_size);
 		if (len < 0)
 			syslog(LOG_ERR, "Initial read error: %s (%d)",
 						strerror(errno), errno);
@@ -248,11 +273,19 @@ static void dump_mode(int sk)
 static void recv_mode(int sk)
 {
 	struct timeval tv_beg,tv_end,tv_diff;
+	struct bt_voice opts;
 	long total;
 	int len;
 
+	/* SCO voice setting */
+	memset(&opts, 0, sizeof(opts));
+	opts.setting = voice;
+	if (setsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &opts, sizeof(opts)) < 0)
+		syslog(LOG_ERR, "Can't set socket options: %s (%d)",
+							strerror(errno), errno);
+
 	if (defer_setup) {
-		len = read(sk, buf, sizeof(buf));
+		len = read(sk, buf, data_size);
 		if (len < 0)
 			syslog(LOG_ERR, "Initial read error: %s (%d)",
 						strerror(errno), errno);
@@ -271,7 +304,9 @@ static void recv_mode(int sk)
 				if (r < 0)
 					syslog(LOG_ERR, "Read failed: %s (%d)",
 							strerror(errno), errno);
-				return;
+				if (errno != ENOTCONN)
+					return;
+				r = 0;
 			}
 			total += r;
 		}
@@ -312,8 +347,8 @@ static void send_mode(char *svr)
 
 	seq = 0;
 	while (1) {
-		bt_put_le32(seq, buf);
-		bt_put_le16(data_size, buf + 4);
+		put_le32(seq, buf);
+		put_le16(data_size, buf + 4);
 
 		seq++;
 
@@ -381,7 +416,8 @@ static void usage(void)
 		"\t-n connect and be silent (client)\n"
 		"Options:\n"
 		"\t[-b bytes]\n"
-		"\t[-W seconds] enable deferred setup\n");
+		"\t[-W seconds] enable deferred setup\n"
+		"\t[-V voice] select SCO voice setting (0x0060 cvsd, 0x0003 transparent)\n");
 }
 
 int main(int argc ,char *argv[])
@@ -389,7 +425,7 @@ int main(int argc ,char *argv[])
 	struct sigaction sa;
 	int opt, sk, mode = RECV;
 
-	while ((opt = getopt(argc, argv, "rdscmnb:W:")) != EOF) {
+	while ((opt = getopt(argc, argv, "rdscmnb:W:V:")) != EOF) {
 		switch(opt) {
 		case 'r':
 			mode = RECV;
@@ -421,6 +457,10 @@ int main(int argc ,char *argv[])
 
 		case 'W':
 			defer_setup = atoi(optarg);
+			break;
+
+		case 'V':
+			voice = strtol(optarg, NULL, 0);
 			break;
 
 		default:

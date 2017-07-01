@@ -30,8 +30,26 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#include "src/shared/util.h"
+
 #include "lib/sdp.h"
 #include "lib/sdp_lib.h"
+
+static void test_ntoh64(void)
+{
+	uint64_t test = 0x123456789abcdef;
+
+	g_assert(ntoh64(test) == be64toh(test));
+	g_assert(ntoh64(test) == be64_to_cpu(test));
+}
+
+static void test_hton64(void)
+{
+	uint64_t test = 0x123456789abcdef;
+
+	g_assert(hton64(test) == htobe64(test));
+	g_assert(hton64(test) == cpu_to_be64(test));
+}
 
 static void test_sdp_get_access_protos_valid(void)
 {
@@ -438,6 +456,9 @@ static void test_sdp_get_server_ver(void)
 int main(int argc, char *argv[])
 {
 	g_test_init(&argc, &argv, NULL);
+
+	g_test_add_func("/lib/ntoh64", test_ntoh64);
+	g_test_add_func("/lib/hton64", test_hton64);
 
 	g_test_add_func("/lib/sdp_get_access_protos/valid",
 					test_sdp_get_access_protos_valid);

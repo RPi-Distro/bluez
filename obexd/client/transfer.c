@@ -60,6 +60,7 @@ struct transfer_callback {
 enum {
 	TRANSFER_STATUS_QUEUED = 0,
 	TRANSFER_STATUS_ACTIVE,
+	TRANSFER_STATUS_SUSPENDED,
 	TRANSFER_STATUS_COMPLETE,
 	TRANSFER_STATUS_ERROR
 };
@@ -79,6 +80,7 @@ struct obc_transfer {
 	char *name;		/* Transfer object name */
 	char *type;		/* Transfer object type */
 	int fd;
+	guint req;
 	guint xfer;
 	gint64 size;
 	gint64 transferred;
@@ -157,6 +159,14 @@ static DBusMessage *obc_transfer_cancel(DBusConnection *connection,
 				ERROR_INTERFACE ".InProgress",
 				"Cancellation already in progress");
 
+	if (transfer->req > 0) {
+		if (!g_obex_cancel_req(transfer->obex, transfer->req, TRUE))
+			return g_dbus_create_error(message,
+						ERROR_INTERFACE ".Failed",
+						"Failed");
+		transfer->req = 0;
+	}
+
 	if (transfer->xfer == 0) {
 		struct transfer_callback *callback = transfer->callback;
 
@@ -185,6 +195,65 @@ static DBusMessage *obc_transfer_cancel(DBusConnection *connection,
 	transfer->msg = dbus_message_ref(message);
 
 	return NULL;
+}
+
+static void transfer_set_status(struct obc_transfer *transfer, uint8_t status)
+{
+	if (transfer->status == status)
+		return;
+
+	transfer->status = status;
+
+	g_dbus_emit_property_changed(transfer->conn, transfer->path,
+					TRANSFER_INTERFACE, "Status");
+}
+
+static DBusMessage *obc_transfer_suspend(DBusConnection *connection,
+					DBusMessage *message, void *user_data)
+{
+	struct obc_transfer *transfer = user_data;
+	const char *sender;
+
+	sender = dbus_message_get_sender(message);
+	if (g_strcmp0(transfer->owner, sender) != 0)
+		return g_dbus_create_error(message,
+				ERROR_INTERFACE ".NotAuthorized",
+				"Not Authorized");
+
+	if (transfer->xfer == 0)
+		return g_dbus_create_error(message,
+				ERROR_INTERFACE ".NotInProgress",
+				"Not in progress");
+
+	g_obex_suspend(transfer->obex);
+
+	transfer_set_status(transfer, TRANSFER_STATUS_SUSPENDED);
+
+	return g_dbus_create_reply(message, DBUS_TYPE_INVALID);
+}
+
+static DBusMessage *obc_transfer_resume(DBusConnection *connection,
+					DBusMessage *message, void *user_data)
+{
+	struct obc_transfer *transfer = user_data;
+	const char *sender;
+
+	sender = dbus_message_get_sender(message);
+	if (g_strcmp0(transfer->owner, sender) != 0)
+		return g_dbus_create_error(message,
+				ERROR_INTERFACE ".NotAuthorized",
+				"Not Authorized");
+
+	if (transfer->xfer == 0)
+		return g_dbus_create_error(message,
+				ERROR_INTERFACE ".NotInProgress",
+				"Not in progress");
+
+	g_obex_resume(transfer->obex);
+
+	transfer_set_status(transfer, TRANSFER_STATUS_ACTIVE);
+
+	return g_dbus_create_reply(message, DBUS_TYPE_INVALID);
 }
 
 static gboolean name_exists(const GDBusPropertyTable *property, void *data)
@@ -269,9 +338,12 @@ static const char *status2str(uint8_t status)
 		return "queued";
 	case TRANSFER_STATUS_ACTIVE:
 		return "active";
+	case TRANSFER_STATUS_SUSPENDED:
+		return "suspended";
 	case TRANSFER_STATUS_COMPLETE:
 		return "complete";
 	case TRANSFER_STATUS_ERROR:
+	default:
 		return "error";
 	}
 }
@@ -299,6 +371,8 @@ static gboolean get_session(const GDBusPropertyTable *property,
 }
 
 static const GDBusMethodTable obc_transfer_methods[] = {
+	{ GDBUS_METHOD("Suspend", NULL, NULL, obc_transfer_suspend) },
+	{ GDBUS_METHOD("Resume", NULL, NULL, obc_transfer_resume) },
 	{ GDBUS_ASYNC_METHOD("Cancel", NULL, NULL,
 				obc_transfer_cancel) },
 	{ }
@@ -317,6 +391,9 @@ static const GDBusPropertyTable obc_transfer_properties[] = {
 static void obc_transfer_free(struct obc_transfer *transfer)
 {
 	DBG("%p", transfer);
+
+	if (transfer->req > 0)
+		g_obex_cancel_req(transfer->obex, transfer->req, TRUE);
 
 	if (transfer->xfer)
 		g_obex_cancel_transfer(transfer->xfer, NULL, NULL);
@@ -548,14 +625,6 @@ static gboolean get_xfer_progress(const void *buf, gsize len,
 	return TRUE;
 }
 
-static void transfer_set_status(struct obc_transfer *transfer, uint8_t status)
-{
-	transfer->status = status;
-
-	g_dbus_emit_property_changed(transfer->conn, transfer->path,
-					TRANSFER_INTERFACE, "Status");
-}
-
 static void xfer_complete(GObex *obex, GError *err, gpointer user_data)
 {
 	struct obc_transfer *transfer = user_data;
@@ -596,11 +665,22 @@ static void get_xfer_progress_first(GObex *obex, GError *err, GObexPacket *rsp,
 
 	rspcode = g_obex_packet_get_operation(rsp, &final);
 	if (rspcode != G_OBEX_RSP_SUCCESS && rspcode != G_OBEX_RSP_CONTINUE) {
-		err = g_error_new(OBC_TRANSFER_ERROR, rspcode,
-					"Transfer failed (0x%02x)", rspcode);
+		err = g_error_new(OBC_TRANSFER_ERROR, rspcode, "%s",
+						g_obex_strerror(rspcode));
 		xfer_complete(obex, err, transfer);
 		g_error_free(err);
 		return;
+	}
+
+	hdr = g_obex_packet_get_header(rsp, G_OBEX_HDR_LENGTH);
+	if (hdr) {
+		uint32_t len;
+		if (g_obex_header_get_uint32(hdr, &len)) {
+			transfer->size = len;
+			g_dbus_emit_property_changed(transfer->conn,
+						transfer->path,
+						TRANSFER_INTERFACE, "Size");
+		}
 	}
 
 	hdr = g_obex_packet_get_header(rsp, G_OBEX_HDR_APPARAM);
@@ -622,13 +702,17 @@ static void get_xfer_progress_first(GObex *obex, GError *err, GObexPacket *rsp,
 		return;
 	}
 
-	if (!g_obex_srm_active(obex)) {
-		req = g_obex_packet_new(G_OBEX_OP_GET, TRUE, G_OBEX_HDR_INVALID);
+	if (g_obex_srm_active(obex) ||
+				transfer->status == TRANSFER_STATUS_SUSPENDED)
+		return;
 
-		transfer->xfer = g_obex_get_req_pkt(obex, req, get_xfer_progress,
+	transfer->req = 0;
+
+	req = g_obex_packet_new(G_OBEX_OP_GET, TRUE, G_OBEX_HDR_INVALID);
+
+	transfer->xfer = g_obex_get_req_pkt(obex, req, get_xfer_progress,
 						xfer_complete, transfer,
 						&err);
-	}
 }
 
 static gssize put_xfer_progress(void *buf, gsize len, gpointer user_data)
@@ -677,7 +761,8 @@ static gboolean report_progress(gpointer data)
 		return FALSE;
 	}
 
-	if (transfer->status != TRANSFER_STATUS_ACTIVE)
+	if (transfer->status != TRANSFER_STATUS_ACTIVE &&
+				transfer->status != TRANSFER_STATUS_SUSPENDED)
 		transfer_set_status(transfer, TRANSFER_STATUS_ACTIVE);
 
 	g_dbus_emit_property_changed(transfer->conn, transfer->path,
@@ -712,11 +797,11 @@ static gboolean transfer_start_get(struct obc_transfer *transfer, GError **err)
 		g_obex_packet_add_header(req, hdr);
 	}
 
-	transfer->xfer = g_obex_send_req(transfer->obex, req,
+	transfer->req = g_obex_send_req(transfer->obex, req,
 						FIRST_PACKET_TIMEOUT,
 						get_xfer_progress_first,
 						transfer, err);
-	if (transfer->xfer == 0)
+	if (transfer->req == 0)
 		return FALSE;
 
 	if (transfer->path == NULL)

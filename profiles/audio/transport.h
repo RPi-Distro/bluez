@@ -24,13 +24,13 @@
 
 struct media_transport;
 
-struct media_transport *media_transport_create(struct audio_device *device,
+struct media_transport *media_transport_create(struct btd_device *device,
 						uint8_t *configuration,
 						size_t size, void *data);
 
 void media_transport_destroy(struct media_transport *transport);
 const char *media_transport_get_path(struct media_transport *transport);
-struct audio_device *media_transport_get_dev(struct media_transport *transport);
+struct btd_device *media_transport_get_dev(struct media_transport *transport);
 uint16_t media_transport_get_volume(struct media_transport *transport);
 void media_transport_update_delay(struct media_transport *transport,
 							uint16_t delay);
@@ -39,6 +39,6 @@ void media_transport_update_volume(struct media_transport *transport,
 void transport_get_properties(struct media_transport *transport,
 							DBusMessageIter *iter);
 
-uint8_t media_transport_get_device_volume(struct audio_device *dev);
-void media_transport_update_device_volume(struct audio_device *dev,
+uint8_t media_transport_get_device_volume(struct btd_device *dev);
+void media_transport_update_device_volume(struct btd_device *dev,
 								uint8_t volume);

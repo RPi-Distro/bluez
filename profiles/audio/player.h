@@ -42,6 +42,7 @@ typedef enum {
 } player_folder_type_t;
 
 struct media_player;
+struct media_item;
 
 struct media_player_callback {
 	bool (*set_setting) (struct media_player *mp, const char *key,
@@ -53,6 +54,16 @@ struct media_player_callback {
 	int (*previous) (struct media_player *mp, void *user_data);
 	int (*fast_forward) (struct media_player *mp, void *user_data);
 	int (*rewind) (struct media_player *mp, void *user_data);
+	int (*list_items) (struct media_player *mp, const char *name,
+				uint32_t start, uint32_t end, void *user_data);
+	int (*change_folder) (struct media_player *mp, const char *path,
+						uint64_t uid, void *user_data);
+	int (*search) (struct media_player *mp, const char *string,
+						void *user_data);
+	int (*play_item) (struct media_player *mp, const char *name,
+					uint64_t uid, void *user_data);
+	int (*add_to_nowplaying) (struct media_player *mp, const char *name,
+					uint64_t uid, void *user_data);
 };
 
 struct media_player *media_player_controller_create(const char *path,
@@ -64,8 +75,9 @@ void media_player_set_setting(struct media_player *mp, const char *key,
 							const char *value);
 const char *media_player_get_status(struct media_player *mp);
 void media_player_set_status(struct media_player *mp, const char *status);
-void media_player_set_metadata(struct media_player *mp, const char *key,
-						void *data, size_t len);
+void media_player_set_metadata(struct media_player *mp,
+				struct media_item *item, const char *key,
+				void *data, size_t len);
 void media_player_set_type(struct media_player *mp, const char *type);
 void media_player_set_subtype(struct media_player *mp, const char *subtype);
 void media_player_set_name(struct media_player *mp, const char *name);
@@ -74,9 +86,24 @@ void media_player_set_searchable(struct media_player *mp, bool enabled);
 void media_player_set_folder(struct media_player *mp, const char *path,
 								uint32_t items);
 void media_player_set_playlist(struct media_player *mp, const char *name);
+struct media_item *media_player_set_playlist_item(struct media_player *mp,
+								uint64_t uid);
 
-int media_player_create_folder(struct media_player *mp, const char *name,
-						player_folder_type_t type);
+struct media_item *media_player_create_folder(struct media_player *mp,
+						const char *name,
+						player_folder_type_t type,
+						uint64_t uid);
+struct media_item *media_player_create_item(struct media_player *mp,
+						const char *name,
+						player_item_type_t type,
+						uint64_t uid);
+
+void media_item_set_playable(struct media_item *item, bool value);
+void media_player_list_complete(struct media_player *mp, GSList *items,
+								int err);
+void media_player_change_folder_complete(struct media_player *player,
+						const char *path, int ret);
+void media_player_search_complete(struct media_player *mp, int ret);
 
 void media_player_set_callbacks(struct media_player *mp,
 				const struct media_player_callback *cbs,

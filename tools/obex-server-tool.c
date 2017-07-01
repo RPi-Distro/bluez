@@ -34,7 +34,7 @@
 #include <errno.h>
 
 #include <gobex/gobex.h>
-#include <btio/btio.h>
+#include "btio/btio.h"
 
 static GMainLoop *main_loop = NULL;
 
@@ -427,7 +427,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	if (option_root && chdir(option_root) > 0) {
+	if (option_root && chdir(option_root) < 0) {
 		perror("chdir:");
 		exit(EXIT_FAILURE);
 	}

@@ -45,7 +45,7 @@
 
 #include <netinet/in.h>
 
-#include "sdp-xml.h"
+#include "src/sdp-xml.h"
 
 #ifndef APPLE_AGENT_SVCLASS_ID
 #define APPLE_AGENT_SVCLASS_ID 0x2112
@@ -286,7 +286,7 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x110c, "RemoteControlTarget", NULL, 0 },
 	{ 0x110d, "AdvancedAudio", NULL, 0 },
 	{ 0x110e, "RemoteControl", NULL, 0 },
-	{ 0x110f, "VideoConferencing", NULL, 0 },
+	{ 0x110f, "RemoteControlController", NULL, 0 },
 	{ 0x1110, "Intercom", NULL, 0 },
 	{ 0x1111, "Fax", NULL, 0 },
 	{ 0x1112, "HeadsetAudioGateway", NULL, 0 },
@@ -316,7 +316,6 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x1126, "HCR_Print (HCR)", NULL, 0 },
 	{ 0x1127, "HCR_Scan (HCR)", NULL, 0 },
 	{ 0x1128, "Common ISDN Access (CIP)", NULL, 0 },
-	{ 0x1129, "VideoConferencingGW (VCP)", NULL, 0 },
 	{ 0x112a, "UDI-MT", NULL, 0 },
 	{ 0x112b, "UDI-TA", NULL, 0 },
 	{ 0x112c, "Audio/Video", NULL, 0 },
@@ -1049,7 +1048,7 @@ static void print_service_desc(void *value, void *user)
 			if (proto == RFCOMM_UUID)
 				printf("    Channel: %d\n", p->val.uint8);
 			else
-				printf("    uint8: 0x%x\n", p->val.uint8);
+				printf("    uint8: 0x%02x\n", p->val.uint8);
 			break;
 		case SDP_UINT16:
 			if (proto == L2CAP_UUID) {
@@ -1061,9 +1060,9 @@ static void print_service_desc(void *value, void *user)
 				if (i == 1)
 					printf("    Version: 0x%04x\n", p->val.uint16);
 				else
-					printf("    uint16: 0x%x\n", p->val.uint16);
+					printf("    uint16: 0x%04x\n", p->val.uint16);
 			else
-				printf("    uint16: 0x%x\n", p->val.uint16);
+				printf("    uint16: 0x%04x\n", p->val.uint16);
 			break;
 		case SDP_SEQ16:
 			printf("    SEQ16:");
@@ -1175,18 +1174,15 @@ static int add_sp(sdp_session_t *session, svc_info_t *si)
 	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
 	root = sdp_list_append(0, &root_uuid);
 	sdp_set_browse_groups(&record, root);
-	sdp_list_free(root, 0);
 
 	sdp_uuid16_create(&sp_uuid, SERIAL_PORT_SVCLASS_ID);
 	svclass_id = sdp_list_append(0, &sp_uuid);
 	sdp_set_service_classes(&record, svclass_id);
-	sdp_list_free(svclass_id, 0);
 
 	sdp_uuid16_create(&profile.uuid, SERIAL_PORT_PROFILE_ID);
 	profile.version = 0x0100;
 	profiles = sdp_list_append(0, &profile);
 	sdp_set_profile_descs(&record, profiles);
-	sdp_list_free(profiles, 0);
 
 	sdp_uuid16_create(&l2cap, L2CAP_UUID);
 	proto[0] = sdp_list_append(0, &l2cap);
@@ -1227,6 +1223,9 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(apseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
+	sdp_list_free(profiles, 0);
 
 	return ret;
 }
@@ -1814,7 +1813,10 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(proto[2], 0);
 	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, NULL);
 
 	return ret;
 }
@@ -1886,7 +1888,10 @@ end:
 	sdp_list_free(proto[1], 0);
 	sdp_list_free(proto[2], 0);
 	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
 	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
 
 	return ret;
 }

@@ -250,9 +250,9 @@ static uint32_t get_val(uint8_t *ptr, uint8_t len)
 	case 1:
 		return *ptr;
 	case 2:
-		return bt_get_le16(ptr);
+		return get_le16(ptr);
 	case 4:
-		return bt_get_le32(ptr);
+		return get_le32(ptr);
 	}
 	return 0;
 }
@@ -595,9 +595,9 @@ static void conf_rfc(void *ptr, int len, int in, uint16_t handle,
 		uint16_t rto, mto, mps;
 		txwin = *((uint8_t *) (ptr + 1));
 		maxtrans = *((uint8_t *) (ptr + 2));
-		rto = bt_get_le16(ptr + 3);
-		mto = bt_get_le16(ptr + 5);
-		mps = bt_get_le16(ptr + 7);
+		rto = get_le16(ptr + 3);
+		mto = get_le16(ptr + 5);
+		mps = get_le16(ptr + 7);
 		printf(", TxWin %d, MaxTx %d, RTo %d, MTo %d, MPS %d",
 					txwin, maxtrans, rto, mto, mps);
 	}
@@ -853,7 +853,7 @@ static void info_opt(int level, int type, void *ptr, int len)
 				}
 		break;
 	case 0x0003:
-		fc_mask = bt_get_le64(ptr);
+		fc_mask = get_le64(ptr);
 		printf("Fixed channel list 0x%8.8" PRIx64 "\n", fc_mask);
 		if (parser.flags & DUMP_VERBOSE)
 			for (i=0; l2cap_fix_chan[i].name; i++)
@@ -916,7 +916,7 @@ static void l2cap_ctrl_ext_parse(int level, struct frame *frm, uint32_t ctrl)
 		printf(" %s", sar2str(sar));
 		if (sar == L2CAP_SAR_START) {
 			uint16_t len;
-			len = bt_get_le16(frm->ptr);
+			len = get_le16(frm->ptr);
 			frm->ptr += L2CAP_SDULEN_SIZE;
 			frm->len -= L2CAP_SDULEN_SIZE;
 			printf(" (len %d)", len);
@@ -949,7 +949,7 @@ static void l2cap_ctrl_parse(int level, struct frame *frm, uint32_t ctrl)
 		printf(" %s", sar2str(sar));
 		if (sar == L2CAP_SAR_START) {
 			uint16_t len;
-			len = bt_get_le16(frm->ptr);
+			len = get_le16(frm->ptr);
 			frm->ptr += L2CAP_SDULEN_SIZE;
 			frm->len -= L2CAP_SDULEN_SIZE;
 			printf(" (len %d)", len);
@@ -1062,7 +1062,7 @@ static inline void a2mp_discover_req(int level, struct frame *frm, uint16_t len)
 
 	do {
 		len -= 2;
-		mask = bt_get_le16(octet);
+		mask = get_le16(octet);
 		printf(" 0x%4.4x", mask);
 
 		extension = octet[1] & 0x80;
@@ -1102,7 +1102,7 @@ static inline void a2mp_discover_rsp(int level, struct frame *frm, uint16_t len)
 
 	do {
 		len -= 2;
-		mask = bt_get_le16(octet);
+		mask = get_le16(octet);
 		printf(" 0x%4.4x", mask);
 
 		extension = octet[1] & 0x80;
@@ -1324,7 +1324,7 @@ static void l2cap_parse(int level, struct frame *frm)
 		if (p_filter(FILT_L2CAP))
 			return;
 
-		psm = bt_get_le16(frm->ptr);
+		psm = get_le16(frm->ptr);
 		frm->ptr += 2;
 		frm->len -= 2;
 
@@ -1433,7 +1433,7 @@ static void l2cap_parse(int level, struct frame *frm)
 				frm->ptr += 2;
 				frm->len -= 4;
 			}
-			fcs = bt_get_le16(frm->ptr + frm->len);
+			fcs = get_le16(frm->ptr + frm->len);
 		}
 
 		if (!p_filter(FILT_L2CAP)) {

@@ -116,10 +116,11 @@ struct avdtp_media_codec_capability {
 #error "Unknown byte order"
 #endif
 
-typedef void (*avdtp_session_state_cb) (struct audio_device *dev,
+typedef void (*avdtp_session_state_cb) (struct btd_device *dev,
 					struct avdtp *session,
 					avdtp_session_state_t old_state,
-					avdtp_session_state_t new_state);
+					avdtp_session_state_t new_state,
+					void *user_data);
 
 typedef void (*avdtp_stream_state_cb) (struct avdtp_stream *stream,
 					avdtp_state_t old_state,
@@ -212,28 +213,15 @@ struct avdtp_sep_ind {
 typedef void (*avdtp_discover_cb_t) (struct avdtp *session, GSList *seps,
 					struct avdtp_error *err, void *user_data);
 
-struct avdtp *avdtp_get(struct audio_device *device);
+struct avdtp *avdtp_get(struct btd_device *device);
 
 void avdtp_unref(struct avdtp *session);
 struct avdtp *avdtp_ref(struct avdtp *session);
 
-gboolean avdtp_is_connected(struct audio_device *device);
-
 struct avdtp_service_capability *avdtp_service_cap_new(uint8_t category,
 							void *data, int size);
 
-struct avdtp_remote_sep *avdtp_get_remote_sep(struct avdtp *session,
-						uint8_t seid);
-
-uint8_t avdtp_get_seid(struct avdtp_remote_sep *sep);
-
-uint8_t avdtp_get_type(struct avdtp_remote_sep *sep);
-
 struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep);
-
-gboolean avdtp_get_delay_reporting(struct avdtp_remote_sep *sep);
-
-struct avdtp_stream *avdtp_get_stream(struct avdtp_remote_sep *sep);
 
 int avdtp_discover(struct avdtp *session, avdtp_discover_cb_t cb,
 			void *user_data);
@@ -252,15 +240,13 @@ gboolean avdtp_stream_get_transport(struct avdtp_stream *stream, int *sock,
 					GSList **caps);
 struct avdtp_service_capability *avdtp_stream_get_codec(
 						struct avdtp_stream *stream);
-gboolean avdtp_stream_has_capability(struct avdtp_stream *stream,
-				struct avdtp_service_capability *cap);
 gboolean avdtp_stream_has_capabilities(struct avdtp_stream *stream,
 					GSList *caps);
 struct avdtp_remote_sep *avdtp_stream_get_remote_sep(
 						struct avdtp_stream *stream);
 
-unsigned int avdtp_add_state_cb(struct audio_device *dev,
-				avdtp_session_state_cb cb);
+unsigned int avdtp_add_state_cb(struct btd_device *dev,
+				avdtp_session_state_cb cb, void *user_data);
 
 gboolean avdtp_remove_state_cb(unsigned int id);
 
@@ -307,9 +293,3 @@ int avdtp_error_posix_errno(struct avdtp_error *err);
 
 struct btd_adapter *avdtp_get_adapter(struct avdtp *session);
 struct btd_device *avdtp_get_device(struct avdtp *session);
-
-gboolean avdtp_stream_setup_active(struct avdtp *session);
-void avdtp_set_device_disconnect(struct avdtp *session, gboolean dev_dc);
-
-int avdtp_init(struct btd_adapter *adapter, GKeyFile *config);
-void avdtp_exit(struct btd_adapter *adapter);

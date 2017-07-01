@@ -2,10 +2,10 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+from optparse import OptionParser, make_option
 import sys
 import time
 import dbus
-from optparse import OptionParser, make_option
 import bluezutils
 
 bus = dbus.SystemBus()
@@ -20,7 +20,7 @@ parser = OptionParser(option_list=option_list)
 
 adapter_path = bluezutils.find_adapter(options.dev_id).object_path
 server = dbus.Interface(bus.get_object("org.bluez", adapter_path),
-						"org.bluez.NetworkServer")
+						"org.bluez.NetworkServer1")
 
 service = "nap"
 

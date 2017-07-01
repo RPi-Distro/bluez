@@ -33,9 +33,10 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
-#include <adapter.h>
-#include <btio/btio.h>
-#include <log.h>
+
+#include "btio/btio.h"
+#include "src/adapter.h"
+#include "src/log.h"
 
 #include "mcap.h"
 #include "mcap_lib.h"
@@ -55,7 +56,7 @@ struct mcap_csp {
 	guint		remote_caps;	/* CSP-Slave: remote master got caps */
 	guint		rem_req_acc;	/* CSP-Slave: accuracy required by master */
 	guint		ind_expected;	/* CSP-Master: indication expected */
-	MCAPCtrl	csp_req;	/* CSP-Master: Request control flag */
+	uint8_t		csp_req;	/* CSP-Master: Request control flag */
 	guint		ind_timer;	/* CSP-Slave: indication timer */
 	guint		set_timer;	/* CSP-Slave: delayed set timer */
 	void		*set_data;	/* CSP-Slave: delayed set data */
@@ -87,8 +88,6 @@ struct sync_set_data {
 	int ind_freq;
 	gboolean role;
 };
-
-#define hton64(x)     ntoh64(x)
 
 static gboolean csp_caps_initialized = FALSE;
 struct csp_caps _caps;

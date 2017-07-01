@@ -168,12 +168,13 @@ int service_probe(struct btd_service *service)
 	return err;
 }
 
-void service_shutdown(struct btd_service *service)
+void service_remove(struct btd_service *service)
 {
 	change_state(service, BTD_SERVICE_STATE_UNAVAILABLE, 0);
 	service->profile->device_remove(service);
 	service->device = NULL;
 	service->profile = NULL;
+	btd_service_unref(service);
 }
 
 int btd_service_connect(struct btd_service *service)
@@ -197,17 +198,15 @@ int btd_service_connect(struct btd_service *service)
 		return -EBUSY;
 	}
 
-	change_state(service, BTD_SERVICE_STATE_CONNECTING, 0);
-
 	err = profile->connect(service);
-	if (err == 0)
+	if (err == 0) {
+		change_state(service, BTD_SERVICE_STATE_CONNECTING, 0);
 		return 0;
+	}
 
 	ba2str(device_get_address(service->device), addr);
 	error("%s profile connect failed for %s: %s", profile->name, addr,
 								strerror(-err));
-
-	btd_service_connecting_complete(service, err);
 
 	return err;
 }
@@ -237,6 +236,11 @@ int btd_service_disconnect(struct btd_service *service)
 	err = profile->disconnect(service);
 	if (err == 0)
 		return 0;
+
+	if (err == -ENOTCONN) {
+		btd_service_disconnecting_complete(service, 0);
+		return 0;
+	}
 
 	ba2str(device_get_address(service->device), addr);
 	error("%s profile disconnect failed for %s: %s", profile->name, addr,

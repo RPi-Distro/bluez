@@ -37,13 +37,15 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
 
-#include "textfile.h"
-#include "csr.h"
+#include "src/textfile.h"
+#include "src/shared/util.h"
+#include "tools/csr.h"
 
 static struct hci_dev_info di;
 static int all;
@@ -824,25 +826,32 @@ static char *get_minor_device_name(int major, int minor)
 		case 0:
 			break;
 		case 1:
-			strncat(cls_str, "Joystick", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Joystick",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		case 2:
-			strncat(cls_str, "Gamepad", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Gamepad",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		case 3:
-			strncat(cls_str, "Remote control", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Remote control",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		case 4:
-			strncat(cls_str, "Sensing device", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Sensing device",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		case 5:
-			strncat(cls_str, "Digitizer tablet", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Digitizer tablet",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		case 6:
-			strncat(cls_str, "Card reader", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "Card reader",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		default:
-			strncat(cls_str, "(reserved)", sizeof(cls_str) - strlen(cls_str));
+			strncat(cls_str, "(reserved)",
+					sizeof(cls_str) - strlen(cls_str) - 1);
 			break;
 		}
 		if (strlen(cls_str) > 0)
@@ -1137,13 +1146,17 @@ static void cmd_version(int ctl, int hdev, char *opt)
 	}
 
 	hciver = hci_vertostr(ver.hci_ver);
-	lmpver = lmp_vertostr(ver.lmp_ver);
+	if (((di.type & 0x30) >> 4) == HCI_BREDR)
+		lmpver = lmp_vertostr(ver.lmp_ver);
+	else
+		lmpver = pal_vertostr(ver.lmp_ver);
 
 	print_dev_hdr(&di);
 	printf("\tHCI Version: %s (0x%x)  Revision: 0x%x\n"
-		"\tLMP Version: %s (0x%x)  Subversion: 0x%x\n"
+		"\t%s Version: %s (0x%x)  Subversion: 0x%x\n"
 		"\tManufacturer: %s (%d)\n",
 		hciver ? hciver : "n/a", ver.hci_ver, ver.hci_rev,
+		(((di.type & 0x30) >> 4) == HCI_BREDR) ? "LMP" : "PAL",
 		lmpver ? lmpver : "n/a", ver.lmp_ver, ver.lmp_subver,
 		bt_compidtostr(ver.manufacturer), ver.manufacturer);
 
@@ -1304,7 +1317,7 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 				printf("\t%s service classes:",
 					type == 0x02 ? "Shortened" : "Complete");
 				for (i = 0; i < (len - 1) / 2; i++) {
-					uint16_t val = bt_get_le16((ptr + (i * 2)));
+					uint16_t val = get_le16((ptr + (i * 2)));
 					printf(" 0x%4.4x", val);
 				}
 				printf("\n");
@@ -1844,7 +1857,7 @@ static void print_dev_hdr(struct hci_dev_info *di)
 	ba2str(&di->bdaddr, addr);
 
 	printf("%s:\tType: %s  Bus: %s\n", di->name,
-					hci_typetostr(di->type >> 4),
+					hci_typetostr((di->type & 0x30) >> 4),
 					hci_bustostr(di->type & 0x0f));
 	printf("\tBD Address: %s  ACL MTU: %d:%d  SCO MTU: %d:%d\n",
 					addr, di->acl_mtu, di->acl_pkts,
@@ -1868,18 +1881,22 @@ static void print_dev_info(int ctl, struct hci_dev_info *di)
 	printf("\tTX bytes:%d acl:%d sco:%d commands:%d errors:%d\n",
 		st->byte_tx, st->acl_tx, st->sco_tx, st->cmd_tx, st->err_tx);
 
-	if (all && !hci_test_bit(HCI_RAW, &di->flags) &&
-			(bacmp(&di->bdaddr, BDADDR_ANY) || (di->type >> 4))) {
+	if (all && !hci_test_bit(HCI_RAW, &di->flags)) {
 		print_dev_features(di, 0);
-		print_pkt_type(di);
-		print_link_policy(di);
-		print_link_mode(di);
 
-		if (hci_test_bit(HCI_UP, &di->flags)) {
-			cmd_name(ctl, di->dev_id, NULL);
-			cmd_class(ctl, di->dev_id, NULL);
-			cmd_version(ctl, di->dev_id, NULL);
+		if (((di->type & 0x30) >> 4) == HCI_BREDR) {
+			print_pkt_type(di);
+			print_link_policy(di);
+			print_link_mode(di);
+
+			if (hci_test_bit(HCI_UP, &di->flags)) {
+				cmd_name(ctl, di->dev_id, NULL);
+				cmd_class(ctl, di->dev_id, NULL);
+			}
 		}
+
+		if (hci_test_bit(HCI_UP, &di->flags))
+			cmd_version(ctl, di->dev_id, NULL);
 	}
 
 	printf("\n");
@@ -1910,7 +1927,7 @@ static struct {
 	{ "class",	cmd_class,	"[class]",	"Get/Set class of device" },
 	{ "voice",	cmd_voice,	"[voice]",	"Get/Set voice setting" },
 	{ "iac",	cmd_iac,	"[iac]",	"Get/Set inquiry access code" },
-	{ "inqtpl", 	cmd_inq_tpl,	"[level]",	"Get/Set inquiry transmit power level" },
+	{ "inqtpl",	cmd_inq_tpl,	"[level]",	"Get/Set inquiry transmit power level" },
 	{ "inqmode",	cmd_inq_mode,	"[mode]",	"Get/Set inquiry mode" },
 	{ "inqdata",	cmd_inq_data,	"[data]",	"Get/Set inquiry data" },
 	{ "inqtype",	cmd_inq_type,	"[type]",	"Get/Set inquiry scan type" },

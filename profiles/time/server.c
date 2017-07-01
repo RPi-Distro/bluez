@@ -31,19 +31,20 @@
 #include <errno.h>
 #include <stdbool.h>
 
-#include <adapter.h>
-#include <device.h>
-#include <profile.h>
-#include <plugin.h>
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/plugin.h"
 
 #include "lib/uuid.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
 #include "attrib/att-database.h"
-#include "attrib-server.h"
+#include "src/shared/util.h"
+#include "src/attrib-server.h"
 #include "attrib/gatt-service.h"
-#include "log.h"
+#include "src/log.h"
 
 #define CURRENT_TIME_SVC_UUID		0x1805
 #define REF_TIME_UPDATE_SVC_UUID	0x1806
@@ -90,7 +91,7 @@ static int encode_current_time(uint8_t value[10])
 		return -EINVAL;
 	}
 
-	att_put_u16(1900 + tm.tm_year, &value[0]); /* Year */
+	put_le16(1900 + tm.tm_year, &value[0]); /* Year */
 	value[2] = tm.tm_mon + 1; /* Month */
 	value[3] = tm.tm_mday; /* Day */
 	value[4] = tm.tm_hour; /* Hours */
@@ -152,15 +153,15 @@ static gboolean register_current_time_service(struct btd_adapter *adapter)
 	/* Current Time service */
 	return gatt_service_add(adapter, GATT_PRIM_SVC_UUID, &uuid,
 				/* CT Time characteristic */
-				GATT_OPT_CHR_UUID, CT_TIME_CHR_UUID,
-				GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ |
-							ATT_CHAR_PROPER_NOTIFY,
+				GATT_OPT_CHR_UUID16, CT_TIME_CHR_UUID,
+				GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ |
+							GATT_CHR_PROP_NOTIFY,
 				GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 						current_time_read, adapter,
 
 				/* Local Time Information characteristic */
-				GATT_OPT_CHR_UUID, LOCAL_TIME_INFO_CHR_UUID,
-				GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ,
+				GATT_OPT_CHR_UUID16, LOCAL_TIME_INFO_CHR_UUID,
+				GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ,
 				GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 						local_time_info_read, adapter,
 
@@ -215,15 +216,15 @@ static gboolean register_ref_time_update_service(struct btd_adapter *adapter)
 	/* Reference Time Update service */
 	return gatt_service_add(adapter, GATT_PRIM_SVC_UUID, &uuid,
 				/* Time Update control point */
-				GATT_OPT_CHR_UUID, TIME_UPDATE_CTRL_CHR_UUID,
+				GATT_OPT_CHR_UUID16, TIME_UPDATE_CTRL_CHR_UUID,
 				GATT_OPT_CHR_PROPS,
-					ATT_CHAR_PROPER_WRITE_WITHOUT_RESP,
+					GATT_CHR_PROP_WRITE_WITHOUT_RESP,
 				GATT_OPT_CHR_VALUE_CB, ATTRIB_WRITE,
 						time_update_control, adapter,
 
 				/* Time Update status */
-				GATT_OPT_CHR_UUID, TIME_UPDATE_STAT_CHR_UUID,
-				GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ,
+				GATT_OPT_CHR_UUID16, TIME_UPDATE_STAT_CHR_UUID,
+				GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ,
 				GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 						time_update_status, adapter,
 

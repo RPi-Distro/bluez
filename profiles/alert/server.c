@@ -33,21 +33,21 @@
 #include <stdlib.h>
 
 #include "lib/uuid.h"
-#include "plugin.h"
-#include "dbus-common.h"
+#include "src/plugin.h"
+#include "src/dbus-common.h"
 #include "attrib/att.h"
-#include "adapter.h"
-#include "device.h"
+#include "src/adapter.h"
+#include "src/device.h"
 #include "attrib/att-database.h"
-#include "log.h"
+#include "src/log.h"
 #include "attrib/gatt-service.h"
 #include "attrib/gattrib.h"
-#include "attrib-server.h"
+#include "src/attrib-server.h"
 #include "attrib/gatt.h"
-#include "profile.h"
-#include "error.h"
-#include "textfile.h"
-#include "attio.h"
+#include "src/profile.h"
+#include "src/error.h"
+#include "src/textfile.h"
+#include "src/attio.h"
 
 #define PHONE_ALERT_STATUS_SVC_UUID	0x180E
 #define ALERT_NOTIF_SVC_UUID		0x1811
@@ -363,6 +363,20 @@ end:
 	return result;
 }
 
+static void destroy_notify_callback(guint8 status, const guint8 *pdu, guint16 len,
+							gpointer user_data)
+{
+	struct notify_callback *cb = user_data;
+
+	DBG("status=%#x", status);
+
+	btd_device_remove_attio_callback(cb->device, cb->id);
+	btd_device_unref(cb->device);
+	g_free(cb->notify_data->value);
+	g_free(cb->notify_data);
+	g_free(cb);
+}
+
 static void attio_connected_cb(GAttrib *attrib, gpointer user_data)
 {
 	struct notify_callback *cb = user_data;
@@ -398,7 +412,9 @@ static void attio_connected_cb(GAttrib *attrib, gpointer user_data)
 					al_adapter->hnd_value[type],
 					al_adapter->hnd_ccc[type]);
 
-	g_attrib_send(attrib, 0, pdu, len, NULL, NULL, NULL);
+	g_attrib_send(attrib, 0, pdu, len, destroy_notify_callback, cb, NULL);
+
+	return;
 
 end:
 	btd_device_remove_attio_callback(cb->device, cb->id);
@@ -789,9 +805,9 @@ static void register_phone_alert_service(struct alert_adapter *al_adapter)
 	/* Phone Alert Status Service */
 	gatt_service_add(al_adapter->adapter, GATT_PRIM_SVC_UUID, &uuid,
 			/* Alert Status characteristic */
-			GATT_OPT_CHR_UUID, ALERT_STATUS_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ |
-							ATT_CHAR_PROPER_NOTIFY,
+			GATT_OPT_CHR_UUID16, ALERT_STATUS_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ |
+							GATT_CHR_PROP_NOTIFY,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 			alert_status_read, al_adapter->adapter,
 			GATT_OPT_CCC_GET_HANDLE,
@@ -799,14 +815,14 @@ static void register_phone_alert_service(struct alert_adapter *al_adapter)
 			GATT_OPT_CHR_VALUE_GET_HANDLE,
 			&al_adapter->hnd_value[NOTIFY_ALERT_STATUS],
 			/* Ringer Control Point characteristic */
-			GATT_OPT_CHR_UUID, RINGER_CP_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_WRITE_WITHOUT_RESP,
+			GATT_OPT_CHR_UUID16, RINGER_CP_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_WRITE_WITHOUT_RESP,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_WRITE,
 			ringer_cp_write, NULL,
 			/* Ringer Setting characteristic */
-			GATT_OPT_CHR_UUID, RINGER_SETTING_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ |
-							ATT_CHAR_PROPER_NOTIFY,
+			GATT_OPT_CHR_UUID16, RINGER_SETTING_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ |
+							GATT_CHR_PROP_NOTIFY,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 			ringer_setting_read, al_adapter->adapter,
 			GATT_OPT_CCC_GET_HANDLE,
@@ -854,6 +870,9 @@ static uint8_t alert_notif_cp_write(struct attribute *a,
 {
 	DBG("a = %p", a);
 
+	if (a->len < 2)
+		return 0;
+
 	switch (a->data[0]) {
 	case ENABLE_NEW_INCOMING:
 		DBG("ENABLE_NEW_INCOMING: 0x%02x", a->data[1]);
@@ -889,36 +908,36 @@ static void register_alert_notif_service(struct alert_adapter *al_adapter)
 	/* Alert Notification Service */
 	gatt_service_add(al_adapter->adapter, GATT_PRIM_SVC_UUID, &uuid,
 			/* Supported New Alert Category */
-			GATT_OPT_CHR_UUID, SUPP_NEW_ALERT_CAT_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ,
+			GATT_OPT_CHR_UUID16, SUPP_NEW_ALERT_CAT_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 			supp_new_alert_cat_read, al_adapter->adapter,
 			GATT_OPT_CHR_VALUE_GET_HANDLE,
 			&al_adapter->supp_new_alert_cat_handle,
 			/* New Alert */
-			GATT_OPT_CHR_UUID, NEW_ALERT_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_NOTIFY,
+			GATT_OPT_CHR_UUID16, NEW_ALERT_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_NOTIFY,
 			GATT_OPT_CCC_GET_HANDLE,
 			&al_adapter->hnd_ccc[NOTIFY_NEW_ALERT],
 			GATT_OPT_CHR_VALUE_GET_HANDLE,
 			&al_adapter->hnd_value[NOTIFY_NEW_ALERT],
 			/* Supported Unread Alert Category */
-			GATT_OPT_CHR_UUID, SUPP_UNREAD_ALERT_CAT_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_READ,
+			GATT_OPT_CHR_UUID16, SUPP_UNREAD_ALERT_CAT_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_READ,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 			supp_unread_alert_cat_read, al_adapter->adapter,
 			GATT_OPT_CHR_VALUE_GET_HANDLE,
 			&al_adapter->supp_unread_alert_cat_handle,
 			/* Unread Alert Status */
-			GATT_OPT_CHR_UUID, UNREAD_ALERT_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_NOTIFY,
+			GATT_OPT_CHR_UUID16, UNREAD_ALERT_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_NOTIFY,
 			GATT_OPT_CCC_GET_HANDLE,
 			&al_adapter->hnd_ccc[NOTIFY_UNREAD_ALERT],
 			GATT_OPT_CHR_VALUE_GET_HANDLE,
 			&al_adapter->hnd_value[NOTIFY_UNREAD_ALERT],
 			/* Alert Notification Control Point */
-			GATT_OPT_CHR_UUID, ALERT_NOTIF_CP_CHR_UUID,
-			GATT_OPT_CHR_PROPS, ATT_CHAR_PROPER_WRITE,
+			GATT_OPT_CHR_UUID16, ALERT_NOTIF_CP_CHR_UUID,
+			GATT_OPT_CHR_PROPS, GATT_CHR_PROP_WRITE,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_WRITE,
 			alert_notif_cp_write, NULL,
 			GATT_OPT_INVALID);

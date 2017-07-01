@@ -47,6 +47,8 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
+#include "src/shared/util.h"
+
 /* Test modes */
 enum {
 	SEND,
@@ -466,8 +468,11 @@ static void save_mode(int sk)
 	while ((len = read(sk, b, data_size)) > 0) {
 		ret = write(save_fd, b, len);
 		if (ret < 0)
-			return;
+			goto done;
 	}
+
+done:
+	free(b);
 }
 
 static void recv_mode(int sk)
@@ -564,8 +569,8 @@ static void do_send(int sk)
 
 	seq = 0;
 	while ((num_frames == -1) || (num_frames-- > 0)) {
-		bt_put_le32(seq, buf);
-		bt_put_le16(data_size, buf + 4);
+		put_le32(seq, buf);
+		put_le16(data_size, buf + 4);
 
 		seq++;
 

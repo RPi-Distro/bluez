@@ -40,9 +40,9 @@
 #include <inttypes.h>
 
 #include <glib.h>
-#include <btio/btio.h>
 #include <gobex/gobex.h>
 
+#include "btio/btio.h"
 #include "obexd.h"
 #include "log.h"
 #include "obex.h"
@@ -251,6 +251,9 @@ static void obex_session_free(struct obex_session *os)
 
 	if (os->obex)
 		g_obex_unref(os->obex);
+
+	g_free(os->src);
+	g_free(os->dst);
 
 	g_free(os);
 }
@@ -1134,6 +1137,9 @@ int obex_session_start(GIOChannel *io, uint16_t tx_mtu, uint16_t rx_mtu,
 	os->obex = obex;
 	os->io = g_io_channel_ref(io);
 
+	obex_getsockname(os, &os->src);
+	obex_getpeername(os, &os->dst);
+
 	sessions = g_slist_prepend(sessions, os);
 
 	return 0;
@@ -1224,6 +1230,16 @@ int obex_getpeername(struct obex_session *os, char **name)
 		return -ENOTSUP;
 
 	return transport->getpeername(os->io, name);
+}
+
+int obex_getsockname(struct obex_session *os, char **name)
+{
+	struct obex_transport_driver *transport = os->server->transport;
+
+	if (transport == NULL || transport->getsockname == NULL)
+		return -ENOTSUP;
+
+	return transport->getsockname(os->io, name);
 }
 
 int memncmp0(const void *a, size_t na, const void *b, size_t nb)

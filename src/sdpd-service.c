@@ -28,26 +28,20 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <sys/time.h>
-#include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include <netinet/in.h>
-
 #include <glib.h>
-#include <dbus/dbus.h>
 
-#include "hcid.h"
+#include "src/shared/util.h"
 #include "sdpd.h"
 #include "log.h"
-#include "adapter.h"
 
 static sdp_record_t *server = NULL;
 static uint32_t fixed_dbts = 0;
@@ -327,7 +321,7 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 		return NULL;
 	}
 
-	lookAheadAttrId = bt_get_be16(p + sizeof(uint8_t));
+	lookAheadAttrId = get_be16(p + sizeof(uint8_t));
 
 	SDPDBG("Look ahead attr id : %d", lookAheadAttrId);
 
@@ -337,7 +331,7 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 			SDPDBG("Unexpected end of packet");
 			return NULL;
 		}
-		handle = bt_get_be32(p + sizeof(uint8_t) + sizeof(uint16_t) +
+		handle = get_be32(p + sizeof(uint8_t) + sizeof(uint16_t) +
 							sizeof(uint8_t));
 		SDPDBG("SvcRecHandle : 0x%x", handle);
 		rec = sdp_record_find(handle);
@@ -372,7 +366,7 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 							seqlen, localExtractedLength);
 		dtd = *(uint8_t *) p;
 
-		attrId = bt_get_be16(p + attrSize);
+		attrId = get_be16(p + attrSize);
 		attrSize += sizeof(uint16_t);
 
 		SDPDBG("DTD of attrId : %d Attr id : 0x%x", dtd, attrId);
@@ -463,13 +457,13 @@ success:
 	update_db_timestamp();
 
 	/* Build a rsp buffer */
-	bt_put_be32(rec->handle, rsp->data);
+	put_be32(rec->handle, rsp->data);
 	rsp->data_size = sizeof(uint32_t);
 
 	return 0;
 
 invalid:
-	bt_put_be16(SDP_INVALID_SYNTAX, rsp->data);
+	put_be16(SDP_INVALID_SYNTAX, rsp->data);
 	rsp->data_size = sizeof(uint16_t);
 
 	return -1;
@@ -484,7 +478,7 @@ int service_update_req(sdp_req_t *req, sdp_buf_t *rsp)
 	int status = 0, scanned = 0;
 	uint8_t *p = req->buf + sizeof(sdp_pdu_hdr_t);
 	int bufsize = req->len - sizeof(sdp_pdu_hdr_t);
-	uint32_t handle = bt_get_be32(p);
+	uint32_t handle = get_be32(p);
 
 	SDPDBG("Svc Rec Handle: 0x%x", handle);
 
@@ -512,7 +506,7 @@ int service_update_req(sdp_req_t *req, sdp_buf_t *rsp)
 
 done:
 	p = rsp->data;
-	bt_put_be16(status, p);
+	put_be16(status, p);
 	rsp->data_size = sizeof(uint16_t);
 	return status;
 }
@@ -523,7 +517,7 @@ done:
 int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 {
 	uint8_t *p = req->buf + sizeof(sdp_pdu_hdr_t);
-	uint32_t handle = bt_get_be32(p);
+	uint32_t handle = get_be32(p);
 	sdp_record_t *rec;
 	int status = 0;
 
@@ -542,7 +536,7 @@ int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 	}
 
 	p = rsp->data;
-	bt_put_be16(status, p);
+	put_be16(status, p);
 	rsp->data_size = sizeof(uint16_t);
 
 	return status;

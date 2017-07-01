@@ -30,6 +30,8 @@
 #include <glib.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdbool.h>
+#include <stdlib.h>
 
 #include <gobex/gobex.h>
 #include <gobex/gobex-apparam.h>
@@ -42,6 +44,8 @@
 #include "mimetype.h"
 #include "map_ap.h"
 #include "map-event.h"
+
+#include "obexd/src/manager.h"
 
 struct mns_session {
 	GString *buffer;
@@ -83,14 +87,15 @@ static void reset_request(struct mns_session *mns)
 		g_obex_apparam_free(mns->inparams);
 		mns->inparams = NULL;
 	}
-
-	if (mns->remote_address)
-		g_free(mns->remote_address);
 }
 
 static void mns_session_free(struct mns_session *mns)
 {
 	reset_request(mns);
+
+	if (mns->remote_address)
+		g_free(mns->remote_address);
+
 	g_free(mns);
 }
 
@@ -180,19 +185,31 @@ static void parse_event_report_type(struct map_event *event, const char *value)
 static void parse_event_report_handle(struct map_event *event,
 							const char *value)
 {
-	event->handle = g_strdup(value);
+	event->handle = strtoull(value, NULL, 16);
 }
 
 static void parse_event_report_folder(struct map_event *event,
 							const char *value)
 {
-	event->folder = g_strdup(value);
+	if (!value)
+		return;
+
+	if (g_str_has_prefix(value, "/"))
+		event->folder = g_strdup(value);
+	else
+		event->folder = g_strconcat("/", value, NULL);
 }
 
 static void parse_event_report_old_folder(struct map_event *event,
 							const char *value)
 {
-	event->old_folder = g_strdup(value);
+	if (!value)
+		return;
+
+	if (g_str_has_prefix(value, "/"))
+		event->old_folder = g_strdup(value);
+	else
+		event->old_folder = g_strconcat("/", value, NULL);
 }
 
 static void parse_event_report_msg_type(struct map_event *event,
@@ -248,7 +265,6 @@ static const GMarkupParser event_report_parser = {
 
 static void map_event_free(struct map_event *event)
 {
-	g_free(event->handle);
 	g_free(event->folder);
 	g_free(event->old_folder);
 	g_free(event->msg_type);
@@ -267,10 +283,10 @@ static void *event_report_open(const char *name, int oflag, mode_t mode,
 
 	mns->buffer = g_string_new("");
 
-	if (*err < 0)
-		return NULL;
-	else
-		return mns;
+	if (err != NULL)
+		*err = 0;
+
+	return mns;
 }
 
 static int event_report_close(void *obj)
@@ -279,6 +295,8 @@ static int event_report_close(void *obj)
 	GMarkupParseContext *ctxt;
 	struct map_event *event;
 
+	DBG("");
+
 	event = g_new0(struct map_event, 1);
 	ctxt = g_markup_parse_context_new(&event_report_parser, 0, event,
 									NULL);
@@ -286,13 +304,7 @@ static int event_report_close(void *obj)
 									NULL);
 	g_markup_parse_context_free(ctxt);
 
-	DBG("Event report for %s:%d", mns->remote_address,
-							mns->mas_instance_id);
-
-	DBG("type=%x, handle=%s, folder=%s, old_folder=%s, msg_type=%s",
-				event->type, event->handle, event->folder,
-					event->old_folder, event->msg_type);
-
+	map_dispatch_event(mns->mas_instance_id, mns->remote_address, event);
 	map_event_free(event);
 
 	reset_request(mns);
@@ -327,11 +339,6 @@ static struct obex_mime_type_driver mime_event_report = {
 	.open = event_report_open,
 	.close = event_report_close,
 	.write = event_report_write,
-};
-
-static struct obex_mime_type_driver *mas_drivers[] = {
-	&mime_event_report,
-	NULL
 };
 
 static int mns_init(void)

@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2012  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
  *
  *  This library is free software; you can redistribute it and/or
@@ -29,11 +29,13 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <sys/signalfd.h>
 
 #include <glib.h>
 
+#include "src/shared/util.h"
 #include "src/shared/tester.h"
 
 #define COLOR_OFF	"\x1B[0m"
@@ -114,8 +116,8 @@ static void test_destroy(gpointer data)
 	if (test->destroy)
 		test->destroy(test->user_data);
 
-	g_free(test->name);
-	g_free(test);
+	free(test->name);
+	free(test);
 }
 
 void tester_print(const char *format, ...)
@@ -190,9 +192,14 @@ void tester_add_full(const char *name, const void *test_data,
 		return;
 	}
 
-	test = g_new0(struct test_case, 1);
+	test = new0(struct test_case, 1);
+	if (!test) {
+		if (destroy)
+			destroy(user_data);
+		return;
+	}
 
-	test->name = g_strdup(name);
+	test->name = strdup(name);
 	test->result = TEST_RESULT_NOT_RUN;
 	test->stage = TEST_STAGE_INVALID;
 
@@ -460,6 +467,11 @@ void tester_setup_failed(void)
 	if (test->stage != TEST_STAGE_SETUP)
 		return;
 
+	if (test->timeout_id > 0) {
+		g_source_remove(test->timeout_id);
+		test->timeout_id = 0;
+	}
+
 	print_progress(test->name, COLOR_RED, "setup failed");
 
 	g_idle_add(done_callback, test);
@@ -612,7 +624,7 @@ static gboolean wait_callback(gpointer user_data)
 
 	wait->func(wait->user_data);
 
-	g_free(wait);
+	free(wait);
 
 	return FALSE;
 }
@@ -631,9 +643,9 @@ void tester_wait(unsigned int seconds, tester_wait_func_t func,
 
 	test = test_current->data;
 
-	print_progress(test->name, COLOR_BLACK, "waiting %u seconds", seconds);
-
-	wait = g_new0(struct wait_data, 1);
+	wait = new0(struct wait_data, 1);
+	if (!wait)
+		return;
 
 	wait->seconds = seconds;
 	wait->test = test;
@@ -641,6 +653,8 @@ void tester_wait(unsigned int seconds, tester_wait_func_t func,
 	wait->user_data = user_data;
 
 	g_timeout_add(1000, wait_callback, wait);
+
+	print_progress(test->name, COLOR_BLACK, "waiting %u seconds", seconds);
 }
 
 static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,

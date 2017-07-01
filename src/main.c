@@ -55,6 +55,7 @@
 #include "dbus-common.h"
 #include "agent.h"
 #include "profile.h"
+#include "gatt.h"
 #include "systemd.h"
 
 #define BLUEZ_NAME "org.bluez"
@@ -282,10 +283,10 @@ static void init_defaults(void)
 	if (sscanf(VERSION, "%hhu.%hhu", &major, &minor) != 2)
 		return;
 
-        main_opts.did_source = 0x0002;		/* USB */
-        main_opts.did_vendor = 0x1d6b;		/* Linux Foundation */
-        main_opts.did_product = 0x0246;		/* BlueZ */
-        main_opts.did_version = (major << 8 | minor);
+	main_opts.did_source = 0x0002;		/* USB */
+	main_opts.did_vendor = 0x1d6b;		/* Linux Foundation */
+	main_opts.did_product = 0x0246;		/* BlueZ */
+	main_opts.did_version = (major << 8 | minor);
 }
 
 static GMainLoop *event_loop;
@@ -531,6 +532,13 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	if (option_experimental)
+		gdbus_flags = G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
+
+	g_dbus_set_flags(gdbus_flags);
+
+	gatt_init();
+
 	if (adapter_init() < 0) {
 		error("Adapter handling initialization failed");
 		exit(1);
@@ -540,15 +548,14 @@ int main(int argc, char *argv[])
 	btd_agent_init();
 	btd_profile_init();
 
-	if (option_experimental)
-		gdbus_flags = G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
-
-	g_dbus_set_flags(gdbus_flags);
-
 	if (option_compat == TRUE)
 		sdp_flags |= SDP_SERVER_COMPAT;
 
 	start_sdp_server(sdp_mtu, sdp_flags);
+
+	if (main_opts.did_source > 0)
+		register_device_id(main_opts.did_source, main_opts.did_vendor,
+				main_opts.did_product, main_opts.did_version);
 
 	/* Loading plugins has to be done after D-Bus has been setup since
 	 * the plugins might wanna expose some paths on the bus. However the
@@ -593,6 +600,8 @@ int main(int argc, char *argv[])
 	btd_device_cleanup();
 
 	adapter_cleanup();
+
+	gatt_cleanup();
 
 	rfkill_exit();
 

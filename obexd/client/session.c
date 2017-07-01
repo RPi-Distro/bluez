@@ -65,18 +65,31 @@ struct callback_data {
 	void *data;
 };
 
+struct pending_request;
+typedef int (*session_process_t) (struct pending_request *p, GError **err);
+typedef void (*destroy_t) (void *data);
+
 struct pending_request {
 	guint id;
 	guint req_id;
 	struct obc_session *session;
+	session_process_t process;
 	struct obc_transfer *transfer;
 	session_callback_t func;
 	void *data;
+	destroy_t destroy;
 };
 
 struct setpath_data {
 	char **remaining;
 	int index;
+	session_callback_t func;
+	void *user_data;
+};
+
+struct file_data {
+	char *srcname;
+	char *destname;
 	session_callback_t func;
 	void *user_data;
 };
@@ -96,7 +109,8 @@ struct obc_session {
 	char *owner;		/* Session owner */
 	guint watch;
 	GQueue *queue;
-	guint queue_complete_id;
+	guint process_id;
+	char *folder;
 };
 
 static GSList *sessions = NULL;
@@ -140,9 +154,11 @@ static void session_unregistered(struct obc_session *session)
 }
 
 static struct pending_request *pending_request_new(struct obc_session *session,
+						session_process_t process,
 						struct obc_transfer *transfer,
 						session_callback_t func,
-						void *data)
+						void *data,
+						destroy_t destroy)
 {
 	struct pending_request *p;
 	static guint id = 0;
@@ -150,6 +166,8 @@ static struct pending_request *pending_request_new(struct obc_session *session,
 	p = g_new0(struct pending_request, 1);
 	p->id = ++id;
 	p->session = obc_session_ref(session);
+	p->process = process;
+	p->destroy = destroy;
 	p->transfer = transfer;
 	p->func = func;
 	p->data = data;
@@ -159,6 +177,12 @@ static struct pending_request *pending_request_new(struct obc_session *session,
 
 static void pending_request_free(struct pending_request *p)
 {
+	if (p->req_id > 0)
+		g_obex_cancel_req(p->session->obex, p->req_id, TRUE);
+
+	if (p->destroy)
+		p->destroy(p->data);
+
 	if (p->transfer)
 		obc_transfer_unregister(p->transfer);
 
@@ -168,12 +192,29 @@ static void pending_request_free(struct pending_request *p)
 	g_free(p);
 }
 
+static void setpath_data_free(void *process_data)
+{
+	struct setpath_data *data = process_data;
+
+	g_strfreev(data->remaining);
+	g_free(data);
+}
+
+static void file_data_free(void *process_data)
+{
+	struct file_data *data = process_data;
+
+	g_free(data->srcname);
+	g_free(data->destname);
+	g_free(data);
+}
+
 static void session_free(struct obc_session *session)
 {
 	DBG("%p", session);
 
-	if (session->queue_complete_id != 0)
-		g_source_remove(session->queue_complete_id);
+	if (session->process_id != 0)
+		g_source_remove(session->process_id);
 
 	if (session->queue) {
 		g_queue_foreach(session->queue, (GFunc) pending_request_free,
@@ -199,13 +240,31 @@ static void session_free(struct obc_session *session)
 	if (session->p)
 		pending_request_free(session->p);
 
-	sessions = g_slist_remove(sessions, session);
-
 	g_free(session->path);
 	g_free(session->owner);
 	g_free(session->source);
 	g_free(session->destination);
+	g_free(session->folder);
 	g_free(session);
+}
+
+static void disconnect_complete(GObex *obex, GError *err, GObexPacket *rsp,
+							void *user_data)
+{
+	struct obc_session *session = user_data;
+
+	DBG("");
+
+	if (err)
+		error("%s", err->message);
+
+	/* Disconnect transport */
+	if (session->id > 0 && session->transport != NULL) {
+		session->transport->disconnect(session->id);
+		session->id = 0;
+	}
+
+	session_free(session);
 }
 
 void obc_session_unref(struct obc_session *session)
@@ -218,6 +277,25 @@ void obc_session_unref(struct obc_session *session)
 
 	if (refs > 0)
 		return;
+
+	sessions = g_slist_remove(sessions, session);
+
+	if (!session->obex)
+		goto disconnect;
+
+	/* Wait OBEX Disconnect to complete if command succeed otherwise
+	 * proceed with transport disconnection since there is nothing else to
+	 * be done */
+	if (g_obex_disconnect(session->obex, disconnect_complete, session,
+									NULL))
+		return;
+
+disconnect:
+	/* Disconnect transport */
+	if (session->id > 0 && session->transport != NULL) {
+		session->transport->disconnect(session->id);
+		session->id = 0;
+	}
 
 	session_free(session);
 }
@@ -246,6 +324,16 @@ done:
 		g_error_free(gerr);
 	obc_session_unref(callback->session);
 	g_free(callback);
+}
+
+static void session_disconnected(GObex *obex, GError *err, gpointer user_data)
+{
+	struct obc_session *session = user_data;
+
+	if (err)
+		error("%s", err->message);
+
+	obc_session_shutdown(session);
 }
 
 static void transport_func(GIOChannel *io, GError *err, gpointer user_data)
@@ -296,6 +384,8 @@ static void transport_func(GIOChannel *io, GError *err, gpointer user_data)
 
 	session->obex = obex;
 	sessions = g_slist_prepend(sessions, session);
+
+	g_obex_set_disconnect_function(obex, session_disconnected, session);
 
 	return;
 done:
@@ -463,6 +553,7 @@ struct obc_session *obc_session_create(const char *source,
 	session->destination = g_strdup(destination);
 	session->channel = channel;
 	session->queue = g_queue_new();
+	session->folder = g_strdup("/");
 
 	if (owner)
 		obc_session_set_owner(session, owner, owner_disconnected);
@@ -514,12 +605,6 @@ void obc_session_shutdown(struct obc_session *session)
 	/* Unregister interfaces */
 	if (session->path)
 		session_unregistered(session);
-
-	/* Disconnect transport */
-	if (session->id > 0 && session->transport != NULL) {
-		session->transport->disconnect(session->id);
-		session->id = 0;
-	}
 
 	obc_session_unref(session);
 }
@@ -638,22 +723,63 @@ static const GDBusMethodTable session_methods[] = {
 	{ }
 };
 
+static gboolean get_target(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct obc_session *session = data;
+
+	if (session->driver->uuid == NULL)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING,
+						&session->driver->uuid);
+
+	return TRUE;
+}
+
+static gboolean target_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct obc_session *session = data;
+
+	return session->driver->uuid != NULL;
+}
+
 static const GDBusPropertyTable session_properties[] = {
 	{ "Source", "s", get_source, NULL, source_exists },
 	{ "Destination", "s", get_destination },
 	{ "Channel", "y", get_channel },
+	{ "Target", "s", get_target, NULL, target_exists },
 	{ }
 };
 
-static gboolean session_queue_complete(gpointer data)
+static gboolean session_process(gpointer data)
 {
 	struct obc_session *session = data;
 
+	session->process_id = 0;
+
 	session_process_queue(session);
 
-	session->queue_complete_id = 0;
-
 	return FALSE;
+}
+
+static void session_queue(struct pending_request *p)
+{
+	g_queue_push_tail(p->session->queue, p);
+
+	if (p->session->process_id == 0)
+		p->session->process_id = g_idle_add(session_process,
+								p->session);
+}
+
+static int session_process_transfer(struct pending_request *p, GError **err)
+{
+	if (!obc_transfer_start(p->transfer, p->session->obex, err))
+		return -1;
+
+	DBG("Tranfer(%p) started", p->transfer);
+	p->session->p = p;
+	return 0;
 }
 
 guint obc_session_queue(struct obc_session *session,
@@ -678,13 +804,9 @@ guint obc_session_queue(struct obc_session *session,
 
 	obc_transfer_set_callback(transfer, transfer_complete, session);
 
-	p = pending_request_new(session, transfer, func, user_data);
-	g_queue_push_tail(session->queue, p);
-
-	if (session->queue_complete_id == 0)
-		session->queue_complete_id = g_idle_add(
-					session_queue_complete, session);
-
+	p = pending_request_new(session, session_process_transfer, transfer,
+							func, user_data, NULL);
+	session_queue(p);
 	return p->id;
 }
 
@@ -703,12 +825,8 @@ static void session_process_queue(struct obc_session *session)
 	while ((p = g_queue_pop_head(session->queue))) {
 		GError *gerr = NULL;
 
-		DBG("Transfer(%p) started", p->transfer);
-
-		if (obc_transfer_start(p->transfer, session->obex, &gerr)) {
-			session->p = p;
+		if (p->process(p, &gerr) == 0)
 			break;
-		}
 
 		if (p->func)
 			p->func(session, p->transfer, gerr, p->data);
@@ -808,7 +926,8 @@ const char *obc_session_register(struct obc_session *session,
 
 	if (g_dbus_register_interface(session->conn, session->path,
 					SESSION_INTERFACE, session_methods,
-					NULL, NULL, session, destroy) == FALSE)
+					NULL, session_properties, session,
+					destroy) == FALSE)
 		goto fail;
 
 	if (session->driver->probe && session->driver->probe(session) < 0) {
@@ -844,6 +963,11 @@ const char *obc_session_get_owner(struct obc_session *session)
 	return session->owner;
 }
 
+const char *obc_session_get_destination(struct obc_session *session)
+{
+	return session->destination;
+}
+
 const char *obc_session_get_path(struct obc_session *session)
 {
 	return session->path;
@@ -854,18 +978,19 @@ const char *obc_session_get_target(struct obc_session *session)
 	return session->driver->target;
 }
 
+const char *obc_session_get_folder(struct obc_session *session)
+{
+	return session->folder;
+}
+
 static void setpath_complete(struct obc_session *session,
 						struct obc_transfer *transfer,
 						GError *err, void *user_data)
 {
 	struct pending_request *p = user_data;
-	struct setpath_data *data = p->data;
 
-	if (data->func)
-		data->func(session, NULL, err, data->user_data);
-
-	g_strfreev(data->remaining);
-	g_free(data);
+	if (p->func)
+		p->func(session, NULL, err, p->data);
 
 	if (session->p == p)
 		session->p = NULL;
@@ -875,12 +1000,49 @@ static void setpath_complete(struct obc_session *session,
 	session_process_queue(session);
 }
 
+static void setpath_op_complete(struct obc_session *session,
+						struct obc_transfer *transfer,
+						GError *err, void *user_data)
+{
+	struct setpath_data *data = user_data;
+
+	if (data->func)
+		data->func(session, NULL, err, data->user_data);
+}
+
+static void setpath_set_folder(struct obc_session *session, const char *cur)
+{
+	char *folder = NULL;
+	const char *delim;
+
+	delim = strrchr(session->folder, '/');
+	if (strlen(cur) == 0 || delim == NULL ||
+			(strcmp(cur, "..") == 0 && delim == session->folder)) {
+		folder = g_strdup("/");
+	} else {
+		if (strcmp(cur, "..") == 0) {
+			folder = g_strndup(session->folder,
+						delim - session->folder);
+		} else {
+			if (g_str_has_suffix(session->folder, "/"))
+				folder = g_strconcat(session->folder,
+								cur, NULL);
+			else
+				folder = g_strconcat(session->folder, "/",
+								cur, NULL);
+		}
+	}
+	g_free(session->folder);
+	session->folder = folder;
+}
+
 static void setpath_cb(GObex *obex, GError *err, GObexPacket *rsp,
 							gpointer user_data)
 {
 	struct pending_request *p = user_data;
 	struct setpath_data *data = p->data;
 	char *next;
+	char *current;
 	guint8 code;
 
 	p->req_id = 0;
@@ -895,10 +1057,13 @@ static void setpath_cb(GObex *obex, GError *err, GObexPacket *rsp,
 		GError *gerr = NULL;
 		g_set_error(&gerr, OBEX_IO_ERROR, code, "%s",
 							g_obex_strerror(code));
-		setpath_complete(p->session, NULL, err, user_data);
+		setpath_complete(p->session, NULL, gerr, user_data);
 		g_clear_error(&gerr);
 		return;
 	}
+
+	current = data->remaining[data->index - 1];
+	setpath_set_folder(p->session, current);
 
 	/* Ignore empty folder names to avoid resetting the current path */
 	while ((next = data->remaining[data->index]) && strlen(next) == 0)
@@ -913,9 +1078,32 @@ static void setpath_cb(GObex *obex, GError *err, GObexPacket *rsp,
 
 	p->req_id = g_obex_setpath(obex, next, setpath_cb, p, &err);
 	if (err != NULL) {
-		setpath_complete(p->session, NULL, err, data);
+		setpath_complete(p->session, NULL, err, user_data);
 		g_error_free(err);
 	}
+}
+
+static int session_process_setpath(struct pending_request *p, GError **err)
+{
+	struct setpath_data *req = p->data;
+	const char *first = "";
+
+	/* Relative path */
+	if (req->remaining[0][0] != '/')
+		first = req->remaining[req->index];
+	req->index++;
+
+	p->req_id = g_obex_setpath(p->session->obex, first, setpath_cb, p, err);
+	if (*err != NULL)
+		goto fail;
+
+	p->session->p = p;
+
+	return 0;
+
+fail:
+	pending_request_free(p);
+	return (*err)->code;
 }
 
 guint obc_session_setpath(struct obc_session *session, const char *path,
@@ -924,17 +1112,10 @@ guint obc_session_setpath(struct obc_session *session, const char *path,
 {
 	struct setpath_data *data;
 	struct pending_request *p;
-	const char *first = "";
 
 	if (session->obex == NULL) {
 		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_DISCONNECTED,
 						"Session disconnected");
-		return 0;
-	}
-
-	if (session->p != NULL) {
-		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_BUSY,
-							"Session busy");
 		return 0;
 	}
 
@@ -943,27 +1124,10 @@ guint obc_session_setpath(struct obc_session *session, const char *path,
 	data->user_data = user_data;
 	data->remaining = g_strsplit(strlen(path) ? path : "/", "/", 0);
 
-	p = pending_request_new(session, NULL, setpath_complete, data);
-
-	/* Relative path */
-	if (path[0] != '/')
-		first = data->remaining[data->index];
-
-	data->index++;
-
-	p->req_id = g_obex_setpath(session->obex, first, setpath_cb, p, err);
-	if (*err != NULL)
-		goto fail;
-
-	session->p = p;
-
+	p = pending_request_new(session, session_process_setpath, NULL,
+				setpath_op_complete, data, setpath_data_free);
+	session_queue(p);
 	return p->id;
-
-fail:
-	g_strfreev(data->remaining);
-	g_free(data);
-	pending_request_free(p);
-	return 0;
 }
 
 static void async_cb(GObex *obex, GError *err, GObexPacket *rsp,
@@ -1000,10 +1164,39 @@ done:
 	session_process_queue(session);
 }
 
+static void file_op_complete(struct obc_session *session,
+						struct obc_transfer *transfer,
+						GError *err, void *user_data)
+{
+	struct file_data *data = user_data;
+
+	if (data->func)
+		data->func(session, NULL, err, data->user_data);
+}
+
+static int session_process_mkdir(struct pending_request *p, GError **err)
+{
+	struct file_data *req = p->data;
+
+	p->req_id = g_obex_mkdir(p->session->obex, req->srcname, async_cb, p,
+									err);
+	if (*err != NULL)
+		goto fail;
+
+	p->session->p = p;
+
+	return 0;
+
+fail:
+	pending_request_free(p);
+	return (*err)->code;
+}
+
 guint obc_session_mkdir(struct obc_session *session, const char *folder,
 				session_callback_t func, void *user_data,
 				GError **err)
 {
+	struct file_data *data;
 	struct pending_request *p;
 
 	if (session->obex == NULL) {
@@ -1012,28 +1205,40 @@ guint obc_session_mkdir(struct obc_session *session, const char *folder,
 		return 0;
 	}
 
-	if (session->p != NULL) {
-		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_BUSY, "Session busy");
-		return 0;
-	}
+	data = g_new0(struct file_data, 1);
+	data->srcname = g_strdup(folder);
+	data->func = func;
+	data->user_data = user_data;
 
-
-	p = pending_request_new(session, NULL, func, user_data);
-
-	p->req_id = g_obex_mkdir(session->obex, folder, async_cb, p, err);
-	if (*err != NULL) {
-		pending_request_free(p);
-		return 0;
-	}
-
-	session->p = p;
+	p = pending_request_new(session, session_process_mkdir, NULL,
+					file_op_complete, data, file_data_free);
+	session_queue(p);
 	return p->id;
+}
+
+static int session_process_copy(struct pending_request *p, GError **err)
+{
+	struct file_data *req = p->data;
+
+	p->req_id = g_obex_copy(p->session->obex, req->srcname, req->destname,
+							async_cb, p, err);
+	if (*err != NULL)
+		goto fail;
+
+	p->session->p = p;
+
+	return 0;
+
+fail:
+	pending_request_free(p);
+	return (*err)->code;
 }
 
 guint obc_session_copy(struct obc_session *session, const char *srcname,
 				const char *destname, session_callback_t func,
 				void *user_data, GError **err)
 {
+	struct file_data *data;
 	struct pending_request *p;
 
 	if (session->obex == NULL) {
@@ -1042,28 +1247,41 @@ guint obc_session_copy(struct obc_session *session, const char *srcname,
 		return 0;
 	}
 
-	if (session->p != NULL) {
-		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_BUSY, "Session busy");
-		return 0;
-	}
+	data = g_new0(struct file_data, 1);
+	data->srcname = g_strdup(srcname);
+	data->destname = g_strdup(destname);
+	data->func = func;
+	data->user_data = user_data;
 
-	p = pending_request_new(session, NULL, func, user_data);
-
-	p->req_id = g_obex_copy(session->obex, srcname, destname, async_cb, p,
-									err);
-	if (*err != NULL) {
-		pending_request_free(p);
-		return 0;
-	}
-
-	session->p = p;
+	p = pending_request_new(session, session_process_copy, NULL,
+				file_op_complete, data, file_data_free);
+	session_queue(p);
 	return p->id;
+}
+
+static int session_process_move(struct pending_request *p, GError **err)
+{
+	struct file_data *req = p->data;
+
+	p->req_id = g_obex_move(p->session->obex, req->srcname, req->destname,
+							async_cb, p, err);
+	if (*err != NULL)
+		goto fail;
+
+	p->session->p = p;
+
+	return 0;
+
+fail:
+	pending_request_free(p);
+	return (*err)->code;
 }
 
 guint obc_session_move(struct obc_session *session, const char *srcname,
 				const char *destname, session_callback_t func,
 				void *user_data, GError **err)
 {
+	struct file_data *data;
 	struct pending_request *p;
 
 	if (session->obex == NULL) {
@@ -1072,28 +1290,41 @@ guint obc_session_move(struct obc_session *session, const char *srcname,
 		return 0;
 	}
 
-	if (session->p != NULL) {
-		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_BUSY, "Session busy");
-		return 0;
-	}
+	data = g_new0(struct file_data, 1);
+	data->srcname = g_strdup(srcname);
+	data->destname = g_strdup(destname);
+	data->func = func;
+	data->user_data = user_data;
 
-	p = pending_request_new(session, NULL, func, user_data);
-
-	p->req_id = g_obex_move(session->obex, srcname, destname, async_cb, p,
-									err);
-	if (*err != NULL) {
-		pending_request_free(p);
-		return 0;
-	}
-
-	session->p = p;
+	p = pending_request_new(session, session_process_move, NULL,
+				file_op_complete, data, file_data_free);
+	session_queue(p);
 	return p->id;
+}
+
+static int session_process_delete(struct pending_request *p, GError **err)
+{
+	struct file_data *req = p->data;
+
+	p->req_id = g_obex_delete(p->session->obex, req->srcname, async_cb, p,
+									err);
+	if (*err != NULL)
+		goto fail;
+
+	p->session->p = p;
+
+	return 0;
+
+fail:
+	pending_request_free(p);
+	return (*err)->code;
 }
 
 guint obc_session_delete(struct obc_session *session, const char *file,
 				session_callback_t func, void *user_data,
 				GError **err)
 {
+	struct file_data *data;
 	struct pending_request *p;
 
 	if (session->obex == NULL) {
@@ -1102,20 +1333,14 @@ guint obc_session_delete(struct obc_session *session, const char *file,
 		return 0;
 	}
 
-	if (session->p != NULL) {
-		g_set_error(err, OBEX_IO_ERROR, OBEX_IO_BUSY, "Session busy");
-		return 0;
-	}
+	data = g_new0(struct file_data, 1);
+	data->srcname = g_strdup(file);
+	data->func = func;
+	data->user_data = user_data;
 
-	p = pending_request_new(session, NULL, func, user_data);
-
-	p->req_id = g_obex_delete(session->obex, file, async_cb, p, err);
-	if (*err != NULL) {
-		pending_request_free(p);
-		return 0;
-	}
-
-	session->p = p;
+	p = pending_request_new(session, session_process_delete, NULL,
+				file_op_complete, data, file_data_free);
+	session_queue(p);
 	return p->id;
 }
 
@@ -1131,6 +1356,8 @@ void obc_session_cancel(struct obc_session *session, guint id,
 		return;
 
 	g_obex_cancel_req(session->obex, p->req_id, remove);
+	p->req_id = 0;
+
 	if (!remove)
 		return;
 

@@ -33,9 +33,9 @@
 #include <sys/socket.h>
 #include <inttypes.h>
 
-#include <btio/btio.h>
 #include <gobex/gobex.h>
 
+#include "btio/btio.h"
 #include "obexd.h"
 #include "obex.h"
 #include "obex-priv.h"
@@ -127,81 +127,6 @@ static inline DBusMessage *not_authorized(DBusMessage *msg)
 			"Not authorized");
 }
 
-static void dbus_message_iter_append_variant(DBusMessageIter *iter,
-						int type, void *val)
-{
-	DBusMessageIter value;
-	DBusMessageIter array;
-	const char *sig;
-
-	switch (type) {
-	case DBUS_TYPE_STRING:
-		sig = DBUS_TYPE_STRING_AS_STRING;
-		break;
-	case DBUS_TYPE_BYTE:
-		sig = DBUS_TYPE_BYTE_AS_STRING;
-		break;
-	case DBUS_TYPE_INT16:
-		sig = DBUS_TYPE_INT16_AS_STRING;
-		break;
-	case DBUS_TYPE_UINT16:
-		sig = DBUS_TYPE_UINT16_AS_STRING;
-		break;
-	case DBUS_TYPE_INT32:
-		sig = DBUS_TYPE_INT32_AS_STRING;
-		break;
-	case DBUS_TYPE_UINT32:
-		sig = DBUS_TYPE_UINT32_AS_STRING;
-		break;
-	case DBUS_TYPE_BOOLEAN:
-		sig = DBUS_TYPE_BOOLEAN_AS_STRING;
-		break;
-	case DBUS_TYPE_ARRAY:
-		sig = DBUS_TYPE_ARRAY_AS_STRING DBUS_TYPE_STRING_AS_STRING;
-		break;
-	case DBUS_TYPE_OBJECT_PATH:
-		sig = DBUS_TYPE_OBJECT_PATH_AS_STRING;
-		break;
-	default:
-		error("Could not append variant with type %d", type);
-		return;
-	}
-
-	dbus_message_iter_open_container(iter, DBUS_TYPE_VARIANT, sig, &value);
-
-	if (type == DBUS_TYPE_ARRAY) {
-		int i;
-		const char ***str_array = val;
-
-		dbus_message_iter_open_container(&value, DBUS_TYPE_ARRAY,
-			DBUS_TYPE_STRING_AS_STRING, &array);
-
-		for (i = 0; (*str_array)[i]; i++)
-			dbus_message_iter_append_basic(&array, DBUS_TYPE_STRING,
-							&((*str_array)[i]));
-
-		dbus_message_iter_close_container(&value, &array);
-	} else
-		dbus_message_iter_append_basic(&value, type, val);
-
-	dbus_message_iter_close_container(iter, &value);
-}
-
-static void dbus_message_iter_append_dict_entry(DBusMessageIter *dict,
-					const char *key, int type, void *val)
-{
-	DBusMessageIter entry;
-
-	dbus_message_iter_open_container(dict, DBUS_TYPE_DICT_ENTRY,
-					NULL, &entry);
-
-	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
-
-	dbus_message_iter_append_variant(&entry, type, val);
-
-	dbus_message_iter_close_container(dict, &entry);
-}
-
 static void agent_disconnected(DBusConnection *conn, void *user_data)
 {
 	DBG("Agent exited");
@@ -265,6 +190,38 @@ static DBusMessage *unregister_agent(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
+static gboolean get_source(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct obex_session *os = data;
+	char *s;
+
+	s = os->src;
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &s);
+
+	return TRUE;
+}
+
+static gboolean get_destination(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct obex_session *os = data;
+	char *s;
+
+	s = os->dst;
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &s);
+
+	return TRUE;
+}
+
+static gboolean session_target_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct obex_session *os = data;
+
+	return os->service->target ? TRUE : FALSE;
+}
+
 static char *target2str(const uint8_t *t)
 {
 	if (!t)
@@ -273,7 +230,8 @@ static char *target2str(const uint8_t *t)
 	return g_strdup_printf("%02X%02X%02X%02X-%02X%02X-%02X%02X-"
 				"%02X%02X-%02X%02X%02X%02X%02X%02X",
 				t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7],
-				t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15]);
+				t[8], t[9], t[10], t[11], t[12], t[13], t[14],
+				t[15]);
 }
 
 static gboolean get_target(const GDBusPropertyTable *property,
@@ -292,7 +250,6 @@ static gboolean get_target(const GDBusPropertyTable *property,
 static gboolean get_root(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
-	struct obex_session *os = data;
 	const char *root;
 
 	root = obex_option_root_folder();
@@ -330,6 +287,7 @@ static const char *status2str(uint8_t status)
 	case TRANSFER_STATUS_COMPLETE:
 		return "complete";
 	case TRANSFER_STATUS_ERROR:
+	default:
 		return "error";
 	}
 }
@@ -521,7 +479,9 @@ static const GDBusPropertyTable transfer_properties[] = {
 };
 
 static const GDBusPropertyTable session_properties[] = {
-	{ "Target", "s", get_target },
+	{ "Source", "s", get_source },
+	{ "Destination", "s", get_destination },
+	{ "Target", "s", get_target, NULL, session_target_exists },
 	{ "Root", "s", get_root },
 	{ }
 };
@@ -571,8 +531,6 @@ void manager_cleanup(void)
 
 void manager_emit_transfer_started(struct obex_transfer *transfer)
 {
-	static unsigned int id = 0;
-
 	transfer->status = TRANSFER_STATUS_ACTIVE;
 
 	g_dbus_emit_property_changed(connection, transfer->path,
@@ -632,7 +590,12 @@ struct obex_transfer *manager_register_transfer(struct obex_session *os)
 
 void manager_unregister_transfer(struct obex_transfer *transfer)
 {
-	struct obex_session *os = transfer->session;
+	struct obex_session *os;
+
+	if (transfer == NULL)
+		return;
+
+	os = transfer->session;
 
 	if (transfer->status == TRANSFER_STATUS_ACTIVE)
 		emit_transfer_completed(transfer, os->offset == os->size);
@@ -715,12 +678,8 @@ int manager_request_authorization(struct obex_transfer *transfer, int32_t time,
 	struct obex_session *os = transfer->session;
 	DBusMessage *msg;
 	DBusPendingCall *call;
-	const char *filename = os->name ? os->name : "";
-	const char *type = os->type ? os->type : "";
-	char *address;
 	unsigned int watch;
 	gboolean got_reply;
-	int err;
 
 	if (!agent)
 		return -1;
@@ -731,10 +690,6 @@ int manager_request_authorization(struct obex_transfer *transfer, int32_t time,
 	if (!new_folder || !new_name)
 		return -EINVAL;
 
-	err = obex_getpeername(os, &address);
-	if (err < 0)
-		return err;
-
 	msg = dbus_message_new_method_call(agent->bus_name, agent->path,
 							AGENT_INTERFACE,
 							"AuthorizePush");
@@ -742,10 +697,7 @@ int manager_request_authorization(struct obex_transfer *transfer, int32_t time,
 	dbus_message_append_args(msg, DBUS_TYPE_OBJECT_PATH, &transfer->path,
 							DBUS_TYPE_INVALID);
 
-	g_free(address);
-
-	if (!dbus_connection_send_with_reply(connection,
-					msg, &call, TIMEOUT)) {
+	if (!g_dbus_send_message_with_reply(connection, msg, &call, TIMEOUT)) {
 		dbus_message_unref(msg);
 		return -EPERM;
 	}
@@ -808,18 +760,17 @@ void manager_register_session(struct obex_session *os)
 	if (!g_dbus_register_interface(connection, path,
 				SESSION_INTERFACE,
 				session_methods, NULL,
-				session_properties, os, NULL)) {
+				session_properties, os, NULL))
 		error("Cannot register Session interface.");
-		goto done;
-	}
 
-done:
 	g_free(path);
 }
 
 void manager_unregister_session(struct obex_session *os)
 {
-	char *path = g_strdup_printf("%s/session%u", OBEX_BASE_PATH, os->id);
+	char *path;
+
+	path = g_strdup_printf("%s/session%u", SESSION_BASE_PATH, os->id);
 
 	g_dbus_unregister_interface(connection, path, SESSION_INTERFACE);
 
@@ -834,8 +785,17 @@ void manager_emit_transfer_progress(struct obex_transfer *transfer)
 
 void manager_emit_transfer_completed(struct obex_transfer *transfer)
 {
-	if (transfer->session->object)
-		emit_transfer_completed(transfer, !transfer->session->aborted);
+	struct obex_session *session;
+
+	if (transfer == NULL)
+		return;
+
+	session = transfer->session;
+
+	if (session == NULL || session->object == NULL)
+		return;
+
+	emit_transfer_completed(transfer, !session->aborted);
 }
 
 DBusConnection *manager_dbus_get_connection(void)

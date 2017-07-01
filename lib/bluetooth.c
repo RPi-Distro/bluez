@@ -542,7 +542,7 @@ const char *bt_compidtostr(int compid)
 	case 139:
 		return "Topcorn Positioning Systems, LLC";
 	case 140:
-		return "Qualcomm Labs, Inc.";
+		return "Qualcomm Retail Solutions, Inc. (formerly Qualcomm Labs, Inc.)";
 	case 141:
 		return "Zscan Software";
 	case 142:
@@ -564,7 +564,7 @@ const char *bt_compidtostr(int compid)
 	case 150:
 		return "ODM Technology, Inc.";
 	case 151:
-		return "Bluetrek Technologies Limited";
+		return "ConnecteDevice Ltd.";
 	case 152:
 		return "zer01.tv GmbH";
 	case 153:
@@ -655,6 +655,236 @@ const char *bt_compidtostr(int compid)
 		return "adidas AG";
 	case 196:
 		return "LG Electronics";
+	case 197:
+		return "Onset Computer Corporation";
+	case 198:
+		return "Selfly BV";
+	case 199:
+		return "Quuppa Oy.";
+	case 200:
+		return "GeLo Inc";
+	case 201:
+		return "Evluma";
+	case 202:
+		return "MC10";
+	case 203:
+		return "Binauric SE";
+	case 204:
+		return "Beats Electronics";
+	case 205:
+		return "Microchip Technology Inc.";
+	case 206:
+		return "Elgato Systems GmbH";
+	case 207:
+		return "ARCHOS SA";
+	case 208:
+		return "Dexcom, Inc.";
+	case 209:
+		return "Polar Electro Europe B.V.";
+	case 210:
+		return "Dialog Semiconductor B.V.";
+	case 211:
+		return "Taixingbang Technology (HK) Co,. LTD.";
+	case 212:
+		return "Kawantech";
+	case 213:
+		return "Austco Communication Systems";
+	case 214:
+		return "Timex Group USA, Inc.";
+	case 215:
+		return "Qualcomm Technologies, Inc.";
+	case 216:
+		return "Qualcomm Connected Experiences, Inc.";
+	case 217:
+		return "Voyetra Turtle Beach";
+	case 218:
+		return "txtr GmbH";
+	case 219:
+		return "Biosentronics";
+	case 220:
+		return "Procter & Gamble";
+	case 221:
+		return "Hosiden Corporation";
+	case 222:
+		return "Muzik LLC";
+	case 223:
+		return "Misfit Wearables Corp";
+	case 224:
+		return "Google";
+	case 225:
+		return "Danlers Ltd";
+	case 226:
+		return "Semilink Inc";
+	case 227:
+		return "inMusic Brands, Inc";
+	case 228:
+		return "L.S. Research Inc.";
+	case 229:
+		return "Eden Software Consultants Ltd.";
+	case 230:
+		return "Freshtemp";
+	case 231:
+		return "KS Technologies";
+	case 232:
+		return "ACTS Technologies";
+	case 233:
+		return "Vtrack Systems";
+	case 234:
+		return "Nielsen-Kellerman Company";
+	case 235:
+		return "Server Technology, Inc.";
+	case 236:
+		return "BioResearch Associates";
+	case 237:
+		return "Jolly Logic, LLC";
+	case 238:
+		return "Above Average Outcomes, Inc.";
+	case 239:
+		return "Bitsplitters GmbH";
+	case 240:
+		return "PayPal, Inc.";
+	case 241:
+		return "Witron Technology Limited";
+	case 242:
+		return "Morse Project Inc.";
+	case 243:
+		return "Kent Displays Inc.";
+	case 244:
+		return "Nautilus Inc.";
+	case 245:
+		return "Smartifier Oy";
+	case 246:
+		return "Elcometer Limited";
+	case 247:
+		return "VSN Technologies Inc.";
+	case 248:
+		return "AceUni Corp., Ltd.";
+	case 249:
+		return "StickNFind";
+	case 250:
+		return "Crystal Code AB";
+	case 251:
+		return "KOUKAAM a.s.";
+	case 252:
+		return "Delphi Corporation";
+	case 253:
+		return "ValenceTech Limited";
+	case 254:
+		return "Reserved";
+	case 255:
+		return "Typo Products, LLC";
+	case 256:
+		return "TomTom International BV";
+	case 257:
+		return "Fugoo, Inc";
+	case 258:
+		return "Keiser Corporation";
+	case 259:
+		return "Bang & Olufsen A/S";
+	case 260:
+		return "PLUS Locations Systems Pty Ltd";
+	case 261:
+		return "Ubiquitous Computing Technology Corporation";
+	case 262:
+		return "Innovative Yachtter Solutions";
+	case 263:
+		return "William Demant Holding A/S";
+	case 264:
+		return "Chicony Electronics Co., Ltd.";
+	case 265:
+		return "Atus BV";
+	case 266:
+		return "Codegate Ltd.";
+	case 267:
+		return "ERi, Inc.";
+	case 268:
+		return "Transducers Direct, LLC";
+	case 269:
+		return "Fujitsu Ten Limited";
+	case 270:
+		return "Audi AG";
+	case 271:
+		return "HiSilicon Technologies Co., Ltd.";
+	case 272:
+		return "Nippon Seiki Co., Ltd.";
+	case 273:
+		return "Steelseries ApS";
+	case 274:
+		return "vyzybl Inc.";
+	case 275:
+		return "Openbrain Technologies, Co., Ltd.";
+	case 276:
+		return "Xensr";
+	case 277:
+		return "e.solutions";
+	case 278:
+		return "1OAK Technologies";
+	case 279:
+		return "Wimoto Technologies Inc";
+	case 280:
+		return "Radius Networks, Inc.";
+	case 281:
+		return "Wize Technology Co., Ltd.";
+	case 282:
+		return "Qualcomm Labs, Inc.";
+	case 283:
+		return "Aruba Networks";
+	case 284:
+		return "Baidu";
+	case 285:
+		return "Arendi AG";
+	case 286:
+		return "Skoda Auto a.s.";
+	case 287:
+		return "Volkswagon AG";
+	case 288:
+		return "Porsche AG";
+	case 289:
+		return "Sino Wealth Electronic Ltd.";
+	case 290:
+		return "AirTurn, Inc.";
+	case 291:
+		return "Kinsa, Inc.";
+	case 292:
+		return "HID Global";
+	case 293:
+		return "SEAT es";
+	case 294:
+		return "Promethean Ltd.";
+	case 295:
+		return "Salutica Allied Solutions";
+	case 296:
+		return "GPSI Group Pty Ltd";
+	case 297:
+		return "Nimble Devices Oy";
+	case 298:
+		return "Changzhou Yongse Infotech Co., Ltd";
+	case 299:
+		return "SportIQ";
+	case 300:
+		return "TEMEC Instruments B.V.";
+	case 301:
+		return "Sony Corporation";
+	case 302:
+		return "ASSA ABLOY";
+	case 303:
+		return "Clarion Co., Ltd.";
+	case 304:
+		return "Warehouse Innovations";
+	case 305:
+		return "Cypress Semiconductor Corporation";
+	case 306:
+		return "MADS Inc";
+	case 307:
+		return "Blue Maestro Limited";
+	case 308:
+		return "Resolution Products, Inc.";
+	case 309:
+		return "Airewear LLC";
+	case 310:
+		return "ETC sp. z.o.o.";
+	case 311:
+		return "Prestigio Plaza Ltd.";
 	case 65535:
 		return "internal use";
 	default:

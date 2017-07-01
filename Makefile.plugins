@@ -8,6 +8,9 @@ builtin_sources += plugins/wiimote.c
 builtin_modules += autopair
 builtin_sources += plugins/autopair.c
 
+builtin_modules += policy
+builtin_sources += plugins/policy.c
+
 if MAINTAINER_MODE
 builtin_modules += gatt_example
 builtin_sources += plugins/gatt-example.c
@@ -27,25 +30,24 @@ noinst_LIBRARIES += profiles/sap/libsap.a
 profiles_sap_libsap_a_SOURCES = profiles/sap/sap.h profiles/sap/sap-u8500.c
 endif
 
-builtin_modules += audio
-builtin_sources += profiles/audio/main.c \
-			profiles/audio/manager.h profiles/audio/manager.c \
-			profiles/audio/control.h profiles/audio/control.c \
-			profiles/audio/avctp.h profiles/audio/avctp.c \
-			profiles/audio/avrcp.h profiles/audio/avrcp.c \
-			profiles/audio/device.h profiles/audio/device.c \
-			profiles/audio/source.h profiles/audio/source.c \
+builtin_modules += a2dp
+builtin_sources += profiles/audio/source.h profiles/audio/source.c \
 			profiles/audio/sink.h profiles/audio/sink.c \
 			profiles/audio/a2dp.h profiles/audio/a2dp.c \
 			profiles/audio/avdtp.h profiles/audio/avdtp.c \
 			profiles/audio/media.h profiles/audio/media.c \
 			profiles/audio/transport.h profiles/audio/transport.c \
-			profiles/audio/player.h profiles/audio/player.c \
 			profiles/audio/a2dp-codecs.h
+
+builtin_modules += avrcp
+builtin_sources += profiles/audio/control.h profiles/audio/control.c \
+			profiles/audio/avctp.h profiles/audio/avctp.c \
+			profiles/audio/avrcp.h profiles/audio/avrcp.c \
+			profiles/audio/player.h profiles/audio/player.c
 
 builtin_modules += network
 builtin_sources += profiles/network/manager.c \
-			profiles/network/common.h profiles/network/common.c \
+			profiles/network/bnep.h profiles/network/bnep.c \
 			profiles/network/server.h profiles/network/server.c \
 			profiles/network/connection.h \
 			profiles/network/connection.c
@@ -107,4 +109,12 @@ builtin_sources += profiles/heartrate/heartrate.c
 
 builtin_modules += cyclingspeed
 builtin_sources += profiles/cyclingspeed/cyclingspeed.c
+endif
+
+if SIXAXIS
+plugin_LTLIBRARIES += plugins/sixaxis.la
+plugins_sixaxis_la_SOURCES = plugins/sixaxis.c
+plugins_sixaxis_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
+						-no-undefined @UDEV_LIBS@
+plugins_sixaxis_la_CFLAGS = $(AM_CFLAGS) -fvisibility=hidden @UDEV_CFLAGS@
 endif

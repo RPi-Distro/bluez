@@ -538,6 +538,26 @@ static void cmd_devices(const char *arg)
 	}
 }
 
+static void cmd_paired_devices(const char *arg)
+{
+	GList *list;
+
+	for (list = g_list_first(dev_list); list; list = g_list_next(list)) {
+		GDBusProxy *proxy = list->data;
+		DBusMessageIter iter;
+		dbus_bool_t paired;
+
+		if (g_dbus_proxy_get_property(proxy, "Paired", &iter) == FALSE)
+			continue;
+
+		dbus_message_iter_get_basic(&iter, &paired);
+		if (!paired)
+			continue;
+
+		print_device(proxy, NULL);
+	}
+}
+
 static void generic_callback(const DBusError *error, void *user_data)
 {
 	char *str = user_data;
@@ -831,6 +851,93 @@ static void cmd_trust(const char *arg)
 	g_free(str);
 }
 
+static void cmd_untrust(const char *arg)
+{
+	GDBusProxy *proxy;
+	dbus_bool_t trusted;
+	char *str;
+
+	if (!arg || !strlen(arg)) {
+		rl_printf("Missing device address argument\n");
+		return;
+	}
+
+	proxy = find_proxy_by_address(dev_list, arg);
+	if (!proxy) {
+		rl_printf("Device %s not available\n", arg);
+		return;
+	}
+
+	trusted = FALSE;
+
+	str = g_strdup_printf("%s untrust", arg);
+
+	if (g_dbus_proxy_set_property_basic(proxy, "Trusted",
+					DBUS_TYPE_BOOLEAN, &trusted,
+					generic_callback, str, g_free) == TRUE)
+		return;
+
+	g_free(str);
+}
+
+static void cmd_block(const char *arg)
+{
+	GDBusProxy *proxy;
+	dbus_bool_t blocked;
+	char *str;
+
+	if (!arg || !strlen(arg)) {
+		rl_printf("Missing device address argument\n");
+		return;
+	}
+
+	proxy = find_proxy_by_address(dev_list, arg);
+	if (!proxy) {
+		rl_printf("Device %s not available\n", arg);
+		return;
+	}
+
+	blocked = TRUE;
+
+	str = g_strdup_printf("%s block", arg);
+
+	if (g_dbus_proxy_set_property_basic(proxy, "Blocked",
+					DBUS_TYPE_BOOLEAN, &blocked,
+					generic_callback, str, g_free) == TRUE)
+		return;
+
+	g_free(str);
+}
+
+static void cmd_unblock(const char *arg)
+{
+	GDBusProxy *proxy;
+	dbus_bool_t blocked;
+	char *str;
+
+	if (!arg || !strlen(arg)) {
+		rl_printf("Missing device address argument\n");
+		return;
+	}
+
+	proxy = find_proxy_by_address(dev_list, arg);
+	if (!proxy) {
+		rl_printf("Device %s not available\n", arg);
+		return;
+	}
+
+	blocked = FALSE;
+
+	str = g_strdup_printf("%s unblock", arg);
+
+	if (g_dbus_proxy_set_property_basic(proxy, "Blocked",
+					DBUS_TYPE_BOOLEAN, &blocked,
+					generic_callback, str, g_free) == TRUE)
+		return;
+
+	g_free(str);
+}
+
 static void remove_device_reply(DBusMessage *message, void *user_data)
 {
 	DBusError error;
@@ -1047,6 +1154,8 @@ static const struct {
 	{ "select",       "<ctrl>",   cmd_select, "Select default controller",
 							ctrl_generator },
 	{ "devices",      NULL,       cmd_devices, "List available devices" },
+	{ "paired-devices", NULL,     cmd_paired_devices,
+					"List paired devices"},
 	{ "system-alias", "<name>",   cmd_system_alias },
 	{ "reset-alias",  NULL,       cmd_reset_alias },
 	{ "power",        "<on/off>", cmd_power, "Set controller power" },
@@ -1057,7 +1166,8 @@ static const struct {
 	{ "agent",        "<on/off/capability>", cmd_agent,
 				"Enable/disable agent with given capability",
 							capability_generator},
-	{ "default-agent",NULL,       cmd_default_agent },
+	{ "default-agent",NULL,       cmd_default_agent,
+				"Set agent as the default one" },
 	{ "scan",         "<on/off>", cmd_scan, "Scan for devices" },
 	{ "info",         "<dev>",    cmd_info, "Device information",
 							dev_generator },
@@ -1065,6 +1175,12 @@ static const struct {
 							dev_generator },
 	{ "trust",        "<dev>",    cmd_trust, "Trust device",
 							dev_generator },
+	{ "untrust",      "<dev>",    cmd_untrust, "Untrust device",
+							dev_generator },
+	{ "block",        "<dev>",    cmd_block, "Block device",
+								dev_generator },
+	{ "unblock",      "<dev>",    cmd_unblock, "Unblock device",
+								dev_generator },
 	{ "remove",       "<dev>",    cmd_remove, "Remove device",
 							dev_generator },
 	{ "connect",      "<dev>",    cmd_connect, "Connect device",
@@ -1183,9 +1299,10 @@ static void rl_handler(char *input)
 
 	for (i = 0; cmd_table[i].cmd; i++) {
 		if (cmd_table[i].desc)
-			printf("\t%s %s\t%s\n", cmd_table[i].cmd,
-						cmd_table[i].arg ? : "    ",
-						cmd_table[i].desc);
+			printf("  %s %-*s %s\n", cmd_table[i].cmd,
+					(int)(25 - strlen(cmd_table[i].cmd)),
+					cmd_table[i].arg ? : "",
+					cmd_table[i].desc ? : "");
 	}
 
 done:
@@ -1195,12 +1312,16 @@ done:
 static gboolean input_handler(GIOChannel *channel, GIOCondition condition,
 							gpointer user_data)
 {
+	if (condition & G_IO_IN) {
+		rl_callback_read_char();
+		return TRUE;
+	}
+
 	if (condition & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
 		g_main_loop_quit(main_loop);
 		return FALSE;
 	}
 
-	rl_callback_read_char();
 	return TRUE;
 }
 

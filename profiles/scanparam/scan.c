@@ -29,19 +29,18 @@
 #include <stdbool.h>
 #include <errno.h>
 
-#include <bluetooth/bluetooth.h>
-
 #include "lib/uuid.h"
-#include "log.h"
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
+#include "src/log.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/shared/util.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
 #include "attrib/gatt.h"
-#include "attio.h"
+#include "src/attio.h"
 
 #define SCAN_PARAMETERS_UUID		"00001813-0000-1000-8000-00805f9b34fb"
 
@@ -61,27 +60,17 @@ struct scan {
 	uint16_t window;
 	uint16_t iwhandle;
 	uint16_t refresh_handle;
-	uint16_t refresh_cb_id;
+	guint refresh_cb_id;
 };
-
-static GSList *servers = NULL;
-
-static int scan_device_cmp(gconstpointer a, gconstpointer b)
-{
-	const struct scan *scan = a;
-	const struct btd_device *device = b;
-
-	return (device == scan->device ? 0 : -1);
-}
 
 static void write_scan_params(GAttrib *attrib, uint16_t handle)
 {
 	uint8_t value[4];
 
-	att_put_u16(SCAN_INTERVAL, &value[0]);
-	att_put_u16(SCAN_WINDOW, &value[2]);
+	put_le16(SCAN_INTERVAL, &value[0]);
+	put_le16(SCAN_WINDOW, &value[2]);
 
-	gatt_write_char(attrib, handle, value, sizeof(value), NULL, NULL);
+	gatt_write_cmd(attrib, handle, value, sizeof(value), NULL, NULL);
 }
 
 static void refresh_value_cb(const uint8_t *pdu, uint16_t len,
@@ -131,21 +120,21 @@ static void discover_descriptor_cb(guint8 status, const guint8 *pdu,
 		goto done;
 
 	ptr = list->data[0];
-	handle = att_get_u16(ptr);
-	uuid16 = att_get_u16(&ptr[2]);
+	handle = get_le16(ptr);
+	uuid16 = get_le16(&ptr[2]);
 
 	if (uuid16 != GATT_CLIENT_CHARAC_CFG_UUID)
 		goto done;
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
 	gatt_write_char(scan->attrib, handle, value, sizeof(value),
 						ccc_written_cb, user_data);
 done:
 	att_data_list_free(list);
 }
 
-static void refresh_discovered_cb(GSList *chars, guint8 status,
-						gpointer user_data)
+static void refresh_discovered_cb(uint8_t status, GSList *chars,
+								void *user_data)
 {
 	struct scan *scan = user_data;
 	struct gatt_char *chr;
@@ -168,17 +157,16 @@ static void refresh_discovered_cb(GSList *chars, guint8 status,
 	start = chr->value_handle + 1;
 	end = scan->range.end;
 
-	if (start >= end)
+	if (start > end)
 		return;
 
 	scan->refresh_handle = chr->value_handle;
 
-	gatt_find_info(scan->attrib, start, end,
-				discover_descriptor_cb, user_data);
+	gatt_discover_char_desc(scan->attrib, start, end,
+					discover_descriptor_cb, user_data);
 }
 
-static void iwin_discovered_cb(GSList *chars, guint8 status,
-						gpointer user_data)
+static void iwin_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 {
 	struct scan *scan = user_data;
 	struct gatt_char *chr;
@@ -227,8 +215,9 @@ static void attio_disconnected_cb(gpointer user_data)
 	scan->attrib = NULL;
 }
 
-static int scan_register(struct btd_device *device, struct gatt_primary *prim)
+static int scan_register(struct btd_service *service, struct gatt_primary *prim)
 {
+	struct btd_device *device = btd_service_get_device(service);
 	struct scan *scan;
 
 	scan = g_new0(struct scan, 1);
@@ -239,27 +228,17 @@ static int scan_register(struct btd_device *device, struct gatt_primary *prim)
 							attio_disconnected_cb,
 							scan);
 
-	servers = g_slist_prepend(servers, scan);
+	btd_service_set_user_data(service, scan);
 
 	return 0;
 }
 
-static void scan_unregister(struct btd_device *device)
+static void scan_param_remove(struct btd_service *service)
 {
-	struct scan *scan;
-	GSList *l;
+	struct scan *scan = btd_service_get_user_data(service);
 
-	l = g_slist_find_custom(servers, device, scan_device_cmp);
-	if (l == NULL)
-		return;
-
-	scan = l->data;
-	servers = g_slist_remove(servers, scan);
-
-	if (scan->refresh_cb_id) {
+	if (scan->attrib != NULL && scan->refresh_cb_id > 0)
 		g_attrib_unregister(scan->attrib, scan->refresh_cb_id);
-		scan->refresh_cb_id = 0;
-	}
 
 	btd_device_remove_attio_callback(scan->device, scan->attioid);
 	btd_device_unref(scan->device);
@@ -278,14 +257,7 @@ static int scan_param_probe(struct btd_service *service)
 	if (!prim)
 		return -EINVAL;
 
-	return scan_register(device, prim);
-}
-
-static void scan_param_remove(struct btd_service *service)
-{
-	struct btd_device *device = btd_service_get_device(service);
-
-	scan_unregister(device);
+	return scan_register(service, prim);
 }
 
 static struct btd_profile scan_profile = {

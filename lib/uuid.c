@@ -32,7 +32,6 @@
 
 #include "uuid.h"
 
-#if __BYTE_ORDER == __BIG_ENDIAN
 static uint128_t bluetooth_base_uuid = {
 	.data = {	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
 			0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB }
@@ -41,33 +40,36 @@ static uint128_t bluetooth_base_uuid = {
 #define BASE_UUID16_OFFSET	2
 #define BASE_UUID32_OFFSET	0
 
-#else
-static uint128_t bluetooth_base_uuid = {
-	.data = {	0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80,
-			0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
-};
-
-#define BASE_UUID16_OFFSET	12
-#define BASE_UUID32_OFFSET	BASE_UUID16_OFFSET
-
-#endif
-
 static void bt_uuid16_to_uuid128(const bt_uuid_t *src, bt_uuid_t *dst)
 {
+	uint16_t be16;
+
 	dst->value.u128 = bluetooth_base_uuid;
 	dst->type = BT_UUID128;
 
-	memcpy(&dst->value.u128.data[BASE_UUID16_OFFSET],
-			&src->value.u16, sizeof(src->value.u16));
+	/*
+	 * No matter the system: 128-bit UUIDs should be stored
+	 * as big-endian. 16-bit UUIDs are stored on host order.
+	 */
+
+	be16 = htons(src->value.u16);
+	memcpy(&dst->value.u128.data[BASE_UUID16_OFFSET], &be16, sizeof(be16));
 }
 
 static void bt_uuid32_to_uuid128(const bt_uuid_t *src, bt_uuid_t *dst)
 {
+	uint32_t be32;
+
 	dst->value.u128 = bluetooth_base_uuid;
 	dst->type = BT_UUID128;
 
-	memcpy(&dst->value.u128.data[BASE_UUID32_OFFSET],
-				&src->value.u32, sizeof(src->value.u32));
+	/*
+	 * No matter the system: 128-bit UUIDs should be stored
+	 * as big-endian. 32-bit UUIDs are stored on host order.
+	 */
+
+	be32 = htonl(src->value.u32);
+	memcpy(&dst->value.u128.data[BASE_UUID32_OFFSET], &be32, sizeof(be32));
 }
 
 void bt_uuid_to_uuid128(const bt_uuid_t *src, bt_uuid_t *dst)
@@ -154,10 +156,7 @@ int bt_uuid_to_string(const bt_uuid_t *uuid, char *str, size_t n)
 		unsigned int   data4;
 		unsigned short data5;
 
-		uint128_t nvalue;
-		const uint8_t *data = (uint8_t *) &nvalue;
-
-		hton128(&uuid->value.u128, &nvalue);
+		const uint8_t *data = (uint8_t *) &uuid->value.u128;
 
 		memcpy(&data0, &data[0], 4);
 		memcpy(&data1, &data[4], 2);
@@ -231,8 +230,8 @@ static int bt_string_to_uuid128(bt_uuid_t *uuid, const char *string)
 {
 	uint32_t data0, data4;
 	uint16_t data1, data2, data3, data5;
-	uint128_t n128, u128;
-	uint8_t *val = (uint8_t *) &n128;
+	uint128_t u128;
+	uint8_t *val = (uint8_t *) &u128;
 
 	if (sscanf(string, "%08x-%04hx-%04hx-%04hx-%08x%04hx",
 				&data0, &data1, &data2,
@@ -252,8 +251,6 @@ static int bt_string_to_uuid128(bt_uuid_t *uuid, const char *string)
 	memcpy(&val[8], &data3, 2);
 	memcpy(&val[10], &data4, 4);
 	memcpy(&val[14], &data5, 2);
-
-	ntoh128(&n128, &u128);
 
 	bt_uuid128_create(uuid, u128);
 

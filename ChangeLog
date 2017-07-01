@@ -1,3 +1,122 @@
+ver 5.17:
+	Fix issue with not resetting OBEX SRM setup.
+	Fix issue with BR/EDR devices and auto-connect list.
+	Fix issue with bonding complete detection as peripheral.
+	Fix issue with not updating bearer timestamp of connections.
+	Fix issue with paired property for multiple bearers.
+	Add support for Android Bluetooth Handsfree interface.
+	Add support for Android Bluetooth Wideband speech.
+
+ver 5.16:
+	Fix issue with HID over GATT physical location.
+	Fix issue with HID over GATT unique identifier.
+	Fix issue with missing paired property notification.
+	Fix issue with endianess of long term key storage.
+	Add support for storing signature resolving keys.
+	Add support for Android Bluetooth AVRCP interface.
+
+ver 5.15:
+	Fix issue with LE enabling and background scanning.
+	Fix issue with HID over GATT input device name.
+	Fix issue with storage of slave long term keys.
+	Add support for handling identity resolving keys.
+	Add support for Android Bluetooth A2DP interface.
+	Add support for Android Bluetooth audio interface.
+
+ver 5.14:
+	Fix issue with marking PS3 controllers as trusted.
+	Fix issue with authorization of PS3 controllers.
+	Add support for DualShock 4 controller detection.
+	Add support for legacy pairing emulation.
+	Add support for secure simple pairing emulation.
+	Add support for automated pairing testing.
+	Add support for RFCOMM protocol testing.
+	Add support for HCI controller testing.
+
+ver 5.13:
+	Fix issue with PS3 controller detection.
+	Add support for data transfers to L2CAP testing tool.
+	Add support for delay reporting to AVDTP testing tool.
+	Add support for Android Bluetooth Core interface.
+	Add support for Android Bluetooth Socket interface.
+	Add support for Android Bluetooth HID Host interface.
+	Add support for Android Bluetooth PAN interface.
+
+ver 5.12:
+	Fix issue with missing reply to DisconnectProfile.
+	Fix issue with icon property and class of device changes.
+	Fix issue with HID devices when SDP record is not available.
+	Fix issue with handling auto-pairing of printers.
+	Fix issue with agent authorization handling.
+	Add support for PS3 controller setup and pairing.
+	Add support for LE L2CAP CoC test capabilities.
+	Add support for AVDTP qualification test cases.
+	Add support for SMP cryptographic test cases.
+
+ver 5.11:
+	Fix issue with connection attempt when not powered.
+	Fix issue with assigning player to AVRCP target role.
+	Fix issue with OBEX default cache directory.
+	Fix issue with SDP search error handling.
+	Fix issue with processing of SDP records.
+	Fix issue with HID to HCI switching utility.
+	Fix issue with mgmt end-to-end testing tool.
+	Fix issue with L2CAP end-to-end testing tool.
+	Add support for SMP end-to-end testing tool.
+	Add support for more Wii controllers.
+
+ver 5.10:
+	Fix issue with discoverable timeout handling.
+	Fix issue with MAP messages and record version.
+	Fix issue with MAP messages and status events.
+	Fix issue with MAP messages and relative folders.
+	Fix issue with MAP messages and type property signals.
+	Fix issue with transfer size for OBEX GET operations.
+	Fix issue with AVRCP service class identifier.
+	Fix issue with AVRCP tracking seeked signal.
+	Add support for OBEX command line client.
+
+ver 5.9:
+	Fix issue with network service and adapter removal.
+	Fix issue with misleading OBEX error messages.
+	Fix issue with OBEX transport reference handling.
+	Fix issue with memory leak with MAP event handler.
+	Fix issue with missing MAP property changed signal.
+	Fix issue with message type property values.
+	Fix issue with empty UUID list for devices.
+	Fix issue with profile agent cancel method.
+	Remove dependency on USB library.
+
+ver 5.8:
+	Fix issue with missing OBEX session properties.
+	Fix issue with missing SDP service refresh.
+	Fix issue with SDP attribute range check.
+	Fix issue with priority for SDP transactions.
+	Fix issue with service discovery after pairing.
+	Fix issue with race condition in service list.
+	Fix issue with input service state transition.
+	Fix issue with default authorization for profiles.
+	Fix issue with AVRCP browsing channel connections.
+	Add support for AVRCP role agnostic sessions.
+
+ver 5.7:
+	Fix issue with missing UUID discovery during pairing.
+	Fix issue with broken patch for SDP range check handling.
+	Fix issue with AVRCP usage of UID=0 for paused/stopped.
+	Add support MAP notification dispatching.
+
+ver 5.6:
+	Fix issue with incoming connections without SDP record.
+	Fix issue with canceling ongoing device connections.
+	Fix issue with handling failed connection attempts.
+	Fix issue with pending resume during A2DP open failures.
+	Fix issue with registering AVRCP unsupported notification.
+	Fix issue with listing available AVRCP target settings.
+	Fix issue with missing error for OBEX SetPath commands.
+	Fix issue with missing OBEX session command queue.
+	Fix issue with retrieving multiple MAP event reports.
+	Add support for command line player utility.
+
 ver 5.5:
 	Fix issue with race condition between SDP and properties.
 	Fix issue with handling storage of private device addresses.

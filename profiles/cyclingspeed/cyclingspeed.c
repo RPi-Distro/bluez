@@ -30,18 +30,19 @@
 #include <gdbus/gdbus.h>
 
 #include "lib/uuid.h"
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
-#include "dbus-common.h"
-#include "error.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/dbus-common.h"
+#include "src/shared/util.h"
+#include "src/error.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
-#include "attio.h"
-#include "log.h"
+#include "src/attio.h"
+#include "src/log.h"
 
 /* min length for ATT indication or notification: opcode (1b) + handle (2b) */
 #define ATT_HDR_LEN 3
@@ -380,7 +381,7 @@ static void read_feature_cb(guint8 status, const guint8 *pdu, guint16 len,
 		return;
 	}
 
-	csc->feature = att_get_u16(value);
+	csc->feature = get_le16(value);
 
 	if ((csc->feature & MULTI_SENSOR_LOC_SUPPORT)
 						&& (csc->locations == NULL))
@@ -446,8 +447,8 @@ static void discover_desc_cb(guint8 status, const guint8 *pdu,
 		char *msg;
 
 		value = list->data[i];
-		handle = att_get_u16(value);
-		uuid = att_get_u16(value + 2);
+		handle = get_le16(value);
+		uuid = get_le16(value + 2);
 
 		if (uuid != GATT_CLIENT_CHARAC_CFG_UUID)
 			continue;
@@ -456,16 +457,16 @@ static void discover_desc_cb(guint8 status, const guint8 *pdu,
 			ch->csc->measurement_ccc_handle = handle;
 
 			if (g_slist_length(ch->csc->cadapter->watchers) == 0) {
-				att_put_u16(0x0000, attr_val);
+				put_le16(0x0000, attr_val);
 				msg = g_strdup("Disable measurement");
 			} else {
-				att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT,
+				put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT,
 								attr_val);
 				msg = g_strdup("Enable measurement");
 			}
 
 		} else if (g_strcmp0(ch->uuid, SC_CONTROL_POINT_UUID) == 0) {
-			att_put_u16(GATT_CLIENT_CHARAC_CFG_IND_BIT, attr_val);
+			put_le16(GATT_CLIENT_CHARAC_CFG_IND_BIT, attr_val);
 			msg = g_strdup("Enable SC Control Point indications");
 		} else {
 			break;
@@ -506,7 +507,7 @@ static void discover_desc(struct csc *csc, struct gatt_char *c,
 	ch->csc = csc;
 	memcpy(ch->uuid, c->uuid, sizeof(c->uuid));
 
-	gatt_find_info(csc->attrib, start, end, discover_desc_cb, ch);
+	gatt_discover_char_desc(csc->attrib, start, end, discover_desc_cb, ch);
 }
 
 static void update_watcher(gpointer data, gpointer user_data)
@@ -573,8 +574,8 @@ static void process_measurement(struct csc *csc, const uint8_t *pdu,
 		}
 
 		m.has_wheel_rev = true;
-		m.wheel_rev = att_get_u32(pdu);
-		m.last_wheel_time = att_get_u16(pdu + 4);
+		m.wheel_rev = get_le32(pdu);
+		m.last_wheel_time = get_le16(pdu + 4);
 		pdu += 6;
 		len -= 6;
 	}
@@ -586,8 +587,8 @@ static void process_measurement(struct csc *csc, const uint8_t *pdu,
 		}
 
 		m.has_crank_rev = true;
-		m.crank_rev = att_get_u16(pdu);
-		m.last_crank_time = att_get_u16(pdu + 2);
+		m.crank_rev = get_le16(pdu);
+		m.last_crank_time = get_le16(pdu + 2);
 		pdu += 4;
 		len -= 4;
 	}
@@ -759,7 +760,7 @@ done:
 		g_attrib_send(csc->attrib, 0, opdu, olen, NULL, NULL, NULL);
 }
 
-static void discover_char_cb(GSList *chars, guint8 status, gpointer user_data)
+static void discover_char_cb(uint8_t status, GSList *chars, void *user_data)
 {
 	struct csc *csc = user_data;
 	uint16_t feature_val_handle = 0;
@@ -816,7 +817,7 @@ static void enable_measurement(gpointer data, gpointer user_data)
 	if (csc->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
 	msg = g_strdup("Enable measurement");
 
 	gatt_write_char(csc->attrib, handle, value, sizeof(value),
@@ -833,7 +834,7 @@ static void disable_measurement(gpointer data, gpointer user_data)
 	if (csc->attrib == NULL || !handle)
 		return;
 
-	att_put_u16(0x0000, value);
+	put_le16(0x0000, value);
 	msg = g_strdup("Disable measurement");
 
 	gatt_write_char(csc->attrib, handle, value, sizeof(value),
@@ -964,8 +965,6 @@ static int csc_adapter_probe(struct btd_profile *p, struct btd_adapter *adapter)
 	cadapter = g_new0(struct csc_adapter, 1);
 	cadapter->adapter = adapter;
 
-	csc_adapters = g_slist_prepend(csc_adapters, cadapter);
-
 	if (!g_dbus_register_interface(btd_get_dbus_connection(),
 						adapter_get_path(adapter),
 						CYCLINGSPEED_MANAGER_INTERFACE,
@@ -977,6 +976,8 @@ static int csc_adapter_probe(struct btd_profile *p, struct btd_adapter *adapter)
 		destroy_csc_adapter(cadapter);
 		return -EIO;
 	}
+
+	csc_adapters = g_slist_prepend(csc_adapters, cadapter);
 
 	return 0;
 }
@@ -1166,7 +1167,7 @@ static DBusMessage *set_cumulative_wheel_rev(DBusConnection *conn,
 	csc->pending_req = req;
 
 	att_val[0] = SET_CUMULATIVE_VALUE;
-	att_put_u32(value, att_val + 1);
+	put_le32(value, att_val + 1);
 
 	gatt_write_char(csc->attrib, csc->controlpoint_val_handle, att_val,
 		sizeof(att_val), controlpoint_write_cb, req);
