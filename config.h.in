@@ -43,6 +43,9 @@
    */
 #undef LT_OBJDIR
 
+/* Define to 1 if you need the dbus_connection_can_send_type() function. */
+#undef NEED_DBUS_CONNECTION_CAN_SEND_TYPE
+
 /* Define to 1 if you need the dbus_watch_get_unix_fd() function. */
 #undef NEED_DBUS_WATCH_GET_UNIX_FD
 

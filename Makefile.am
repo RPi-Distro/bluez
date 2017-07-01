@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 8:0:5
+lib_libbluetooth_la_LDFLAGS = -version-info 9:0:6
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -81,7 +81,7 @@ sbc_sbcenc_LDADD = sbc/libsbc.la
 if SNDFILE
 noinst_PROGRAMS += sbc/sbctester
 
-sbc_sbctester_LDADD = @SNDFILE_LIBS@
+sbc_sbctester_LDADD = @SNDFILE_LIBS@ -lm
 sbc_sbctest_CFLAGS = @SNDFILE_CFLAGS@
 endif
 endif
@@ -101,6 +101,11 @@ gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/object.c gdbus/watch.c
 builtin_modules =
 builtin_sources =
 builtin_nodist =
+
+if PNATPLUGIN
+builtin_modules += pnat
+builtin_sources += plugins/pnat.c
+endif
 
 if ECHOPLUGIN
 builtin_modules += echo
@@ -127,7 +132,7 @@ builtin_nodist += audio/telephony.c
 noinst_LIBRARIES = audio/libtelephony.a
 
 audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
-                                audio/telephony-maemo.c audio/telephony-ofono.c
+                                audio/telephony-maemo5.c audio/telephony-ofono.c
 endif
 
 if INPUTPLUGIN
@@ -213,7 +218,7 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			src/main.conf network/network.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
-			audio/telephony-maemo.c audio/telephony-ofono.c
+			audio/telephony-maemo5.c audio/telephony-ofono.c
 
 
 if ALSA

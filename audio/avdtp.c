@@ -88,6 +88,7 @@
 #define AVDTP_MSG_TYPE_REJECT			0x03
 
 #define REQ_TIMEOUT 4
+#define ABORT_TIMEOUT 2
 #define DISCONNECT_TIMEOUT 1
 #define STREAM_TIMEOUT 20
 
@@ -803,7 +804,7 @@ static gboolean stream_timeout(gpointer user_data)
 	struct avdtp_stream *stream = user_data;
 	struct avdtp *session = stream->session;
 
-	avdtp_close(session, stream);
+	avdtp_close(session, stream, FALSE);
 
 	stream->idle_timer = 0;
 
@@ -898,6 +899,68 @@ static void cleanup_queue(struct avdtp *session, struct avdtp_stream *stream)
 	}
 }
 
+static void handle_unanswered_req(struct avdtp *session,
+						struct avdtp_stream *stream)
+{
+	struct pending_req *req;
+	struct avdtp_local_sep *lsep;
+	struct avdtp_error err;
+
+	if (session->req->signal_id == AVDTP_ABORT) {
+		/* Avoid freeing the Abort request here */
+		debug("handle_unanswered_req: Abort req, returning");
+		session->req->stream = NULL;
+		return;
+	}
+
+	req = session->req;
+	session->req = NULL;
+
+	avdtp_error_init(&err, AVDTP_ERROR_ERRNO, EIO);
+
+	lsep = stream->lsep;
+
+	switch (req->signal_id) {
+	case AVDTP_RECONFIGURE:
+		error("No reply to Reconfigure request");
+		if (lsep && lsep->cfm && lsep->cfm->reconfigure)
+			lsep->cfm->reconfigure(session, lsep, stream, &err,
+						lsep->user_data);
+		break;
+	case AVDTP_OPEN:
+		error("No reply to Open request");
+		if (lsep && lsep->cfm && lsep->cfm->open)
+			lsep->cfm->open(session, lsep, stream, &err,
+					lsep->user_data);
+		break;
+	case AVDTP_START:
+		error("No reply to Start request");
+		if (lsep && lsep->cfm && lsep->cfm->start)
+			lsep->cfm->start(session, lsep, stream, &err,
+						lsep->user_data);
+		break;
+	case AVDTP_SUSPEND:
+		error("No reply to Suspend request");
+		if (lsep && lsep->cfm && lsep->cfm->suspend)
+			lsep->cfm->suspend(session, lsep, stream, &err,
+						lsep->user_data);
+		break;
+	case AVDTP_CLOSE:
+		error("No reply to Close request");
+		if (lsep && lsep->cfm && lsep->cfm->close)
+			lsep->cfm->close(session, lsep, stream, &err,
+						lsep->user_data);
+		break;
+	case AVDTP_SET_CONFIGURATION:
+		error("No reply to SetConfiguration request");
+		if (lsep && lsep->cfm && lsep->cfm->set_configuration)
+			lsep->cfm->set_configuration(session, lsep, stream,
+							&err, lsep->user_data);
+	}
+
+	pending_req_free(req);
+}
+
 static void avdtp_sep_set_state(struct avdtp *session,
 				struct avdtp_local_sep *sep,
 				avdtp_state_t state)
@@ -959,7 +1022,7 @@ static void avdtp_sep_set_state(struct avdtp *session,
 		if (session->pending_open == stream)
 			handle_transport_connect(session, NULL, 0, 0);
 		if (session->req && session->req->stream == stream)
-			session->req->stream = NULL;
+			handle_unanswered_req(session, stream);
 		/* Remove pending commands for this stream from the queue */
 		cleanup_queue(session, stream);
 		stream_free(stream);
@@ -1371,6 +1434,7 @@ static gboolean avdtp_setconf_cmd(struct avdtp *session, uint8_t transaction,
 	}
 
 	sep->stream = stream;
+	sep->info.inuse = 1;
 	session->streams = g_slist_append(session->streams, stream);
 
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_CONFIGURED);
@@ -2070,7 +2134,7 @@ static uint16_t get_version(struct avdtp *session)
 		goto done;
 
 	proto_desc = sdp_get_proto_desc(protos, AVDTP_UUID);
-	if (proto_desc->dtd == SDP_UINT16)
+	if (proto_desc && proto_desc->dtd == SDP_UINT16)
 		ver = proto_desc->val.uint16;
 
 	sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free, NULL);
@@ -2354,20 +2418,19 @@ static uint8_t req_get_seid(struct pending_req *req)
 	return ((struct seid_req *) (req->data))->acp_seid;
 }
 
-static gboolean request_timeout(gpointer user_data)
+static int cancel_request(struct avdtp *session, int err)
 {
-	struct avdtp *session = user_data;
 	struct pending_req *req;
 	struct seid_req sreq;
 	struct avdtp_local_sep *lsep;
 	struct avdtp_stream *stream;
 	uint8_t seid;
-	struct avdtp_error err;
+	struct avdtp_error averr;
 
 	req = session->req;
 	session->req = NULL;
 
-	avdtp_error_init(&err, AVDTP_ERROR_ERRNO, ETIMEDOUT);
+	avdtp_error_init(&averr, AVDTP_ERROR_ERRNO, err);
 
 	seid = req_get_seid(req);
 	if (seid)
@@ -2383,52 +2446,52 @@ static gboolean request_timeout(gpointer user_data)
 
 	switch (req->signal_id) {
 	case AVDTP_RECONFIGURE:
-		error("Reconfigure request timed out");
+		error("Reconfigure: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->reconfigure)
-			lsep->cfm->reconfigure(session, lsep, stream, &err,
+			lsep->cfm->reconfigure(session, lsep, stream, &averr,
 						lsep->user_data);
 		break;
 	case AVDTP_OPEN:
-		error("Open request timed out");
+		error("Open: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->open)
-			lsep->cfm->open(session, lsep, stream, &err,
+			lsep->cfm->open(session, lsep, stream, &averr,
 					lsep->user_data);
 		break;
 	case AVDTP_START:
-		error("Start request timed out");
+		error("Start: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->start)
-			lsep->cfm->start(session, lsep, stream, &err,
+			lsep->cfm->start(session, lsep, stream, &averr,
 						lsep->user_data);
 		break;
 	case AVDTP_SUSPEND:
-		error("Suspend request timed out");
+		error("Suspend: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->suspend)
-			lsep->cfm->suspend(session, lsep, stream, &err,
+			lsep->cfm->suspend(session, lsep, stream, &averr,
 						lsep->user_data);
 		break;
 	case AVDTP_CLOSE:
-		error("Close request timed out");
+		error("Close: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->close) {
-			lsep->cfm->close(session, lsep, stream, &err,
+			lsep->cfm->close(session, lsep, stream, &averr,
 						lsep->user_data);
 			if (stream)
 				stream->close_int = FALSE;
 		}
 		break;
 	case AVDTP_SET_CONFIGURATION:
-		error("SetConfiguration request timed out");
+		error("SetConfiguration: %s (%d)", strerror(err), err);
 		if (lsep && lsep->cfm && lsep->cfm->set_configuration)
 			lsep->cfm->set_configuration(session, lsep, stream,
-							&err, lsep->user_data);
+							&averr, lsep->user_data);
 		goto failed;
 	case AVDTP_DISCOVER:
-		error("Discover request timed out");
+		error("Discover: %s (%d)", strerror(err), err);
 		goto failed;
 	case AVDTP_GET_CAPABILITIES:
-		error("GetCapabilities request timed out");
+		error("GetCapabilities: %s (%d)", strerror(err), err);
 		goto failed;
 	case AVDTP_ABORT:
-		error("Abort request timed out");
+		error("Abort: %s (%d)", strerror(err), err);
 		goto failed;
 	}
 
@@ -2438,8 +2501,9 @@ static gboolean request_timeout(gpointer user_data)
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.acp_seid = seid;
 
-	if (send_request(session, TRUE, stream, AVDTP_ABORT,
-						&sreq, sizeof(sreq)) < 0) {
+	err = send_request(session, TRUE, stream, AVDTP_ABORT, &sreq,
+				sizeof(sreq));
+	if (err < 0) {
 		error("Unable to send abort request");
 		goto failed;
 	}
@@ -2447,9 +2511,18 @@ static gboolean request_timeout(gpointer user_data)
 	goto done;
 
 failed:
-	connection_lost(session, ETIMEDOUT);
+	connection_lost(session, err);
 done:
 	pending_req_free(req);
+	return err;
+}
+
+static gboolean request_timeout(gpointer user_data)
+{
+	struct avdtp *session = user_data;
+
+	cancel_request(session, ETIMEDOUT);
+
 	return FALSE;
 }
 
@@ -2486,7 +2559,8 @@ static int send_req(struct avdtp *session, gboolean priority,
 
 	session->req = req;
 
-	req->timeout = g_timeout_add_seconds(REQ_TIMEOUT,
+	req->timeout = g_timeout_add_seconds(req->signal_id == AVDTP_ABORT ?
+					ABORT_TIMEOUT : REQ_TIMEOUT,
 					request_timeout,
 					session);
 	return 0;
@@ -2921,7 +2995,7 @@ static gboolean avdtp_parse_rej(struct avdtp *session,
 		if (sep && sep->cfm && sep->cfm->abort)
 			sep->cfm->abort(session, sep, stream, &err,
 					sep->user_data);
-		return TRUE;
+		return FALSE;
 	case AVDTP_DELAY_REPORT:
 		if (!stream_rej_to_err(buf, size, &err, &acp_seid))
 			return FALSE;
@@ -3401,7 +3475,8 @@ int avdtp_start(struct avdtp *session, struct avdtp_stream *stream)
 							&req, sizeof(req));
 }
 
-int avdtp_close(struct avdtp *session, struct avdtp_stream *stream)
+int avdtp_close(struct avdtp *session, struct avdtp_stream *stream,
+		gboolean immediate)
 {
 	struct seid_req req;
 	int ret;
@@ -3416,6 +3491,9 @@ int avdtp_close(struct avdtp *session, struct avdtp_stream *stream)
 		error("avdtp_close: rejecting since close is already initiated");
 		return -EINVAL;
 	}
+
+	if (immediate && session->req && stream == session->req->stream)
+		return avdtp_abort(session, stream);
 
 	memset(&req, 0, sizeof(req));
 	req.acp_seid = stream->rseid;
@@ -3453,8 +3531,12 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 	if (!g_slist_find(session->streams, stream))
 		return -EINVAL;
 
-	if (stream->lsep->state <= AVDTP_STATE_OPEN)
+	if (stream->lsep->state == AVDTP_STATE_IDLE ||
+			stream->lsep->state == AVDTP_STATE_ABORTING)
 		return -EINVAL;
+
+	if (session->req && stream == session->req->stream)
+		return cancel_request(session, ECANCELED);
 
 	memset(&req, 0, sizeof(req));
 	req.acp_seid = stream->rseid;

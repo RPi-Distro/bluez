@@ -114,6 +114,10 @@ const char *class_to_icon(uint32_t class)
 			return "audio-card";	/* Headset */
 		case 0x06:
 			return "audio-card";	/* Headphone */
+		case 0x0b: /* VCR */
+		case 0x0c: /* Video Camera */
+		case 0x0d: /* Camcorder */
+			return "camera-video";
 		default:
 			return "audio-card";	/* Other audio device */
 		}
@@ -468,6 +472,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	name_status_t name_status;
 	int state;
 	dbus_bool_t legacy;
+	unsigned char features[8];
 
 	ba2str(local, local_addr);
 	ba2str(peer, peer_addr);
@@ -493,8 +498,6 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		adapter_set_state(adapter, state);
 	}
 
-	legacy = (data == NULL);
-
 	memset(&match, 0, sizeof(struct remote_dev_info));
 	bacpy(&match.bdaddr, peer);
 	match.name_status = NAME_SENT;
@@ -502,7 +505,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	dev = adapter_search_found_devices(adapter, &match);
 	if (dev) {
 		adapter_update_found_devices(adapter, peer, rssi, class,
-						NULL, NULL, legacy,
+						NULL, NULL, dev->legacy,
 						NAME_NOT_REQUIRED);
 		return;
 	}
@@ -518,6 +521,18 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 
 	create_name(filename, PATH_MAX, STORAGEDIR, local_addr, "names");
 	name = textfile_get(filename, peer_addr);
+
+	if (data)
+		legacy = FALSE;
+	else if (name == NULL)
+		legacy = TRUE;
+	else if (read_remote_features(local, peer, NULL, features) == 0) {
+		if (features[0] & 0x01)
+			legacy = FALSE;
+		else
+			legacy = TRUE;
+	} else
+		legacy = TRUE;
 
 	tmp_name = extract_eir_name(data, &name_type);
 	if (tmp_name) {
@@ -536,7 +551,6 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 				name = tmp_name;
 		}
 	}
-
 
 	if (name && name_type != 0x08)
 		name_status = NAME_SENT;

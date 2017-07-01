@@ -138,9 +138,9 @@ static int hci_str2uint(hci_map *map, char *str, unsigned int *val)
 	return set;
 }
 
-char *hci_dtypetostr(int type)
+char *hci_bustostr(int bus)
 {
-	switch (type) {
+	switch (bus) {
 	case HCI_VIRTUAL:
 		return "VIRTUAL";
 	case HCI_USB:
@@ -155,6 +155,23 @@ char *hci_dtypetostr(int type)
 		return "PCI";
 	case HCI_SDIO:
 		return "SDIO";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+char *hci_dtypetostr(int type)
+{
+	return hci_bustostr(type & 0x0f);
+}
+
+char *hci_typetostr(int type)
+{
+	switch (type) {
+	case HCI_BREDR:
+		return "BR/EDR";
+	case HCI_80211:
+		return "802.11";
 	default:
 		return "UNKNOWN";
 	}
@@ -473,7 +490,7 @@ static hci_map commands_map[] = {
 	{ "Write Simple Pairing Mode",			142 },
 	{ "Read Local OOB Data",			143 },
 
-	{ "Read Inquiry Transmit Power Level",		144 },
+	{ "Read Inquiry Response Transmit Power Level",	144 },
 	{ "Write Inquiry Transmit Power Level",		145 },
 	{ "Read Default Erroneous Data Reporting",	146 },
 	{ "Write Default Erroneous Data Reporting",	147 },
@@ -2246,16 +2263,16 @@ int hci_read_local_oob_data(int dd, uint8_t *hash, uint8_t *randomizer, int to)
 	return 0;
 }
 
-int hci_read_inquiry_transmit_power_level(int dd, int8_t *level, int to)
+int hci_read_inq_response_tx_power_level(int dd, int8_t *level, int to)
 {
-	read_inquiry_transmit_power_level_rp rp;
+	read_inq_response_tx_power_level_rp rp;
 	struct hci_request rq;
 
 	memset(&rq, 0, sizeof(rq));
 	rq.ogf    = OGF_HOST_CTL;
-	rq.ocf    = OCF_READ_INQUIRY_TRANSMIT_POWER_LEVEL;
+	rq.ocf    = OCF_READ_INQ_RESPONSE_TX_POWER_LEVEL;
 	rq.rparam = &rp;
-	rq.rlen   = READ_INQUIRY_TRANSMIT_POWER_LEVEL_RP_SIZE;
+	rq.rlen   = READ_INQ_RESPONSE_TX_POWER_LEVEL_RP_SIZE;
 
 	if (hci_send_req(dd, &rq, to) < 0)
 		return -1;
@@ -2267,6 +2284,11 @@ int hci_read_inquiry_transmit_power_level(int dd, int8_t *level, int to)
 
 	*level = rp.level;
 	return 0;
+}
+
+int hci_read_inquiry_transmit_power_level(int dd, int8_t *level, int to)
+{
+	return hci_read_inq_response_tx_power_level(dd, level, to);
 }
 
 int hci_write_inquiry_transmit_power_level(int dd, int8_t level, int to)

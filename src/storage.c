@@ -483,21 +483,81 @@ int write_version_info(bdaddr_t *local, bdaddr_t *peer, uint16_t manufacturer,
 	return textfile_put(filename, addr, str);
 }
 
-int write_features_info(bdaddr_t *local, bdaddr_t *peer, unsigned char *features)
+int write_features_info(bdaddr_t *local, bdaddr_t *peer,
+				unsigned char *page1, unsigned char *page2)
 {
-	char filename[PATH_MAX + 1], addr[18], str[17];
+	char filename[PATH_MAX + 1], addr[18];
+	char str[] = "0000000000000000 0000000000000000";
+	char *old_value;
 	int i;
 
-	memset(str, 0, sizeof(str));
-	for (i = 0; i < 8; i++)
-		sprintf(str + (i * 2), "%2.2X", features[i]);
+	ba2str(peer, addr);
+
+	create_filename(filename, PATH_MAX, local, "features");
+	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+	old_value = textfile_get(filename, addr);
+
+	if (page1)
+		for (i = 0; i < 8; i++)
+			sprintf(str + (i * 2), "%2.2X", page1[i]);
+	else if (old_value && strlen(old_value) >= 16)
+		strncpy(str, old_value, 16);
+
+	if (page2)
+		for (i = 0; i < 8; i++)
+			sprintf(str + 17 + (i * 2), "%2.2X", page2[i]);
+	else if (old_value && strlen(old_value) >= 33)
+		strncpy(str + 17, old_value + 17, 16);
+
+	free(old_value);
+
+	return textfile_put(filename, addr, str);
+}
+
+static int decode_bytes(const char *str, unsigned char *bytes, size_t len)
+{
+	unsigned int i;
+
+	for (i = 0; i < len; i++) {
+		if (sscanf(str + (i * 2), "%02hhX", &bytes[i]) != 1)
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
+int read_remote_features(bdaddr_t *local, bdaddr_t *peer,
+				unsigned char *page1, unsigned char *page2)
+{
+	char filename[PATH_MAX + 1], addr[18], *str;
+	size_t len;
+	int err;
+
+	if (page1 == NULL && page2 == NULL)
+		return -EINVAL;
 
 	create_filename(filename, PATH_MAX, local, "features");
 
-	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
 	ba2str(peer, addr);
-	return textfile_put(filename, addr, str);
+
+	str = textfile_get(filename, addr);
+	if (!str)
+		return -ENOENT;
+
+	len = strlen(str);
+
+	err = -ENOENT;
+
+	if (page1 && len >= 16)
+		err = decode_bytes(str, page1, 8);
+
+	if (page2 && len >= 33)
+		err = decode_bytes(str + 17, page2, 8);
+
+	free(str);
+
+	return err;
 }
 
 int write_lastseen_info(bdaddr_t *local, bdaddr_t *peer, struct tm *tm)

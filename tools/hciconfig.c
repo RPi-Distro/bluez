@@ -944,7 +944,8 @@ static void cmd_version(int ctl, int hdev, char *opt)
 	lmpver = lmp_vertostr(ver.hci_ver);
 
 	print_dev_hdr(&di);
-	printf("\tHCI Ver: %s (0x%x) HCI Rev: 0x%x LMP Ver: %s (0x%x) LMP Subver: 0x%x\n"
+	printf("\tHCI Version: %s (0x%x)  Revision: 0x%x\n"
+		"\tLMP Version: %s (0x%x)  Subversion: 0x%x\n"
 		"\tManufacturer: %s (%d)\n",
 		hciver ? hciver : "n/a", ver.hci_ver, ver.hci_rev,
 		lmpver ? lmpver : "n/a", ver.lmp_ver, ver.lmp_subver,
@@ -980,7 +981,7 @@ static void cmd_inq_tpl(int ctl, int hdev, char *opt)
 	} else {
 		int8_t level;
 
-		if (hci_read_inquiry_transmit_power_level(dd, &level, 1000) < 0) {
+		if (hci_read_inq_response_tx_power_level(dd, &level, 1000) < 0) {
 			fprintf(stderr, "Can't read inquiry transmit power level on hci%d: %s (%d)\n",
 						hdev, strerror(errno), errno);
 			exit(1);
@@ -1127,7 +1128,11 @@ static void cmd_inq_data(int ctl, int hdev, char *opt)
 				}
 				break;
 			case 0x0a:
-				printf("\tTX power level: %d\n", *((uint8_t *) ptr));
+				printf("\tTX power level: %d\n", *((int8_t *) ptr));
+				break;
+			case 0x10:
+				printf("\tDevice ID with %d bytes data\n",
+								len - 1);
 				break;
 			default:
 				printf("\tUnknown type 0x%02x with %d bytes data\n",
@@ -1583,10 +1588,12 @@ static void print_dev_hdr(struct hci_dev_info *di)
 
 	ba2str(&di->bdaddr, addr);
 
-	printf("%s:\tType: %s\n", di->name, hci_dtypetostr(di->type) );
-	printf("\tBD Address: %s ACL MTU: %d:%d SCO MTU: %d:%d\n",
-		addr, di->acl_mtu, di->acl_pkts,
-		di->sco_mtu, di->sco_pkts);
+	printf("%s:\tType: %s  Bus: %s\n", di->name,
+					hci_typetostr(di->type >> 4),
+					hci_bustostr(di->type & 0x0f));
+	printf("\tBD Address: %s  ACL MTU: %d:%d  SCO MTU: %d:%d\n",
+					addr, di->acl_mtu, di->acl_pkts,
+						di->sco_mtu, di->sco_pkts);
 }
 
 static void print_dev_info(int ctl, struct hci_dev_info *di)

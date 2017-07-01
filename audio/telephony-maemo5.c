@@ -106,6 +106,7 @@ static uint32_t callerid = 0;
 #define CSD_CALL_INSTANCE	"com.nokia.csd.Call.Instance"
 #define CSD_CALL_CONFERENCE	"com.nokia.csd.Call.Conference"
 #define CSD_CALL_PATH		"/com/nokia/csd/call"
+#define CSD_CALL_CONFERENCE_PATH "/com/nokia/csd/call/conference"
 
 /* Call status values as exported by the CSD CALL plugin */
 #define CSD_CALL_STATUS_IDLE			0
@@ -224,8 +225,8 @@ static guint create_request_timer = 0;
 static struct indicator maemo_indicators[] =
 {
 	{ "battchg",	"0-5",	5,	TRUE },
-	{ "signal",	"0-5",	5,	TRUE },
-	{ "service",	"0,1",	1,	TRUE },
+	{ "signal",	"0-5",	0,	TRUE },
+	{ "service",	"0,1",	0,	TRUE },
 	{ "call",	"0,1",	0,	TRUE },
 	{ "callsetup",	"0-3",	0,	TRUE },
 	{ "callheld",	"0-2",	0,	FALSE },
@@ -311,6 +312,26 @@ static struct csd_call *find_call_with_status(int status)
 	}
 
 	return NULL;
+}
+
+static int release_conference(void)
+{
+	DBusMessage *msg;
+
+	debug("telephony-maemo: releasing conference call");
+
+	msg = dbus_message_new_method_call(CSD_CALL_BUS_NAME,
+						CSD_CALL_CONFERENCE_PATH,
+						CSD_CALL_INSTANCE,
+						"Release");
+	if (!msg) {
+		error("Unable to allocate new D-Bus message");
+		return -ENOMEM;
+	}
+
+	g_dbus_send_message(connection, msg);
+
+	return 0;
 }
 
 static int release_call(struct csd_call *call)
@@ -517,6 +538,7 @@ void telephony_last_dialed_number_req(void *telephony_device)
 void telephony_terminate_call_req(void *telephony_device)
 {
 	struct csd_call *call;
+	int err;
 
 	call = find_call_with_status(CSD_CALL_STATUS_ACTIVE);
 	if (!call)
@@ -529,7 +551,12 @@ void telephony_terminate_call_req(void *telephony_device)
 		return;
 	}
 
-	if (release_call(call) < 0)
+	if (call->conference)
+		err = release_conference();
+	else
+		err = release_call(call);
+
+	if (err < 0)
 		telephony_terminate_call_rsp(telephony_device,
 						CME_ERROR_AG_FAILURE);
 	else
@@ -885,6 +912,14 @@ void telephony_key_press_req(void *telephony_device, const char *keys)
 							CME_ERROR_AG_FAILURE);
 	else
 		telephony_key_press_rsp(telephony_device, CME_ERROR_NONE);
+}
+
+void telephony_voice_dial_req(void *telephony_device, gboolean enable)
+{
+	debug("telephony-maemo: got %s voice dial request",
+			enable ? "enable" : "disable");
+
+	telephony_voice_dial_rsp(telephony_device, CME_ERROR_NOT_SUPPORTED);
 }
 
 static void handle_incoming_call(DBusMessage *msg)
@@ -1377,9 +1412,15 @@ static void hal_battery_level_reply(DBusPendingCall *call, void *user_data)
 		goto done;
 	}
 
-	dbus_message_get_args(reply, NULL,
+	dbus_error_init(&err);
+	if (dbus_message_get_args(reply, &err,
 				DBUS_TYPE_INT32, &level,
-				DBUS_TYPE_INVALID);
+				DBUS_TYPE_INVALID) == FALSE) {
+		error("Unable to parse GetPropertyInteger reply: %s, %s",
+							err.name, err.message);
+		dbus_error_free(&err);
+		goto done;
+	}
 
 	*value = (int) level;
 
@@ -1560,7 +1601,7 @@ static void signal_strength_reply(DBusPendingCall *call, void *user_data)
 	}
 
 	dbus_error_init(&err);
-	if (!dbus_message_get_args(reply, NULL,
+	if (!dbus_message_get_args(reply, &err,
 					DBUS_TYPE_BYTE, &signals_bar,
 					DBUS_TYPE_BYTE, &rssi_in_dbm,
 					DBUS_TYPE_INT32, &net_err,
@@ -1610,7 +1651,7 @@ static void registration_status_reply(DBusPendingCall *call, void *user_data)
 	}
 
 	dbus_error_init(&err);
-	if (!dbus_message_get_args(reply, NULL,
+	if (!dbus_message_get_args(reply, &err,
 					DBUS_TYPE_BYTE, &status,
 					DBUS_TYPE_UINT16, &lac,
 					DBUS_TYPE_UINT32, &cell_id,
@@ -1757,14 +1798,12 @@ static void phonebook_read_reply(DBusPendingCall *call, void *user_data)
 	}
 
 	dbus_error_init(&derr);
-	dbus_message_get_args(reply, NULL,
+	if (dbus_message_get_args(reply, &derr,
 				DBUS_TYPE_STRING, &name,
 				DBUS_TYPE_STRING, &number,
 				DBUS_TYPE_INT32, &current_location,
 				DBUS_TYPE_INT32, &err,
-				DBUS_TYPE_INVALID);
-
-	if (dbus_error_is_set(&derr)) {
+				DBUS_TYPE_INVALID) == FALSE) {
 		error("Unable to parse SIM.Phonebook.read arguments: %s, %s",
 				derr.name, derr.message);
 		dbus_error_free(&derr);
