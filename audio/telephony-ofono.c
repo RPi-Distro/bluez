@@ -579,19 +579,17 @@ void telephony_nr_and_ec_req(void *telephony_device, gboolean enable)
 
 void telephony_key_press_req(void *telephony_device, const char *keys)
 {
-	struct voice_call *active, *waiting;
+	struct voice_call *active, *incoming;
 	int err;
 
 	DBG("telephony-ofono: got key press request for %s", keys);
 
-	waiting = find_vc_with_status(CALL_STATUS_INCOMING);
-	if (!waiting)
-		waiting = find_vc_with_status(CALL_STATUS_DIALING);
+	incoming = find_vc_with_status(CALL_STATUS_INCOMING);
 
 	active = find_vc_with_status(CALL_STATUS_ACTIVE);
 
-	if (waiting)
-		err = answer_call(waiting);
+	if (incoming)
+		err = answer_call(incoming);
 	else if (active)
 		err = release_call(active);
 	else
@@ -1116,7 +1114,7 @@ static void get_modems_reply(DBusPendingCall *call, void *user_data)
 	DBusMessage *reply;
 	DBusMessageIter iter, entry;
 
-	DBG("list_modem_reply is called\n");
+	DBG("");
 	reply = dbus_pending_call_steal_reply(call);
 
 	dbus_error_init(&err);

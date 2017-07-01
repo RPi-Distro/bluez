@@ -268,7 +268,7 @@ static void cmd_le_adv(int ctl, int hdev, char *opt)
 	rq.rparam = &status;
 	rq.rlen = 1;
 
-	ret = hci_send_req(dd, &rq, 100);
+	ret = hci_send_req(dd, &rq, 1000);
 
 	hci_close_dev(dd);
 
@@ -1138,7 +1138,7 @@ static void cmd_version(int ctl, int hdev, char *opt)
 	}
 
 	hciver = hci_vertostr(ver.hci_ver);
-	lmpver = lmp_vertostr(ver.hci_ver);
+	lmpver = lmp_vertostr(ver.lmp_ver);
 
 	print_dev_hdr(&di);
 	printf("\tHCI Version: %s (0x%x)  Revision: 0x%x\n"

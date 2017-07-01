@@ -27,6 +27,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
+#include <bluetooth/uuid.h>
 #include <bluetooth/sdp.h>
 
 #include "gattrib.h"
@@ -103,4 +104,23 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 	}
 
 	return chan;
+}
+
+size_t gatt_attr_data_from_string(const char *str, uint8_t **data)
+{
+	char tmp[3];
+	size_t size, i;
+
+	size = strlen(str) / 2;
+	*data = g_try_malloc0(size);
+	if (*data == NULL)
+		return 0;
+
+	tmp[2] = '\0';
+	for (i = 0; i < size; i++) {
+		memcpy(tmp, str + (i * 2), 2);
+		(*data)[i] = (uint8_t) strtol(tmp, NULL, 16);
+	}
+
+	return size;
 }

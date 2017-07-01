@@ -34,6 +34,7 @@
 #include <sys/ioctl.h>
 
 #include <bluetooth/bluetooth.h>
+#include <bluetooth/uuid.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
@@ -144,6 +145,8 @@ struct btd_adapter {
 	GSList *powered_callbacks;
 
 	gboolean name_stored;
+
+	GSList *loaded_drivers;
 };
 
 static void adapter_set_pairable_timeout(struct btd_adapter *adapter,
@@ -257,6 +260,7 @@ static int pending_remote_name_cancel(struct btd_adapter *adapter)
 	if (!dev) /* no pending request */
 		return -ENODATA;
 
+	adapter->state &= ~STATE_RESOLVNAME;
 	err = adapter_ops->cancel_resolve_name(adapter->dev_id, &dev->bdaddr);
 	if (err < 0)
 		error("Remote name cancel failed: %s(%d)",
@@ -452,6 +456,20 @@ static int adapter_set_mode(struct btd_adapter *adapter, uint8_t mode)
 	return 0;
 }
 
+static struct session_req *find_session_by_msg(GSList *list, const DBusMessage *msg)
+{
+	GSList *l;
+
+	for (l = list; l; l = l->next) {
+		struct session_req *req = l->data;
+
+		if (req->msg == msg)
+			return req;
+	}
+
+	return NULL;
+}
+
 static int set_mode(struct btd_adapter *adapter, uint8_t new_mode,
 			DBusMessage *msg)
 {
@@ -496,11 +514,18 @@ done:
 
 	DBG("%s", modestr);
 
-	if (msg != NULL)
-		/* Wait for mode change to reply */
-		adapter->pending_mode = create_session(adapter, connection,
-							msg, new_mode, NULL);
-	else
+	if (msg != NULL) {
+		struct session_req *req;
+
+		req = find_session_by_msg(adapter->mode_sessions, msg);
+		if (req) {
+			adapter->pending_mode = req;
+			session_ref(req);
+		} else
+			/* Wait for mode change to reply */
+			adapter->pending_mode = create_session(adapter,
+					connection, msg, new_mode, NULL);
+	} else
 		/* Nothing to reply just write the new mode */
 		adapter->mode = new_mode;
 
@@ -516,8 +541,10 @@ static DBusMessage *set_discoverable(DBusConnection *conn, DBusMessage *msg,
 
 	mode = discoverable ? MODE_DISCOVERABLE : MODE_CONNECTABLE;
 
-	if (mode == adapter->mode)
+	if (mode == adapter->mode) {
+		adapter->global_mode = mode;
 		return dbus_message_new_method_return(msg);
+	}
 
 	err = set_mode(adapter, mode, msg);
 	if (err < 0)
@@ -541,8 +568,10 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 
 	mode = MODE_OFF;
 
-	if (mode == adapter->mode)
+	if (mode == adapter->mode) {
+		adapter->global_mode = mode;
 		return dbus_message_new_method_return(msg);
+	}
 
 	err = set_mode(adapter, mode, msg);
 	if (err < 0)
@@ -791,16 +820,25 @@ static void confirm_mode_cb(struct agent *agent, DBusError *derr, void *data)
 		return;
 	}
 
-	err = set_mode(req->adapter, req->mode, NULL);
+	err = set_mode(req->adapter, req->mode, req->msg);
 	if (err < 0)
 		reply = btd_error_failed(req->msg, strerror(-err));
-	else
+	else if (!req->adapter->pending_mode)
 		reply = dbus_message_new_method_return(req->msg);
+	else
+		reply = NULL;
 
-	g_dbus_send_message(req->conn, reply);
+	if (reply) {
+		/*
+		 * Send reply immediately only if there was an error changing
+		 * mode, or change is not needed. Otherwise, reply is sent in
+		 * set_mode_complete.
+		 */
+		g_dbus_send_message(req->conn, reply);
 
-	dbus_message_unref(req->msg);
-	req->msg = NULL;
+		dbus_message_unref(req->msg);
+		req->msg = NULL;
+	}
 
 	if (!find_session(req->adapter->mode_sessions, req->owner))
 		session_unref(req);
@@ -986,6 +1024,9 @@ static void adapter_emit_uuids_updated(struct btd_adapter *adapter)
 	char **uuids;
 	int i;
 	sdp_list_t *list;
+
+	if (!adapter->initialized)
+		return;
 
 	uuids = g_new0(char *, sdp_list_len(adapter->services) + 1);
 
@@ -2212,23 +2253,25 @@ static void probe_driver(struct btd_adapter *adapter, gpointer user_data)
 	if (!adapter->up)
 		return;
 
+	if (driver->probe == NULL)
+		return;
+
 	err = driver->probe(adapter);
-	if (err < 0)
+	if (err < 0) {
 		error("%s: %s (%d)", driver->name, strerror(-err), -err);
+		return;
+	}
+
+	adapter->loaded_drivers = g_slist_prepend(adapter->loaded_drivers,
+									driver);
 }
 
 static void load_drivers(struct btd_adapter *adapter)
 {
 	GSList *l;
 
-	for (l = adapter_drivers; l; l = l->next) {
-		struct btd_adapter_driver *driver = l->data;
-
-		if (driver->probe == NULL)
-			continue;
-
-		probe_driver(adapter, driver);
-	}
+	for (l = adapter_drivers; l; l = l->next)
+		probe_driver(adapter, l->data);
 }
 
 static void load_connections(struct btd_adapter *adapter)
@@ -2362,24 +2405,19 @@ void btd_adapter_get_mode(struct btd_adapter *adapter, uint8_t *mode,
 	if (mode) {
 		if (main_opts.remember_powered == FALSE)
 			*mode = main_opts.mode;
-		else if (read_device_mode(address, str, sizeof(str)) < 0)
-			*mode = main_opts.mode;
-		else
+		else if (read_device_mode(address, str, sizeof(str)) == 0)
 			*mode = get_mode(&adapter->bdaddr, str);
+		else
+			*mode = main_opts.mode;
 	}
 
 	if (on_mode) {
-		if (main_opts.remember_powered == FALSE) {
-			if (adapter->initialized)
-				*on_mode = get_mode(&adapter->bdaddr, "on");
-			else {
-				*on_mode = main_opts.mode;
-				adapter->initialized = TRUE;
-			}
-		} else if (read_on_mode(address, str, sizeof(str)) < 0)
-			*on_mode = main_opts.mode;
-		else
+		if (main_opts.remember_powered == FALSE)
+			*on_mode = get_mode(&adapter->bdaddr, "on");
+		else if (read_on_mode(address, str, sizeof(str)) == 0)
 			*on_mode = get_mode(&adapter->bdaddr, str);
+		else
+			*on_mode = main_opts.mode;
 	}
 
 	if (pairable)
@@ -2443,16 +2481,20 @@ static void reply_pending_requests(struct btd_adapter *adapter)
 	}
 }
 
+static void remove_driver(gpointer data, gpointer user_data)
+{
+	struct btd_adapter_driver *driver = data;
+	struct btd_adapter *adapter = user_data;
+
+	if (driver->remove)
+		driver->remove(adapter);
+}
+
 static void unload_drivers(struct btd_adapter *adapter)
 {
-	GSList *l;
-
-	for (l = adapter_drivers; l; l = l->next) {
-		struct btd_adapter_driver *driver = l->data;
-
-		if (driver->remove)
-			driver->remove(adapter);
-	}
+	g_slist_foreach(adapter->loaded_drivers, remove_driver, adapter);
+	g_slist_free(adapter->loaded_drivers);
+	adapter->loaded_drivers = NULL;
 }
 
 static void set_mode_complete(struct btd_adapter *adapter)
@@ -2462,6 +2504,15 @@ static void set_mode_complete(struct btd_adapter *adapter)
 	int err;
 
 	DBG("");
+
+	/*
+	 * g_slist_free is not called after g_slist_foreach because the list is
+	 * updated using g_slist_remove in session_remove which is called by
+         * session_free, which is called for each element by g_slist_foreach.
+	 */
+	if (adapter->mode == MODE_OFF)
+		g_slist_foreach(adapter->mode_sessions, (GFunc) session_free,
+									NULL);
 
 	if (adapter->pending_mode == NULL)
 		return;
@@ -2477,8 +2528,12 @@ static void set_mode_complete(struct btd_adapter *adapter)
 
 		if (err < 0)
 			reply = btd_error_failed(msg, strerror(-err));
-		else
+		else {
+			if (strcmp(dbus_message_get_member(msg),
+						"SetProperty") == 0)
+				adapter->global_mode = adapter->mode;
 			reply = g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+		}
 
 		g_dbus_send_message(connection, reply);
 	}
@@ -2675,6 +2730,8 @@ gboolean adapter_init(struct btd_adapter *adapter)
 	 * the are active connections before the daemon've started */
 	load_connections(adapter);
 
+	adapter->initialized = TRUE;
+
 	return TRUE;
 }
 
@@ -2770,12 +2827,15 @@ void adapter_set_state(struct btd_adapter *adapter, int state)
 		break;
 	case STATE_LE_SCAN:
 		/* Scanning enabled */
-		adapter->stop_discov_id = g_timeout_add(5120,
-						stop_scanning, adapter);
+		if (adapter->disc_sessions) {
+			adapter->stop_discov_id = g_timeout_add(5120,
+								stop_scanning,
+								adapter);
 
-		/* For dual mode: don't send "Discovering = TRUE"  */
-		if (bredr_capable(adapter) == TRUE)
-			return;
+			/* For dual mode: don't send "Discovering = TRUE"  */
+			if (bredr_capable(adapter) == TRUE)
+				return;
+		}
 
 		/* LE only */
 		discov_active = TRUE;
@@ -3288,9 +3348,16 @@ int btd_register_adapter_driver(struct btd_adapter_driver *driver)
 	return 0;
 }
 
+static void unload_driver(struct btd_adapter *adapter, gpointer data)
+{
+	adapter->loaded_drivers = g_slist_remove(adapter->loaded_drivers, data);
+}
+
 void btd_unregister_adapter_driver(struct btd_adapter_driver *driver)
 {
 	adapter_drivers = g_slist_remove(adapter_drivers, driver);
+
+	manager_foreach_adapter(unload_driver, driver);
 }
 
 static void agent_auth_cb(struct agent *agent, DBusError *derr,
@@ -3664,4 +3731,22 @@ int adapter_create_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 int adapter_cancel_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 {
 	return adapter_ops->cancel_bonding(adapter->dev_id, bdaddr);
+}
+
+int btd_adapter_read_local_oob_data(struct btd_adapter *adapter)
+{
+	return adapter_ops->read_local_oob_data(adapter->dev_id);
+}
+
+int btd_adapter_add_remote_oob_data(struct btd_adapter *adapter,
+			bdaddr_t *bdaddr, uint8_t *hash, uint8_t *randomizer)
+{
+	return adapter_ops->add_remote_oob_data(adapter->dev_id, bdaddr, hash,
+								randomizer);
+}
+
+int btd_adapter_remove_remote_oob_data(struct btd_adapter *adapter,
+							bdaddr_t *bdaddr)
+{
+	return adapter_ops->remove_remote_oob_data(adapter->dev_id, bdaddr);
 }

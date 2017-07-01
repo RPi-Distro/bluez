@@ -108,6 +108,9 @@ static void media_endpoint_remove(struct media_endpoint *endpoint)
 {
 	struct media_adapter *adapter = endpoint->adapter;
 
+	if (g_slist_find(adapter->endpoints, endpoint) == NULL)
+		return;
+
 	info("Endpoint unregistered: sender=%s path=%s", endpoint->sender,
 			endpoint->path);
 
@@ -123,7 +126,7 @@ static void media_endpoint_remove(struct media_endpoint *endpoint)
 		media_endpoint_cancel(endpoint);
 
 	if (endpoint->transport)
-		media_transport_remove(endpoint->transport);
+		media_transport_destroy(endpoint->transport);
 
 	g_dbus_remove_watch(adapter->conn, endpoint->watch);
 	g_free(endpoint->capabilities);
@@ -185,7 +188,8 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 						gboolean delay_reporting,
 						uint8_t codec,
 						uint8_t *capabilities,
-						int size)
+						int size,
+						int *err)
 {
 	struct media_endpoint *endpoint;
 
@@ -206,13 +210,13 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 	if (strcasecmp(uuid, A2DP_SOURCE_UUID) == 0) {
 		endpoint->sep = a2dp_add_sep(&adapter->src,
 					AVDTP_SEP_TYPE_SOURCE, codec,
-					delay_reporting, endpoint);
+					delay_reporting, endpoint, err);
 		if (endpoint->sep == NULL)
 			goto failed;
 	} else if (strcasecmp(uuid, A2DP_SINK_UUID) == 0) {
 		endpoint->sep = a2dp_add_sep(&adapter->src,
 						AVDTP_SEP_TYPE_SINK, codec,
-						delay_reporting, endpoint);
+						delay_reporting, endpoint, err);
 		if (endpoint->sep == NULL)
 			goto failed;
 	} else if (strcasecmp(uuid, HFP_AG_UUID) == 0 ||
@@ -227,8 +231,11 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 			media_endpoint_set_configuration(endpoint, dev, NULL,
 							0, headset_setconf_cb,
 							dev);
-	} else
+	} else {
+		if (err)
+			*err = -EINVAL;
 		goto failed;
+	}
 
 	endpoint->watch = g_dbus_add_disconnect_watch(adapter->conn, sender,
 						media_endpoint_exit, endpoint,
@@ -237,6 +244,8 @@ static struct media_endpoint *media_endpoint_create(struct media_adapter *adapte
 	adapter->endpoints = g_slist_append(adapter->endpoints, endpoint);
 	info("Endpoint registered: sender=%s path=%s", sender, path);
 
+	if (err)
+		*err = 0;
 	return endpoint;
 
 failed:
@@ -335,6 +344,7 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	uint8_t codec;
 	uint8_t *capabilities;
 	int size = 0;
+	int err;
 
 	sender = dbus_message_get_sender(msg);
 
@@ -355,8 +365,12 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_invalid_args(msg);
 
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
-				codec, capabilities, size) == FALSE)
-		return btd_error_invalid_args(msg);
+				codec, capabilities, size, &err) == FALSE) {
+		if (err == -EPROTONOSUPPORT)
+			return btd_error_not_supported(msg);
+		else
+			return btd_error_invalid_args(msg);
+	}
 
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
@@ -651,7 +665,7 @@ void media_endpoint_clear_configuration(struct media_endpoint *endpoint)
 							DBUS_TYPE_INVALID);
 	g_dbus_send_message(conn, msg);
 done:
-	media_transport_remove(endpoint->transport);
+	media_transport_destroy(endpoint->transport);
 	endpoint->transport = NULL;
 }
 

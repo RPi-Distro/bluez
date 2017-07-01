@@ -142,7 +142,8 @@ bin_PROGRAMS += test/l2test test/rctest
 noinst_PROGRAMS += test/gaptest test/sdptest test/scotest \
 			test/attest test/hstest test/avtest test/ipctest \
 					test/lmptest test/bdaddr test/agent \
-					test/btiotest test/test-textfile
+					test/btiotest test/test-textfile \
+					test/uuidtest
 
 test_hciemu_LDADD = @GLIB_LIBS@ lib/libbluetooth.la
 
@@ -175,6 +176,9 @@ test_agent_LDADD = @DBUS_LIBS@
 test_btiotest_SOURCES = test/btiotest.c btio/btio.h btio/btio.c
 test_btiotest_LDADD = @GLIB_LIBS@ lib/libbluetooth.la
 
+test_uuidtest_SOURCES = test/uuidtest.c
+test_uuidtest_LDADD = lib/libbluetooth.la
+
 test_test_textfile_SOURCES = test/test-textfile.c src/textfile.h src/textfile.c
 
 dist_man_MANS += test/rctest.1 test/hciemu.1
@@ -184,14 +188,15 @@ else
 EXTRA_DIST += test/rctest.1 test/hciemu.1 test/bdaddr.8
 endif
 
-EXTRA_DIST += test/apitest test/hsplay test/hsmicro test/dbusdef.py \
-		test/monitor-bluetooth test/list-devices test/test-discovery \
-		test/test-manager test/test-adapter test/test-device \
-		test/test-service test/test-serial test/test-telephony \
-		test/test-network test/simple-agent test/simple-service \
-		test/simple-endpoint test/test-audio test/test-input \
-		test/test-attrib test/service-record.dtd test/service-did.xml \
-		test/service-spp.xml test/service-opp.xml test/service-ftp.xml
+EXTRA_DIST += test/apitest test/sap-client test/hsplay test/hsmicro \
+		test/dbusdef.py test/monitor-bluetooth test/list-devices \
+		test/test-discovery test/test-manager test/test-adapter \
+		test/test-device test/test-service test/test-serial \
+		test/test-telephony test/test-network test/simple-agent \
+		test/simple-service test/simple-endpoint test/test-audio \
+		test/test-input test/test-attrib test/test-sap-server \
+		test/service-record.dtd test/service-did.xml test/service-spp.xml \
+		test/service-opp.xml test/service-ftp.xml
 
 
 if HIDD

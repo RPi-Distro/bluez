@@ -47,6 +47,7 @@
 #include "manager.h"
 #include "device.h"
 #include "event.h"
+#include "oob.h"
 
 #define MGMT_BUF_SIZE 1024
 
@@ -92,6 +93,7 @@ static void read_version_complete(int sk, void *buf, size_t len)
 
 	memset(&hdr, 0, sizeof(hdr));
 	hdr.opcode = htobs(MGMT_OP_READ_INDEX_LIST);
+	hdr.index = htobs(MGMT_INDEX_NONE);
 	if (write(sk, &hdr, sizeof(hdr)) < 0)
 		error("Unable to read controller index list: %s (%d)",
 						strerror(errno), errno);
@@ -114,50 +116,32 @@ static void add_controller(uint16_t index)
 
 static void read_info(int sk, uint16_t index)
 {
-	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_read_info)];
-	struct mgmt_hdr *hdr = (void *) buf;
-	struct mgmt_cp_read_info *cp = (void *) &buf[sizeof(*hdr)];
+	struct mgmt_hdr hdr;
 
-	memset(buf, 0, sizeof(buf));
-	hdr->opcode = htobs(MGMT_OP_READ_INFO);
-	hdr->len = htobs(sizeof(*cp));
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.opcode = htobs(MGMT_OP_READ_INFO);
+	hdr.index = htobs(index);
 
-	cp->index = htobs(index);
-
-	if (write(sk, buf, sizeof(buf)) < 0)
+	if (write(sk, &hdr, sizeof(hdr)) < 0)
 		error("Unable to send read_info command: %s (%d)",
 						strerror(errno), errno);
 }
 
 static void get_connections(int sk, uint16_t index)
 {
-	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_get_connections)];
-	struct mgmt_hdr *hdr = (void *) buf;
-	struct mgmt_cp_get_connections *cp = (void *) &buf[sizeof(*hdr)];
+	struct mgmt_hdr hdr;
 
-	memset(buf, 0, sizeof(buf));
-	hdr->opcode = htobs(MGMT_OP_GET_CONNECTIONS);
-	hdr->len = htobs(sizeof(*cp));
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.opcode = htobs(MGMT_OP_GET_CONNECTIONS);
+	hdr.index = htobs(index);
 
-	cp->index = htobs(index);
-
-	if (write(sk, buf, sizeof(buf)) < 0)
+	if (write(sk, &hdr, sizeof(hdr)) < 0)
 		error("Unable to send get_connections command: %s (%d)",
 						strerror(errno), errno);
 }
 
-static void mgmt_index_added(int sk, void *buf, size_t len)
+static void mgmt_index_added(int sk, uint16_t index)
 {
-	struct mgmt_ev_index_added *ev = buf;
-	uint16_t index;
-
-	if (len < sizeof(*ev)) {
-		error("Too small index added event");
-		return;
-	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
-
 	add_controller(index);
 	read_info(sk, index);
 }
@@ -177,18 +161,8 @@ static void remove_controller(uint16_t index)
 	DBG("Removed controller %u", index);
 }
 
-static void mgmt_index_removed(int sk, void *buf, size_t len)
+static void mgmt_index_removed(int sk, uint16_t index)
 {
-	struct mgmt_ev_index_removed *ev = buf;
-	uint16_t index;
-
-	if (len < sizeof(*ev)) {
-		error("Too small index removed event");
-		return;
-	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
-
 	remove_controller(index);
 }
 
@@ -200,9 +174,9 @@ static int mgmt_set_mode(int index, uint16_t opcode, uint8_t val)
 
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(opcode);
+	hdr->index = htobs(index);
 	hdr->len = htobs(sizeof(*cp));
 
-	cp->index = htobs(index);
 	cp->val = val;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -287,37 +261,31 @@ static int mgmt_update_powered(int index, uint8_t powered)
 	return 0;
 }
 
-static void mgmt_powered(int sk, void *buf, size_t len)
+static void mgmt_powered(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_mode *ev = buf;
-	uint16_t index;
 
 	if (len < sizeof(*ev)) {
 		error("Too small powered event");
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
-
 	DBG("Controller %u powered %u", index, ev->val);
 
 	mgmt_update_powered(index, ev->val);
 }
 
-static void mgmt_discoverable(int sk, void *buf, size_t len)
+static void mgmt_discoverable(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_mode *ev = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 	uint8_t mode;
 
 	if (len < sizeof(*ev)) {
 		error("Too small discoverable event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("Controller %u discoverable %u", index, ev->val);
 
@@ -345,20 +313,17 @@ static void mgmt_discoverable(int sk, void *buf, size_t len)
 	adapter_mode_changed(adapter, mode);
 }
 
-static void mgmt_connectable(int sk, void *buf, size_t len)
+static void mgmt_connectable(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_mode *ev = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 	uint8_t mode;
 
 	if (len < sizeof(*ev)) {
 		error("Too small connectable event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("Controller %u connectable %u", index, ev->val);
 
@@ -386,19 +351,16 @@ static void mgmt_connectable(int sk, void *buf, size_t len)
 	adapter_mode_changed(adapter, mode);
 }
 
-static void mgmt_pairable(int sk, void *buf, size_t len)
+static void mgmt_pairable(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_mode *ev = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 
 	if (len < sizeof(*ev)) {
 		error("Too small pairable event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("Controller %u pairable %u", index, ev->val);
 
@@ -418,19 +380,16 @@ static void mgmt_pairable(int sk, void *buf, size_t len)
 	btd_adapter_pairable_changed(adapter, info->pairable);
 }
 
-static void mgmt_new_key(int sk, void *buf, size_t len)
+static void mgmt_new_key(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_new_key *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 
 	if (len != sizeof(*ev)) {
 		error("new_key event size mismatch (%zu != %zu)",
 							len, sizeof(*ev));
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("Controller %u new key of type %u pin_len %u", index,
 					ev->key.type, ev->key.pin_len);
@@ -455,11 +414,10 @@ static void mgmt_new_key(int sk, void *buf, size_t len)
 	btd_event_bonding_complete(&info->bdaddr, &ev->key.bdaddr, 0);
 }
 
-static void mgmt_device_connected(int sk, void *buf, size_t len)
+static void mgmt_device_connected(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_device_connected *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*ev)) {
@@ -467,7 +425,6 @@ static void mgmt_device_connected(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
 	ba2str(&ev->bdaddr, addr);
 
 	DBG("hci%u device %s connected", index, addr);
@@ -482,11 +439,11 @@ static void mgmt_device_connected(int sk, void *buf, size_t len)
 	btd_event_conn_complete(&info->bdaddr, &ev->bdaddr);
 }
 
-static void mgmt_device_disconnected(int sk, void *buf, size_t len)
+static void mgmt_device_disconnected(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_ev_device_disconnected *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*ev)) {
@@ -494,7 +451,6 @@ static void mgmt_device_disconnected(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
 	ba2str(&ev->bdaddr, addr);
 
 	DBG("hci%u device %s disconnected", index, addr);
@@ -509,11 +465,10 @@ static void mgmt_device_disconnected(int sk, void *buf, size_t len)
 	btd_event_disconn_complete(&info->bdaddr, &ev->bdaddr);
 }
 
-static void mgmt_connect_failed(int sk, void *buf, size_t len)
+static void mgmt_connect_failed(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_connect_failed *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*ev)) {
@@ -521,7 +476,6 @@ static void mgmt_connect_failed(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
 	ba2str(&ev->bdaddr, addr);
 
 	DBG("hci%u %s status %u", index, addr, ev->status);
@@ -556,9 +510,9 @@ static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
 
 		hdr->opcode = htobs(MGMT_OP_PIN_CODE_NEG_REPLY);
 		hdr->len = htobs(sizeof(*cp));
+		hdr->index = htobs(index);
 
 		cp = (void *) &buf[sizeof(*hdr)];
-		cp->index = htobs(index);
 		bacpy(&cp->bdaddr, bdaddr);
 
 		buf_len = sizeof(*hdr) + sizeof(*cp);
@@ -572,9 +526,9 @@ static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
 
 		hdr->opcode = htobs(MGMT_OP_PIN_CODE_REPLY);
 		hdr->len = htobs(sizeof(*cp));
+		hdr->index = htobs(index);
 
 		cp = (void *) &buf[sizeof(*hdr)];
-		cp->index = htobs(index);
 		bacpy(&cp->bdaddr, bdaddr);
 		cp->pin_len = pin_len;
 		memcpy(cp->pin_code, pin, pin_len);
@@ -588,11 +542,10 @@ static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
 	return 0;
 }
 
-static void mgmt_pin_code_request(int sk, void *buf, size_t len)
+static void mgmt_pin_code_request(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_pin_code_request *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 	int err;
 
@@ -601,7 +554,6 @@ static void mgmt_pin_code_request(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
 	ba2str(&ev->bdaddr, addr);
 
 	DBG("hci%u %s", index, addr);
@@ -638,9 +590,9 @@ static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, gboolean success)
 		hdr->opcode = htobs(MGMT_OP_USER_CONFIRM_NEG_REPLY);
 
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
 	cp = (void *) &buf[sizeof(*hdr)];
-	cp->index = htobs(index);
 	bacpy(&cp->bdaddr, bdaddr);
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -649,11 +601,11 @@ static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, gboolean success)
 	return 0;
 }
 
-static void mgmt_user_confirm_request(int sk, void *buf, size_t len)
+static void mgmt_user_confirm_request(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_ev_user_confirm_request *ev = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 	int err;
 
@@ -662,7 +614,6 @@ static void mgmt_user_confirm_request(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
 	ba2str(&ev->bdaddr, addr);
 
 	DBG("hci%u %s", index, addr);
@@ -699,6 +650,7 @@ static int mgmt_add_uuid(int index, uuid_t *uuid, uint8_t svc_hint)
 	struct mgmt_hdr *hdr = (void *) buf;
 	struct mgmt_cp_add_uuid *cp = (void *) &buf[sizeof(*hdr)];
 	uuid_t uuid128;
+	uint128_t uint128;
 
 	DBG("index %d", index);
 
@@ -707,9 +659,11 @@ static int mgmt_add_uuid(int index, uuid_t *uuid, uint8_t svc_hint)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_ADD_UUID);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
-	memcpy(cp->uuid, uuid128.value.uuid128.data, 16);
+	ntoh128((uint128_t *) uuid128.value.uuid128.data, &uint128);
+	htob128(&uint128, (uint128_t *) cp->uuid);
+
 	cp->svc_hint = svc_hint;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -724,6 +678,7 @@ static int mgmt_remove_uuid(int index, uuid_t *uuid)
 	struct mgmt_hdr *hdr = (void *) buf;
 	struct mgmt_cp_remove_uuid *cp = (void *) &buf[sizeof(*hdr)];
 	uuid_t uuid128;
+	uint128_t uint128;
 
 	DBG("index %d", index);
 
@@ -732,9 +687,10 @@ static int mgmt_remove_uuid(int index, uuid_t *uuid)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_REMOVE_UUID);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
-	memcpy(cp->uuid, uuid128.value.uuid128.data, 16);
+	ntoh128((uint128_t *) uuid128.value.uuid128.data, &uint128);
+	htob128(&uint128, (uint128_t *) cp->uuid);
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
 		return -errno;
@@ -787,13 +743,12 @@ static int mgmt_set_powered(int index, gboolean powered)
 	return mgmt_set_mode(index, MGMT_OP_SET_POWERED, powered);
 }
 
-static void read_info_complete(int sk, void *buf, size_t len)
+static void read_info_complete(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_rp_read_info *rp = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
 	uint8_t mode;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*rp)) {
@@ -801,7 +756,6 @@ static void read_info_complete(int sk, void *buf, size_t len)
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&rp->index));
 	if (index > max_index) {
 		error("Unexpected index %u in read info complete", index);
 		return;
@@ -832,6 +786,7 @@ static void read_info_complete(int sk, void *buf, size_t len)
 	DBG("hci%u enabled %u discoverable %u pairable %u sec_mode %u", index,
 					info->enabled, info->discoverable,
 					info->pairable, info->sec_mode);
+	DBG("hci%u name %s", index, (char *) rp->name);
 
 	adapter = btd_manager_register_adapter(index);
 	if (adapter == NULL) {
@@ -850,40 +805,37 @@ static void read_info_complete(int sk, void *buf, size_t len)
 	else
 		mgmt_set_powered(index, TRUE);
 
+	adapter_update_local_name(adapter, (char *) rp->name);
+
 	btd_adapter_unref(adapter);
 }
 
-static void set_powered_complete(int sk, void *buf, size_t len)
+static void set_powered_complete(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_mode *rp = buf;
-	uint16_t index;
 
 	if (len < sizeof(*rp)) {
 		error("Too small set powered complete event");
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&rp->index));
-
 	DBG("hci%d powered %u", index, rp->val);
 
 	mgmt_update_powered(index, rp->val);
 }
 
-static void set_discoverable_complete(int sk, void *buf, size_t len)
+static void set_discoverable_complete(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_mode *rp = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 	uint8_t mode;
 
 	if (len < sizeof(*rp)) {
 		error("Too small set discoverable complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	DBG("hci%d discoverable %u", index, rp->val);
 
@@ -909,19 +861,17 @@ static void set_discoverable_complete(int sk, void *buf, size_t len)
 	adapter_mode_changed(adapter, mode);
 }
 
-static void set_connectable_complete(int sk, void *buf, size_t len)
+static void set_connectable_complete(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_mode *rp = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 
 	if (len < sizeof(*rp)) {
 		error("Too small set connectable complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	DBG("hci%d connectable %u", index, rp->val);
 
@@ -939,19 +889,17 @@ static void set_connectable_complete(int sk, void *buf, size_t len)
 		adapter_mode_changed(adapter, rp->val ? SCAN_PAGE : 0);
 }
 
-static void set_pairable_complete(int sk, void *buf, size_t len)
+static void set_pairable_complete(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_mode *rp = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	uint16_t index;
 
 	if (len < sizeof(*rp)) {
 		error("Too small set pairable complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	DBG("hci%d pairable %u", index, rp->val);
 
@@ -971,19 +919,16 @@ static void set_pairable_complete(int sk, void *buf, size_t len)
 	btd_adapter_pairable_changed(adapter, info->pairable);
 }
 
-static void disconnect_complete(int sk, void *buf, size_t len)
+static void disconnect_complete(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_rp_disconnect *rp = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*rp)) {
 		error("Too small disconnect complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	ba2str(&rp->bdaddr, addr);
 
@@ -1002,19 +947,16 @@ static void disconnect_complete(int sk, void *buf, size_t len)
 						HCI_CONNECTION_TERMINATED);
 }
 
-static void pair_device_complete(int sk, void *buf, size_t len)
+static void pair_device_complete(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_rp_pair_device *rp = buf;
 	struct controller_info *info;
-	uint16_t index;
 	char addr[18];
 
 	if (len < sizeof(*rp)) {
 		error("Too small pair_device complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	ba2str(&rp->bdaddr, addr);
 
@@ -1030,11 +972,11 @@ static void pair_device_complete(int sk, void *buf, size_t len)
 	btd_event_bonding_complete(&info->bdaddr, &rp->bdaddr, rp->status);
 }
 
-static void get_connections_complete(int sk, void *buf, size_t len)
+static void get_connections_complete(int sk, uint16_t index, void *buf,
+								size_t len)
 {
 	struct mgmt_rp_get_connections *rp = buf;
 	struct controller_info *info;
-	uint16_t index;
 	int i;
 
 	if (len < sizeof(*rp)) {
@@ -1046,8 +988,6 @@ static void get_connections_complete(int sk, void *buf, size_t len)
 		error("Too small get_connections complete event");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
 
 	if (index > max_index) {
 		error("Unexpected index %u in get_connections complete",
@@ -1065,7 +1005,80 @@ static void get_connections_complete(int sk, void *buf, size_t len)
 	read_info(sk, index);
 }
 
-static void mgmt_cmd_complete(int sk, void *buf, size_t len)
+static void set_local_name_complete(int sk, uint16_t index, void *buf,
+								size_t len)
+{
+	struct mgmt_cp_set_local_name *rp = buf;
+	struct controller_info *info;
+	struct btd_adapter *adapter;
+
+	if (len < sizeof(*rp)) {
+		error("Too small set_local_name complete event");
+		return;
+	}
+
+	DBG("hci%d name %s", index, (char *) rp->name);
+
+	if (index > max_index) {
+		error("Unexpected index %u in set_local_name complete", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	adapter = manager_find_adapter(&info->bdaddr);
+	if (adapter == NULL) {
+		DBG("Adapter not found");
+		return;
+	}
+
+	adapter_update_local_name(adapter, (char *) rp->name);
+}
+
+static void read_local_oob_data_complete(int sk, uint16_t index, void *buf,
+								size_t len)
+{
+	struct mgmt_rp_read_local_oob_data *rp = buf;
+	struct btd_adapter *adapter;
+
+	if (len != sizeof(*rp)) {
+		error("Wrong read_local_oob_data_complete event size");
+		return;
+	}
+
+	if (index > max_index) {
+		error("Unexpected index %u in read_local_oob_data_complete",
+								index);
+		return;
+	}
+
+	DBG("hci%u", index);
+
+	adapter = manager_find_adapter_by_id(index);
+
+	if (adapter)
+		oob_read_local_data_complete(adapter, rp->hash, rp->randomizer);
+}
+
+static void read_local_oob_data_failed(int sk, uint16_t index)
+{
+	struct btd_adapter *adapter;
+
+	if (index > max_index) {
+		error("Unexpected index %u in read_local_oob_data_failed",
+								index);
+		return;
+	}
+
+	DBG("hci%u", index);
+
+	adapter = manager_find_adapter_by_id(index);
+
+	if (adapter)
+		oob_read_local_data_complete(adapter, NULL, NULL);
+}
+
+static void mgmt_cmd_complete(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_cmd_complete *ev = buf;
 	uint16_t opcode;
@@ -1079,27 +1092,29 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 
 	opcode = btohs(bt_get_unaligned(&ev->opcode));
 
+	len -= sizeof(*ev);
+
 	switch (opcode) {
 	case MGMT_OP_READ_VERSION:
-		read_version_complete(sk, ev->data, len - sizeof(*ev));
+		read_version_complete(sk, ev->data, len);
 		break;
 	case MGMT_OP_READ_INDEX_LIST:
-		read_index_list_complete(sk, ev->data, len - sizeof(*ev));
+		read_index_list_complete(sk, ev->data, len);
 		break;
 	case MGMT_OP_READ_INFO:
-		read_info_complete(sk, ev->data, len - sizeof(*ev));
+		read_info_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_SET_POWERED:
-		set_powered_complete(sk, ev->data, len - sizeof(*ev));
+		set_powered_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_SET_DISCOVERABLE:
-		set_discoverable_complete(sk, ev->data, len - sizeof(*ev));
+		set_discoverable_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_SET_CONNECTABLE:
-		set_connectable_complete(sk, ev->data, len - sizeof(*ev));
+		set_connectable_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_SET_PAIRABLE:
-		set_pairable_complete(sk, ev->data, len - sizeof(*ev));
+		set_pairable_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_ADD_UUID:
 		DBG("add_uuid complete");
@@ -1121,10 +1136,10 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 		break;
 	case MGMT_OP_DISCONNECT:
 		DBG("disconnect complete");
-		disconnect_complete(sk, ev->data, len - sizeof(*ev));
+		disconnect_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_GET_CONNECTIONS:
-		get_connections_complete(sk, ev->data, len - sizeof(*ev));
+		get_connections_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_PIN_CODE_REPLY:
 		DBG("pin_code_reply complete");
@@ -1136,7 +1151,7 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 		DBG("set_io_capability complete");
 		break;
 	case MGMT_OP_PAIR_DEVICE:
-		pair_device_complete(sk, ev->data, len - sizeof(*ev));
+		pair_device_complete(sk, index, ev->data, len);
 		break;
 	case MGMT_OP_USER_CONFIRM_REPLY:
 		DBG("user_confirm_reply complete");
@@ -1144,13 +1159,25 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 	case MGMT_OP_USER_CONFIRM_NEG_REPLY:
 		DBG("user_confirm_net_reply complete");
 		break;
+	case MGMT_OP_SET_LOCAL_NAME:
+		set_local_name_complete(sk, index, ev->data, len);
+		break;
+	case MGMT_OP_READ_LOCAL_OOB_DATA:
+		read_local_oob_data_complete(sk, index, ev->data, len);
+		break;
+	case MGMT_OP_ADD_REMOTE_OOB_DATA:
+		DBG("add_remote_oob_data complete");
+		break;
+	case MGMT_OP_REMOVE_REMOTE_OOB_DATA:
+		DBG("remove_remote_oob_data complete");
+		break;
 	default:
 		error("Unknown command complete for opcode %u", opcode);
 		break;
 	}
 }
 
-static void mgmt_cmd_status(int sk, void *buf, size_t len)
+static void mgmt_cmd_status(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_cmd_status *ev = buf;
 	uint16_t opcode;
@@ -1162,36 +1189,36 @@ static void mgmt_cmd_status(int sk, void *buf, size_t len)
 
 	opcode = btohs(bt_get_unaligned(&ev->opcode));
 
-	DBG("status %u opcode %u", ev->status, opcode);
+	DBG("status %u opcode %u (index %u)", ev->status, opcode, index);
+
+	switch (opcode) {
+	case MGMT_OP_READ_LOCAL_OOB_DATA:
+		read_local_oob_data_failed(sk, index);
+		break;
+	}
 }
 
-static void mgmt_controller_error(int sk, void *buf, size_t len)
+static void mgmt_controller_error(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_controller_error *ev = buf;
-	uint16_t index;
 
 	if (len < sizeof(*ev)) {
 		error("Too small management controller error event packet");
 		return;
 	}
 
-	index = btohs(bt_get_unaligned(&ev->index));
-
 	DBG("index %u error_code %u", index, ev->error_code);
 }
 
-static void mgmt_auth_failed(int sk, void *buf, size_t len)
+static void mgmt_auth_failed(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct controller_info *info;
 	struct mgmt_ev_auth_failed *ev = buf;
-	uint16_t index;
 
 	if (len < sizeof(*ev)) {
 		error("Too small mgmt_auth_failed event packet");
 		return;
 	}
-
-	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("hci%u auth failed status %u", index, ev->status);
 
@@ -1205,13 +1232,38 @@ static void mgmt_auth_failed(int sk, void *buf, size_t len)
 	btd_event_bonding_complete(&info->bdaddr, &ev->bdaddr, ev->status);
 }
 
+static void mgmt_local_name_changed(int sk, uint16_t index, void *buf, size_t len)
+{
+	struct mgmt_cp_set_local_name *ev = buf;
+	struct controller_info *info;
+	struct btd_adapter *adapter;
+
+	if (len < sizeof(*ev)) {
+		error("Too small mgmt_local_name_changed event packet");
+		return;
+	}
+
+	DBG("hci%u local name changed: %s", index, (char *) ev->name);
+
+	if (index > max_index) {
+		error("Unexpected index %u in name_changed event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	adapter = manager_find_adapter(&info->bdaddr);
+	if (adapter)
+		adapter_update_local_name(adapter, (char *) ev->name);
+}
+
 static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data)
 {
 	char buf[MGMT_BUF_SIZE];
 	struct mgmt_hdr *hdr = (void *) buf;
 	int sk;
 	ssize_t ret;
-	uint16_t len, opcode;
+	uint16_t len, opcode, index;
 
 	DBG("cond %d", cond);
 
@@ -1241,6 +1293,7 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 
 	opcode = btohs(bt_get_unaligned(&hdr->opcode));
 	len = btohs(bt_get_unaligned(&hdr->len));
+	index = btohs(bt_get_unaligned(&hdr->index));
 
 	if (ret != MGMT_HDR_SIZE + len) {
 		error("Packet length mismatch. ret %zd len %u", ret, len);
@@ -1249,55 +1302,58 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 
 	switch (opcode) {
 	case MGMT_EV_CMD_COMPLETE:
-		mgmt_cmd_complete(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_cmd_complete(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_CMD_STATUS:
-		mgmt_cmd_status(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_cmd_status(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_CONTROLLER_ERROR:
-		mgmt_controller_error(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_controller_error(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_INDEX_ADDED:
-		mgmt_index_added(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_index_added(sk, index);
 		break;
 	case MGMT_EV_INDEX_REMOVED:
-		mgmt_index_removed(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_index_removed(sk, index);
 		break;
 	case MGMT_EV_POWERED:
-		mgmt_powered(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_powered(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_DISCOVERABLE:
-		mgmt_discoverable(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_discoverable(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_CONNECTABLE:
-		mgmt_connectable(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_connectable(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_PAIRABLE:
-		mgmt_pairable(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_pairable(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_NEW_KEY:
-		mgmt_new_key(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_new_key(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_DEVICE_CONNECTED:
-		mgmt_device_connected(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_device_connected(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_DEVICE_DISCONNECTED:
-		mgmt_device_disconnected(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_device_disconnected(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_CONNECT_FAILED:
-		mgmt_connect_failed(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_connect_failed(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_PIN_CODE_REQUEST:
-		mgmt_pin_code_request(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_pin_code_request(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_USER_CONFIRM_REQUEST:
-		mgmt_user_confirm_request(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_user_confirm_request(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_AUTH_FAILED:
-		mgmt_auth_failed(sk, buf + MGMT_HDR_SIZE, len);
+		mgmt_auth_failed(sk, index, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_LOCAL_NAME_CHANGED:
+		mgmt_local_name_changed(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	default:
-		error("Unknown Management opcode %u", opcode);
+		error("Unknown Management opcode %u (index %u)", opcode, index);
 		break;
 	}
 
@@ -1328,6 +1384,7 @@ static int mgmt_setup(void)
 
 	memset(&hdr, 0, sizeof(hdr));
 	hdr.opcode = htobs(MGMT_OP_READ_VERSION);
+	hdr.index = htobs(MGMT_INDEX_NONE);
 	if (write(dd, &hdr, sizeof(hdr)) < 0) {
 		err = -errno;
 		goto fail;
@@ -1377,8 +1434,8 @@ static int mgmt_set_dev_class(int index, uint8_t major, uint8_t minor)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_SET_DEV_CLASS);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
 	cp->major = major;
 	cp->minor = minor;
 
@@ -1430,8 +1487,23 @@ static int mgmt_resolve_name(int index, bdaddr_t *bdaddr)
 
 static int mgmt_set_name(int index, const char *name)
 {
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_set_local_name)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_set_local_name *cp = (void *) &buf[sizeof(*hdr)];
+
 	DBG("index %d, name %s", index, name);
-	return -ENOSYS;
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_SET_LOCAL_NAME);
+	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
+
+	strncpy((char *) cp->name, name, sizeof(cp->name) - 1);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static int mgmt_cancel_resolve_name(int index, bdaddr_t *bdaddr)
@@ -1554,8 +1626,8 @@ static int mgmt_disconnect(int index, bdaddr_t *bdaddr)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_DISCONNECT);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
 	bacpy(&cp->bdaddr, bdaddr);
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -1577,8 +1649,8 @@ static int mgmt_remove_bonding(int index, bdaddr_t *bdaddr)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_REMOVE_KEY);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
 	bacpy(&cp->bdaddr, bdaddr);
 	cp->disconnect = 1;
 
@@ -1660,9 +1732,9 @@ static int mgmt_load_keys(int index, GSList *keys, gboolean debug_keys)
 	hdr = (void *) buf;
 	hdr->opcode = htobs(MGMT_OP_LOAD_KEYS);
 	hdr->len = htobs(cp_size);
+	hdr->index = htobs(index);
 
 	cp = (void *) (buf + sizeof(*hdr));
-	cp->index = htobs(index);
 	cp->debug_keys = debug_keys;
 	cp->key_count = htobs(key_count);
 
@@ -1696,8 +1768,8 @@ static int mgmt_set_io_capability(int index, uint8_t io_capability)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_SET_IO_CAPABILITY);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
 	cp->io_capability = io_capability;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -1719,8 +1791,8 @@ static int mgmt_create_bonding(int index, bdaddr_t *bdaddr, uint8_t io_cap)
 	memset(buf, 0, sizeof(buf));
 	hdr->opcode = htobs(MGMT_OP_PAIR_DEVICE);
 	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
 
-	cp->index = htobs(index);
 	bacpy(&cp->bdaddr, bdaddr);
 	cp->io_cap = io_cap;
 
@@ -1738,6 +1810,73 @@ static int mgmt_cancel_bonding(int index, bdaddr_t *bdaddr)
 	DBG("hci%d bdaddr %s", index, addr);
 
 	return -ENOSYS;
+}
+
+static int mgmt_read_local_oob_data(int index)
+{
+	struct mgmt_hdr hdr;
+
+	DBG("hci%d", index);
+
+	hdr.opcode = htobs(MGMT_OP_READ_LOCAL_OOB_DATA);
+	hdr.len = 0;
+	hdr.index = htobs(index);
+
+	if (write(mgmt_sock, &hdr, sizeof(hdr)) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static int mgmt_add_remote_oob_data(int index, bdaddr_t *bdaddr,
+					uint8_t *hash, uint8_t *randomizer)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_add_remote_oob_data)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_add_remote_oob_data *cp = (void *) &buf[sizeof(*hdr)];
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s", index, addr);
+
+	memset(buf, 0, sizeof(buf));
+
+	hdr->opcode = htobs(MGMT_OP_ADD_REMOTE_OOB_DATA);
+	hdr->index = htobs(index);
+	hdr->len = htobs(sizeof(*cp));
+
+	bacpy(&cp->bdaddr, bdaddr);
+	memcpy(cp->hash, hash, 16);
+	memcpy(cp->randomizer, randomizer, 16);
+
+	if (write(mgmt_sock, &buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static int mgmt_remove_remote_oob_data(int index, bdaddr_t *bdaddr)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_remove_remote_oob_data)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_remove_remote_oob_data *cp = (void *) &buf[sizeof(*hdr)];
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s", index, addr);
+
+	memset(buf, 0, sizeof(buf));
+
+	hdr->opcode = htobs(MGMT_OP_REMOVE_REMOTE_OOB_DATA);
+	hdr->index = htobs(index);
+	hdr->len = htobs(sizeof(*cp));
+
+	bacpy(&cp->bdaddr, bdaddr);
+
+	if (write(mgmt_sock, &buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static struct btd_adapter_ops mgmt_ops = {
@@ -1779,6 +1918,9 @@ static struct btd_adapter_ops mgmt_ops = {
 	.set_io_capability = mgmt_set_io_capability,
 	.create_bonding = mgmt_create_bonding,
 	.cancel_bonding = mgmt_cancel_bonding,
+	.read_local_oob_data = mgmt_read_local_oob_data,
+	.add_remote_oob_data = mgmt_add_remote_oob_data,
+	.remove_remote_oob_data = mgmt_remove_remote_oob_data,
 };
 
 static int mgmt_init(void)
