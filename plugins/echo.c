@@ -38,7 +38,7 @@
 
 #include "plugin.h"
 #include "adapter.h"
-#include "logging.h"
+#include "log.h"
 
 static gboolean session_event(GIOChannel *chan,
 					GIOCondition cond, gpointer data)
@@ -151,14 +151,14 @@ static struct btd_adapter_driver echo_server = {
 
 static int echo_init(void)
 {
-	debug("Setup echo plugin");
+	DBG("Setup echo plugin");
 
 	return btd_register_adapter_driver(&echo_server);
 }
 
 static void echo_exit(void)
 {
-	debug("Cleanup echo plugin");
+	DBG("Cleanup echo plugin");
 
 	btd_unregister_adapter_driver(&echo_server);
 }

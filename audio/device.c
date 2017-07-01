@@ -43,7 +43,7 @@
 #include <dbus/dbus.h>
 #include <gdbus.h>
 
-#include "logging.h"
+#include "log.h"
 #include "textfile.h"
 #include "../src/adapter.h"
 #include "../src/device.h"
@@ -157,7 +157,7 @@ static void device_set_state(struct audio_device *dev, audio_state_t new_state)
 		priv->authorized = FALSE;
 
 	if (dev->priv->state == new_state) {
-		debug("state change attempted from %s to %s",
+		DBG("state change attempted from %s to %s",
 							state_str, state_str);
 		return;
 	}
@@ -345,6 +345,11 @@ static void device_sink_cb(struct audio_device *dev,
 			device_remove_control_timer(dev);
 			avrcp_disconnect(dev);
 		}
+		if (priv->hs_state != HEADSET_STATE_DISCONNECTED &&
+								priv->dc_req) {
+			headset_shutdown(dev);
+			break;
+		}
 		if (priv->hs_state == HEADSET_STATE_DISCONNECTED)
 			device_set_state(dev, AUDIO_STATE_DISCONNECTED);
 		else if (old_state == SINK_STATE_CONNECTING) {
@@ -519,10 +524,15 @@ static DBusMessage *dev_disconnect(DBusConnection *conn, DBusMessage *msg,
 
 	priv->dc_req = dbus_message_ref(msg);
 
-	if (priv->hs_state != HEADSET_STATE_DISCONNECTED)
-		headset_shutdown(dev);
-	else if (dev->sink && priv->sink_state != SINK_STATE_DISCONNECTED)
+	if (dev->control) {
+		device_remove_control_timer(dev);
+		avrcp_disconnect(dev);
+	}
+
+	if (dev->sink && priv->sink_state != SINK_STATE_DISCONNECTED)
 		sink_shutdown(dev->sink);
+	else if (priv->hs_state != HEADSET_STATE_DISCONNECTED)
+		headset_shutdown(dev);
 	else {
 		dbus_message_unref(priv->dc_req);
 		priv->dc_req = NULL;
@@ -605,7 +615,7 @@ struct audio_device *audio_device_register(DBusConnection *conn,
 		return NULL;
 	}
 
-	debug("Registered interface %s on path %s", AUDIO_INTERFACE,
+	DBG("Registered interface %s on path %s", AUDIO_INTERFACE,
 								dev->path);
 
 	if (sink_callback_id == 0)
