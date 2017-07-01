@@ -135,6 +135,8 @@ struct btd_adapter {
 	gboolean cache_enable;
 
 	gint ref;
+
+	GSList *powered_callbacks;
 };
 
 static void adapter_set_pairable_timeout(struct btd_adapter *adapter,
@@ -155,12 +157,13 @@ static inline DBusMessage *adapter_not_ready(DBusMessage *msg)
 static inline DBusMessage *failed_strerror(DBusMessage *msg, int err)
 {
 	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-							strerror(err));
+							"%s", strerror(err));
 }
 
 static inline DBusMessage *not_in_progress(DBusMessage *msg, const char *str)
 {
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotInProgress", str);
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotInProgress",
+								"%s", str);
 }
 
 static inline DBusMessage *not_authorized(DBusMessage *msg)
@@ -206,6 +209,34 @@ void clear_found_devices_list(struct btd_adapter *adapter)
 	adapter->found_devices = NULL;
 }
 
+static void update_ext_inquiry_response(struct btd_adapter *adapter)
+{
+	uint8_t fec = 0, data[240];
+	struct hci_dev *dev = &adapter->dev;
+	int dd;
+
+	if (!(dev->features[6] & LMP_EXT_INQ))
+		return;
+
+	memset(data, 0, sizeof(data));
+
+	dd = hci_open_dev(adapter->dev_id);
+	if (dd < 0)
+		return;
+
+	if (dev->ssp_mode > 0)
+		create_ext_inquiry_response((char *) dev->name,
+						adapter->tx_power,
+						adapter->services, data);
+
+	if (hci_write_ext_inquiry_response(dd, fec, data,
+						HCI_REQ_TIMEOUT) < 0)
+		error("Can't write extended inquiry response: %s (%d)",
+						strerror(errno), errno);
+
+	hci_close_dev(dd);
+}
+
 static int adapter_set_service_classes(struct btd_adapter *adapter,
 							uint8_t value)
 {
@@ -216,11 +247,16 @@ static int adapter_set_service_classes(struct btd_adapter *adapter,
 	adapter->wanted_cod &= 0x00ffff;
 	adapter->wanted_cod |= (value << 16);
 
-	/* If we already have the CoD we want or the cache is enabled or an
-	 * existing CoD write is in progress just bail out */
-	if (adapter->current_cod == adapter->wanted_cod ||
-			adapter->cache_enable || adapter->pending_cod)
+	/* If the cache is enabled or an existing CoD write is in progress
+	 * just bail out */
+	if (adapter->cache_enable || adapter->pending_cod)
 		return 0;
+
+	/* If we already have the CoD we want, update EIR and return */
+	if (adapter->current_cod == adapter->wanted_cod) {
+		update_ext_inquiry_response(adapter);
+		return 0;
+	}
 
 	DBG("Changing service classes to 0x%06x", adapter->wanted_cod);
 
@@ -818,34 +854,6 @@ static DBusMessage *set_pairable_timeout(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
-static void update_ext_inquiry_response(struct btd_adapter *adapter)
-{
-	uint8_t fec = 0, data[240];
-	struct hci_dev *dev = &adapter->dev;
-	int dd;
-
-	if (!(dev->features[6] & LMP_EXT_INQ))
-		return;
-
-	memset(data, 0, sizeof(data));
-
-	dd = hci_open_dev(adapter->dev_id);
-	if (dd < 0)
-		return;
-
-	if (dev->ssp_mode > 0)
-		create_ext_inquiry_response((char *) dev->name,
-						adapter->tx_power,
-						adapter->services, data);
-
-	if (hci_write_ext_inquiry_response(dd, fec, data,
-						HCI_REQ_TIMEOUT) < 0)
-		error("Can't write extended inquiry response: %s (%d)",
-						strerror(errno), errno);
-
-	hci_close_dev(dd);
-}
-
 void adapter_set_class_complete(bdaddr_t *bdaddr, uint8_t status)
 {
 	uint8_t class[3];
@@ -993,6 +1001,9 @@ static DBusMessage *set_name(DBusConnection *conn, DBusMessage *msg,
 	if (!adapter->up) {
 		strncpy((char *) adapter->dev.name, name, MAX_NAME_LENGTH);
 		write_local_name(&adapter->bdaddr, name);
+		emit_property_changed(connection, adapter->path,
+					ADAPTER_INTERFACE, "Name",
+					DBUS_TYPE_STRING, &name);
 	} else {
 		int err = adapter_ops->set_name(adapter->dev_id, name);
 		if (err < 0)
@@ -1052,7 +1063,7 @@ static void adapter_update_devices(struct btd_adapter *adapter)
 
 	emit_array_property_changed(connection, adapter->path,
 					ADAPTER_INTERFACE, "Devices",
-					DBUS_TYPE_OBJECT_PATH, &devices);
+					DBUS_TYPE_OBJECT_PATH, &devices, i);
 	g_free(devices);
 }
 
@@ -1070,7 +1081,7 @@ static void adapter_emit_uuids_updated(struct btd_adapter *adapter)
 	}
 
 	emit_array_property_changed(connection, adapter->path,
-			ADAPTER_INTERFACE, "UUIDs", DBUS_TYPE_STRING, &uuids);
+			ADAPTER_INTERFACE, "UUIDs", DBUS_TYPE_STRING, &uuids, i);
 
 	g_strfreev(uuids);
 }
@@ -2195,6 +2206,18 @@ static void adapter_disable_cod_cache(struct btd_adapter *adapter)
 		adapter->pending_cod = adapter->wanted_cod;
 }
 
+static void call_adapter_powered_callbacks(struct btd_adapter *adapter,
+						gboolean powered)
+{
+	GSList *l;
+
+	for (l = adapter->powered_callbacks; l; l = l->next) {
+		btd_adapter_powered_cb cb = l->data;
+
+		cb(adapter, powered);
+       }
+}
+
 static int adapter_up(struct btd_adapter *adapter, const char *mode)
 {
 	char srcaddr[18];
@@ -2275,6 +2298,8 @@ proceed:
 					ADAPTER_INTERFACE, "Powered",
 					DBUS_TYPE_BOOLEAN, &powered);
 
+	call_adapter_powered_callbacks(adapter, TRUE);
+
 	adapter_disable_cod_cache(adapter);
 
 	return 0;
@@ -2292,7 +2317,7 @@ int adapter_start(struct btd_adapter *adapter)
 	if (hci_devinfo(adapter->dev_id, &di) < 0)
 		return -errno;
 
-	if (hci_test_bit(HCI_RAW, &di.flags)) {
+	if (ignore_device(&di)) {
 		dev->ignore = 1;
 		return -1;
 	}
@@ -2350,8 +2375,6 @@ int adapter_start(struct btd_adapter *adapter)
 	}
 
 	memcpy(dev->features, features, 8);
-
-	adapter_ops->read_name(adapter->dev_id);
 
 	if (!(features[6] & LMP_SIMPLE_PAIR))
 		goto setup;
@@ -2480,6 +2503,9 @@ int adapter_stop(struct btd_adapter *adapter)
 	adapter->state = DISCOVER_TYPE_NONE;
 	adapter->cache_enable = TRUE;
 	adapter->pending_cod = 0;
+	adapter->off_requested = FALSE;
+
+	call_adapter_powered_callbacks(adapter, FALSE);
 
 	info("Adapter %s has been disabled", adapter->path);
 
@@ -2694,6 +2720,7 @@ static void append_dict_valist(DBusMessageIter *iter,
 	DBusMessageIter dict;
 	const char *key;
 	int type;
+	int n_elements;
 	void *val;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
@@ -2705,7 +2732,13 @@ static void append_dict_valist(DBusMessageIter *iter,
 	while (key) {
 		type = va_arg(var_args, int);
 		val = va_arg(var_args, void *);
-		dict_append_entry(&dict, key, type, val);
+		if (type == DBUS_TYPE_ARRAY) {
+			n_elements = va_arg(var_args, int);
+			if (n_elements > 0)
+				dict_append_array(&dict, key, DBUS_TYPE_STRING,
+						val, n_elements);
+		} else
+			dict_append_entry(&dict, key, type, val);
 		key = va_arg(var_args, char *);
 	}
 
@@ -2736,8 +2769,102 @@ static void emit_device_found(const char *path, const char *address,
 	g_dbus_send_message(connection, signal);
 }
 
+static char **get_eir_uuids(uint8_t *eir_data, size_t *uuid_count)
+{
+	uint16_t len = 0;
+	char **uuids;
+	size_t total;
+	size_t uuid16_count = 0;
+	size_t uuid32_count = 0;
+	size_t uuid128_count = 0;
+	uint8_t *uuid16;
+	uint8_t *uuid32;
+	uint8_t *uuid128;
+	uuid_t service;
+	unsigned int i;
+
+	while (len < EIR_DATA_LENGTH - 1) {
+		uint8_t type = eir_data[1];
+		uint8_t field_len = eir_data[0];
+
+		/* Check for the end of EIR */
+		if (field_len == 0)
+			break;
+
+		switch (type) {
+		case EIR_UUID16_SOME:
+		case EIR_UUID16_ALL:
+			uuid16_count = field_len / 2;
+			uuid16 = &eir_data[2];
+			break;
+		case EIR_UUID32_SOME:
+		case EIR_UUID32_ALL:
+			uuid32_count = field_len / 4;
+			uuid32 = &eir_data[2];
+			break;
+		case EIR_UUID128_SOME:
+		case EIR_UUID128_ALL:
+			uuid128_count = field_len / 16;
+			uuid128 = &eir_data[2];
+			break;
+		}
+
+		len += field_len + 1;
+		eir_data += field_len + 1;
+	}
+
+	/* Bail out if got incorrect length */
+	if (len > EIR_DATA_LENGTH)
+		return NULL;
+
+	total = uuid16_count + uuid32_count + uuid128_count;
+	*uuid_count = total;
+
+	if (!total)
+		return NULL;
+
+	uuids = g_new0(char *, total + 1);
+
+	/* Generate uuids in SDP format (EIR data is Little Endian) */
+	service.type = SDP_UUID16;
+	for (i = 0; i < uuid16_count; i++) {
+		uint16_t val16 = uuid16[1];
+
+		val16 = (val16 << 8) + uuid16[0];
+		service.value.uuid16 = val16;
+		uuids[i] = bt_uuid2string(&service);
+		uuid16 += 2;
+	}
+
+	service.type = SDP_UUID32;
+	for (i = uuid16_count; i < uuid32_count + uuid16_count; i++) {
+		uint32_t val32 = uuid32[3];
+		int k;
+
+		for (k = 2; k >= 0; k--)
+			val32 = (val32 << 8) + uuid32[k];
+
+		service.value.uuid32 = val32;
+		uuids[i] = bt_uuid2string(&service);
+		uuid32 += 4;
+	}
+
+	service.type = SDP_UUID128;
+	for (i = uuid32_count + uuid16_count; i < total; i++) {
+		int k;
+
+		for (k = 0; k < 16; k++)
+			service.value.uuid128.data[k] = uuid128[16 - k - 1];
+
+		uuids[i] = bt_uuid2string(&service);
+		uuid128 += 16;
+	}
+
+	return uuids;
+}
+
 void adapter_emit_device_found(struct btd_adapter *adapter,
-				struct remote_dev_info *dev)
+				struct remote_dev_info *dev, uint8_t *eir_data)
 {
 	struct btd_device *device;
 	char peer_addr[18], local_addr[18];
@@ -2745,6 +2872,8 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 	dbus_bool_t paired = FALSE;
 	dbus_int16_t rssi = dev->rssi;
 	char *alias;
+	char **uuids = NULL;
+	size_t uuid_count = 0;
 
 	ba2str(&dev->bdaddr, peer_addr);
 	ba2str(&adapter->bdaddr, local_addr);
@@ -2764,6 +2893,10 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 	} else
 		alias = g_strdup(dev->alias);
 
+	/* Extract UUIDs from extended inquiry response if any*/
+	if (eir_data != NULL)
+		uuids = get_eir_uuids(eir_data, &uuid_count);
+
 	emit_device_found(adapter->path, paddr,
 			"Address", DBUS_TYPE_STRING, &paddr,
 			"Class", DBUS_TYPE_UINT32, &dev->class,
@@ -2773,15 +2906,17 @@ void adapter_emit_device_found(struct btd_adapter *adapter,
 			"Alias", DBUS_TYPE_STRING, &alias,
 			"LegacyPairing", DBUS_TYPE_BOOLEAN, &dev->legacy,
 			"Paired", DBUS_TYPE_BOOLEAN, &paired,
+			"UUIDs", DBUS_TYPE_ARRAY, &uuids, uuid_count,
 			NULL);
 
 	g_free(alias);
+	g_strfreev(uuids);
 }
 
 void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 				int8_t rssi, uint32_t class, const char *name,
 				const char *alias, gboolean legacy,
-				name_status_t name_status)
+				name_status_t name_status, uint8_t *eir_data)
 {
 	struct remote_dev_info *dev, match;
 
@@ -2820,7 +2955,7 @@ done:
 	adapter->found_devices = g_slist_sort(adapter->found_devices,
 						(GCompareFunc) dev_rssi_cmp);
 
-	adapter_emit_device_found(adapter, dev);
+	adapter_emit_device_found(adapter, dev, eir_data);
 }
 
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr)
@@ -3306,4 +3441,30 @@ int adapter_ops_setup(void)
 		return -EINVAL;
 
 	return adapter_ops->setup();
+}
+
+void btd_adapter_register_powered_callback(struct btd_adapter *adapter,
+						btd_adapter_powered_cb cb)
+{
+	adapter->powered_callbacks =
+			g_slist_append(adapter->powered_callbacks, cb);
+}
+
+void btd_adapter_unregister_powered_callback(struct btd_adapter *adapter,
+						btd_adapter_powered_cb cb)
+{
+	adapter->powered_callbacks =
+			g_slist_remove(adapter->powered_callbacks, cb);
+}
+
+int btd_adapter_set_fast_connectable(struct btd_adapter *adapter,
+							gboolean enable)
+{
+	if (!adapter_ops)
+		return -EINVAL;
+
+	if (!adapter->up)
+		return -EINVAL;
+
+	return adapter_ops->set_fast_connectable(adapter->dev_id, enable);
 }

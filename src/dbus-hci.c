@@ -463,6 +463,8 @@ static char *extract_eir_name(uint8_t *data, uint8_t *type)
 	switch (*type) {
 	case 0x08:
 	case 0x09:
+		if (!g_utf8_validate((char *) (data + 2), data[0] - 1, NULL))
+			return strdup("");
 		return strndup((char *) (data + 2), data[0] - 1);
 	}
 
@@ -515,7 +517,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	if (dev) {
 		adapter_update_found_devices(adapter, peer, rssi, class,
 						NULL, NULL, dev->legacy,
-						NAME_NOT_REQUIRED);
+						NAME_NOT_REQUIRED, data);
 		return;
 	}
 
@@ -566,7 +568,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 
 	/* add in the list to track name sent/pending */
 	adapter_update_found_devices(adapter, peer, rssi, class, name, alias,
-					legacy, name_status);
+					legacy, name_status, data);
 
 	g_free(name);
 	g_free(alias);
@@ -642,7 +644,7 @@ void hcid_dbus_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 	if (dev_info) {
 		g_free(dev_info->name);
 		dev_info->name = g_strdup(name);
-		adapter_emit_device_found(adapter, dev_info);
+		adapter_emit_device_found(adapter, dev_info, NULL);
 	}
 
 	if (device)
@@ -700,6 +702,13 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	/* Clear any previous debug key */
 	device_set_debug_key(device, NULL);
 
+	/* If this is not the first link key set a flag so a subsequent auth
+	 * complete event doesn't trigger SDP and remove any stored key */
+	if (old_key_type != 0xff) {
+		device_set_renewed_key(device, TRUE);
+		device_remove_bonding(device);
+	}
+
 	/* Store the link key only in runtime memory if it's a debug
 	 * key, else store the link key persistently if one of the
 	 * following is true:
@@ -734,18 +743,12 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	} else
 		temporary = TRUE;
 
-	/* If this is not the first link key set a flag so a subsequent auth
-	 * complete event doesn't trigger SDP */
-	if (old_key_type != 0xff)
-		device_set_renewed_key(device, TRUE);
-
 	if (!device_is_connected(device))
 		device_set_secmode3_conn(device, TRUE);
 	else if (!bonding && old_key_type == 0xff)
 		hcid_dbus_bonding_process_complete(local, peer, 0);
 
-	if (temporary)
-		device_set_temporary(device, TRUE);
+	device_set_temporary(device, temporary);
 
 	return 0;
 }

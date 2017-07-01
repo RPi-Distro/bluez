@@ -58,7 +58,7 @@ extern "C" {
 
 /* HCI controller types */
 #define HCI_BREDR	0x00
-#define HCI_80211	0x01
+#define HCI_AMP		0x01
 
 /* HCI device flags */
 enum {
@@ -528,6 +528,55 @@ typedef struct {
 } __attribute__ ((packed)) io_capability_neg_reply_cp;
 #define IO_CAPABILITY_NEG_REPLY_CP_SIZE 7
 
+#define OCF_CREATE_PHYSICAL_LINK		0x0035
+typedef struct {
+	uint8_t		handle;
+	uint8_t		key_length;
+	uint8_t		key_type;
+	uint8_t		key[32];
+} __attribute__ ((packed)) create_physical_link_cp;
+#define CREATE_PHYSICAL_LINK_CP_SIZE 35
+
+#define OCF_ACCEPT_PHYSICAL_LINK		0x0036
+
+#define OCF_DISCONNECT_PHYSICAL_LINK		0x0037
+typedef struct {
+	uint8_t		handle;
+	uint8_t		reason;
+} __attribute__ ((packed)) disconnect_physical_link_cp;
+#define DISCONNECT_PHYSICAL_LINK_CP_SIZE 2
+
+#define OCF_CREATE_LOGICAL_LINK		0x0038
+typedef struct {
+	uint8_t		handle;
+	uint8_t		tx_flow[16];
+	uint8_t		rx_flow[16];
+} __attribute__ ((packed)) create_logical_link_cp;
+#define CREATE_LOGICAL_LINK_CP_SIZE 33
+
+#define OCF_ACCEPT_LOGICAL_LINK		0x0039
+
+#define OCF_DISCONNECT_LOGICAL_LINK		0x003A
+typedef struct {
+	uint16_t	handle;
+} __attribute__ ((packed)) disconnect_logical_link_cp;
+#define DISCONNECT_LOGICAL_LINK_CP_SIZE 2
+
+#define OCF_LOGICAL_LINK_CANCEL		0x003B
+typedef struct {
+	uint8_t		handle;
+	uint8_t		tx_flow_id;
+} __attribute__ ((packed)) cancel_logical_link_cp;
+#define LOGICAL_LINK_CANCEL_CP_SIZE 2
+typedef struct {
+	uint8_t		status;
+	uint8_t		handle;
+	uint8_t		tx_flow_id;
+} __attribute__ ((packed)) cancel_logical_link_rp;
+#define LOGICAL_LINK_CANCEL_RP_SIZE 3
+
+#define OCF_FLOW_SPEC_MODIFY		0x003C
+
 /* Link Policy */
 #define OGF_LINK_POLICY		0x02
 
@@ -992,6 +1041,8 @@ typedef struct {
 #define OCF_READ_PAGE_SCAN_TYPE		0x0046
 
 #define OCF_WRITE_PAGE_SCAN_TYPE	0x0047
+	#define PAGE_SCAN_TYPE_STANDARD		0x00
+	#define PAGE_SCAN_TYPE_INTERLACED	0x01
 
 #define OCF_READ_AFH_MODE		0x0048
 typedef struct {
@@ -1123,6 +1174,57 @@ typedef struct {
 } __attribute__ ((packed)) send_keypress_notify_rp;
 #define SEND_KEYPRESS_NOTIFY_RP_SIZE 1
 
+#define OCF_READ_LOGICAL_LINK_ACCEPT_TIMEOUT	 0x0061
+typedef struct {
+	uint8_t		status;
+	uint16_t	timeout;
+} __attribute__ ((packed)) read_log_link_accept_timeout_rp;
+#define READ_LOGICAL_LINK_ACCEPT_TIMEOUT_RP_SIZE 3
+
+#define OCF_WRITE_LOGICAL_LINK_ACCEPT_TIMEOUT	0x0062
+typedef struct {
+	uint16_t	timeout;
+} __attribute__ ((packed)) write_log_link_accept_timeout_cp;
+#define WRITE_LOGICAL_LINK_ACCEPT_TIMEOUT_CP_SIZE 2
+
+#define OCF_SET_EVENT_MASK_PAGE_2	0x0063
+
+#define OCF_READ_LOCATION_DATA		0x0064
+
+#define OCF_WRITE_LOCATION_DATA	0x0065
+
+#define OCF_READ_FLOW_CONTROL_MODE	0x0066
+
+#define OCF_WRITE_FLOW_CONTROL_MODE	0x0067
+
+#define OCF_READ_ENHANCED_TRANSMIT_POWER_LEVEL	0x0068
+typedef struct {
+	uint8_t		status;
+	uint16_t	handle;
+	int8_t		level_gfsk;
+	int8_t		level_dqpsk;
+	int8_t		level_8dpsk;
+} __attribute__ ((packed)) read_enhanced_transmit_power_level_rp;
+#define READ_ENHANCED_TRANSMIT_POWER_LEVEL_RP_SIZE 6
+
+#define OCF_READ_BEST_EFFORT_FLUSH_TIMEOUT	0x0069
+typedef struct {
+	uint8_t		status;
+	uint32_t	timeout;
+} __attribute__ ((packed)) read_best_effort_flush_timeout_rp;
+#define READ_BEST_EFFORT_FLUSH_TIMEOUT_RP_SIZE 5
+
+#define OCF_WRITE_BEST_EFFORT_FLUSH_TIMEOUT	0x006A
+typedef struct {
+	uint16_t	handle;
+	uint32_t	timeout;
+} __attribute__ ((packed)) write_best_effort_flush_timeout_cp;
+#define WRITE_BEST_EFFORT_FLUSH_TIMEOUT_CP_SIZE 6
+typedef struct {
+	uint8_t		status;
+} __attribute__ ((packed)) write_best_effort_flush_timeout_rp;
+#define WRITE_BEST_EFFORT_FLUSH_TIMEOUT_RP_SIZE 1
+
 /* Informational Parameters */
 #define OGF_INFO_PARAM		0x04
 
@@ -1239,6 +1341,51 @@ typedef struct {
 	uint16_t	accuracy;
 } __attribute__ ((packed)) read_clock_rp;
 #define READ_CLOCK_RP_SIZE 9
+
+#define OCF_READ_LOCAL_AMP_INFO	0x0009
+typedef struct {
+	uint8_t		status;
+	uint8_t		amp_status;
+	uint32_t	total_bandwidth;
+	uint32_t	max_guaranteed_bandwidth;
+	uint32_t	min_latency;
+	uint32_t	max_pdu_size;
+	uint8_t		controller_type;
+	uint16_t	pal_caps;
+	uint16_t	max_amp_assoc_length;
+	uint32_t	max_flush_timeout;
+	uint32_t	best_effort_flush_timeout;
+} __attribute__ ((packed)) read_local_amp_info_rp;
+#define READ_LOCAL_AMP_INFO_RP_SIZE 31
+
+#define OCF_READ_LOCAL_AMP_ASSOC	0x000A
+typedef struct {
+	uint8_t		handle;
+	uint16_t	length_so_far;
+	uint16_t	assoc_length;
+} __attribute__ ((packed)) read_local_amp_assoc_cp;
+#define READ_LOCAL_AMP_ASSOC_CP_SIZE 5
+typedef struct {
+	uint8_t		status;
+	uint8_t		handle;
+	uint16_t	length;
+	uint8_t		fragment[248];
+} __attribute__ ((packed)) read_local_amp_assoc_rp;
+#define READ_LOCAL_AMP_ASSOC_RP_SIZE 252
+
+#define OCF_WRITE_REMOTE_AMP_ASSOC	0x000B
+typedef struct {
+	uint8_t		handle;
+	uint16_t	length_so_far;
+	uint16_t	assoc_length;
+	uint8_t		fragment[248];
+} __attribute__ ((packed)) write_remote_amp_assoc_cp;
+#define WRITE_REMOTE_AMP_ASSOC_CP_SIZE 253
+typedef struct {
+	uint8_t		status;
+	uint8_t		handle;
+} __attribute__ ((packed)) write_remote_amp_assoc_rp;
+#define WRITE_REMOTE_AMP_ASSOC_RP_SIZE 2
 
 /* Testing commands */
 #define OGF_TESTING_CMD		0x3e
@@ -1962,6 +2109,63 @@ typedef struct {
 	uint16_t	diversifier;
 } __attribute__ ((packed)) evt_le_long_term_key_request;
 #define EVT_LE_LTK_REQUEST_SIZE 12
+
+#define EVT_PHYSICAL_LINK_COMPLETE		0x40
+typedef struct {
+	uint8_t		status;
+	uint8_t		handle;
+} __attribute__ ((packed)) evt_physical_link_complete;
+#define EVT_PHYSICAL_LINK_COMPLETE_SIZE 2
+
+#define EVT_CHANNEL_SELECTED		0x41
+
+#define EVT_DISCONNECT_PHYSICAL_LINK_COMPLETE	0x42
+typedef struct {
+	uint8_t		status;
+	uint8_t		handle;
+	uint8_t		reason;
+} __attribute__ ((packed)) evt_disconn_physical_link_complete;
+#define EVT_DISCONNECT_PHYSICAL_LINK_COMPLETE_SIZE 3
+
+#define EVT_PHYSICAL_LINK_LOSS_EARLY_WARNING	0x43
+typedef struct {
+	uint8_t		handle;
+	uint8_t		reason;
+} __attribute__ ((packed)) evt_physical_link_loss_warning;
+#define EVT_PHYSICAL_LINK_LOSS_WARNING_SIZE 2
+
+#define EVT_PHYSICAL_LINK_RECOVERY		0x44
+typedef struct {
+	uint8_t		handle;
+} __attribute__ ((packed)) evt_physical_link_recovery;
+#define EVT_PHYSICAL_LINK_RECOVERY_SIZE 1
+
+#define EVT_LOGICAL_LINK_COMPLETE		0x45
+typedef struct {
+	uint8_t		status;
+	uint16_t	log_handle;
+	uint8_t		handle;
+	uint8_t		tx_flow_id;
+} __attribute__ ((packed)) evt_logical_link_complete;
+#define EVT_LOGICAL_LINK_COMPLETE_SIZE 5
+
+#define EVT_DISCONNECT_LOGICAL_LINK_COMPLETE	0x46
+
+#define EVT_FLOW_SPEC_MODIFY_COMPLETE		0x47
+typedef struct {
+	uint8_t		status;
+	uint16_t	handle;
+} __attribute__ ((packed)) evt_flow_spec_modify_complete;
+#define EVT_FLOW_SPEC_MODIFY_COMPLETE_SIZE 3
+
+#define EVT_NUMBER_COMPLETED_BLOCKS		0x48
+
+#define EVT_AMP_STATUS_CHANGE			0x4D
+typedef struct {
+	uint8_t		status;
+	uint8_t		amp_status;
+} __attribute__ ((packed)) evt_amp_status_change;
+#define EVT_AMP_STATUS_CHANGE_SIZE 2
 
 #define EVT_TESTING			0xFE
 

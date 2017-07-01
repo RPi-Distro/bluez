@@ -113,10 +113,10 @@ struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter
 void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 				int8_t rssi, uint32_t class, const char *name,
 				const char *alias, gboolean legacy,
-				name_status_t name_status);
+				name_status_t name_status, uint8_t *eir_data);
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_emit_device_found(struct btd_adapter *adapter,
-				struct remote_dev_info *dev);
+				struct remote_dev_info *dev, uint8_t *eir_data);
 void adapter_update_oor_devices(struct btd_adapter *adapter);
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
 void adapter_setname_complete(bdaddr_t *local, uint8_t status);
@@ -183,8 +183,22 @@ struct btd_adapter_ops {
 	int (*set_name) (int index, const char *name);
 	int (*read_name) (int index);
 	int (*set_class) (int index, uint32_t class);
+	int (*set_fast_connectable) (int index, gboolean enable);
 };
 
 int btd_register_adapter_ops(struct btd_adapter_ops *btd_adapter_ops);
 void btd_adapter_cleanup_ops(struct btd_adapter_ops *btd_adapter_ops);
 int adapter_ops_setup(void);
+
+typedef void (*btd_adapter_powered_cb) (struct btd_adapter *adapter,
+						gboolean powered);
+void btd_adapter_register_powered_callback(struct btd_adapter *adapter,
+						btd_adapter_powered_cb cb);
+void btd_adapter_unregister_powered_callback(struct btd_adapter *adapter,
+						btd_adapter_powered_cb cb);
+
+/* If TRUE, enables fast connectabe, i.e. reduces page scan interval and changes
+ * type. If FALSE, disables fast connectable, i.e. sets page scan interval and
+ * type to default values. Valid for both connectable and discoverable modes. */
+int btd_adapter_set_fast_connectable(struct btd_adapter *adapter,
+							gboolean enable);

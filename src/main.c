@@ -50,6 +50,7 @@
 
 #include "hcid.h"
 #include "sdpd.h"
+#include "attrib-server.h"
 #include "adapter.h"
 #include "dbus-hci.h"
 #include "dbus-common.h"
@@ -207,6 +208,13 @@ static void parse_config(GKeyFile *config)
 		g_clear_error(&err);
 	else
 		main_opts.debug_keys = boolean;
+
+	boolean = g_key_file_get_boolean(config, "General",
+						"AttributeServer", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.attrib_server = boolean;
 
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
@@ -453,6 +461,11 @@ int main(int argc, char *argv[])
 
 	start_sdp_server(mtu, main_opts.deviceid, SDP_SERVER_COMPAT);
 
+	if (main_opts.attrib_server) {
+		if (attrib_server_init() < 0)
+			error("Can't initialize attribute server");
+	}
+
 	/* Loading plugins has to be done after D-Bus has been setup since
 	 * the plugins might wanna expose some paths on the bus. However the
 	 * best order of how to init various subsystems of the Bluetooth
@@ -479,6 +492,9 @@ int main(int argc, char *argv[])
 	rfkill_exit();
 
 	plugin_cleanup();
+
+	if (main_opts.attrib_server)
+		attrib_server_exit();
 
 	stop_sdp_server();
 

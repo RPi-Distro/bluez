@@ -437,7 +437,7 @@ static void avctp_set_state(struct control *control, avctp_state_t new_state)
 {
 	GSList *l;
 	struct audio_device *dev = control->dev;
-	avdtp_session_state_t old_state = control->state;
+	avctp_state_t old_state = control->state;
 	gboolean value;
 
 	switch (new_state) {
@@ -1027,7 +1027,7 @@ static DBusMessage *volume_up(DBusConnection *conn, DBusMessage *msg,
 	err = avctp_send_passthrough(control, VOL_UP_OP);
 	if (err < 0)
 		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-							strerror(-err));
+							"%s", strerror(-err));
 
 	return dbus_message_new_method_return(msg);
 }
@@ -1057,7 +1057,7 @@ static DBusMessage *volume_down(DBusConnection *conn, DBusMessage *msg,
 	err = avctp_send_passthrough(control, VOL_DOWN_OP);
 	if (err < 0)
 		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-							strerror(-err));
+							"%s", strerror(-err));
 
 	return dbus_message_new_method_return(msg);
 }
