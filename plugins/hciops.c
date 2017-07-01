@@ -40,6 +40,7 @@
 
 #include <glib.h>
 
+#include "glib-helper.h"
 #include "hcid.h"
 #include "sdpd.h"
 #include "btio.h"
@@ -1344,7 +1345,7 @@ static void pin_code_request(int index, bdaddr_t *dba)
 		goto reject;
 	}
 
-	err = btd_event_request_pin(&dev->bdaddr, dba);
+	err = btd_event_request_pin(&dev->bdaddr, dba, FALSE);
 	if (err < 0) {
 		error("PIN code negative reply: %s", strerror(-err));
 		goto reject;
@@ -2236,14 +2237,9 @@ static void stop_hci_dev(int index)
 
 	hci_close_dev(dev->sk);
 
-	g_slist_foreach(dev->keys, (GFunc) g_free, NULL);
-	g_slist_free(dev->keys);
-
-	g_slist_foreach(dev->uuids, (GFunc) g_free, NULL);
-	g_slist_free(dev->uuids);
-
-	g_slist_foreach(dev->connections, (GFunc) conn_free, NULL);
-	g_slist_free(dev->connections);
+	g_slist_free_full(dev->keys, g_free);
+	g_slist_free_full(dev->uuids, g_free);
+	g_slist_free_full(dev->connections, g_free);
 
 	init_dev_info(index, -1, dev->registered, dev->already_up);
 }
@@ -3216,17 +3212,6 @@ static int hciops_get_conn_list(int index, GSList **conns)
 	return 0;
 }
 
-static int hciops_read_local_features(int index, uint8_t *features)
-{
-	struct dev_info *dev = &devs[index];
-
-	DBG("hci%d", index);
-
-	memcpy(features, dev->features, 8);
-
-	return  0;
-}
-
 static int hciops_disconnect(int index, bdaddr_t *bdaddr)
 {
 	DBG("hci%d", index);
@@ -3668,7 +3653,6 @@ static struct btd_adapter_ops hci_ops = {
 	.block_device = hciops_block_device,
 	.unblock_device = hciops_unblock_device,
 	.get_conn_list = hciops_get_conn_list,
-	.read_local_features = hciops_read_local_features,
 	.disconnect = hciops_disconnect,
 	.remove_bonding = hciops_remove_bonding,
 	.pincode_reply = hciops_pincode_reply,

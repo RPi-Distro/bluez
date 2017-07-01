@@ -108,6 +108,9 @@ AC_DEFUN([AC_PATH_DBUS], [
 AC_DEFUN([AC_PATH_GLIB], [
 	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.16, dummy=yes,
 				AC_MSG_ERROR(GLib library version 2.16 or later is required))
+	AC_CHECK_LIB(glib-2.0, g_slist_free_full, dummy=yes,
+		AC_DEFINE(NEED_G_SLIST_FREE_FULL, 1,
+			[Define to 1 if you need g_slist_free_full() function.]))
 	AC_SUBST(GLIB_CFLAGS)
 	AC_SUBST(GLIB_LIBS)
 ])
@@ -190,6 +193,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	serial_enable=yes
 	network_enable=yes
 	sap_enable=no
+	proximity_enable=no
 	service_enable=yes
 	health_enable=no
 	pnat_enable=no
@@ -205,12 +209,13 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	pcmcia_enable=no
 	hid2hci_enable=no
 	dfutool_enable=no
-	udevrules_enable=yes
-	configfiles_enable=yes
+	datafiles_enable=yes
 	telephony_driver=dummy
 	maemo6_enable=no
 	sap_driver=dummy
 	dbusoob_enable=no
+	wiimote_enable=no
+	thermometer_enable=no
 
 	AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization], [disable code optimization]), [
 		optimization_enable=${enableval}
@@ -236,6 +241,10 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		sap_driver=${withval}
 	])
 	AC_SUBST([SAP_DRIVER], [sap-${sap_driver}.c])
+
+	AC_ARG_ENABLE(proximity, AC_HELP_STRING([--enable-proximity], [enable proximity plugin]), [
+		proximity_enable=${enableval}
+	])
 
 	AC_ARG_ENABLE(serial, AC_HELP_STRING([--disable-serial], [disable serial plugin]), [
 		serial_enable=${enableval}
@@ -321,12 +330,8 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		test_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(udevrules, AC_HELP_STRING([--enable-udevrules], [install Bluetooth udev rules]), [
-		udevrules_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(configfiles, AC_HELP_STRING([--enable-configfiles], [install Bluetooth configuration files]), [
-		configfiles_enable=${enableval}
+	AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--enable-datafiles], [install Bluetooth configuration and data files]), [
+		datafiles_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(debug, AC_HELP_STRING([--enable-debug], [enable compiling with debugging information]), [
@@ -347,8 +352,16 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		dbusoob_enable=${enableval}
 	])
 
+	AC_ARG_ENABLE(wiimote, AC_HELP_STRING([--enable-wiimote], [compile with Wii Remote plugin]), [
+		wiimote_enable=${enableval}
+	])
+
 	AC_ARG_ENABLE(hal, AC_HELP_STRING([--enable-hal], [Use HAL to determine adapter class]), [
 		hal_enable=${enableval}
+	])
+
+	AC_ARG_ENABLE(thermometer, AC_HELP_STRING([--enable-thermometer], [enable thermometer plugin]), [
+		thermometer_enable=${enableval}
 	])
 
 	if (test "${fortify_enable}" = "yes"); then
@@ -383,6 +396,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(SERIALPLUGIN, test "${serial_enable}" = "yes")
 	AM_CONDITIONAL(NETWORKPLUGIN, test "${network_enable}" = "yes")
 	AM_CONDITIONAL(SAPPLUGIN, test "${sap_enable}" = "yes")
+	AM_CONDITIONAL(PROXIMITYPLUGIN, test "${proximity_enable}" = "yes")
 	AM_CONDITIONAL(SERVICEPLUGIN, test "${service_enable}" = "yes")
 	AM_CONDITIONAL(HEALTHPLUGIN, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(MCAP, test "${health_enable}" = "yes")
@@ -400,10 +414,11 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(TOOLS, test "${tools_enable}" = "yes")
 	AM_CONDITIONAL(BCCMD, test "${bccmd_enable}" = "yes")
 	AM_CONDITIONAL(PCMCIA, test "${pcmcia_enable}" = "yes")
-	AM_CONDITIONAL(HID2HCI, test "${hid2hci_enable}" = "yes" && test "${usb_found}" = "yes")
+	AM_CONDITIONAL(HID2HCI, test "${hid2hci_enable}" = "yes" && test "${usb_found}" = "yes" && test "${udev_found}" = "yes")
 	AM_CONDITIONAL(DFUTOOL, test "${dfutool_enable}" = "yes" && test "${usb_found}" = "yes")
-	AM_CONDITIONAL(UDEVRULES, test "${udevrules_enable}" = "yes")
-	AM_CONDITIONAL(CONFIGFILES, test "${configfiles_enable}" = "yes")
+	AM_CONDITIONAL(DATAFILES, test "${datafiles_enable}" = "yes")
 	AM_CONDITIONAL(MAEMO6PLUGIN, test "${maemo6_enable}" = "yes")
 	AM_CONDITIONAL(DBUSOOBPLUGIN, test "${dbusoob_enable}" = "yes")
+	AM_CONDITIONAL(WIIMOTEPLUGIN, test "${wiimote_enable}" = "yes")
+	AM_CONDITIONAL(THERMOMETERPLUGIN, test "${thermometer_enable}" = "yes")
 ])

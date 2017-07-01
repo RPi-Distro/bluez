@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 4.94)
+AC_INIT(bluez, 4.96)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AM_CONFIG_HEADER(config.h)
@@ -35,6 +35,10 @@ AC_FUNC_PPOLL
 AC_CHECK_LIB(dl, dlopen, dummy=yes,
 			AC_MSG_ERROR(dynamic linking loader is required))
 
+AC_CHECK_HEADER([sys/inotify.h],
+		[AC_DEFINE([HAVE_SYS_INOTIFY_H], 1,
+			[Define to 1 if you have <sys/inotify.h>.])],
+			[AC_MSG_ERROR(inotify headers are required and missing)])
 AC_PATH_DBUS
 AC_PATH_GLIB
 AC_PATH_ALSA
@@ -57,5 +61,14 @@ if (test "${enable_capng}" = "yes"); then
 	AC_DEFINE(HAVE_CAPNG, 1, [Define to 1 if you have capabilities library.])
 fi
 
+AC_ARG_WITH([systemdunitdir], AC_HELP_STRING([--with-systemdunitdir=DIR],
+	[path to systemd system service directory]), [path_systemdunit=${withval}],
+		[path_systemdunit="`$PKG_CONFIG --variable=systemdsystemunitdir systemd`"])
+if (test -n "${path_systemdunit}"); then
+	SYSTEMD_UNITDIR="${path_systemdunit}"
+	AC_SUBST(SYSTEMD_UNITDIR)
+fi
+AM_CONDITIONAL(SYSTEMD, test -n "${path_systemdunit}")
+
 AC_OUTPUT(Makefile scripts/bluetooth.rules doc/version.xml
-					src/bluetoothd.8 bluez.pc)
+			src/bluetoothd.8 src/bluetooth.service bluez.pc)

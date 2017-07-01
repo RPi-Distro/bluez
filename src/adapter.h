@@ -100,6 +100,8 @@ int adapter_resolve_names(struct btd_adapter *adapter);
 struct btd_adapter *adapter_create(DBusConnection *conn, int id);
 gboolean adapter_init(struct btd_adapter *adapter);
 void adapter_remove(struct btd_adapter *adapter);
+void adapter_set_allow_name_changes(struct btd_adapter *adapter,
+						gboolean allow_name_changes);
 uint16_t adapter_get_dev_id(struct btd_adapter *adapter);
 const gchar *adapter_get_path(struct btd_adapter *adapter);
 void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
@@ -115,7 +117,7 @@ int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_emit_device_found(struct btd_adapter *adapter,
 						struct remote_dev_info *dev);
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
-void adapter_update_local_name(struct btd_adapter *adapter, const char *name);
+int adapter_update_local_name(struct btd_adapter *adapter, const char *name);
 void adapter_service_insert(struct btd_adapter *adapter, void *rec);
 void adapter_service_remove(struct btd_adapter *adapter, void *rec);
 void btd_adapter_class_changed(struct btd_adapter *adapter,
@@ -163,6 +165,15 @@ int btd_adapter_restore_powered(struct btd_adapter *adapter);
 int btd_adapter_switch_online(struct btd_adapter *adapter);
 int btd_adapter_switch_offline(struct btd_adapter *adapter);
 
+typedef ssize_t (*btd_adapter_pin_cb_t) (struct btd_adapter *adapter,
+					struct btd_device *dev, char *out);
+void btd_adapter_register_pin_cb(struct btd_adapter *adapter,
+						btd_adapter_pin_cb_t cb);
+void btd_adapter_unregister_pin_cb(struct btd_adapter *adapter,
+						btd_adapter_pin_cb_t cb);
+ssize_t btd_adapter_get_pin(struct btd_adapter *adapter, struct btd_device *dev,
+								char *pin_buf);
+
 typedef void (*bt_hci_result_t) (uint8_t status, gpointer user_data);
 
 struct btd_adapter_ops {
@@ -186,7 +197,6 @@ struct btd_adapter_ops {
 	int (*block_device) (int index, bdaddr_t *bdaddr);
 	int (*unblock_device) (int index, bdaddr_t *bdaddr);
 	int (*get_conn_list) (int index, GSList **conns);
-	int (*read_local_features) (int index, uint8_t *features);
 	int (*disconnect) (int index, bdaddr_t *bdaddr);
 	int (*remove_bonding) (int index, bdaddr_t *bdaddr);
 	int (*pincode_reply) (int index, bdaddr_t *bdaddr, const char *pin,

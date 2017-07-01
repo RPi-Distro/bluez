@@ -594,10 +594,10 @@ int read_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t *
 	return 0;
 }
 
-int read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin)
+ssize_t read_pin_code(bdaddr_t *local, bdaddr_t *peer, char *pin)
 {
 	char filename[PATH_MAX + 1], addr[18], *str;
-	int len;
+	ssize_t len;
 
 	create_filename(filename, PATH_MAX, local, "pincodes");
 
@@ -1211,8 +1211,7 @@ int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba)
 		textfile_del(filename, key);
 	}
 
-	g_slist_foreach(match.keys, (GFunc) g_free, NULL);
-	g_slist_free(match.keys);
+	g_slist_free_full(match.keys, g_free);
 
 	/* Deleting all attributes values of a given address */
 	memset(&match, 0, sizeof(match));
@@ -1228,8 +1227,7 @@ int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba)
 		textfile_del(filename, key);
 	}
 
-	g_slist_foreach(match.keys, (GFunc) g_free, NULL);
-	g_slist_free(match.keys);
+	g_slist_free_full(match.keys, g_free);
 
 	return 0;
 }

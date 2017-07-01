@@ -34,6 +34,8 @@
 #include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
+#include <bluetooth/sdp.h>
+#include <bluetooth/sdp_lib.h>
 
 #include <glib.h>
 
@@ -41,6 +43,7 @@
 
 #include <gdbus.h>
 
+#include "glib-helper.h"
 #include "hcid.h"
 #include "dbus-common.h"
 #include "log.h"
@@ -262,6 +265,11 @@ static void manager_set_default_adapter(int id)
 			DBUS_TYPE_INVALID);
 }
 
+struct btd_adapter *manager_get_default_adapter(void)
+{
+	return manager_find_adapter_by_id(default_adapter_id);
+}
+
 static void manager_remove_adapter(struct btd_adapter *adapter)
 {
 	uint16_t dev_id = adapter_get_dev_id(adapter);
@@ -283,6 +291,7 @@ static void manager_remove_adapter(struct btd_adapter *adapter)
 			DBUS_TYPE_INVALID);
 
 	adapter_remove(adapter);
+	btd_adapter_unref(adapter);
 
 	if (adapters == NULL)
 		btd_start_exit_timer();
@@ -290,8 +299,15 @@ static void manager_remove_adapter(struct btd_adapter *adapter)
 
 void manager_cleanup(DBusConnection *conn, const char *path)
 {
-	g_slist_foreach(adapters, (GFunc) manager_remove_adapter, NULL);
-	g_slist_free(adapters);
+	while (adapters) {
+		struct btd_adapter *adapter = adapters->data;
+
+		adapters = g_slist_remove(adapters, adapter);
+		adapter_remove(adapter);
+		btd_adapter_unref(adapter);
+	}
+
+	btd_start_exit_timer();
 
 	g_dbus_unregister_interface(conn, "/", MANAGER_INTERFACE);
 }

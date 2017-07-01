@@ -36,6 +36,7 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
+#include "glib-helper.h"
 #include "log.h"
 #include "device.h"
 #include "manager.h"
@@ -163,10 +164,8 @@ static void setup_free(struct a2dp_setup *s)
 	setups = g_slist_remove(setups, s);
 	if (s->session)
 		avdtp_unref(s->session);
-	g_slist_foreach(s->cb, (GFunc) g_free, NULL);
-	g_slist_free(s->cb);
-	g_slist_foreach(s->caps, (GFunc) g_free, NULL);
-	g_slist_free(s->caps);
+	g_slist_free_full(s->cb, g_free);
+	g_slist_free_full(s->caps, g_free);
 	g_free(s);
 }
 
@@ -371,11 +370,10 @@ static void stream_state_changed(struct avdtp_stream *stream,
 		sep->session = NULL;
 	}
 
-	if (sep->endpoint)
-		media_endpoint_clear_configuration(sep->endpoint);
-
 	sep->stream = NULL;
 
+	if (sep->endpoint)
+		media_endpoint_clear_configuration(sep->endpoint);
 }
 
 static gboolean auto_config(gpointer data)
@@ -1549,15 +1547,20 @@ void a2dp_unregister(const bdaddr_t *src)
 	if (!server)
 		return;
 
-	g_slist_foreach(server->sinks, (GFunc) a2dp_remove_sep, NULL);
-	g_slist_free(server->sinks);
-
-	g_slist_foreach(server->sources, (GFunc) a2dp_remove_sep, NULL);
-	g_slist_free(server->sources);
+	g_slist_free_full(server->sinks, (GDestroyNotify) a2dp_unregister_sep);
+	g_slist_free_full(server->sources,
+					(GDestroyNotify) a2dp_unregister_sep);
 
 	avdtp_exit(src);
 
 	servers = g_slist_remove(servers, server);
+
+	if (server->source_record_id)
+		remove_record_from_server(server->source_record_id);
+
+	if (server->sink_record_id)
+		remove_record_from_server(server->sink_record_id);
+
 	g_free(server);
 
 	if (servers)
@@ -2074,8 +2077,7 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 
 	/* Copy given caps if they are different than current caps */
 	if (setup->caps != caps) {
-		g_slist_foreach(setup->caps, (GFunc) g_free, NULL);
-		g_slist_free(setup->caps);
+		g_slist_free_full(setup->caps, g_free);
 		setup->caps = g_slist_copy(caps);
 	}
 

@@ -445,8 +445,7 @@ static void pending_connect_finalize(struct audio_device *dev)
 
 	g_slist_foreach(p->callbacks, (GFunc) pending_connect_complete, dev);
 
-	g_slist_foreach(p->callbacks, (GFunc) g_free, NULL);
-	g_slist_free(p->callbacks);
+	g_slist_free_full(p->callbacks, g_free);
 
 	if (p->io) {
 		g_io_channel_shutdown(p->io, TRUE, NULL);
@@ -1771,7 +1770,7 @@ static DBusMessage *hs_ring(DBusConnection *conn, DBusMessage *msg,
 
 	if (ag.ring_timer) {
 		DBG("IndicateCall received when already indicating");
-		goto done;
+		return reply;
 	}
 
 	err = headset_send(hs, "\r\nRING\r\n");
@@ -1784,7 +1783,6 @@ static DBusMessage *hs_ring(DBusConnection *conn, DBusMessage *msg,
 	ag.ring_timer = g_timeout_add_seconds(RING_INTERVAL, ring_timer_cb,
 						NULL);
 
-done:
 	return reply;
 }
 
@@ -2052,6 +2050,7 @@ static DBusMessage *hs_set_property(DBusConnection *conn,
 
 	return btd_error_invalid_args(msg);
 }
+
 static GDBusMethodTable headset_methods[] = {
 	{ "Connect",		"",	"",	hs_connect,
 						G_DBUS_METHOD_FLAG_ASYNC },
@@ -2060,7 +2059,8 @@ static GDBusMethodTable headset_methods[] = {
 	{ "IndicateCall",	"",	"",	hs_ring },
 	{ "CancelCall",		"",	"",	hs_cancel_call },
 	{ "Play",		"",	"",	hs_play,
-						G_DBUS_METHOD_FLAG_ASYNC },
+						G_DBUS_METHOD_FLAG_ASYNC |
+						G_DBUS_METHOD_FLAG_DEPRECATED },
 	{ "Stop",		"",	"",	hs_stop },
 	{ "IsPlaying",		"",	"b",	hs_is_playing,
 						G_DBUS_METHOD_FLAG_DEPRECATED },
@@ -2163,8 +2163,7 @@ static void headset_free(struct audio_device *dev)
 
 	headset_close_rfcomm(dev);
 
-	g_slist_foreach(hs->nrec_cbs, (GFunc) g_free, NULL);
-	g_slist_free(hs->nrec_cbs);
+	g_slist_free_full(hs->nrec_cbs, g_free);
 
 	g_free(hs);
 	dev->headset = NULL;

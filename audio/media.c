@@ -34,6 +34,7 @@
 #include "../src/adapter.h"
 #include "../src/dbus-common.h"
 
+#include "glib-helper.h"
 #include "log.h"
 #include "error.h"
 #include "device.h"
@@ -166,7 +167,12 @@ static void headset_state_changed(struct audio_device *dev,
 
 	switch (new_state) {
 	case HEADSET_STATE_DISCONNECTED:
-		media_endpoint_clear_configuration(endpoint);
+		if (endpoint->transport &&
+			media_transport_get_dev(endpoint->transport) == dev) {
+
+			DBG("Clear endpoint %p", endpoint);
+			media_endpoint_clear_configuration(endpoint);
+		}
 		break;
 	case HEADSET_STATE_CONNECTING:
 		media_endpoint_set_configuration(endpoint, dev, NULL, 0,
@@ -365,7 +371,7 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_invalid_args(msg);
 
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
-				codec, capabilities, size, &err) == FALSE) {
+				codec, capabilities, size, &err) == NULL) {
 		if (err == -EPROTONOSUPPORT)
 			return btd_error_not_supported(msg);
 		else
@@ -408,9 +414,8 @@ static void path_free(void *data)
 {
 	struct media_adapter *adapter = data;
 
-	g_slist_foreach(adapter->endpoints, (GFunc) media_endpoint_release,
-									NULL);
-	g_slist_free(adapter->endpoints);
+	g_slist_free_full(adapter->endpoints,
+				(GDestroyNotify) media_endpoint_release);
 
 	dbus_connection_unref(adapter->conn);
 
@@ -643,6 +648,7 @@ void media_endpoint_clear_configuration(struct media_endpoint *endpoint)
 	DBusConnection *conn;
 	DBusMessage *msg;
 	const char *path;
+	struct media_transport *transport = endpoint->transport;
 
 	if (endpoint->transport == NULL)
 		return;
@@ -665,8 +671,8 @@ void media_endpoint_clear_configuration(struct media_endpoint *endpoint)
 							DBUS_TYPE_INVALID);
 	g_dbus_send_message(conn, msg);
 done:
-	media_transport_destroy(endpoint->transport);
 	endpoint->transport = NULL;
+	media_transport_destroy(transport);
 }
 
 void media_endpoint_release(struct media_endpoint *endpoint)
