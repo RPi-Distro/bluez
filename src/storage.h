@@ -78,6 +78,13 @@ int read_device_pairable(bdaddr_t *local, gboolean *mode);
 gboolean read_blocked(const bdaddr_t *local, const bdaddr_t *remote);
 int write_blocked(const bdaddr_t *local, const bdaddr_t *remote,
 							gboolean blocked);
+int write_device_services(const bdaddr_t *sba, const bdaddr_t *dba,
+							const char *services);
+char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba);
+int write_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
+					uint16_t handle, const char *chars);
+char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
+							uint16_t handle);
 
 #define PNP_UUID		"00001200-0000-1000-8000-00805f9b34fb"
 

@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 12:0:9
+lib_libbluetooth_la_LDFLAGS = -version-info 13:0:10
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -78,6 +78,9 @@ sbc_sbcdec_LDADD = sbc/libsbc.la
 
 sbc_sbcenc_SOURCES = sbc/sbcenc.c sbc/formats.h
 sbc_sbcenc_LDADD = sbc/libsbc.la
+
+attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
+		attrib/gattrib.h attrib/gattrib.c
 
 if SNDFILE
 noinst_PROGRAMS += sbc/sbctester
@@ -168,6 +171,20 @@ builtin_modules += service
 builtin_sources += plugins/service.c
 endif
 
+if ATTRIBPLUGIN
+bin_PROGRAMS += attrib/gatttool
+
+attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
+			  attrib/gattrib.c
+attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@
+
+builtin_modules += attrib
+builtin_sources += attrib/main.c \
+		attrib/manager.h attrib/manager.c \
+		attrib/client.h attrib/client.c \
+		attrib/example.h attrib/example.c
+endif
+
 builtin_modules += hciops
 builtin_sources += plugins/hciops.c
 
@@ -185,10 +202,12 @@ endif
 sbin_PROGRAMS += src/bluetoothd
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
+			$(attrib_sources) \
 			src/main.c src/log.h src/log.c \
 			src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
+			src/attrib-server.h src/attrib-server.c \
 			src/sdp-xml.h src/sdp-xml.c src/btio.h src/btio.c \
 			src/textfile.h src/textfile.c \
 			src/glib-helper.h src/glib-helper.c \
@@ -248,7 +267,7 @@ audio_libasound_module_ctl_bluetooth_la_LIBADD = lib/libbluetooth.la @ALSA_LIBS@
 audio_libasound_module_ctl_bluetooth_la_CFLAGS = @ALSA_CFLAGS@
 
 if CONFIGFILES
-alsaconfdir = $(sysconfdir)/alsa
+alsaconfdir = $(datadir)/alsa
 
 alsaconf_DATA = audio/bluetooth.conf
 endif
@@ -313,7 +332,8 @@ EXTRA_DIST += doc/manager-api.txt \
 		doc/adapter-api.txt doc/device-api.txt \
 		doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
 		doc/serial-api.txt doc/network-api.txt \
-		doc/input-api.txt doc/audio-api.txt doc/control-api.txt
+		doc/input-api.txt doc/audio-api.txt doc/control-api.txt \
+		doc/hfp-api.txt doc/assigned-numbers.txt
 
 AM_YFLAGS = -d
 
@@ -321,14 +341,15 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ \
 		-DBLUETOOTH_PLUGIN_BUILTIN -DPLUGINDIR=\""$(plugindir)"\"
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
-			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus
+			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
+			-I$(srcdir)/attrib
 
 
 pkgconfigdir = $(libdir)/pkgconfig
 
 pkgconfig_DATA = bluez.pc
 
-DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
+DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules --enable-attrib
 
 DISTCLEANFILES = $(pkgconfig_DATA)
 

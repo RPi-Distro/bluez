@@ -178,7 +178,8 @@ static inline DBusMessage *no_such_adapter(DBusMessage *msg)
 
 static inline DBusMessage *in_progress(DBusMessage *msg, const char *str)
 {
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress", str);
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress",
+								"%s", str);
 }
 
 static void browse_request_free(struct browse_req *req)
@@ -381,7 +382,7 @@ static DBusMessage *set_alias(DBusConnection *conn, DBusMessage *msg,
 	if (err < 0)
 		return g_dbus_create_error(msg,
 				ERROR_INTERFACE ".Failed",
-				strerror(-err));
+				"%s", strerror(-err));
 
 	g_free(device->alias);
 	device->alias = g_str_equal(alias, "") ? NULL : g_strdup(alias);
@@ -413,7 +414,7 @@ static DBusMessage *set_trust(DBusConnection *conn, DBusMessage *msg,
 	if (err < 0)
 		return g_dbus_create_error(msg,
 				ERROR_INTERFACE ".Failed",
-				strerror(-err));
+				"%s", strerror(-err));
 
 	device->trusted = value;
 
@@ -1056,7 +1057,7 @@ void device_get_name(struct btd_device *device, char *name, size_t len)
 	strncpy(name, device->name, len);
 }
 
-static void device_remove_bonding(struct btd_device *device)
+void device_remove_bonding(struct btd_device *device)
 {
 	char filename[PATH_MAX + 1];
 	char srcaddr[18], dstaddr[18];
@@ -1340,7 +1341,7 @@ static void services_changed(struct btd_device *device)
 		uuids[i] = l->data;
 
 	emit_array_property_changed(conn, device->path, DEVICE_INTERFACE,
-					"UUIDs", DBUS_TYPE_STRING, &uuids);
+					"UUIDs", DBUS_TYPE_STRING, &uuids, i);
 
 	g_free(uuids);
 }
@@ -2034,7 +2035,7 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 		DBusMessage *reply;
 		reply = g_dbus_create_error(msg,
 				ERROR_INTERFACE ".ConnectionAttemptFailed",
-				err->message);
+				"%s", err->message);
 		error("bt_io_connect: %s", err->message);
 		g_error_free(err);
 		return reply;
