@@ -58,6 +58,7 @@ bool bt_le_set_advertising(bool advertising, bt_le_set_advertising_done cb,
 
 uint8_t bt_get_device_android_type(const bdaddr_t *addr);
 bool bt_is_device_le(const bdaddr_t *addr);
+uint8_t bt_device_last_seen_bearer(const bdaddr_t *bdaddr);
 
 const char *bt_get_adapter_name(void);
 bool bt_device_is_bonded(const bdaddr_t *bdaddr);
@@ -78,3 +79,13 @@ void bt_store_gatt_ccc(const bdaddr_t *addr, uint16_t value);
 uint16_t bt_get_gatt_ccc(const bdaddr_t *addr);
 
 const bdaddr_t *bt_get_id_addr(const bdaddr_t *addr, uint8_t *type);
+
+bool bt_kernel_conn_control(void);
+
+bool bt_auto_connect_add(const bdaddr_t *addr);
+
+void bt_auto_connect_remove(const bdaddr_t *addr);
+
+typedef void (*bt_unpaired_device_cb)(const bdaddr_t *addr, uint8_t type);
+bool bt_unpaired_register(bt_unpaired_device_cb cb);
+void bt_unpaired_unregister(bt_unpaired_device_cb cb);

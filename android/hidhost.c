@@ -109,7 +109,7 @@ struct hid_device {
 	struct bt_uhid	*uhid;
 	uint8_t		last_hid_msg;
 	struct bt_hog	*hog;
-	guint		reconnect_id;
+	int		sec_level;
 };
 
 static int device_cmp(gconstpointer s, gconstpointer user_data)
@@ -123,9 +123,6 @@ static int device_cmp(gconstpointer s, gconstpointer user_data)
 static void hid_device_free(void *data)
 {
 	struct hid_device *dev = data;
-
-	if (dev->reconnect_id > 0)
-		g_source_remove(dev->reconnect_id);
 
 	if (dev->ctrl_watch > 0)
 		g_source_remove(dev->ctrl_watch);
@@ -162,6 +159,8 @@ static struct hid_device *hid_device_new(const bdaddr_t *addr)
 	dev = g_new0(struct hid_device, 1);
 	bacpy(&dev->dst, addr);
 	dev->state = HAL_HIDHOST_STATE_DISCONNECTED;
+	dev->sec_level = BT_IO_SEC_LOW;
+
 	devices = g_slist_append(devices, dev);
 
 	return dev;
@@ -594,7 +593,7 @@ static void control_connect_cb(GIOChannel *chan, GError *conn_err,
 					BT_IO_OPT_SOURCE_BDADDR, &adapter_addr,
 					BT_IO_OPT_DEST_BDADDR, &dev->dst,
 					BT_IO_OPT_PSM, L2CAP_PSM_HIDP_INTR,
-					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+					BT_IO_OPT_SEC_LEVEL, dev->sec_level,
 					BT_IO_OPT_INVALID);
 	if (!dev->intr_io) {
 		error("hidhost: Failed to connect interrupt channel (%s)",
@@ -640,8 +639,13 @@ static void hid_sdp_search_cb(sdp_list_t *recs, int err, gpointer data)
 			dev->country = data->val.uint8;
 
 		data = sdp_data_get(rec, SDP_ATTR_HID_DEVICE_SUBCLASS);
-		if (data)
+		if (data) {
 			dev->subclass = data->val.uint8;
+
+			/* Encryption is mandatory for keyboards */
+			if (dev->subclass & 0x40)
+				dev->sec_level = BT_IO_SEC_MEDIUM;
+		}
 
 		data = sdp_data_get(rec, SDP_ATTR_HID_BOOT_DEVICE);
 		if (data)
@@ -673,6 +677,18 @@ static void hid_sdp_search_cb(sdp_list_t *recs, int err, gpointer data)
 	}
 
 	if (dev->ctrl_io) {
+		/* Raise the security level for this device if needed. */
+		if ((dev->sec_level > BT_IO_SEC_LOW) &&
+			!bt_io_set(dev->ctrl_io, &gerr,
+					BT_IO_OPT_SEC_LEVEL, dev->sec_level,
+					BT_IO_OPT_INVALID)) {
+			error("hidhost: Cannot raise security level: %s",
+								gerr->message);
+			g_error_free(gerr);
+
+			goto fail;
+		}
+
 		if (uhid_create(dev) < 0)
 			goto fail;
 		return;
@@ -682,7 +698,7 @@ static void hid_sdp_search_cb(sdp_list_t *recs, int err, gpointer data)
 					BT_IO_OPT_SOURCE_BDADDR, &adapter_addr,
 					BT_IO_OPT_DEST_BDADDR, &dev->dst,
 					BT_IO_OPT_PSM, L2CAP_PSM_HIDP_CTRL,
-					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+					BT_IO_OPT_SEC_LEVEL, dev->sec_level,
 					BT_IO_OPT_INVALID);
 	if (gerr) {
 		error("hidhost: Failed to connect control channel (%s)",
@@ -748,19 +764,6 @@ fail:
 	hid_device_remove(dev);
 }
 
-static gboolean hog_reconnect(void *user_data)
-{
-	struct hid_device *dev = user_data;
-
-	DBG("");
-
-	dev->reconnect_id = 0;
-
-	bt_gatt_connect_app(hog_app, &dev->dst);
-
-	return FALSE;
-}
-
 static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 {
 	GSList *l;
@@ -772,20 +775,17 @@ static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 	if (err < 0) {
 		if (!dev)
 			return;
-		if (dev->hog && !dev->reconnect_id) {
+		if (dev->hog) {
 			bt_hid_notify_state(dev,
 						HAL_HIDHOST_STATE_DISCONNECTED);
 			bt_hog_detach(dev->hog);
-			dev->reconnect_id = g_idle_add(hog_reconnect, dev);
 			return;
 		}
 		goto fail;
 	}
 
-	if (!dev) {
+	if (!dev)
 		dev = hid_device_new(addr);
-		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
-	}
 
 	if (!dev->hog) {
 		/* TODO: Get device details and primary */
@@ -802,9 +802,17 @@ static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 		goto fail;
 	}
 
+	if (!bt_gatt_set_security(addr, BT_IO_SEC_MEDIUM)) {
+		error("Failed to set security level");
+		goto fail;
+	}
+
 	DBG("");
 
 	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTED);
+
+	if (!bt_gatt_add_autoconnect(hog_app, &dev->dst))
+		error("hidhost: Could not add to autoconnect list");
 
 	return;
 
@@ -844,12 +852,13 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 	android2bdaddr(&cmd->bdaddr, &dst);
 
 	l = g_slist_find_custom(devices, &dst, device_cmp);
-	if (l) {
-		status = HAL_STATUS_FAILED;
-		goto failed;
-	}
+	if (l)
+		dev = l->data;
+	else
+		dev = hid_device_new(&dst);
 
-	dev = hid_device_new(&dst);
+	if (dev->state != HAL_HIDHOST_STATE_DISCONNECTED)
+		goto done;
 
 	ba2str(&dev->dst, addr);
 	DBG("connecting to %s", addr);
@@ -945,6 +954,19 @@ failed:
 									status);
 }
 
+static bool bt_hid_write_virtual_unplug(GIOChannel *chan)
+{
+	uint8_t hdr = HID_MSG_CONTROL | HID_VIRTUAL_CABLE_UNPLUG;
+	int fd = g_io_channel_unix_get_fd(chan);
+
+	if (write(fd, &hdr, sizeof(hdr)) == sizeof(hdr))
+		return true;
+
+	error("hidhost: Error writing virtual unplug command: %s (%d)",
+							strerror(errno), errno);
+	return false;
+}
+
 static void bt_hid_virtual_unplug(const void *buf, uint16_t len)
 {
 	const struct hal_cmd_hidhost_virtual_unplug *cmd = buf;
@@ -952,8 +974,6 @@ static void bt_hid_virtual_unplug(const void *buf, uint16_t len)
 	GSList *l;
 	uint8_t status;
 	bdaddr_t dst;
-	uint8_t hdr;
-	int fd;
 
 	DBG("");
 
@@ -972,13 +992,7 @@ static void bt_hid_virtual_unplug(const void *buf, uint16_t len)
 		goto failed;
 	}
 
-	hdr = HID_MSG_CONTROL | HID_VIRTUAL_CABLE_UNPLUG;
-
-	fd = g_io_channel_unix_get_fd(dev->ctrl_io);
-
-	if (write(fd, &hdr, sizeof(hdr)) < 0) {
-		error("hidhost: Error writing virtual unplug command: %s (%d)",
-						strerror(errno), errno);
+	if (!bt_hid_write_virtual_unplug(dev->ctrl_io)) {
 		status = HAL_STATUS_FAILED;
 		goto failed;
 	}
@@ -1405,6 +1419,16 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	ba2str(&dst, address);
 	DBG("Incoming connection from %s on PSM %d", address, psm);
 
+	if (!bt_device_is_bonded(&dst)) {
+		warn("hidhost: Rejecting connection from unknown device %s",
+								address);
+		if (psm == L2CAP_PSM_HIDP_CTRL)
+			bt_hid_write_virtual_unplug(chan);
+
+		g_io_channel_shutdown(chan, TRUE, NULL);
+		return;
+	}
+
 	switch (psm) {
 	case L2CAP_PSM_HIDP_CTRL:
 		l = g_slist_find_custom(devices, &dst, device_cmp);
@@ -1443,11 +1467,37 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	}
 }
 
+static void hid_unpaired_cb(const bdaddr_t *addr, uint8_t type)
+{
+	GSList *l;
+	struct hid_device *dev;
+	char address[18];
+
+	l = g_slist_find_custom(devices, addr, device_cmp);
+	if (!l)
+		return;
+
+	dev = l->data;
+
+	ba2str(addr, address);
+	DBG("Unpaired device %s", address);
+
+	if (hog_app)
+		bt_gatt_remove_autoconnect(hog_app, addr);
+
+	hid_device_remove(dev);
+}
+
 bool bt_hid_register(struct ipc *ipc, const bdaddr_t *addr, uint8_t mode)
 {
 	GError *err = NULL;
 
 	DBG("");
+
+	if (!bt_unpaired_register(hid_unpaired_cb)) {
+		error("hidhost: Could not register unpaired callback");
+		return false;
+	}
 
 	bacpy(&adapter_addr, addr);
 
@@ -1512,4 +1562,6 @@ void bt_hid_unregister(void)
 
 	ipc_unregister(hal_ipc, HAL_SERVICE_ID_HIDHOST);
 	hal_ipc = NULL;
+
+	bt_unpaired_unregister(hid_unpaired_cb);
 }

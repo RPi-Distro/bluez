@@ -37,8 +37,8 @@
 
 #include <sys/signalfd.h>
 #if defined(ANDROID)
+#include <sys/prctl.h>
 #include <sys/capability.h>
-#include <linux/prctl.h>
 #endif
 
 #include <glib.h>
@@ -382,7 +382,7 @@ static void cleanup_services(void)
 
 	DBG("");
 
-	for (i = HAL_SERVICE_ID_BLUETOOTH; i < HAL_SERVICE_ID_MAX + 1; i++) {
+	for (i = HAL_SERVICE_ID_MAX; i > HAL_SERVICE_ID_CORE; i--) {
 		if (!services[i])
 			continue;
 

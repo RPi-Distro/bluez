@@ -437,8 +437,6 @@ static void do_listen(void (*handler)(int sk))
 		exit(0);
 	}
 
-	return;
-
 error:
 	close(sk);
 	exit(1);
@@ -632,8 +630,8 @@ static void automated_send_recv()
 
 	if (fork()) {
 		if (!savefile) {
+			/* do_listen() never returns */
 			do_listen(recv_mode);
-			return;
 		}
 
 		save_fd = open(savefile, O_CREAT | O_WRONLY,
@@ -641,9 +639,8 @@ static void automated_send_recv()
 		if (save_fd < 0)
 			syslog(LOG_ERR, "Failed to open file to save data");
 
+		/* do_listen() never returns */
 		do_listen(save_mode);
-
-		close(save_fd);
 	} else {
 		ba2str(&bdaddr, device);
 

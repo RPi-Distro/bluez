@@ -15,16 +15,20 @@
  *
  */
 
+#include <pthread.h>
+#include <unistd.h>
+#include <math.h>
+
+#include "../src/shared/util.h"
 #include "if-main.h"
 #include "../hal-utils.h"
-#include "pthread.h"
-#include "unistd.h"
-#include <math.h>
 
 audio_hw_device_t *if_audio_sco = NULL;
 static struct audio_stream_out *stream_out = NULL;
+static struct audio_stream_in *stream_in = NULL;
 
 static size_t buffer_size = 0;
+static size_t buffer_size_in = 0;
 static pthread_t play_thread = 0;
 static pthread_mutex_t outstream_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -146,6 +150,11 @@ static int feed_from_generator(short *buffer, void *data)
 	return buffer_size;
 }
 
+static int feed_from_in(short *buffer, void *data)
+{
+	return stream_in->read(stream_in, buffer, buffer_size_in);
+}
+
 static void prepare_sample(void)
 {
 	int x;
@@ -165,10 +174,24 @@ static void prepare_sample(void)
 	sample_pos = 0;
 }
 
+static void mono_to_stereo_pcm16(const int16_t *in, int16_t *out, size_t samples)
+{
+	int16_t mono;
+	size_t i;
+
+	for (i = 0; i < samples; i++) {
+		mono = get_unaligned(&in[i]);
+
+		put_unaligned(mono, &out[2 * i]);
+		put_unaligned(mono, &out[2 * i + 1]);
+	}
+}
+
 static void *playback_thread(void *data)
 {
 	int (*filbuff_cb) (short*, void*);
 	short buffer[buffer_size / sizeof(short)];
+	short buffer_in[buffer_size_in / sizeof(short)];
 	size_t len = 0;
 	ssize_t w_len = 0;
 	FILE *in = data;
@@ -177,8 +200,12 @@ static void *playback_thread(void *data)
 
 	/* Use file or fall back to generator */
 	if (in) {
-		filbuff_cb = feed_from_file;
-		cb_data = in;
+		if (data == stream_in)
+			filbuff_cb = feed_from_in;
+		else {
+			filbuff_cb = feed_from_file;
+			cb_data = in;
+		}
 	} else {
 		prepare_sample();
 		filbuff_cb = feed_from_generator;
@@ -204,7 +231,19 @@ static void *playback_thread(void *data)
 
 		pthread_mutex_unlock(&state_mutex);
 
-		len = filbuff_cb(buffer, cb_data);
+		if (data && data == stream_in) {
+			int chan_in = popcount(stream_in->common.get_channels(&stream_in->common));
+			int chan_out = popcount(stream_out->common.get_channels(&stream_out->common));
+
+			len = filbuff_cb(buffer_in, cb_data);
+
+			if (chan_in == 1 && chan_out == 2) {
+				mono_to_stereo_pcm16(buffer_in,
+							buffer,
+							buffer_size_in / 2);
+			}
+		} else
+			len = filbuff_cb(buffer, cb_data);
 
 		pthread_mutex_lock(&outstream_mutex);
 		if (!stream_out) {
@@ -216,7 +255,7 @@ static void *playback_thread(void *data)
 		pthread_mutex_unlock(&outstream_mutex);
 	} while (len && w_len > 0);
 
-	if (in)
+	if (in && data != stream_in)
 		fclose(in);
 
 	pthread_mutex_lock(&state_mutex);
@@ -224,6 +263,75 @@ static void *playback_thread(void *data)
 	pthread_mutex_unlock(&state_mutex);
 
 	haltest_info("Done playing.\n");
+
+	return NULL;
+}
+
+static void write_stereo_pcm16(char *buffer, size_t len, FILE *out)
+{
+	const int16_t *input = (const void *) buffer;
+	int16_t sample[2];
+	size_t i;
+
+	for (i = 0; i < len / 2; i++) {
+		int16_t mono = get_unaligned(&input[i]);
+
+		put_unaligned(mono, &sample[0]);
+		put_unaligned(mono, &sample[1]);
+
+		fwrite(sample, sizeof(sample), 1, out);
+	}
+}
+
+static void *read_thread(void *data)
+{
+	int (*filbuff_cb) (short*, void*) = feed_from_in;
+	short buffer[buffer_size_in / sizeof(short)];
+	ssize_t len = 0;
+	void *cb_data = NULL;
+	FILE *out = data;
+
+	pthread_mutex_lock(&state_mutex);
+	current_state = STATE_PLAYING;
+	pthread_mutex_unlock(&state_mutex);
+
+	do {
+		pthread_mutex_lock(&state_mutex);
+
+		if (current_state == STATE_STOPPING) {
+			haltest_info("Detected stopping\n");
+			pthread_mutex_unlock(&state_mutex);
+			break;
+		} else if (current_state == STATE_SUSPENDED) {
+			pthread_mutex_unlock(&state_mutex);
+			usleep(500);
+			continue;
+		}
+
+		pthread_mutex_unlock(&state_mutex);
+
+		len = filbuff_cb(buffer, cb_data);
+		if (len < 0) {
+			haltest_error("Error receiving SCO data");
+			break;
+		}
+
+		haltest_info("Read %zd bytes\n", len);
+
+		if (out) {
+			write_stereo_pcm16((char *) buffer, len, out);
+			haltest_info("Written %zd bytes\n", len * 2);
+		}
+	} while (len);
+
+	if (out)
+		fclose(out);
+
+	pthread_mutex_lock(&state_mutex);
+	current_state = STATE_STOPPED;
+	pthread_mutex_unlock(&state_mutex);
+
+	haltest_info("Done reading.\n");
 
 	return NULL;
 }
@@ -274,26 +382,115 @@ fail:
 		fclose(in);
 }
 
+static void loop_p(int argc, const char **argv)
+{
+	int chan_out, chan_in;
+
+	RETURN_IF_NULL(if_audio_sco);
+	RETURN_IF_NULL(stream_out);
+	RETURN_IF_NULL(stream_in);
+
+	chan_out = popcount(stream_out->common.get_channels(&stream_out->common));
+	chan_in = popcount(stream_in->common.get_channels(&stream_in->common));
+
+	if (!buffer_size || !buffer_size_in) {
+		haltest_error("Invalid buffer sizes. Streams opened\n");
+		return;
+	}
+
+	if (buffer_size / chan_out != buffer_size_in / chan_in) {
+		haltest_error("read/write buffers differ, not supported\n");
+		return;
+	}
+
+	pthread_mutex_lock(&state_mutex);
+	if (current_state != STATE_STOPPED) {
+		haltest_error("Already playing or stream suspended!\n");
+		pthread_mutex_unlock(&state_mutex);
+		return;
+	}
+	pthread_mutex_unlock(&state_mutex);
+
+	if (pthread_create(&play_thread, NULL, playback_thread,
+							stream_in) != 0)
+		haltest_error("Cannot create playback thread!\n");
+}
+
+static void read_p(int argc, const char **argv)
+{
+	const char *fname = NULL;
+	FILE *out = NULL;
+
+	RETURN_IF_NULL(if_audio_sco);
+	RETURN_IF_NULL(stream_in);
+
+	pthread_mutex_lock(&state_mutex);
+	if (current_state != STATE_STOPPED) {
+		haltest_error("Already playing or stream suspended!\n");
+		pthread_mutex_unlock(&state_mutex);
+		return;
+	}
+	pthread_mutex_unlock(&state_mutex);
+
+	if (argc < 3) {
+		haltest_error("Invalid audio file path.\n");
+		haltest_info("Using read and through away\n");
+	} else {
+		fname = argv[2];
+		out = fopen(fname, "w");
+		if (!out) {
+			haltest_error("Cannot open file: %s\n", fname);
+			return;
+		}
+
+		haltest_info("Reading to file: %s\n", fname);
+	}
+
+	if (!buffer_size_in) {
+		haltest_error("Invalid buffer size.\n");
+		goto failed;
+	}
+
+	if (pthread_create(&play_thread, NULL, read_thread, out) != 0) {
+		haltest_error("Cannot create playback thread!\n");
+		goto failed;
+	}
+
+	return;
+failed:
+	if (out)
+		fclose(out);
+}
+
 static void stop_p(int argc, const char **argv)
 {
+	RETURN_IF_NULL(if_audio_sco);
+	RETURN_IF_NULL(play_thread);
+
 	pthread_mutex_lock(&state_mutex);
 	if (current_state == STATE_STOPPED || current_state == STATE_STOPPING) {
 		pthread_mutex_unlock(&state_mutex);
 		return;
 	}
 
+	if (stream_out) {
+		pthread_mutex_lock(&outstream_mutex);
+		stream_out->common.standby(&stream_out->common);
+		pthread_mutex_unlock(&outstream_mutex);
+	}
+
 	current_state = STATE_STOPPING;
 	pthread_mutex_unlock(&state_mutex);
 
-	pthread_mutex_lock(&outstream_mutex);
-	stream_out->common.standby(&stream_out->common);
-	pthread_mutex_unlock(&outstream_mutex);
+	pthread_join(play_thread, NULL);
+	play_thread = 0;
 
 	haltest_info("Ended %s\n", __func__);
 }
 
 static void open_output_stream_p(int argc, const char **argv)
 {
+	struct audio_config *config;
 	int err;
 
 	RETURN_IF_NULL(if_audio_sco);
@@ -306,15 +503,28 @@ static void open_output_stream_p(int argc, const char **argv)
 	}
 	pthread_mutex_unlock(&state_mutex);
 
+	if (argc < 3) {
+		haltest_info("No sampling rate specified. Use default conf\n");
+		config = NULL;
+	} else {
+		config = calloc(1, sizeof(struct audio_config));
+		if (!config)
+			return;
+
+		config->sample_rate = atoi(argv[2]);
+		config->channel_mask = AUDIO_CHANNEL_OUT_STEREO;
+		config->format = AUDIO_FORMAT_PCM_16_BIT;
+	}
+
 	err = if_audio_sco->open_output_stream(if_audio_sco,
 						0,
 						AUDIO_DEVICE_OUT_ALL_SCO,
 						AUDIO_OUTPUT_FLAG_NONE,
-						NULL,
+						config,
 						&stream_out);
 	if (err < 0) {
 		haltest_error("open output stream returned %d\n", err);
-		return;
+		goto failed;
 	}
 
 	buffer_size = stream_out->common.get_buffer_size(&stream_out->common);
@@ -322,6 +532,9 @@ static void open_output_stream_p(int argc, const char **argv)
 		haltest_error("Invalid buffer size received!\n");
 	else
 		haltest_info("Using buffer size: %zu\n", buffer_size);
+failed:
+	if (config)
+		free(config);
 }
 
 static void close_output_stream_p(int argc, const char **argv)
@@ -329,15 +542,75 @@ static void close_output_stream_p(int argc, const char **argv)
 	RETURN_IF_NULL(if_audio_sco);
 	RETURN_IF_NULL(stream_out);
 
-	stop_p(argc, argv);
-
-	haltest_info("Waiting for playback thread...\n");
-	pthread_join(play_thread, NULL);
+	if (play_thread)
+		stop_p(argc, argv);
 
 	if_audio_sco->close_output_stream(if_audio_sco, stream_out);
 
 	stream_out = NULL;
 	buffer_size = 0;
+}
+
+static void open_input_stream_p(int argc, const char **argv)
+{
+	struct audio_config *config;
+	int err;
+
+	RETURN_IF_NULL(if_audio_sco);
+
+	pthread_mutex_lock(&state_mutex);
+	if (current_state == STATE_PLAYING) {
+		haltest_error("Already playing!\n");
+		pthread_mutex_unlock(&state_mutex);
+		return;
+	}
+	pthread_mutex_unlock(&state_mutex);
+
+	if (argc < 3) {
+		haltest_info("No sampling rate specified. Use default conf\n");
+		config = NULL;
+	} else {
+		config = calloc(1, sizeof(struct audio_config));
+		if (!config)
+			return;
+
+		config->sample_rate = atoi(argv[2]);
+		config->channel_mask = AUDIO_CHANNEL_OUT_MONO;
+		config->format = AUDIO_FORMAT_PCM_16_BIT;
+	}
+
+	err = if_audio_sco->open_input_stream(if_audio_sco,
+						0,
+						AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,
+						config,
+						&stream_in);
+	if (err < 0) {
+		haltest_error("open output stream returned %d\n", err);
+		goto failed;
+	}
+
+	buffer_size_in = stream_in->common.get_buffer_size(&stream_in->common);
+	if (buffer_size_in == 0)
+		haltest_error("Invalid buffer size received!\n");
+	else
+		haltest_info("Using buffer size: %zu\n", buffer_size_in);
+failed:
+	if (config)
+		free(config);
+}
+
+static void close_input_stream_p(int argc, const char **argv)
+{
+	RETURN_IF_NULL(if_audio_sco);
+	RETURN_IF_NULL(stream_in);
+
+	if (play_thread)
+		stop_p(argc, argv);
+
+	if_audio_sco->close_input_stream(if_audio_sco, stream_in);
+
+	stream_in = NULL;
+	buffer_size_in = 0;
 }
 
 static void cleanup_p(int argc, const char **argv)
@@ -497,9 +770,13 @@ static void init_check_p(int argc, const char **argv)
 static struct method methods[] = {
 	STD_METHOD(init),
 	STD_METHOD(cleanup),
-	STD_METHOD(open_output_stream),
+	STD_METHODH(open_output_stream, "sample_rate"),
 	STD_METHOD(close_output_stream),
+	STD_METHODH(open_input_stream, "sampling rate"),
+	STD_METHOD(close_input_stream),
 	STD_METHODH(play, "<path to pcm file>"),
+	STD_METHOD(read),
+	STD_METHOD(loop),
 	STD_METHOD(stop),
 	STD_METHOD(suspend),
 	STD_METHOD(resume),

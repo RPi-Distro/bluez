@@ -80,7 +80,7 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:10:17
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:11:17
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -157,7 +157,9 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			src/shared/queue.h src/shared/queue.c \
 			src/shared/util.h src/shared/util.c \
 			src/shared/mgmt.h src/shared/mgmt.c \
-			src/shared/att-types.h src/shared/att.h src/shared/att.c
+			src/shared/att-types.h src/shared/att.h src/shared/att.c \
+			src/shared/gatt-helpers.h src/shared/gatt-helpers.c \
+			src/shared/gatt-client.h src/shared/gatt-client.c
 src_bluetoothd_LDADD = lib/libbluetooth-internal.la gdbus/libgdbus-internal.la \
 			@GLIB_LIBS@ @DBUS_LIBS@ -ldl -lrt
 src_bluetoothd_LDFLAGS = $(AM_LDFLAGS) -Wl,--export-dynamic \
@@ -367,10 +369,19 @@ if LIBRARY
 pkgconfig_DATA = lib/bluez.pc
 endif
 
+manual_pages = doc/btmon.1
+
+if MANPAGES
+dist_noinst_MANS += $(manual_pages)
+endif
+
+EXTRA_DIST += $(manual_pages:.1=.txt)
+
 DISTCHECK_CONFIGURE_FLAGS = --disable-datafiles --enable-library \
+					--enable-manpages \
 					--disable-systemd --disable-udev
 
-DISTCLEANFILES = $(pkgconfig_DATA)
+DISTCLEANFILES = $(pkgconfig_DATA) $(manual_pages)
 
 MAINTAINERCLEANFILES = Makefile.in \
 	aclocal.m4 configure config.h.in config.sub config.guess \
@@ -382,6 +393,9 @@ SED_PROCESS = $(AM_V_GEN)$(MKDIR_P) $(dir $@) && \
 
 %.service: %.service.in Makefile
 	$(SED_PROCESS)
+
+%.1: %.txt
+	$(AM_V_GEN)a2x --doctype manpage --format manpage $(srcdir)/$<
 
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@

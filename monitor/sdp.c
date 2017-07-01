@@ -686,7 +686,7 @@ static const struct sdp_data sdp_table[] = {
 	{ }
 };
 
-void sdp_packet(const struct l2cap_frame *frame, uint16_t channel)
+void sdp_packet(const struct l2cap_frame *frame)
 {
 	uint8_t pdu;
 	uint16_t tid, plen;
@@ -694,22 +694,21 @@ void sdp_packet(const struct l2cap_frame *frame, uint16_t channel)
 	struct tid_data *tid_info;
 	const struct sdp_data *sdp_data = NULL;
 	const char *pdu_color, *pdu_str;
-
 	int i;
 
-	if (frame->size < 5) {
+	l2cap_frame_pull(&sdp_frame, frame, 0);
+
+	if (!l2cap_frame_get_u8(&sdp_frame, &pdu) ||
+				!l2cap_frame_get_be16(&sdp_frame, &tid) ||
+				!l2cap_frame_get_be16(&sdp_frame, &plen)) {
 		print_text(COLOR_ERROR, "frame too short");
 		packet_hexdump(frame->data, frame->size);
 		return;
 	}
 
-	pdu = *((uint8_t *) frame->data);
-	tid = get_be16(frame->data + 1);
-	plen = get_be16(frame->data + 3);
-
-	if (frame->size != plen + 5) {
+	if (sdp_frame.size != plen) {
 		print_text(COLOR_ERROR, "invalid frame size");
-		packet_hexdump(frame->data, frame->size);
+		packet_hexdump(sdp_frame.data, sdp_frame.size);
 		return;
 	}
 
@@ -737,13 +736,12 @@ void sdp_packet(const struct l2cap_frame *frame, uint16_t channel)
 	print_indent(6, pdu_color, "SDP: ", pdu_str, COLOR_OFF,
 				" (0x%2.2x) tid %d len %d", pdu, tid, plen);
 
-	tid_info = get_tid(tid, channel);
+	tid_info = get_tid(tid, frame->chan);
 
 	if (!sdp_data || !sdp_data->func || !tid_info) {
-		packet_hexdump(frame->data + 5, frame->size - 5);
+		packet_hexdump(sdp_frame.data, sdp_frame.size);
 		return;
 	}
 
-	l2cap_frame_pull(&sdp_frame, frame, 5);
 	sdp_data->func(&sdp_frame, tid_info);
 }

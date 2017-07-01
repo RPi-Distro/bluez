@@ -105,6 +105,8 @@ struct report {
 	uint16_t		ccc_handle;
 	guint			notifyid;
 	struct gatt_char	*decl;
+	uint16_t		len;
+	uint8_t			*value;
 };
 
 static void report_value_cb(const guint8 *pdu, guint16 len, gpointer user_data)
@@ -290,8 +292,18 @@ static void discover_report(GAttrib *attrib, uint16_t start, uint16_t end,
 static void report_read_cb(guint8 status, const guint8 *pdu, guint16 len,
 							gpointer user_data)
 {
-	if (status != 0)
+	struct report *report = user_data;
+
+	if (status != 0) {
 		error("Error reading Report value: %s", att_ecode2str(status));
+		return;
+	}
+
+	if (report->value)
+		g_free(report->value);
+
+	report->value = g_memdup(pdu, len);
+	report->len = len;
 }
 
 static struct report *report_new(struct bt_hog *hog, struct gatt_char *chr)
@@ -370,12 +382,47 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 					external_service_char_cb, hog);
 }
 
-static int report_type_cmp(gconstpointer a, gconstpointer b)
-{
-	const struct report *report = a;
-	uint8_t type = GPOINTER_TO_UINT(b);
 
-	return report->type - type;
+static int report_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct report *ra = a, *rb = b;
+
+	/* sort by type first.. */
+	if (ra->type != rb->type)
+		return ra->type - rb->type;
+
+	/* skip id check in case of report id 0 */
+	if (!rb->id)
+		return 0;
+
+	/* ..then by id */
+	return ra->id - rb->id;
+}
+
+static struct report *find_report(struct bt_hog *hog, uint8_t type, uint8_t id)
+{
+	struct report cmp;
+	GSList *l;
+
+	switch (type) {
+	case UHID_FEATURE_REPORT:
+		cmp.type = HOG_REPORT_TYPE_FEATURE;
+		break;
+	case UHID_OUTPUT_REPORT:
+		cmp.type = HOG_REPORT_TYPE_OUTPUT;
+		break;
+	case UHID_INPUT_REPORT:
+		cmp.type = HOG_REPORT_TYPE_INPUT;
+		break;
+	default:
+		return NULL;
+	}
+
+	cmp.id = hog->has_report_id ? id : 0;
+
+	l = g_slist_find_custom(hog->reports, &cmp, report_cmp);
+
+	return l ? l->data : NULL;
 }
 
 static void output_written_cb(guint8 status, const guint8 *pdu,
@@ -391,39 +438,22 @@ static void forward_report(struct uhid_event *ev, void *user_data)
 {
 	struct bt_hog *hog = user_data;
 	struct report *report;
-	GSList *l;
 	void *data;
 	int size;
-	guint type;
 
-	if (hog->has_report_id) {
-		data = ev->u.output.data + 1;
-		size = ev->u.output.size - 1;
-	} else {
-		data = ev->u.output.data;
-		size = ev->u.output.size;
-	}
-
-	switch (ev->type) {
-	case UHID_OUTPUT:
-		type = HOG_REPORT_TYPE_OUTPUT;
-		break;
-	case UHID_FEATURE:
-		type = HOG_REPORT_TYPE_FEATURE;
-		break;
-	default:
-		return;
-	}
-
-	l = g_slist_find_custom(hog->reports, GUINT_TO_POINTER(type),
-							report_type_cmp);
-	if (!l)
+	report = find_report(hog, ev->u.output.rtype, ev->u.output.data[0]);
+	if (!report)
 		return;
 
-	report = l->data;
+	data = ev->u.output.data;
+	size = ev->u.output.size;
+	if (hog->has_report_id && size > 0) {
+		data++;
+		--size;
+	}
 
-	DBG("Sending report type %d to handle 0x%X", type,
-						report->decl->value_handle);
+	DBG("Sending report type %d ID %d to handle 0x%X", report->type,
+				report->id, report->decl->value_handle);
 
 	if (hog->attrib == NULL)
 		return;
@@ -434,6 +464,37 @@ static void forward_report(struct uhid_event *ev, void *user_data)
 	else if (report->decl->properties & GATT_CHR_PROP_WRITE_WITHOUT_RESP)
 		gatt_write_cmd(hog->attrib, report->decl->value_handle,
 						data, size, NULL, NULL);
+}
+
+static void get_report(struct uhid_event *ev, void *user_data)
+{
+	struct bt_hog *hog = user_data;
+	struct report *report;
+	struct uhid_event rsp;
+	int err;
+
+	memset(&rsp, 0, sizeof(rsp));
+	rsp.type = UHID_FEATURE_ANSWER;
+	rsp.u.feature_answer.id = ev->u.feature.id;
+
+	report = find_report(hog, ev->u.feature.rtype, ev->u.feature.rnum);
+	if (!report) {
+		rsp.u.feature_answer.err = ENOTSUP;
+		goto done;
+	}
+
+	if (!report->value) {
+		rsp.u.feature_answer.err = EIO;
+		goto done;
+	}
+
+	rsp.u.feature_answer.size = report->len;
+	memcpy(rsp.u.feature_answer.data, report->value, report->len);
+
+done:
+	err = bt_uhid_send(hog->uhid, &rsp);
+	if (err < 0)
+		error("bt_uhid_send: %s", strerror(-err));
 }
 
 static bool get_descriptor_item_info(uint8_t *buf, ssize_t blen, ssize_t *len,
@@ -573,7 +634,7 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 	bt_uhid_register(hog->uhid, UHID_OUTPUT, forward_report, hog);
-	bt_uhid_register(hog->uhid, UHID_FEATURE, forward_report, hog);
+	bt_uhid_register(hog->uhid, UHID_FEATURE, get_report, hog);
 }
 
 static void info_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -700,6 +761,7 @@ static void report_free(void *data)
 {
 	struct report *report = data;
 
+	g_free(report->value);
 	g_free(report->decl);
 	g_free(report);
 }
@@ -1050,12 +1112,9 @@ int bt_hog_send_report(struct bt_hog *hog, void *data, size_t size, int type)
 	if (!hog->attrib)
 		return -ENOTCONN;
 
-	l = g_slist_find_custom(hog->reports, GUINT_TO_POINTER(type),
-							report_type_cmp);
-	if (!l)
+	report = find_report(hog, type, 0);
+	if (!report)
 		return -ENOTSUP;
-
-	report = l->data;
 
 	DBG("hog: Write report, handle 0x%X", report->decl->value_handle);
 

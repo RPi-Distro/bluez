@@ -60,6 +60,8 @@ static GDBusProxy *default_ctrl;
 static GList *ctrl_list;
 static GList *dev_list;
 
+static guint input = 0;
+
 static const char * const agent_arguments[] = {
 	"on",
 	"off",
@@ -164,7 +166,7 @@ static void print_iter(const char *label, const char *name,
 
 	switch (dbus_message_iter_get_arg_type(iter)) {
 	case DBUS_TYPE_INVALID:
-		rl_printf("%s%s is inavlid\n", label, name);
+		rl_printf("%s%s is invalid\n", label, name);
 		break;
 	case DBUS_TYPE_STRING:
 	case DBUS_TYPE_OBJECT_PATH:
@@ -1386,11 +1388,20 @@ static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,
 
 	switch (si.ssi_signo) {
 	case SIGINT:
-		rl_replace_line("", 0);
-		rl_crlf();
-		rl_on_new_line();
-		rl_redisplay();
-		break;
+		if (input) {
+			rl_replace_line("", 0);
+			rl_crlf();
+			rl_on_new_line();
+			rl_redisplay();
+			break;
+		}
+
+		/*
+		 * If input was not yet setup up that means signal was received
+		 * while daemon was not yet running. Since user is not able
+		 * to terminate client by CTRL-D or typing exit treat this as
+		 * exit and fall through.
+		 */
 	case SIGTERM:
 		if (__terminated == 0) {
 			rl_replace_line("", 0);
@@ -1476,7 +1487,7 @@ int main(int argc, char *argv[])
 	GOptionContext *context;
 	GError *error = NULL;
 	GDBusClient *client;
-	guint signal, input;
+	guint signal;
 
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);

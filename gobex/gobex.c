@@ -250,6 +250,7 @@ static gboolean req_timeout(gpointer user_data)
 
 	g_assert(p != NULL);
 
+	p->timeout_id = 0;
 	obex->pending_req = NULL;
 
 	err = g_error_new(G_OBEX_ERROR, G_OBEX_ERROR_TIMEOUT,
@@ -262,8 +263,6 @@ static gboolean req_timeout(gpointer user_data)
 
 	g_error_free(err);
 	pending_pkt_free(p);
-
-	p->timeout_id = 0;
 
 	return FALSE;
 }
@@ -515,7 +514,7 @@ static void enable_tx(GObex *obex)
 	if (obex->suspended)
 		return;
 
-	if (obex->write_source > 0)
+	if (!obex->io || obex->write_source > 0)
 		return;
 
 	cond = G_IO_OUT | G_IO_HUP | G_IO_ERR | G_IO_NVAL;
@@ -527,6 +526,8 @@ static gboolean g_obex_send_internal(GObex *obex, struct pending_pkt *p,
 {
 
 	if (obex->io == NULL) {
+		if (!err)
+			return FALSE;
 		g_set_error(err, G_OBEX_ERROR, G_OBEX_ERROR_DISCONNECTED,
 					"The transport is not connected");
 		g_obex_debug(G_OBEX_DEBUG_ERROR, "%s", (*err)->message);
@@ -664,6 +665,8 @@ gboolean g_obex_send(GObex *obex, GObexPacket *pkt, GError **err)
 	g_obex_debug(G_OBEX_DEBUG_COMMAND, "conn %u", obex->conn_id);
 
 	if (obex == NULL || pkt == NULL) {
+		if (!err)
+			return FALSE;
 		g_set_error(err, G_OBEX_ERROR, G_OBEX_ERROR_INVALID_ARGS,
 				"Invalid arguments");
 		g_obex_debug(G_OBEX_DEBUG_ERROR, "%s", (*err)->message);
@@ -1231,6 +1234,8 @@ static gboolean read_stream(GObex *obex, GError **err)
 	obex->rx_pkt_len = g_ntohs(u16);
 
 	if (obex->rx_pkt_len > obex->rx_mtu) {
+		if (!err)
+			return FALSE;
 		g_set_error(err, G_OBEX_ERROR, G_OBEX_ERROR_PARSE_ERROR,
 				"Too big incoming packet");
 		g_obex_debug(G_OBEX_DEBUG_ERROR, "%s", (*err)->message);
@@ -1303,7 +1308,9 @@ static gboolean read_packet(GObex *obex, GError **err)
 
 	return TRUE;
 fail:
-	g_obex_debug(G_OBEX_DEBUG_ERROR, "%s", (*err)->message);
+	if (err)
+		g_obex_debug(G_OBEX_DEBUG_ERROR, "%s", (*err)->message);
+
 	return FALSE;
 }
 
@@ -1665,6 +1672,16 @@ guint g_obex_move(GObex *obex, const char *name, const char *dest,
 					G_OBEX_HDR_NAME, name,
 					G_OBEX_HDR_DESTNAME, dest,
 					G_OBEX_HDR_INVALID);
+
+	return g_obex_send_req(obex, req, -1, func, user_data, err);
+}
+
+guint g_obex_abort(GObex *obex, GObexResponseFunc func, gpointer user_data,
+								GError **err)
+{
+	GObexPacket *req;
+
+	req = g_obex_packet_new(G_OBEX_OP_ABORT, TRUE, G_OBEX_HDR_INVALID);
 
 	return g_obex_send_req(obex, req, -1, func, user_data, err);
 }
