@@ -395,6 +395,7 @@ struct generic_data {
 	uint8_t client_auth_req;
 	bool reject_ssp;
 	bool client_reject_ssp;
+	bool just_works;
 };
 
 static const char dummy_data[] = { 0x00 };
@@ -2212,6 +2213,15 @@ static const struct generic_data load_ltks_invalid_params_test_3 = {
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 };
 
+static const char set_io_cap_invalid_param_1[] = { 0xff };
+
+static const struct generic_data set_io_cap_invalid_param_test_1 = {
+	.send_opcode = MGMT_OP_SET_IO_CAPABILITY,
+	.send_param = set_io_cap_invalid_param_1,
+	.send_len = sizeof(set_io_cap_invalid_param_1),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
 static const char pair_device_param[] = {
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x00, 0x00 };
 static const char pair_device_rsp[] = {
@@ -2220,6 +2230,10 @@ static const char pair_device_invalid_param_1[] = {
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0xff, 0x00 };
 static const char pair_device_invalid_param_rsp_1[] = {
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0xff };
+static const char pair_device_invalid_param_2[] = {
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x00, 0x05 };
+static const char pair_device_invalid_param_rsp_2[] = {
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x00 };
 
 static const struct generic_data pair_device_not_powered_test_1 = {
 	.send_opcode = MGMT_OP_PAIR_DEVICE,
@@ -2237,6 +2251,15 @@ static const struct generic_data pair_device_invalid_param_test_1 = {
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 	.expect_param = pair_device_invalid_param_rsp_1,
 	.expect_len = sizeof(pair_device_invalid_param_rsp_1),
+};
+
+static const struct generic_data pair_device_invalid_param_test_2 = {
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_param = pair_device_invalid_param_2,
+	.send_len = sizeof(pair_device_invalid_param_2),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = pair_device_invalid_param_rsp_2,
+	.expect_len = sizeof(pair_device_invalid_param_rsp_2),
 };
 
 static const void *pair_device_send_param_func(uint16_t *len)
@@ -2521,6 +2544,7 @@ static const struct generic_data pairing_acceptor_ssp_1 = {
 	.expect_hci_func = client_bdaddr_param_func,
 	.io_cap = 0x03, /* NoInputNoOutput */
 	.client_io_cap = 0x03, /* NoInputNoOutput */
+	.just_works = true,
 };
 
 static const struct generic_data pairing_acceptor_ssp_2 = {
@@ -2532,6 +2556,18 @@ static const struct generic_data pairing_acceptor_ssp_2 = {
 	.expect_hci_func = client_bdaddr_param_func,
 	.io_cap = 0x01, /* DisplayYesNo */
 	.client_io_cap = 0x01, /* DisplayYesNo */
+};
+
+static const struct generic_data pairing_acceptor_ssp_3 = {
+	.setup_settings = settings_powered_connectable_pairable_ssp,
+	.client_enable_ssp = true,
+	.expect_alt_ev = MGMT_EV_NEW_LINK_KEY,
+	.expect_alt_ev_len = 26,
+	.expect_hci_command = BT_HCI_CMD_USER_CONFIRM_REQUEST_REPLY,
+	.expect_hci_func = client_bdaddr_param_func,
+	.io_cap = 0x01, /* DisplayYesNo */
+	.client_io_cap = 0x01, /* DisplayYesNo */
+	.just_works = true,
 };
 
 static const char unpair_device_param[] = {
@@ -2735,6 +2771,67 @@ static const struct generic_data set_privacy_nval_param_test = {
 	.send_param = set_privacy_nval_param,
 	.send_len = sizeof(set_privacy_nval_param),
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const void *get_conn_info_send_param_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[7];
+
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const void *get_conn_info_expect_param_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[10];
+
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+	param[7] = 0xff; /* RSSI (= -1) */
+	param[8] = 0xff; /* TX power (= -1) */
+	param[9] = 0x04; /* max TX power */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const void *get_conn_info_error_expect_param_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[10];
+
+	/* All unset parameters shall be 0 in case of error */
+	memset(param, 0, sizeof(param));
+
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const struct generic_data get_conn_info_succes1_test = {
+	.setup_settings = settings_powered_connectable_pairable_ssp,
+	.send_opcode = MGMT_OP_GET_CONN_INFO,
+	.send_func = get_conn_info_send_param_func,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = get_conn_info_expect_param_func,
+};
+
+static const struct generic_data get_conn_info_ncon_test = {
+	.setup_settings = settings_powered_connectable_pairable_ssp,
+	.send_opcode = MGMT_OP_GET_CONN_INFO,
+	.send_func = get_conn_info_send_param_func,
+	.expect_status = MGMT_STATUS_NOT_CONNECTED,
+	.expect_func = get_conn_info_error_expect_param_func,
 };
 
 static void client_cmd_complete(uint16_t opcode, uint8_t status,
@@ -3090,6 +3187,12 @@ static void user_confirm_request_callback(uint16_t index, uint16_t length,
 	struct mgmt_cp_user_confirm_reply cp;
 	uint16_t opcode;
 
+	if (test->just_works) {
+		tester_warn("User Confirmation received for just-works case");
+		tester_test_failed();
+		return;
+	}
+
 	memset(&cp, 0, sizeof(cp));
 	memcpy(&cp.addr, &ev->addr, sizeof(cp.addr));
 
@@ -3132,6 +3235,9 @@ static void test_setup(const void *test_data)
 
 	if (test->client_auth_req)
 		bthost_set_auth_req(bthost, test->client_auth_req);
+
+	if (!test->just_works)
+		bthost_set_auth_req(bthost, 0x01);
 
 	if (test->client_reject_ssp)
 		bthost_set_reject_user_confirm(bthost, true);
@@ -3419,6 +3525,57 @@ static void test_pairing_acceptor(const void *test_data)
 	else
 		addr_type = BDADDR_LE_PUBLIC;
 
+	bthost_hci_connect(bthost, master_bdaddr, addr_type);
+}
+
+static void connected_event(uint16_t index, uint16_t length, const void *param,
+							void *user_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	const void *send_param = test->send_param;
+	uint16_t send_len = test->send_len;
+
+	tester_print("Sending command 0x%04x", test->send_opcode);
+
+	if (test->send_func)
+		send_param = test->send_func(&send_len);
+
+	mgmt_send(data->mgmt, test->send_opcode, data->mgmt_index, send_len,
+			send_param, command_generic_callback, NULL, NULL);
+	test_add_condition(data);
+
+	/* Complete MGMT_EV_DEVICE_CONNECTED *after* adding new one */
+	test_condition_complete(data);
+}
+
+static void test_command_generic_connect(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	unsigned int id;
+	const uint8_t *master_bdaddr;
+	uint8_t addr_type;
+	struct bthost *bthost;
+
+	tester_print("Registering %s notification",
+					mgmt_evstr(MGMT_EV_DEVICE_CONNECTED));
+	id = mgmt_register(data->mgmt_alt, MGMT_EV_DEVICE_CONNECTED,
+				data->mgmt_index, connected_event,
+				NULL, NULL);
+	data->mgmt_alt_ev_id = id;
+	test_add_condition(data);
+
+	master_bdaddr = hciemu_get_master_bdaddr(data->hciemu);
+	if (!master_bdaddr) {
+		tester_warn("No master bdaddr");
+		tester_test_failed();
+		return;
+	}
+
+	addr_type = data->hciemu_type == HCIEMU_TYPE_BREDRLE ? BDADDR_BREDR :
+							BDADDR_LE_PUBLIC;
+
+	bthost = hciemu_client_get_host(data->hciemu);
 	bthost_hci_connect(bthost, master_bdaddr, addr_type);
 }
 
@@ -3892,11 +4049,18 @@ int main(int argc, char *argv[])
 				&load_ltks_invalid_params_test_3,
 				NULL, test_command_generic);
 
+	test_bredrle("Set IO Capability - Invalid Params 1",
+				&set_io_cap_invalid_param_test_1,
+				NULL, test_command_generic);
+
 	test_bredrle("Pair Device - Not Powered 1",
 				&pair_device_not_powered_test_1,
 				NULL, test_command_generic);
 	test_bredrle("Pair Device - Invalid Parameters 1",
 				&pair_device_invalid_param_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Pair Device - Invalid Parameters 2",
+				&pair_device_invalid_param_test_2,
 				NULL, test_command_generic);
 	test_bredrle("Pair Device - Legacy Success 1",
 				&pair_device_success_test_1,
@@ -3949,6 +4113,9 @@ int main(int argc, char *argv[])
 				test_pairing_acceptor);
 	test_bredrle("Pairing Acceptor - SSP 2",
 				&pairing_acceptor_ssp_2, setup_ssp_acceptor,
+				test_pairing_acceptor);
+	test_bredrle("Pairing Acceptor - SSP 3",
+				&pairing_acceptor_ssp_3, setup_ssp_acceptor,
 				test_pairing_acceptor);
 
 	test_bredrle("Unpair Device - Not Powered 1",
@@ -4012,6 +4179,13 @@ int main(int argc, char *argv[])
 	test_bredrle("Set Privacy - Invalid Parameters",
 				&set_privacy_nval_param_test,
 				NULL, test_command_generic);
+
+	test_bredrle("Get Conn Info - Success",
+				&get_conn_info_succes1_test, NULL,
+				test_command_generic_connect);
+	test_bredrle("Get Conn Info - Not Connected",
+				&get_conn_info_ncon_test, NULL,
+				test_command_generic);
 
 	return tester_run();
 }

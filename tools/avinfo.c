@@ -158,21 +158,95 @@ struct getcap_resp {
 	uint8_t caps[0];
 } __attribute__ ((packed));
 
-static void print_vendor(a2dp_vendor_codec_t *vendor)
+static void print_aptx(a2dp_aptx_t *aptx)
 {
-	printf("\tMedia Codec: Vendor Specific A2DP Codec");
+	printf("\t\tVendor Specific Value (aptX)");
 
-	printf("\n\t\tVendor ID 0x%02x%02x%02x%02x", vendor->vendor_id[0],
-		vendor->vendor_id[1], vendor->vendor_id[2],
-		vendor->vendor_id[3]);
+	printf("\n\t\t\tFrequencies: ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_16000)
+		printf("16kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_32000)
+		printf("32kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_44100)
+		printf("44.1kHz ");
+	if (aptx->frequency & APTX_SAMPLING_FREQ_48000)
+		printf("48kHz ");
 
-	printf("\n\t\tVendor Specific Codec ID 0x%02x%02x\n",
-			vendor->codec_id[0], vendor->codec_id[1]);
+	printf("\n\t\t\tChannel modes: ");
+	if (aptx->channel_mode & APTX_CHANNEL_MODE_MONO)
+		printf("Mono ");
+	if (aptx->channel_mode & APTX_CHANNEL_MODE_STEREO)
+		printf("Stereo ");
+
+	printf("\n");
 }
 
-static void print_mpeg24(a2dp_mpeg_t *mpeg)
+static void print_vendor(a2dp_vendor_codec_t *vendor)
 {
-	printf("\tMedia Codec: MPEG24\n");
+	uint32_t vendor_id = btohl(vendor->vendor_id);
+	uint16_t codec_id = btohs(vendor->codec_id);
+
+	printf("\tMedia Codec: Vendor Specific A2DP Codec");
+
+	printf("\n\t\tVendor ID 0x%08x", vendor_id);
+
+	printf("\n\t\tVendor Specific Codec ID 0x%04x\n", codec_id);
+
+	if (vendor_id == APTX_VENDOR_ID && codec_id == APTX_CODEC_ID)
+		print_aptx((void *) vendor);
+}
+
+static void print_mpeg24(a2dp_aac_t *aac)
+{
+	unsigned freq = AAC_GET_FREQUENCY(*aac);
+	unsigned bitrate = AAC_GET_BITRATE(*aac);
+
+	printf("\tMedia Codec: MPEG24\n\t\tObject Types: ");
+
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG2_AAC_LC)
+		printf("MPEG-2 AAC LC ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_LC)
+		printf("MPEG-4 AAC LC ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_LTP)
+		printf("MPEG-4 AAC LTP ");
+	if (aac->object_type & AAC_OBJECT_TYPE_MPEG4_AAC_SCA)
+		printf("MPEG-4 AAC scalable ");
+
+	printf("\n\t\tFrequencies: ");
+	if (freq & AAC_SAMPLING_FREQ_8000)
+		printf("8kHz ");
+	if (freq & AAC_SAMPLING_FREQ_11025)
+		printf("11.025kHz ");
+	if (freq & AAC_SAMPLING_FREQ_12000)
+		printf("12kHz ");
+	if (freq & AAC_SAMPLING_FREQ_16000)
+		printf("16kHz ");
+	if (freq & AAC_SAMPLING_FREQ_22050)
+		printf("22.05kHz ");
+	if (freq & AAC_SAMPLING_FREQ_24000)
+		printf("24kHz ");
+	if (freq & AAC_SAMPLING_FREQ_32000)
+		printf("32kHz ");
+	if (freq & AAC_SAMPLING_FREQ_44100)
+		printf("44.1kHz ");
+	if (freq & AAC_SAMPLING_FREQ_48000)
+		printf("48kHz ");
+	if (freq & AAC_SAMPLING_FREQ_64000)
+		printf("64kHz ");
+	if (freq & AAC_SAMPLING_FREQ_88200)
+		printf("88.2kHz ");
+	if (freq & AAC_SAMPLING_FREQ_96000)
+		printf("96kHz ");
+
+	printf("\n\t\tChannels: ");
+	if (aac->channels & AAC_CHANNELS_1)
+		printf("1 ");
+	if (aac->channels & AAC_CHANNELS_2)
+		printf("2 ");
+
+	printf("\n\t\tBitrate: %u", bitrate);
+
+	printf("\n\t\tVBR: %s", aac->vbr ? "Yes\n" : "No\n");
 }
 
 static void print_mpeg12(a2dp_mpeg_t *mpeg)

@@ -405,8 +405,9 @@ struct hal_cmd_health_reg_app {
 
 #define HAL_OP_HEALTH_MDEP		0x02
 struct hal_cmd_health_mdep {
+	uint16_t app_id;
 	uint8_t  role;
-	uint8_t  data_type;
+	uint16_t data_type;
 	uint8_t  channel_type;
 	uint16_t descr_len;
 	uint8_t  descr[0];
@@ -744,8 +745,19 @@ struct hal_cmd_gatt_client_set_adv_data {
 	int32_t  max_interval;
 	int32_t  appearance;
 	uint16_t manufacturer_len;
-	uint8_t  manufacturer_data[0];
+	uint16_t service_data_len;
+	uint16_t service_uuid_len;
+	uint8_t  data[0];
 } __attribute__((packed));
+
+#define GATT_CLIENT_TEST_CMD_ENABLE		0x01
+#define GATT_CLIENT_TEST_CMD_CONNECT		0x02
+#define GATT_CLIENT_TEST_CMD_DISCONNECT		0x03
+#define GATT_CLIENT_TEST_CMD_DISCOVER		0x04
+#define GATT_CLIENT_TEST_CMD_READ		0xe0
+#define GATT_CLIENT_TEST_CMD_WRITE		0xe1
+#define GATT_CLIENT_TEST_CMD_INCREASE_SECURITY	0xe2
+#define GATT_CLIENT_TEST_CMD_PAIRING_CONFIG	0xf0
 
 #define HAL_OP_GATT_CLIENT_TEST_COMMAND		0x16
 struct hal_cmd_gatt_client_test_command {
@@ -1590,3 +1602,16 @@ struct hal_ev_gatt_server_rsp_confirmation {
 	int32_t status;
 	int32_t handle;
 } __attribute__((packed));
+
+#define HAL_GATT_PERMISSION_READ			0x0001
+#define HAL_GATT_PERMISSION_READ_ENCRYPTED		0x0002
+#define HAL_GATT_PERMISSION_READ_ENCRYPTED_MITM		0x0004
+#define HAL_GATT_PERMISSION_WRITE			0x0010
+#define HAL_GATT_PERMISSION_WRITE_ENCRYPTED		0x0020
+#define HAL_GATT_PERMISSION_WRITE_ENCRYPTED_MITM	0x0040
+#define HAL_GATT_PERMISSION_WRITE_SIGNED		0x0080
+#define HAL_GATT_PERMISSION_WRITE_SIGNED_MITM		0x0100
+
+#define HAL_GATT_AUTHENTICATION_NONE		0
+#define HAL_GATT_AUTHENTICATION_NO_MITM		1
+#define HAL_GATT_AUTHENTICATION_MITM		2

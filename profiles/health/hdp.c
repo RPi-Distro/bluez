@@ -747,8 +747,11 @@ static struct hdp_channel *create_channel(struct hdp_device *dev,
 {
 	struct hdp_channel *hdp_chann;
 
-	if (dev == NULL)
+	if (dev == NULL) {
+		g_set_error(err, HDP_ERROR, HDP_UNSPECIFIED_ERROR,
+					"HDP device uninitialized");
 		return NULL;
+	}
 
 	hdp_chann = g_new0(struct hdp_channel, 1);
 	hdp_chann->config = config;
@@ -860,7 +863,10 @@ static gboolean serve_echo(GIOChannel *io_chan, GIOCondition cond,
 	chan->edata->echo_done = TRUE;
 
 	fd = g_io_channel_unix_get_fd(io_chan);
+
 	len = read(fd, buf, sizeof(buf));
+	if (len < 0)
+		goto fail;
 
 	if (send_echo_data(fd, buf, len)  >= 0)
 		return TRUE;
@@ -930,7 +936,8 @@ static void hdp_mcap_mdl_connected_cb(struct mcap_mdl *mdl, void *data)
 	struct hdp_device *dev = data;
 	struct hdp_channel *chan;
 
-	DBG("hdp_mcap_mdl_connected_cb");
+	DBG("");
+
 	if (dev->ndc == NULL)
 		return;
 
@@ -1501,8 +1508,8 @@ static gboolean check_echo(GIOChannel *io_chan, GIOCondition cond,
 	}
 
 	fd = g_io_channel_unix_get_fd(io_chan);
-	len = read(fd, buf, sizeof(buf));
 
+	len = read(fd, buf, sizeof(buf));
 	if (len != HDP_ECHO_LEN) {
 		value = FALSE;
 		goto end;

@@ -91,6 +91,10 @@ static struct sdp_xml_data *sdp_xml_data_alloc(void)
 	/* Null terminate the text */
 	elem->size = DEFAULT_XML_DATA_SIZE;
 	elem->text = malloc(DEFAULT_XML_DATA_SIZE);
+	if (!elem->text) {
+		free(elem);
+		return NULL;
+	}
 	elem->text[0] = '\0';
 
 	return elem;
@@ -333,6 +337,8 @@ static char *sdp_xml_parse_string_decode(const char *data, char encoding,
 		int i;
 
 		decoded = malloc((len >> 1) + 1);
+		if (!decoded)
+			return NULL;
 
 		/* Ensure the string is a power of 2 */
 		len = (len >> 1) << 1;
@@ -363,6 +369,8 @@ static sdp_data_t *sdp_xml_parse_url(const char *data)
 
 	url = sdp_xml_parse_string_decode(data,
 				SDP_XML_ENCODING_NORMAL, &length);
+	if (!url)
+		return NULL;
 
 	if (length > UCHAR_MAX)
 		dtd = SDP_URL_STR16;
@@ -382,6 +390,8 @@ static sdp_data_t *sdp_xml_parse_text(const char *data, char encoding)
 	sdp_data_t *ret;
 
 	text = sdp_xml_parse_string_decode(data, encoding, &length);
+	if (!text)
+		return NULL;
 
 	if (length > UCHAR_MAX)
 		dtd = SDP_TEXT_STR16;
@@ -823,7 +833,7 @@ static void convert_raw_data_to_xml(sdp_data_t *value, int indent_level,
 	{
 		int num_chars_to_escape = 0;
 		int length = value->unitSize - 1;
-		char *strBuf = 0;
+		char *strBuf;
 
 		hex = 0;
 
@@ -850,6 +860,10 @@ static void convert_raw_data_to_xml(sdp_data_t *value, int indent_level,
 			appender(data, "encoding=\"hex\" ");
 			strBuf = malloc(sizeof(char)
 						 * ((value->unitSize-1) * 2 + 1));
+			if (!strBuf) {
+				DBG("No memory to convert raw data to xml");
+				return;
+			}
 
 			/* Unit Size seems to include the size for dtd
 			   It is thus off by 1
@@ -866,6 +880,10 @@ static void convert_raw_data_to_xml(sdp_data_t *value, int indent_level,
 			/* escape the XML disallowed chars */
 			strBuf = malloc(sizeof(char) *
 					(value->unitSize + 1 + num_chars_to_escape * 4));
+			if (!strBuf) {
+				DBG("No memory to convert raw data to xml");
+				return;
+			}
 			for (i = 0, j = 0; i < length; i++) {
 				if (value->val.str[i] == '&') {
 					strBuf[j++] = '&';

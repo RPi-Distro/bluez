@@ -31,7 +31,7 @@ static bool interface_ready(void)
 	return cbs != NULL;
 }
 
-static void handle_conn_state(void *buf, uint16_t len)
+static void handle_conn_state(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_a2dp_conn_state *ev = buf;
 
@@ -40,7 +40,7 @@ static void handle_conn_state(void *buf, uint16_t len)
 						(bt_bdaddr_t *) (ev->bdaddr));
 }
 
-static void handle_audio_state(void *buf, uint16_t len)
+static void handle_audio_state(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_a2dp_audio_state *ev = buf;
 
@@ -53,16 +53,10 @@ static void handle_audio_state(void *buf, uint16_t len)
  * index in table equals to 'opcode - HAL_MINIMUM_EVENT'
  */
 static const struct hal_ipc_handler ev_handlers[] = {
-	{	/* HAL_EV_A2DP_CONN_STATE */
-		.handler = handle_conn_state,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_a2dp_conn_state),
-	},
-	{	/* HAL_EV_A2DP_AUDIO_STATE */
-		.handler = handle_audio_state,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_a2dp_audio_state),
-	},
+	/* HAL_EV_A2DP_CONN_STATE */
+	{ handle_conn_state, false, sizeof(struct hal_ev_a2dp_conn_state) },
+	/* HAL_EV_A2DP_AUDIO_STATE */
+	{ handle_audio_state, false, sizeof(struct hal_ev_a2dp_audio_state) },
 };
 
 static bt_status_t a2dp_connect(bt_bdaddr_t *bd_addr)

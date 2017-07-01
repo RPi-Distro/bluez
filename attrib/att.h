@@ -22,6 +22,11 @@
  *
  */
 
+#include "src/shared/crypto.h"
+
+/* Len of signature in write signed packet */
+#define ATT_SIGNATURE_LEN		12
+
 /* Attribute Protocol Opcodes */
 #define ATT_OP_ERROR			0x01
 #define ATT_OP_MTU_REQ			0x02
@@ -83,8 +88,8 @@
 #define ATT_PSM					31
 
 /* Flags for Execute Write Request Operation */
-#define ATT_CANCEL_ALL_PREP_WRITES              0x00
-#define ATT_WRITE_ALL_PREP_WRITES               0x01
+#define ATT_CANCEL_ALL_PREP_WRITES		0x00
+#define ATT_WRITE_ALL_PREP_WRITES		0x01
 
 /* Find Information Response Formats */
 #define ATT_FIND_INFO_RESP_FMT_16BIT		0x01
@@ -129,6 +134,16 @@ uint16_t enc_write_cmd(uint16_t handle, const uint8_t *value, size_t vlen,
 						uint8_t *pdu, size_t len);
 uint16_t dec_write_cmd(const uint8_t *pdu, size_t len, uint16_t *handle,
 						uint8_t *value, size_t *vlen);
+uint16_t enc_signed_write_cmd(uint16_t handle,
+					const uint8_t *value, size_t vlen,
+					struct bt_crypto *crypto,
+					const uint8_t csrk[16],
+					uint32_t sign_cnt,
+					uint8_t *pdu, size_t len);
+uint16_t dec_signed_write_cmd(const uint8_t *pdu, size_t len,
+						uint16_t *handle,
+						uint8_t *value, size_t *vlen,
+						uint8_t signature[12]);
 struct att_data_list *dec_read_by_type_resp(const uint8_t *pdu, size_t len);
 uint16_t enc_write_req(uint16_t handle, const uint8_t *value, size_t vlen,
 						uint8_t *pdu, size_t len);

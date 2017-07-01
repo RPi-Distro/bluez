@@ -150,6 +150,13 @@ static char *codec2str(uint8_t type, uint8_t codec)
 	return "Unknown";
 }
 
+static char *vndcodec2str(uint32_t vendor, uint16_t vndcodec)
+{
+	if (vendor == 0x0000004f && vndcodec == 0x0001)
+		return "aptX";
+	return "Unknown";
+}
+
 static char *cat2str(uint8_t cat)
 {
 	switch (cat) {
@@ -212,12 +219,25 @@ static void capabilities(int level, struct frame *frm)
 		len = get_u8(frm);
 
 		if (cat == 7) {
-			uint8_t type, codec, tmp;
+			uint8_t type, codec;
+			uint16_t tmp, freq, vndcodec = 0;
+			uint32_t bitrate, vendor = 0;
+			int i;
 
 			type  = get_u8(frm);
 			codec = get_u8(frm);
 
-			printf("%s - %s\n", cat2str(cat), codec2str(type, codec));
+			if (codec == 255) {
+				vendor = btohl(htonl(get_u32(frm)));
+				vndcodec = btohs(htons(get_u16(frm)));
+
+				printf("%s - %s (%s)\n", cat2str(cat),
+						codec2str(type, codec),
+						vndcodec2str(vendor, vndcodec));
+			} else {
+				printf("%s - %s\n", cat2str(cat),
+							codec2str(type, codec));
+			}
 
 			switch (codec) {
 			case 0:
@@ -268,6 +288,143 @@ static void capabilities(int level, struct frame *frm)
 				tmp = get_u8(frm);
 				p_indent(level + 1, frm);
 				printf("Bitpool Range %d-%d\n", tmp, get_u8(frm));
+				break;
+			case 1:
+				tmp = get_u8(frm);
+				p_indent(level + 1, frm);
+				printf("Layers: ");
+				if (tmp & 0x80)
+					printf("1 ");
+				if (tmp & 0x40)
+					printf("2 ");
+				if (tmp & 0x20)
+					printf("3 ");
+				printf("\n");
+				p_indent(level + 1, frm);
+				printf("CRC Protection: %s\n",
+						tmp & 0x10 ? "Yes" : "No");
+				p_indent(level + 1, frm);
+				if (tmp & 0x08)
+					printf("Mono ");
+				if (tmp & 0x04)
+					printf("DualChannel ");
+				if (tmp & 0x02)
+					printf("Stereo ");
+				if (tmp & 0x01)
+					printf("JointStereo ");
+				printf("\n");
+				tmp = get_u8(frm);
+				p_indent(level + 1, frm);
+				printf("Media Payload Format: RFC-2250 %s\n",
+						tmp & 0x40 ? "RFC-3119" : "");
+				p_indent(level + 1, frm);
+				if (tmp & 0x20)
+					printf("16kHz ");
+				if (tmp & 0x10)
+					printf("22.05kHz ");
+				if (tmp & 0x08)
+					printf("24kHz ");
+				if (tmp & 0x04)
+					printf("32kHz ");
+				if (tmp & 0x02)
+					printf("44.1kHz ");
+				if (tmp & 0x01)
+					printf("48kHz ");
+				printf("\n");
+				tmp = get_u16(frm);
+				p_indent(level + 1, frm);
+				printf("VBR: %s\n",
+						tmp & 0x8000 ? "Yes" : "No");
+				p_indent(level + 1, frm);
+				printf("Bit Rate Indexes: ");
+				if (tmp & 0x8000) {
+					printf("n/a");
+				} else {
+					for (i = 0; i < 15; i++, tmp >>= 1)
+						if (tmp & 0x0001)
+							printf("%d ", i);
+				}
+				printf("\n");
+				break;
+			case 2:
+				tmp = get_u8(frm);
+				p_indent(level + 1, frm);
+				if (tmp & 0x80)
+					printf("MPEG-2 AAC LC ");
+				if (tmp & 0x40)
+					printf("MPEG-4 AAC LC ");
+				if (tmp & 0x20)
+					printf("MPEG-4 AAC LTP ");
+				if (tmp & 0x10)
+					printf("MPEG-4 AAC scalable ");
+				printf("\n");
+				tmp = get_u16(frm);
+				freq = tmp >> 4;
+				p_indent(level + 1, frm);
+				if (freq & 0x0800)
+					printf("8kHz ");
+				if (freq & 0x0400)
+					printf("11.025kHz ");
+				if (freq & 0x0200)
+					printf("12kHz ");
+				if (freq & 0x0100)
+					printf("16kHz ");
+				if (freq & 0x0080)
+					printf("22.05kHz ");
+				if (freq & 0x0040)
+					printf("24kHz ");
+				if (freq & 0x0020)
+					printf("32kHz ");
+				if (freq & 0x0010)
+					printf("44.1kHz ");
+				if (freq & 0x0008)
+					printf("48kHz ");
+				if (freq & 0x0004)
+					printf("64kHz ");
+				if (freq & 0x0002)
+					printf("88.2kHz ");
+				if (freq & 0x0001)
+					printf("96kHz ");
+				printf("\n");
+				tmp >>= 2;
+				p_indent(level + 1, frm);
+				if (tmp & 0x02)
+					printf("1 ");
+				if (tmp & 0x01)
+					printf("2 ");
+				printf("Channels\n");
+				tmp = get_u8(frm);
+				bitrate = ((tmp & 0x7f) << 16) | get_u16(frm);
+				p_indent(level + 1, frm);
+				printf("%ubps ", bitrate);
+				printf("%s\n", tmp & 0x80 ? "VBR" : "");
+				break;
+			case 255:
+				if (vendor == 0x0000004f &&
+							vndcodec == 0x0001) {
+					tmp = get_u8(frm);
+					p_indent(level + 1, frm);
+					if (tmp & 0x80)
+						printf("16kHz ");
+					if (tmp & 0x40)
+						printf("32kHz ");
+					if (tmp & 0x20)
+						printf("44.1kHz ");
+					if (tmp & 0x10)
+						printf("48kHz ");
+					printf("\n");
+					p_indent(level + 1, frm);
+					if (tmp & 0x02)
+						printf("Stereo ");
+					if (tmp & 0x01)
+						printf("Mono ");
+					printf("\n");
+					break;
+				} else {
+					hex_dump(level + 1, frm, len - 8);
+					frm->ptr += (len - 8);
+					frm->len -= (len - 8);
+				}
 				break;
 			default:
 				hex_dump(level + 1, frm, len - 2);

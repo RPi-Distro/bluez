@@ -561,6 +561,64 @@ uint16_t dec_write_cmd(const uint8_t *pdu, size_t len, uint16_t *handle,
 	return len;
 }
 
+uint16_t enc_signed_write_cmd(uint16_t handle, const uint8_t *value,
+					size_t vlen, struct bt_crypto *crypto,
+					const uint8_t csrk[16],
+					uint32_t sign_cnt,
+					uint8_t *pdu, size_t len)
+{
+	const uint16_t hdr_len = sizeof(pdu[0]) + sizeof(handle);
+	const uint16_t min_len =  hdr_len + ATT_SIGNATURE_LEN;
+
+	if (pdu == NULL)
+		return 0;
+
+	if (vlen > len - min_len)
+		vlen = len - min_len;
+
+	pdu[0] = ATT_OP_SIGNED_WRITE_CMD;
+	put_le16(handle, &pdu[1]);
+
+	if (vlen > 0)
+		memcpy(&pdu[hdr_len], value, vlen);
+
+	if (!bt_crypto_sign_att(crypto, csrk, pdu, hdr_len + vlen, sign_cnt,
+							&pdu[hdr_len + vlen]))
+		return 0;
+
+	return min_len + vlen;
+}
+
+uint16_t dec_signed_write_cmd(const uint8_t *pdu, size_t len,
+						uint16_t *handle,
+						uint8_t *value, size_t *vlen,
+						uint8_t signature[12])
+{
+	const uint16_t hdr_len = sizeof(pdu[0]) + sizeof(*handle);
+	const uint16_t min_len =  hdr_len + ATT_SIGNATURE_LEN;
+
+
+	if (pdu == NULL)
+		return 0;
+
+	if (value == NULL || vlen == NULL || handle == NULL)
+		return 0;
+
+	if (len < min_len)
+		return 0;
+
+	if (pdu[0] != ATT_OP_SIGNED_WRITE_CMD)
+		return 0;
+
+	*vlen = len - min_len;
+	*handle = get_le16(&pdu[1]);
+	memcpy(value, pdu + hdr_len, *vlen);
+
+	memcpy(signature, pdu + hdr_len + *vlen, ATT_SIGNATURE_LEN);
+
+	return len;
+}
+
 uint16_t enc_write_req(uint16_t handle, const uint8_t *value, size_t vlen,
 						uint8_t *pdu, size_t len)
 {

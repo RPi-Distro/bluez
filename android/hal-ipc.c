@@ -35,6 +35,7 @@
 
 #define CONNECT_TIMEOUT (10 * 1000)
 
+static int listen_sk = -1;
 static int cmd_sk = -1;
 static int notif_sk = -1;
 
@@ -62,41 +63,39 @@ void hal_ipc_unregister(uint8_t service)
 	services[service].size = 0;
 }
 
-static void handle_msg(void *buf, ssize_t len)
+static bool handle_msg(void *buf, ssize_t len, int fd)
 {
 	struct ipc_hdr *msg = buf;
 	const struct hal_ipc_handler *handler;
 	uint8_t opcode;
 
 	if (len < (ssize_t) sizeof(*msg)) {
-		error("IPC: message too small (%zd bytes), aborting", len);
-		exit(EXIT_FAILURE);
+		error("IPC: message too small (%zd bytes)", len);
+		return false;
 	}
 
 	if (len != (ssize_t) (sizeof(*msg) + msg->len)) {
-		error("IPC: message malformed (%zd bytes), aborting", len);
-		exit(EXIT_FAILURE);
+		error("IPC: message malformed (%zd bytes)", len);
+		return false;
 	}
 
 	/* if service is valid */
 	if (msg->service_id > HAL_SERVICE_ID_MAX) {
-		error("IPC: unknown service (0x%x), aborting",
-							msg->service_id);
-		exit(EXIT_FAILURE);
+		error("IPC: unknown service (0x%x)", msg->service_id);
+		return false;
 	}
 
 	/* if service is registered */
 	if (!services[msg->service_id].handler) {
-		error("IPC: unregistered service (0x%x), aborting",
-							msg->service_id);
-		exit(EXIT_FAILURE);
+		error("IPC: unregistered service (0x%x)", msg->service_id);
+		return false;
 	}
 
 	/* if opcode fit valid range */
 	if (msg->opcode < HAL_MINIMUM_EVENT) {
-		error("IPC: invalid opcode for service 0x%x (0x%x), aborting",
+		error("IPC: invalid opcode for service 0x%x (0x%x)",
 						msg->service_id, msg->opcode);
-		exit(EXIT_FAILURE);
+		return false;
 	}
 
 	/*
@@ -107,9 +106,9 @@ static void handle_msg(void *buf, ssize_t len)
 
 	/* if opcode is valid */
 	if (opcode >= services[msg->service_id].size) {
-		error("IPC: invalid opcode for service 0x%x (0x%x), aborting",
+		error("IPC: invalid opcode for service 0x%x (0x%x)",
 						msg->service_id, msg->opcode);
-		exit(EXIT_FAILURE);
+		return false;
 	}
 
 	handler = &services[msg->service_id].handler[opcode];
@@ -118,12 +117,14 @@ static void handle_msg(void *buf, ssize_t len)
 	if ((handler->var_len && handler->data_len > msg->len) ||
 			(!handler->var_len && handler->data_len != msg->len)) {
 		error("IPC: message size invalid for service 0x%x opcode 0x%x "
-				"(%u bytes), aborting",
+				"(%u bytes)",
 				msg->service_id, msg->opcode, msg->len);
-		exit(EXIT_FAILURE);
+		return false;
 	}
 
-	handler->handler(msg->payload, msg->len);
+	handler->handler(msg->payload, msg->len, fd);
+
+	return true;
 }
 
 static void *notification_handler(void *data)
@@ -154,9 +155,9 @@ static void *notification_handler(void *data)
 
 		ret = recvmsg(notif_sk, &msg, 0);
 		if (ret < 0) {
-			error("Receiving notifications failed, aborting :%s",
+			error("Receiving notifications failed: %s",
 							strerror(errno));
-			exit(EXIT_FAILURE);
+			goto failed;
 		}
 
 		/* socket was shutdown */
@@ -168,8 +169,8 @@ static void *notification_handler(void *data)
 			}
 			pthread_mutex_unlock(&cmd_sk_mutex);
 
-			error("Notification socket closed, aborting");
-			exit(EXIT_FAILURE);
+			error("Notification socket closed");
+			goto failed;
 		}
 
 		fd = -1;
@@ -184,7 +185,8 @@ static void *notification_handler(void *data)
 			}
 		}
 
-		handle_msg(buf, ret);
+		if (!handle_msg(buf, ret, fd))
+			goto failed;
 	}
 
 	close(notif_sk);
@@ -195,6 +197,9 @@ static void *notification_handler(void *data)
 	DBG("exit");
 
 	return NULL;
+
+failed:
+	exit(EXIT_FAILURE);
 }
 
 static int accept_connection(int sk)
@@ -229,7 +234,39 @@ static int accept_connection(int sk)
 	return new_sk;
 }
 
-bool hal_ipc_init(void)
+bool hal_ipc_accept(void)
+{
+	int err;
+
+	cmd_sk = accept_connection(listen_sk);
+	if (cmd_sk < 0)
+		return false;
+
+	notif_sk = accept_connection(listen_sk);
+	if (notif_sk < 0) {
+		close(cmd_sk);
+		cmd_sk = -1;
+		return false;
+	}
+
+	err = pthread_create(&notif_th, NULL, notification_handler, NULL);
+	if (err) {
+		notif_th = 0;
+		error("Failed to start notification thread: %d (%s)", err,
+							strerror(err));
+		close(cmd_sk);
+		cmd_sk = -1;
+		close(notif_sk);
+		notif_sk = -1;
+		return false;
+	}
+
+	info("IPC connected");
+
+	return true;
+}
+
+bool hal_ipc_init(const char *path, size_t size)
 {
 	struct sockaddr_un addr;
 	int sk;
@@ -246,7 +283,7 @@ bool hal_ipc_init(void)
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
 
-	memcpy(addr.sun_path, BLUEZ_HAL_SK_PATH, sizeof(BLUEZ_HAL_SK_PATH));
+	memcpy(addr.sun_path, path, size);
 
 	if (bind(sk, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		err = errno;
@@ -263,52 +300,25 @@ bool hal_ipc_init(void)
 		return false;
 	}
 
-	/* Start Android Bluetooth daemon service */
-	if (property_set("bluetooth.start", "daemon") < 0) {
-		error("Failed to set bluetooth.start=daemon");
-		close(sk);
-		return false;
-	}
-
-	cmd_sk = accept_connection(sk);
-	if (cmd_sk < 0) {
-		close(sk);
-		return false;
-	}
-
-	notif_sk = accept_connection(sk);
-	if (notif_sk < 0) {
-		close(sk);
-		close(cmd_sk);
-		cmd_sk = -1;
-		return false;
-	}
-
-	info("bluetoothd connected");
-
-	close(sk);
-
-	err = pthread_create(&notif_th, NULL, notification_handler, NULL);
-	if (err) {
-		notif_th = 0;
-		error("Failed to start notification thread: %d (%s)", err,
-							strerror(err));
-		close(cmd_sk);
-		cmd_sk = -1;
-		close(notif_sk);
-		notif_sk = -1;
-		return false;
-	}
+	listen_sk = sk;
 
 	return true;
 }
 
 void hal_ipc_cleanup(void)
 {
+	close(listen_sk);
+	listen_sk = -1;
+
 	pthread_mutex_lock(&cmd_sk_mutex);
-	close(cmd_sk);
-	cmd_sk = -1;
+	if (cmd_sk >= 0) {
+		close(cmd_sk);
+		cmd_sk = -1;
+	}
 	pthread_mutex_unlock(&cmd_sk_mutex);
+
+	if (notif_sk < 0)
+		return;
 
 	shutdown(notif_sk, SHUT_RD);
 
@@ -328,8 +338,8 @@ int hal_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len, void *param,
 	size_t s_len = sizeof(s);
 
 	if (cmd_sk < 0) {
-		error("Invalid cmd socket passed to hal_ipc_cmd, aborting");
-		exit(EXIT_FAILURE);
+		error("Invalid cmd socket passed to hal_ipc_cmd");
+		goto failed;
 	}
 
 	if (!rsp || !rsp_len) {
@@ -358,15 +368,16 @@ int hal_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len, void *param,
 
 	ret = sendmsg(cmd_sk, &msg, 0);
 	if (ret < 0) {
-		error("Sending command failed, aborting :%s", strerror(errno));
+		error("Sending command failed:%s", strerror(errno));
 		pthread_mutex_unlock(&cmd_sk_mutex);
-		exit(EXIT_FAILURE);
+		goto failed;
 	}
 
 	/* socket was shutdown */
 	if (ret == 0) {
-		error("Command socket closed, aborting");
-		exit(EXIT_FAILURE);
+		error("Command socket closed");
+		pthread_mutex_unlock(&cmd_sk_mutex);
+		goto failed;
 	}
 
 	memset(&msg, 0, sizeof(msg));
@@ -388,48 +399,48 @@ int hal_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len, void *param,
 	}
 
 	ret = recvmsg(cmd_sk, &msg, 0);
-	if (ret < 0) {
-		error("Receiving command response failed, aborting :%s",
-							strerror(errno));
-		pthread_mutex_unlock(&cmd_sk_mutex);
-		exit(EXIT_FAILURE);
-	}
 
 	pthread_mutex_unlock(&cmd_sk_mutex);
 
+	if (ret < 0) {
+		error("Receiving command response failed: %s", strerror(errno));
+		goto failed;
+	}
+
+
 	if (ret < (ssize_t) sizeof(cmd)) {
-		error("Too small response received(%zd bytes), aborting", ret);
-		exit(EXIT_FAILURE);
+		error("Too small response received(%zd bytes)", ret);
+		goto failed;
 	}
 
 	if (cmd.service_id != service_id) {
-		error("Invalid service id (0x%x vs 0x%x), aborting",
+		error("Invalid service id (0x%x vs 0x%x)",
 						cmd.service_id, service_id);
-		exit(EXIT_FAILURE);
+		goto failed;
 	}
 
 	if (ret != (ssize_t) (sizeof(cmd) + cmd.len)) {
-		error("Malformed response received(%zd bytes), aborting", ret);
-		exit(EXIT_FAILURE);
+		error("Malformed response received(%zd bytes)", ret);
+		goto failed;
 	}
 
 	if (cmd.opcode != opcode && cmd.opcode != HAL_OP_STATUS) {
-		error("Invalid opcode received (0x%x vs 0x%x), aborting",
+		error("Invalid opcode received (0x%x vs 0x%x)",
 						cmd.opcode, opcode);
-		exit(EXIT_FAILURE);
+		goto failed;
 	}
 
 	if (cmd.opcode == HAL_OP_STATUS) {
 		struct ipc_status *s = rsp;
 
 		if (sizeof(*s) != cmd.len) {
-			error("Invalid status length, aborting");
-			exit(EXIT_FAILURE);
+			error("Invalid status length");
+			goto failed;
 		}
 
 		if (s->code == HAL_STATUS_SUCCESS) {
-			error("Invalid success status response, aborting");
-			exit(EXIT_FAILURE);
+			error("Invalid success status response");
+			goto failed;
 		}
 
 		return s->code;
@@ -455,4 +466,7 @@ int hal_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len, void *param,
 		*rsp_len = cmd.len;
 
 	return BT_STATUS_SUCCESS;
+
+failed:
+	exit(EXIT_FAILURE);
 }

@@ -21,6 +21,11 @@
  *
  */
 
+enum bt_csrk_type {
+	LOCAL_CSRK,
+	REMOTE_CSRK,
+};
+
 typedef void (*bt_bluetooth_ready)(int err, const bdaddr_t *addr);
 bool bt_bluetooth_start(int index, bool mgmt_dbg, bt_bluetooth_ready cb);
 
@@ -37,8 +42,12 @@ void bt_adapter_remove_record(uint32_t handle);
 
 typedef void (*bt_le_device_found)(const bdaddr_t *addr, uint8_t addr_type,
 					int rssi, uint16_t eir_len,
-					const void *eir, bool discoverable);
-bool bt_le_discovery_start(bt_le_device_found cb);
+					const void *eir, bool discoverable,
+					bool bonded);
+bool bt_le_register(bt_le_device_found cb);
+void bt_le_unregister(void);
+
+bool bt_le_discovery_start(void);
 
 typedef void (*bt_le_discovery_stopped)(void);
 bool bt_le_discovery_stop(bt_le_discovery_stopped cb);
@@ -48,10 +57,22 @@ bool bt_le_set_advertising(bool advertising, bt_le_set_advertising_done cb,
 							void *user_data);
 
 uint8_t bt_get_device_android_type(const bdaddr_t *addr);
+bool bt_is_device_le(const bdaddr_t *addr);
+
 const char *bt_get_adapter_name(void);
 bool bt_device_is_bonded(const bdaddr_t *bdaddr);
+bool bt_device_set_uuids(const bdaddr_t *bdaddr, GSList *uuids);
 
 typedef void (*bt_read_device_rssi_done)(uint8_t status, const bdaddr_t *addr,
 						int8_t rssi, void *user_data);
 bool bt_read_device_rssi(const bdaddr_t *addr, bt_read_device_rssi_done cb,
 							void *user_data);
+
+bool bt_get_csrk(const bdaddr_t *addr, enum bt_csrk_type type,
+					uint8_t key[16], uint32_t *sign_cnt);
+
+void bt_update_sign_counter(const bdaddr_t *addr, enum bt_csrk_type type);
+
+void bt_store_gatt_ccc(const bdaddr_t *addr, uint16_t value);
+
+uint16_t bt_get_gatt_ccc(const bdaddr_t *addr);

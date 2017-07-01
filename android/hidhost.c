@@ -40,20 +40,22 @@
 #include "lib/sdp_lib.h"
 #include "src/shared/mgmt.h"
 #include "src/shared/util.h"
+#include "src/shared/uhid.h"
 #include "src/sdp-client.h"
 #include "src/uuid-helper.h"
-#include "profiles/input/uhid_copy.h"
 #include "src/log.h"
 
 #include "hal-msg.h"
 #include "ipc-common.h"
 #include "ipc.h"
+#include "bluetooth.h"
+#include "gatt.h"
+#include "hog.h"
 #include "hidhost.h"
 #include "utils.h"
 
 #define L2CAP_PSM_HIDP_CTRL	0x11
 #define L2CAP_PSM_HIDP_INTR	0x13
-#define UHID_DEVICE_FILE	"/dev/uhid"
 
 /* HID message types */
 #define HID_MSG_CONTROL		0x10
@@ -78,11 +80,14 @@
 /* HID Virtual Cable Unplug */
 #define HID_VIRTUAL_CABLE_UNPLUG	0x05
 
+#define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
+
 static bdaddr_t adapter_addr;
 
 static GIOChannel *ctrl_io = NULL;
 static GIOChannel *intr_io = NULL;
 static GSList *devices = NULL;
+static unsigned int hog_app = 0;
 
 static struct ipc *hal_ipc = NULL;
 
@@ -101,9 +106,10 @@ struct hid_device {
 	GIOChannel	*intr_io;
 	guint		ctrl_watch;
 	guint		intr_watch;
-	int		uhid_fd;
-	guint		uhid_watch_id;
+	struct bt_uhid	*uhid;
 	uint8_t		last_hid_msg;
+	struct bt_hog	*hog;
+	guint		reconnect_id;
 };
 
 static int device_cmp(gconstpointer s, gconstpointer user_data)
@@ -114,24 +120,12 @@ static int device_cmp(gconstpointer s, gconstpointer user_data)
 	return bacmp(&dev->dst, dst);
 }
 
-static void uhid_destroy(int fd)
-{
-	struct uhid_event ev;
-
-	/* destroy uHID device */
-	memset(&ev, 0, sizeof(ev));
-	ev.type = UHID_DESTROY;
-
-	if (write(fd, &ev, sizeof(ev)) < 0)
-		error("hidhost: Failed to destroy uHID device: %s (%d)",
-						strerror(errno), errno);
-
-	close(fd);
-}
-
 static void hid_device_free(void *data)
 {
 	struct hid_device *dev = data;
+
+	if (dev->reconnect_id > 0)
+		g_source_remove(dev->reconnect_id);
 
 	if (dev->ctrl_watch > 0)
 		g_source_remove(dev->ctrl_watch);
@@ -145,13 +139,11 @@ static void hid_device_free(void *data)
 	if (dev->ctrl_io)
 		g_io_channel_unref(dev->ctrl_io);
 
-	if (dev->uhid_watch_id) {
-		g_source_remove(dev->uhid_watch_id);
-		dev->uhid_watch_id = 0;
-	}
+	if (dev->uhid)
+		bt_uhid_unref(dev->uhid);
 
-	if (dev->uhid_fd > 0)
-		uhid_destroy(dev->uhid_fd);
+	if (dev->hog)
+		bt_hog_unref(dev->hog);
 
 	g_free(dev->rd_data);
 	g_free(dev);
@@ -196,9 +188,10 @@ static bool hex2buf(const uint8_t *hex, uint8_t *buf, int buf_size)
 	return true;
 }
 
-static void handle_uhid_output(struct hid_device *dev,
-						struct uhid_output_req *output)
+static void handle_uhid_output(struct uhid_event *event, void *user_data)
 {
+	struct uhid_output_req *output = &event->u.output;
+	struct hid_device *dev = user_data;
 	int fd, req_size;
 	uint8_t *req;
 
@@ -222,87 +215,15 @@ static void handle_uhid_output(struct hid_device *dev,
 	free(req);
 }
 
-static gboolean uhid_event_cb(GIOChannel *io, GIOCondition cond,
-							gpointer user_data)
-{
-	struct hid_device *dev = user_data;
-	struct uhid_event ev;
-	ssize_t bread;
-	int fd;
-
-	DBG("");
-
-	if (cond & (G_IO_ERR | G_IO_NVAL))
-		goto failed;
-
-	fd = g_io_channel_unix_get_fd(io);
-	memset(&ev, 0, sizeof(ev));
-
-	bread = read(fd, &ev, sizeof(ev));
-	if (bread < 0) {
-		DBG("read: %s (%d)", strerror(errno), errno);
-		goto failed;
-	}
-
-	DBG("uHID event type %d received", ev.type);
-
-	switch (ev.type) {
-	case UHID_START:
-	case UHID_STOP:
-		/*
-		 * These are called to start and stop the underlying hardware.
-		 * We open the channels before creating the device so the
-		 * hardware is always ready. No need to handle these.
-		 * The kernel never destroys a device itself! Only an explicit
-		 * UHID_DESTROY request can remove a device.
-		 */
-		break;
-	case UHID_OPEN:
-	case UHID_CLOSE:
-		/*
-		 * OPEN/CLOSE are sent whenever user-space opens any interface
-		 * provided by the kernel HID device. Whenever the open-count
-		 * is non-zero we must be ready for I/O. As long as it is zero,
-		 * we can decide to drop all I/O and put the device
-		 * asleep This is optional, though.
-		 */
-		break;
-	case UHID_OUTPUT:
-		handle_uhid_output(dev, &ev.u.output);
-		break;
-	case UHID_FEATURE:
-		/* TODO */
-		break;
-	case UHID_OUTPUT_EV:
-		/*
-		 * This is only sent by kernels prior to linux-3.11. It
-		 * requires us to parse HID-descriptors in user-space to
-		 * properly handle it. This is redundant as the kernel
-		 * does it already. That's why newer kernels assemble
-		 * the output-reports and send it to us via UHID_OUTPUT.
-		 */
-		DBG("UHID_OUTPUT_EV unsupported");
-		break;
-	default:
-		warn("unexpected uHID event");
-	}
-
-	return TRUE;
-
-failed:
-	dev->uhid_watch_id = 0;
-	return FALSE;
-}
-
 static gboolean intr_io_watch_cb(GIOChannel *chan, gpointer data)
 {
 	struct hid_device *dev = data;
 	uint8_t buf[UHID_DATA_MAX];
 	struct uhid_event ev;
-	int fd, bread;
+	int fd, bread, err;
 
 	/* Wait uHID if not ready */
-	if (dev->uhid_fd < 0)
+	if (!dev->uhid)
 		return TRUE;
 
 	fd = g_io_channel_unix_get_fd(chan);
@@ -323,8 +244,9 @@ static gboolean intr_io_watch_cb(GIOChannel *chan, gpointer data)
 	ev.u.input.size = bread - 1;
 	memcpy(ev.u.input.data, &buf[1], ev.u.input.size);
 
-	if (write(dev->uhid_fd, &ev, sizeof(ev)) < 0)
-		DBG("uhid write: %s (%d)", strerror(errno), errno);
+	err = bt_uhid_send(dev->uhid, &ev);
+	if (err < 0)
+		DBG("bt_uhid_send: %s (%d)", strerror(-err), -err);
 
 	return TRUE;
 }
@@ -571,16 +493,13 @@ static void bt_hid_set_info(struct hid_device *dev)
 
 static int uhid_create(struct hid_device *dev)
 {
-	GIOCondition cond = G_IO_IN | G_IO_ERR | G_IO_NVAL;
 	struct uhid_event ev;
-	GIOChannel *io;
 	int err;
 
-	dev->uhid_fd = open(UHID_DEVICE_FILE, O_RDWR | O_CLOEXEC);
-	if (dev->uhid_fd < 0) {
+	dev->uhid = bt_uhid_new_default();
+	if (!dev->uhid) {
 		err = -errno;
-		error("hidhost: Failed to open uHID device: %s",
-							strerror(errno));
+		error("hidhost: Failed to create bt_uhid instance");
 		return err;
 	}
 
@@ -595,20 +514,16 @@ static int uhid_create(struct hid_device *dev)
 	ev.u.create.rd_size = dev->rd_size;
 	ev.u.create.rd_data = dev->rd_data;
 
-	if (write(dev->uhid_fd, &ev, sizeof(ev)) < 0) {
-		err = -errno;
+	err = bt_uhid_send(dev->uhid, &ev);
+	if (err < 0) {
 		error("hidhost: Failed to create uHID device: %s",
-							strerror(errno));
-		close(dev->uhid_fd);
-		dev->uhid_fd = -1;
+							strerror(-err));
+		bt_uhid_unref(dev->uhid);
+		dev->uhid = NULL;
 		return err;
 	}
 
-	io = g_io_channel_unix_new(dev->uhid_fd);
-	g_io_channel_set_encoding(io, NULL, NULL);
-	dev->uhid_watch_id = g_io_add_watch(io, cond, uhid_event_cb, dev);
-	g_io_channel_unref(io);
-
+	bt_uhid_register(dev->uhid, UHID_OUTPUT, handle_uhid_output, dev);
 	bt_hid_set_info(dev);
 
 	return 0;
@@ -821,6 +736,89 @@ fail:
 	hid_device_remove(dev);
 }
 
+static gboolean hog_reconnect(void *user_data)
+{
+	struct hid_device *dev = user_data;
+
+	DBG("");
+
+	dev->reconnect_id = 0;
+
+	bt_gatt_connect_app(hog_app, &dev->dst);
+
+	return FALSE;
+}
+
+static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
+{
+	GSList *l;
+	struct hid_device *dev;
+
+	l = g_slist_find_custom(devices, addr, device_cmp);
+	dev = l ? l->data : NULL;
+
+	if (err < 0) {
+		if (!dev)
+			return;
+		if (dev->hog && !dev->reconnect_id) {
+			bt_hid_notify_state(dev,
+						HAL_HIDHOST_STATE_DISCONNECTED);
+			bt_hog_detach(dev->hog);
+			dev->reconnect_id = g_idle_add(hog_reconnect, dev);
+			return;
+		}
+		goto fail;
+	}
+
+	if (!dev) {
+		dev = g_new0(struct hid_device, 1);
+		bacpy(&dev->dst, addr);
+		devices = g_slist_append(devices, dev);
+		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
+	}
+
+	if (!dev->hog) {
+		/* TODO: Get device details and primary */
+		dev->hog = bt_hog_new("bluez-input-device", dev->vendor,
+					dev->product, dev->version, NULL);
+		if (!dev->hog) {
+			error("HoG: unable to create session");
+			goto fail;
+		}
+	}
+
+	if (!bt_hog_attach(dev->hog, attrib)) {
+		error("HoG: unable to attach");
+		goto fail;
+	}
+
+	DBG("");
+
+	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTED);
+
+	return;
+
+fail:
+	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_DISCONNECTED);
+	hid_device_remove(dev);
+}
+
+static bool hog_connect(struct hid_device *dev)
+{
+	DBG("");
+
+	if (hog_app)
+		return bt_gatt_connect_app(hog_app, &dev->dst);
+
+	hog_app = bt_gatt_register_app(HOG_UUID, GATT_CLIENT, hog_conn_cb);
+	if (!hog_app) {
+		error("hidhost: bt_gatt_register_app failed");
+		return false;
+	}
+
+	return bt_gatt_connect_app(hog_app, &dev->dst);
+}
+
 static void bt_hid_connect(const void *buf, uint16_t len)
 {
 	const struct hal_cmd_hidhost_connect *cmd = buf;
@@ -843,10 +841,18 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 
 	dev = g_new0(struct hid_device, 1);
 	bacpy(&dev->dst, &dst);
-	dev->uhid_fd = -1;
+	dev->state = HAL_HIDHOST_STATE_DISCONNECTED;
 
 	ba2str(&dev->dst, addr);
 	DBG("connecting to %s", addr);
+
+	if (bt_is_device_le(&dst)) {
+		if (!hog_connect(dev)) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+		goto done;
+	}
 
 	sdp_uuid16_create(&uuid, PNP_INFO_SVCLASS_ID);
 	if (bt_search_service(&adapter_addr, &dev->dst, &uuid,
@@ -857,14 +863,34 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 		goto failed;
 	}
 
+done:
 	devices = g_slist_append(devices, dev);
-	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
+
+	if (dev->state == HAL_HIDHOST_STATE_DISCONNECTED)
+		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
 
 	status = HAL_STATUS_SUCCESS;
 
 failed:
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_HIDHOST, HAL_OP_HIDHOST_CONNECT,
 									status);
+}
+
+static bool hog_disconnect(struct hid_device *dev)
+{
+	DBG("");
+
+	if (dev->state == HAL_HIDHOST_STATE_DISCONNECTED)
+		return false;
+
+	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_DISCONNECTING);
+
+	if (!bt_gatt_disconnect_app(hog_app, &dev->dst)) {
+		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_DISCONNECTED);
+		hid_device_remove(dev);
+	}
+
+	return true;
 }
 
 static void bt_hid_disconnect(const void *buf, uint16_t len)
@@ -886,6 +912,13 @@ static void bt_hid_disconnect(const void *buf, uint16_t len)
 	}
 
 	dev = l->data;
+	if (bt_is_device_le(&dst)) {
+		if (!hog_disconnect(dev)) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+		goto done;
+	}
 
 	/* Wait either channels to HUP */
 	if (dev->intr_io)
@@ -896,6 +929,8 @@ static void bt_hid_disconnect(const void *buf, uint16_t len)
 
 	bt_hid_notify_state(dev, HAL_HIDHOST_STATE_DISCONNECTING);
 
+
+done:
 	status = HAL_STATUS_SUCCESS;
 
 failed:
@@ -1361,7 +1396,6 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 		dev = g_new0(struct hid_device, 1);
 		bacpy(&dev->dst, &dst);
 		dev->ctrl_io = g_io_channel_ref(chan);
-		dev->uhid_fd = -1;
 
 		sdp_uuid16_create(&uuid, PNP_INFO_SVCLASS_ID);
 		if (bt_search_service(&adapter_addr, &dev->dst, &uuid,
@@ -1442,6 +1476,9 @@ bool bt_hid_register(struct ipc *ipc, const bdaddr_t *addr, uint8_t mode)
 void bt_hid_unregister(void)
 {
 	DBG("");
+
+	if (hog_app > 0)
+		bt_gatt_unregister_app(hog_app);
 
 	g_slist_free_full(devices, hid_device_free);
 	devices = NULL;

@@ -223,6 +223,29 @@ static inline struct btdev *find_btdev_by_bdaddr(const uint8_t *bdaddr)
 	return NULL;
 }
 
+static inline struct btdev *find_btdev_by_bdaddr_type(const uint8_t *bdaddr,
+							uint8_t bdaddr_type)
+{
+	int i;
+
+	for (i = 0; i < MAX_BTDEV_ENTRIES; i++) {
+		int cmp;
+
+		if (!btdev_list[i])
+			continue;
+
+		if (bdaddr_type == 0x01)
+			cmp = memcmp(btdev_list[i]->random_addr, bdaddr, 6);
+		else
+			cmp = memcmp(btdev_list[i]->bdaddr, bdaddr, 6);
+
+		if (!cmp)
+			return btdev_list[i];
+	}
+
+	return NULL;
+}
+
 static void hexdump(const unsigned char *buf, uint16_t len)
 {
 	static const char hexdigits[] = "0123456789abcdef";
@@ -981,7 +1004,8 @@ static void sco_conn_complete(struct btdev *btdev, uint8_t status)
 }
 
 static void le_conn_complete(struct btdev *btdev,
-					const uint8_t *bdaddr, uint8_t status)
+					const uint8_t *bdaddr, uint8_t bdaddr_type,
+					uint8_t status)
 {
 	char buf[1 + sizeof(struct bt_hci_evt_le_conn_complete)];
 	struct bt_hci_evt_le_conn_complete *cc = (void *) &buf[1];
@@ -991,13 +1015,18 @@ static void le_conn_complete(struct btdev *btdev,
 	buf[0] = BT_HCI_EVT_LE_CONN_COMPLETE;
 
 	if (!status) {
-		struct btdev *remote = find_btdev_by_bdaddr(bdaddr);
+		struct btdev *remote = find_btdev_by_bdaddr_type(bdaddr,
+								bdaddr_type);
 
 		btdev->conn = remote;
 		remote->conn = btdev;
 
 		cc->status = status;
-		memcpy(cc->peer_addr, btdev->bdaddr, 6);
+		cc->peer_addr_type = btdev->le_scan_own_addr_type;
+		if (cc->peer_addr_type == 0x01)
+			memcpy(cc->peer_addr, btdev->random_addr, 6);
+		else
+			memcpy(cc->peer_addr, btdev->bdaddr, 6);
 
 		cc->role = 0x01;
 		cc->handle = cpu_to_le16(42);
@@ -1008,6 +1037,7 @@ static void le_conn_complete(struct btdev *btdev,
 	}
 
 	cc->status = status;
+	cc->peer_addr_type = bdaddr_type;
 	memcpy(cc->peer_addr, bdaddr, 6);
 	cc->role = 0x00;
 
@@ -1050,14 +1080,15 @@ static bool adv_connectable(struct btdev *btdev)
 	return btdev->le_adv_type != 0x03;
 }
 
-static void le_conn_request(struct btdev *btdev, const uint8_t *bdaddr)
+static void le_conn_request(struct btdev *btdev, const uint8_t *bdaddr,
+							uint8_t bdaddr_type)
 {
-	struct btdev *remote = find_btdev_by_bdaddr(bdaddr);
+	struct btdev *remote = find_btdev_by_bdaddr_type(bdaddr, bdaddr_type);
 
 	if (remote && adv_connectable(remote) && adv_match(btdev, remote))
-		le_conn_complete(btdev, bdaddr, 0);
+		le_conn_complete(btdev, bdaddr, bdaddr_type, 0);
 	else
-		le_conn_complete(btdev, bdaddr,
+		le_conn_complete(btdev, bdaddr, bdaddr_type,
 					BT_HCI_ERR_CONN_FAILED_TO_ESTABLISH);
 }
 
@@ -1763,6 +1794,8 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 	const struct bt_hci_cmd_le_start_encrypt *lse;
 	const struct bt_hci_cmd_le_ltk_req_reply *llrr;
 	const struct bt_hci_cmd_read_local_amp_assoc *rlaa_cmd;
+	const struct bt_hci_cmd_read_rssi *rrssi;
+	const struct bt_hci_cmd_read_tx_power *rtxp;
 	struct bt_hci_rsp_read_default_link_policy rdlp;
 	struct bt_hci_rsp_read_stored_link_key rslk;
 	struct bt_hci_rsp_write_stored_link_key wslk;
@@ -1813,6 +1846,8 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 	struct bt_hci_rsp_pin_code_request_neg_reply pcrnr_rsp;
 	struct bt_hci_rsp_user_confirm_request_reply ucrr_rsp;
 	struct bt_hci_rsp_user_confirm_request_neg_reply ucrnr_rsp;
+	struct bt_hci_rsp_read_rssi rrssi_rsp;
+	struct bt_hci_rsp_read_tx_power rtxp_rsp;
 	uint8_t status, page;
 
 	switch (opcode) {
@@ -2465,6 +2500,39 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 		cmd_complete(btdev, opcode, &rdbs, sizeof(rdbs));
 		break;
 
+	case BT_HCI_CMD_READ_RSSI:
+		rrssi = data;
+
+		rrssi_rsp.status = BT_HCI_ERR_SUCCESS;
+		rrssi_rsp.handle = rrssi->handle;
+		rrssi_rsp.rssi = -1; /* non-zero so we can see it in tester */
+		cmd_complete(btdev, opcode, &rrssi_rsp, sizeof(rrssi_rsp));
+		break;
+
+	case BT_HCI_CMD_READ_TX_POWER:
+		rtxp = data;
+
+		switch (rtxp->type) {
+		case 0x00:
+			rtxp_rsp.status = BT_HCI_ERR_SUCCESS;
+			rtxp_rsp.level =  -1; /* non-zero */
+			break;
+
+		case 0x01:
+			rtxp_rsp.status = BT_HCI_ERR_SUCCESS;
+			rtxp_rsp.level = 4; /* max for class 2 radio */
+			break;
+
+		default:
+			rtxp_rsp.level = 0;
+			rtxp_rsp.status = BT_HCI_ERR_INVALID_PARAMETERS;
+			break;
+		}
+
+		rtxp_rsp.handle = rtxp->handle;
+		cmd_complete(btdev, opcode, &rtxp_rsp, sizeof(rtxp_rsp));
+		break;
+
 	case BT_HCI_CMD_READ_LOCAL_AMP_INFO:
 		if (btdev->type != BTDEV_TYPE_AMP)
 			goto unsupported;
@@ -2907,7 +2975,7 @@ static void default_cmd_completion(struct btdev *btdev, uint16_t opcode,
 			return;
 		lecc = data;
 		btdev->le_scan_own_addr_type = lecc->own_addr_type;
-		le_conn_request(btdev, lecc->peer_addr);
+		le_conn_request(btdev, lecc->peer_addr, lecc->peer_addr_type);
 		break;
 	}
 }

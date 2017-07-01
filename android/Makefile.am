@@ -1,4 +1,7 @@
 if ANDROID
+
+AM_CFLAGS += -DANDROID_VERSION=0xFFFFFF
+
 android_plugindir = $(abs_top_srcdir)/android/.libs
 
 noinst_PROGRAMS += android/system-emulator
@@ -31,8 +34,11 @@ android_bluetoothd_SOURCES = android/main.c \
 				src/shared/ringbuf.h src/shared/ringbuf.c \
 				src/shared/hfp.h src/shared/hfp.c \
 				src/shared/gatt-db.h src/shared/gatt-db.c \
+				src/shared/crypto.h src/shared/crypto.c \
+				src/shared/uhid.h src/shared/uhid.c \
 				android/bluetooth.h android/bluetooth.c \
 				android/hidhost.h android/hidhost.c \
+				android/hog.h android/hog.c \
 				android/ipc-common.h \
 				android/ipc.h android/ipc.c \
 				android/avdtp.h android/avdtp.c \
@@ -165,7 +171,10 @@ android_ipc_tester_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
 
 android_audio_a2dp_default_la_SOURCES = android/audio-msg.h \
 					android/hal-msg.h \
+					android/hal-audio.h \
 					android/hal-audio.c \
+					android/hal-audio-sbc.c \
+					android/hal-audio-aptx.c \
 					android/hardware/audio.h \
 					android/hardware/audio_effect.h \
 					android/hardware/hardware.h \
@@ -201,7 +210,8 @@ android_test_ipc_LDADD = @GLIB_LIBS@
 
 plugin_LTLIBRARIES += android/audio.a2dp.default.la
 
-android_audio_a2dp_default_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/android
+android_audio_a2dp_default_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/android \
+					@SBC_CFLAGS@
 
 android_audio_a2dp_default_la_LIBADD = @SBC_LIBS@
 
@@ -214,6 +224,7 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/init.bluetooth.rc \
 				android/hal-ipc-api.txt \
 				android/audio-ipc-api.txt \
+				android/cts.txt \
 				android/pics-rfcomm.txt \
 				android/pics-spp.txt \
 				android/pics-sdp.txt \
@@ -236,6 +247,7 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pics-iopt.txt \
 				android/pics-sm.txt \
 				android/pics-mps.txt \
+				android/pics-hogp.txt \
 				android/pixit-l2cap.txt \
 				android/pixit-gap.txt \
 				android/pixit-did.txt \
@@ -255,6 +267,7 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pixit-iopt.txt \
 				android/pixit-sm.txt \
 				android/pixit-mps.txt \
+				android/pixit-hogp.txt \
 				android/bite-rfcomm.txt \
 				android/bite-spp.txt \
 				android/pts-l2cap.txt \
@@ -275,4 +288,5 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pts-hdp.txt \
 				android/pts-mcap.txt \
 				android/pts-mps.txt \
-				android/pts-sm.txt
+				android/pts-sm.txt \
+				android/pts-hogp.txt

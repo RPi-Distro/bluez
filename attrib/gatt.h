@@ -105,6 +105,13 @@ guint gatt_execute_write(GAttrib *attrib, uint8_t flags,
 guint gatt_write_cmd(GAttrib *attrib, uint16_t handle, const uint8_t *value,
 			int vlen, GDestroyNotify notify, gpointer user_data);
 
+guint gatt_signed_write_cmd(GAttrib *attrib, uint16_t handle,
+						const uint8_t *value, int vlen,
+						struct bt_crypto *crypto,
+						const uint8_t csrk[16],
+						uint32_t sign_cnt,
+						GDestroyNotify notify,
+						gpointer user_data);
 guint gatt_read_char_by_uuid(GAttrib *attrib, uint16_t start, uint16_t end,
 				bt_uuid_t *uuid, GAttribResultFunc func,
 				gpointer user_data);

@@ -44,6 +44,7 @@
 #include "src/device.h"
 #include "src/plugin.h"
 #include "src/log.h"
+#include "src/shared/util.h"
 
 static const struct {
 	const char *name;
@@ -60,6 +61,17 @@ static const struct {
 		.version = 0x0000,
 	},
 };
+
+struct leds_data {
+	char *syspath_prefix;
+	uint8_t bitmap;
+};
+
+static void leds_data_destroy(struct leds_data *data)
+{
+	free(data->syspath_prefix);
+	free(data);
+}
 
 static struct udev *ctx = NULL;
 static struct udev_monitor *monitor = NULL;
@@ -178,23 +190,58 @@ static void set_leds_hidraw(int fd, uint8_t leds_bitmap)
 		error("sixaxis: failed to set LEDS (%d bytes written)", ret);
 }
 
+static bool set_leds_sysfs(struct leds_data *data)
+{
+	int i;
+
+	if (!data->syspath_prefix)
+		return false;
+
+	/* start from 1, LED0 is never used */
+	for (i = 1; i <= 4; i++) {
+		char path[PATH_MAX] = { 0 };
+		char buf[2] = { 0 };
+		int fd;
+		int ret;
+
+		snprintf(path, PATH_MAX, "%s%d/brightness",
+						data->syspath_prefix, i);
+
+		fd = open(path, O_WRONLY);
+		if (fd < 0) {
+			error("sixaxis: cannot open %s (%s)", path,
+							strerror(errno));
+			return false;
+		}
+
+		buf[0] = '0' + !!(data->bitmap & (1 << i));
+		ret = write(fd, buf, sizeof(buf));
+		close(fd);
+		if (ret != sizeof(buf))
+			return false;
+	}
+
+	return true;
+}
+
 static gboolean setup_leds(GIOChannel *channel, GIOCondition cond,
 							gpointer user_data)
 {
-	int number = GPOINTER_TO_INT(user_data);
-	uint8_t bitmap;
-	int fd;
+	struct leds_data *data = user_data;
 
-	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
+	if (!data)
 		return FALSE;
 
-	DBG("number %d", number);
+	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
+		goto out;
 
-	fd = g_io_channel_unix_get_fd(channel);
+	if(!set_leds_sysfs(data)) {
+		int fd = g_io_channel_unix_get_fd(channel);
+		set_leds_hidraw(fd, data->bitmap);
+	}
 
-	bitmap = calc_leds_bitmap(number);
-	if (bitmap != 0)
-		set_leds_hidraw(fd, bitmap);
+out:
+	leds_data_destroy(data);
 
 	return FALSE;
 }
@@ -257,15 +304,24 @@ static int get_js_number(struct udev_device *udevice)
 	struct udev_enumerate *enumerate;
 	struct udev_device *hid_parent;
 	const char *hidraw_node;
-	const char *hid_phys;
+	const char *hid_id;
 	int number = 0;
 
 	hid_parent = udev_device_get_parent_with_subsystem_devtype(udevice,
 								"hid", NULL);
 
-	hid_phys = udev_device_get_property_value(hid_parent, "HID_PHYS");
+	/*
+	 * Look for HID_UNIQ first for the correct behavior via BT, if
+	 * HID_UNIQ is not available it means the USB bus is being used and we
+	 * can rely on HID_PHYS.
+	 */
+	hid_id = udev_device_get_property_value(hid_parent, "HID_UNIQ");
+	if (!hid_id)
+		hid_id = udev_device_get_property_value(hid_parent,
+							"HID_PHYS");
+
 	hidraw_node = udev_device_get_devnode(udevice);
-	if (!hid_phys || !hidraw_node)
+	if (!hid_id || !hidraw_node)
 		return 0;
 
 	enumerate = udev_enumerate_new(udev_device_get_udev(udevice));
@@ -276,7 +332,7 @@ static int get_js_number(struct udev_device *udevice)
 	udev_list_entry_foreach(dev_list_entry, devices) {
 		struct udev_device *input_parent;
 		struct udev_device *js_dev;
-		const char *input_phys;
+		const char *input_id;
 		const char *devname;
 
 		devname = udev_list_entry_get_name(dev_list_entry);
@@ -291,12 +347,20 @@ static int get_js_number(struct udev_device *udevice)
 
 		/* check if this is the joystick relative to the hidraw device
 		 * above */
-		input_phys = udev_device_get_sysattr_value(input_parent,
-									"phys");
-		if (!input_phys)
+		input_id = udev_device_get_sysattr_value(input_parent, "uniq");
+
+		/*
+		 * A strlen() check is needed because input device over USB
+		 * have the UNIQ attribute defined but with an empty value.
+		 */
+		if (!input_id || strlen(input_id) == 0)
+			input_id = udev_device_get_sysattr_value(input_parent,
+								 "phys");
+
+		if (!input_id)
 			goto next;
 
-		if (!strcmp(input_phys, hid_phys)) {
+		if (!strcmp(input_id, hid_id)) {
 			number = atoi(udev_device_get_sysnum(js_dev));
 
 			/* joystick numbers start from 0, leds from 1 */
@@ -312,6 +376,72 @@ next:
 	udev_enumerate_unref(enumerate);
 
 	return number;
+}
+
+static char *get_leds_syspath_prefix(struct udev_device *udevice)
+{
+	struct udev_list_entry *dev_list_entry;
+	struct udev_enumerate *enumerate;
+	struct udev_device *hid_parent;
+	const char *syspath;
+	char *syspath_prefix;
+
+	hid_parent = udev_device_get_parent_with_subsystem_devtype(udevice,
+								"hid", NULL);
+
+	enumerate = udev_enumerate_new(udev_device_get_udev(udevice));
+	udev_enumerate_add_match_parent(enumerate, hid_parent);
+	udev_enumerate_add_match_subsystem(enumerate, "leds");
+	udev_enumerate_scan_devices(enumerate);
+
+	dev_list_entry = udev_enumerate_get_list_entry(enumerate);
+	if (!dev_list_entry) {
+		syspath_prefix = NULL;
+		goto out;
+	}
+
+	syspath = udev_list_entry_get_name(dev_list_entry);
+
+	/*
+	 * All the sysfs paths of the LEDs have the same structure, just the
+	 * number changes, so strip it and store only the common prefix.
+	 *
+	 * Subtracting 1 here means assuming that the LED number is a single
+	 * digit, this is safe as the kernel driver only exposes 4 LEDs.
+	 */
+	syspath_prefix = strndup(syspath, strlen(syspath) - 1);
+
+out:
+	udev_enumerate_unref(enumerate);
+
+	return syspath_prefix;
+}
+
+static struct leds_data *get_leds_data(struct udev_device *udevice)
+{
+	struct leds_data *data;
+	int number;
+
+	number = get_js_number(udevice);
+	DBG("number %d", number);
+
+	data = malloc0(sizeof(*data));
+	if (!data)
+		return NULL;
+
+	data->bitmap = calc_leds_bitmap(number);
+	if (data->bitmap == 0) {
+		leds_data_destroy(data);
+		return NULL;
+	}
+
+	/*
+	 * It's OK if this fails, set_leds_hidraw() will be used in
+	 * case data->syspath_prefix is NULL.
+	 */
+	data->syspath_prefix = get_leds_syspath_prefix(udevice);
+
+	return data;
 }
 
 static int get_supported_device(struct udev_device *udevice, uint16_t *bus)
@@ -374,8 +504,7 @@ static void device_added(struct udev_device *udevice)
 	case BUS_BLUETOOTH:
 		/* wait for events before setting leds */
 		g_io_add_watch(io, G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				setup_leds,
-				GINT_TO_POINTER(get_js_number(udevice)));
+				setup_leds, get_leds_data(udevice));
 
 		break;
 	default:
