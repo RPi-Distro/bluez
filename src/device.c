@@ -45,6 +45,7 @@
 #include "log.h"
 #include "textfile.h"
 
+#include "att.h"
 #include "hcid.h"
 #include "adapter.h"
 #include "device.h"
@@ -114,6 +115,7 @@ struct btd_device {
 	struct btd_adapter	*adapter;
 	GSList		*uuids;
 	GSList		*services;		/* Primary services path */
+	GSList		*primaries;		/* List of primary services */
 	GSList		*drivers;		/* List of driver_data */
 	GSList		*watches;		/* List of disconnect_data */
 	gboolean	temporary;
@@ -143,9 +145,6 @@ struct btd_device {
 
 	gboolean	authorizing;
 	gint		ref;
-
-	gboolean	has_debug_key;
-	uint8_t		debug_key[16];
 };
 
 static uint16_t uuid_list[] = {
@@ -210,6 +209,9 @@ static void device_free(gpointer user_data)
 
 	g_slist_foreach(device->uuids, (GFunc) g_free, NULL);
 	g_slist_free(device->uuids);
+
+	g_slist_foreach(device->primaries, (GFunc) g_free, NULL);
+	g_slist_free(device->primaries);
 
 	if (device->tmp_records)
 		sdp_list_free(device->tmp_records,
@@ -586,7 +588,7 @@ static DBusMessage *discover_services(DBusConnection *conn,
 		return btd_error_invalid_args(msg);
 
 	if (strlen(pattern) == 0) {
-		err = device_browse(device, conn, msg, NULL, FALSE);
+		err = device_browse_sdp(device, conn, msg, NULL, FALSE);
 		if (err < 0)
 			goto fail;
 	} else {
@@ -597,7 +599,7 @@ static DBusMessage *discover_services(DBusConnection *conn,
 
 		sdp_uuid128_to_uuid(&uuid);
 
-		err = device_browse(device, conn, msg, &uuid, FALSE);
+		err = device_browse_sdp(device, conn, msg, &uuid, FALSE);
 		if (err < 0)
 			goto fail;
 	}
@@ -730,8 +732,10 @@ void device_request_disconnect(struct btd_device *device, DBusMessage *msg)
 	if (device->bonding)
 		bonding_request_cancel(device->bonding);
 
-	if (device->browse)
+	if (device->browse) {
+		discover_services_reply(device->browse, -ECANCELED, NULL);
 		browse_request_cancel(device->browse);
+	}
 
 	if (msg)
 		device->disconnects = g_slist_append(device->disconnects,
@@ -988,6 +992,11 @@ void device_get_name(struct btd_device *device, char *name, size_t len)
 	strncpy(name, device->name, len);
 }
 
+device_type_t device_get_type(struct btd_device *device)
+{
+	return device->type;
+}
+
 void device_remove_bonding(struct btd_device *device)
 {
 	char filename[PATH_MAX + 1];
@@ -1020,6 +1029,8 @@ static void device_remove_stored(struct btd_device *device)
 		device_remove_bonding(device);
 	delete_entry(&src, "profiles", addr);
 	delete_entry(&src, "trusts", addr);
+	delete_entry(&src, "types", addr);
+	delete_entry(&src, "primary", addr);
 	delete_all_records(&src, &device->bdaddr);
 	delete_device_service(&src, &device->bdaddr);
 
@@ -1038,8 +1049,10 @@ void device_remove(struct btd_device *device, gboolean remove_stored)
 	if (device->bonding)
 		device_cancel_bonding(device, HCI_OE_USER_ENDED_CONNECTION);
 
-	if (device->browse)
+	if (device->browse) {
+		discover_services_reply(device->browse, -ECANCELED, NULL);
 		browse_request_cancel(device->browse);
+	}
 
 	if (device->handle)
 		do_disconnect(device);
@@ -1461,8 +1474,16 @@ send_reply:
 	}
 
 cleanup:
-	if (!device->temporary)
+	if (!device->temporary) {
+		bdaddr_t sba, dba;
+
+		adapter_get_address(device->adapter, &sba);
+		device_get_address(device, &dba);
+
 		store_profiles(device);
+		write_device_type(&sba, &dba, device->type);
+	}
+
 	device->browse = NULL;
 	browse_request_free(req);
 }
@@ -1517,10 +1538,36 @@ static void init_browse(struct browse_req *req, gboolean reverse)
 						l->data);
 }
 
+static char *primary_list_to_string(GSList *primary_list)
+{
+	GString *services;
+	GSList *l;
+
+	services = g_string_new(NULL);
+
+	for (l = primary_list; l; l = l->next) {
+		struct att_primary *primary = l->data;
+		char service[64];
+
+		memset(service, 0, sizeof(service));
+
+		snprintf(service, sizeof(service), "%04X#%04X#%s ",
+				primary->start, primary->end, primary->uuid);
+
+		services = g_string_append(services, service);
+	}
+
+	return g_string_free(services, FALSE);
+}
+
 static void primary_cb(GSList *services, int err, gpointer user_data)
 {
 	struct browse_req *req = user_data;
 	struct btd_device *device = req->device;
+	struct btd_adapter *adapter = device->adapter;
+	GSList *l, *uuids = NULL;
+	bdaddr_t dba, sba;
+	char *str;
 
 	if (err) {
 		DBusMessage *reply;
@@ -1531,50 +1578,88 @@ static void primary_cb(GSList *services, int err, gpointer user_data)
 
 	services_changed(device);
 	device_set_temporary(device, FALSE);
-	device_probe_drivers(device, services);
+
+	for (l = services; l; l = l->next) {
+		struct att_primary *prim = l->data;
+		uuids = g_slist_append(uuids, prim->uuid);
+		device_add_primary(device, prim);
+	}
+
+	device_probe_drivers(device, uuids);
+	g_slist_free(uuids);
 
 	create_device_reply(device, req);
+
+	str = primary_list_to_string(services);
+
+	adapter_get_address(adapter, &sba);
+	device_get_address(device, &dba);
+
+	write_device_type(&sba, &dba, device->type);
+	write_device_services(&sba, &dba, str);
+	g_free(str);
 
 done:
 	device->browse = NULL;
 	browse_request_free(req);
 }
 
-static struct browse_req *browse_primary(struct btd_device *device, int *err)
+int device_browse_primary(struct btd_device *device, DBusConnection *conn,
+				DBusMessage *msg, gboolean secure)
 {
 	struct btd_adapter *adapter = device->adapter;
 	struct browse_req *req;
 	bdaddr_t src;
-	int ret;
+	int err;
+
+	if (device->browse)
+		return -EBUSY;
 
 	req = g_new0(struct browse_req, 1);
 	req->device = btd_device_ref(device);
 
 	adapter_get_address(adapter, &src);
 
-	ret = bt_discover_primary(&src, &device->bdaddr, -1, primary_cb, req,
-									NULL);
-
-	if (ret < 0) {
+	err = bt_discover_primary(&src, &device->bdaddr, -1, primary_cb, req,
+							secure, NULL);
+	if (err < 0) {
 		browse_request_free(req);
-		if (err)
-			*err = ret;
-
-		return NULL;
+		return err;
 	}
 
-	return req;
+	if (conn == NULL)
+		conn = get_dbus_connection();
+
+	req->conn = dbus_connection_ref(conn);
+	device->browse = req;
+
+	if (msg) {
+		const char *sender = dbus_message_get_sender(msg);
+
+		req->msg = dbus_message_ref(msg);
+		/* Track the request owner to cancel it
+		 * automatically if the owner exits */
+		req->listener_id = g_dbus_add_disconnect_watch(conn,
+						sender,
+						discover_services_req_exit,
+						req, NULL);
+	}
+
+	return err;
 }
 
-static struct browse_req *browse_sdp(struct btd_device *device, uuid_t *search,
-						gboolean reverse, int *err)
+int device_browse_sdp(struct btd_device *device, DBusConnection *conn,
+			DBusMessage *msg, uuid_t *search, gboolean reverse)
 {
 	struct btd_adapter *adapter = device->adapter;
 	struct browse_req *req;
 	bt_callback_t cb;
 	bdaddr_t src;
 	uuid_t uuid;
-	int ret;
+	int err;
+
+	if (device->browse)
+		return -EBUSY;
 
 	adapter_get_address(adapter, &src);
 
@@ -1589,34 +1674,11 @@ static struct browse_req *browse_sdp(struct btd_device *device, uuid_t *search,
 		cb = browse_cb;
 	}
 
-	ret = bt_search_service(&src, &device->bdaddr, &uuid, cb, req, NULL);
-	if (ret < 0) {
+	err = bt_search_service(&src, &device->bdaddr, &uuid, cb, req, NULL);
+	if (err < 0) {
 		browse_request_free(req);
-		if (err)
-			*err = ret;
-
-		return NULL;
-	}
-
-	return req;
-}
-
-int device_browse(struct btd_device *device, DBusConnection *conn,
-			DBusMessage *msg, uuid_t *search, gboolean reverse)
-{
-	struct browse_req *req;
-	int err = 0;
-
-	if (device->browse)
-		return -EBUSY;
-
-	if (device->type == DEVICE_TYPE_LE)
-		req = browse_primary(device, &err);
-	else
-		req = browse_sdp(device, search, reverse, &err);
-
-	if (req == NULL)
 		return err;
+	}
 
 	if (conn == NULL)
 		conn = get_dbus_connection();
@@ -1715,11 +1777,19 @@ uint8_t device_get_auth(struct btd_device *device)
 	return device->auth;
 }
 
+void device_set_type(struct btd_device *device, device_type_t type)
+{
+	if (!device)
+		return;
+
+	device->type = type;
+}
+
 static gboolean start_discovery(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 
-	device_browse(device, NULL, NULL, NULL, TRUE);
+	device_browse_sdp(device, NULL, NULL, NULL, TRUE);
 
 	device->discov_timer = 0;
 
@@ -2015,6 +2085,12 @@ void device_simple_pairing_complete(struct btd_device *device, uint8_t status)
 		agent_cancel(auth->agent);
 }
 
+void device_authentication_complete(struct btd_device *device)
+{
+	g_free(device->authr);
+	device->authr = NULL;
+}
+
 void device_bonding_complete(struct btd_device *device, uint8_t status)
 {
 	struct bonding_req *bonding = device->bonding;
@@ -2031,8 +2107,7 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 
 	device->auth = 0xff;
 
-	g_free(device->authr);
-	device->authr = NULL;
+	device_authentication_complete(device);
 
 	if (device->renewed_key)
 		return;
@@ -2051,7 +2126,7 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 			device->discov_timer = 0;
 		}
 
-		device_browse(device, bonding->conn, bonding->msg,
+		device_browse_sdp(device, bonding->conn, bonding->msg,
 				NULL, FALSE);
 
 		bonding_request_free(bonding);
@@ -2068,8 +2143,6 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 							device);
 		}
 	}
-
-	device_set_paired(device, TRUE);
 }
 
 gboolean device_is_creating(struct btd_device *device, const char *sender)
@@ -2231,8 +2304,7 @@ int device_request_authentication(struct btd_device *device, auth_type_t type,
 
 	if (err < 0) {
 		error("Failed requesting authentication");
-		g_free(auth);
-		device->authr = NULL;
+		device_authentication_complete(device);
 	}
 
 	return err;
@@ -2290,8 +2362,7 @@ void device_cancel_authentication(struct btd_device *device, gboolean aborted)
 	if (!aborted)
 		cancel_authentication(auth);
 
-	device->authr = NULL;
-	g_free(auth);
+	device_authentication_complete(device);
 }
 
 gboolean device_is_authenticating(struct btd_device *device)
@@ -2314,12 +2385,22 @@ void device_set_renewed_key(struct btd_device *device, gboolean renewed)
 	device->renewed_key = renewed;
 }
 
-void device_add_service(struct btd_device *device, const char *path)
+void btd_device_add_service(struct btd_device *device, const char *path)
 {
 	if (g_slist_find_custom(device->services, path, (GCompareFunc) strcmp))
 		return;
 
 	device->services = g_slist_append(device->services, g_strdup(path));
+}
+
+void device_add_primary(struct btd_device *device, struct att_primary *prim)
+{
+	device->primaries = g_slist_append(device->primaries, prim);
+}
+
+GSList *btd_device_get_primaries(struct btd_device *device)
+{
+	return device->primaries;
 }
 
 void btd_device_add_uuid(struct btd_device *device, const char *uuid)
@@ -2363,30 +2444,6 @@ const sdp_record_t *btd_device_get_record(struct btd_device *device,
 		return NULL;
 
 	return find_record_in_list(device->tmp_records, uuid);
-}
-
-gboolean device_set_debug_key(struct btd_device *device, uint8_t *key)
-{
-	if (key == NULL) {
-		device->has_debug_key = FALSE;
-		return TRUE;
-	}
-
-	memcpy(device->debug_key, key, 16);
-	device->has_debug_key = TRUE;
-
-	return TRUE;
-}
-
-gboolean device_get_debug_key(struct btd_device *device, uint8_t *key)
-{
-	if (!device->has_debug_key)
-		return FALSE;
-
-	if (key != NULL)
-		memcpy(key, device->debug_key, 16);
-
-	return TRUE;
 }
 
 int btd_register_device_driver(struct btd_device_driver *driver)

@@ -55,7 +55,7 @@ struct gattrib_context {
 	bt_primary_t cb;
 	bt_destroy_t destroy;
 	gpointer user_data;
-	GSList *uuids;
+	GSList *primaries;
 };
 
 static GSList *gattrib_list = NULL;
@@ -75,8 +75,7 @@ static void gattrib_context_free(struct gattrib_context *ctxt)
 	if (ctxt->destroy)
 		ctxt->destroy(ctxt->user_data);
 
-	g_slist_foreach(ctxt->uuids, (GFunc) g_free, NULL);
-	g_slist_free(ctxt->uuids);
+	g_slist_free(ctxt->primaries);
 	g_attrib_unref(ctxt->attrib);
 	if (ctxt->io) {
 		g_io_channel_unref(ctxt->io);
@@ -363,16 +362,6 @@ int bt_search_service(const bdaddr_t *src, const bdaddr_t *dst,
 	return 0;
 }
 
-int bt_discover_services(const bdaddr_t *src, const bdaddr_t *dst,
-		bt_callback_t cb, void *user_data, bt_destroy_t destroy)
-{
-	uuid_t uuid;
-
-	sdp_uuid16_create(&uuid, PUBLIC_BROWSE_GROUP);
-
-	return bt_search_service(src, dst, &uuid, cb, user_data, destroy);
-}
-
 static gint find_by_bdaddr(gconstpointer data, gconstpointer user_data)
 {
 	const struct search_context *ctxt = data, *search = user_data;
@@ -449,7 +438,7 @@ static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	struct gattrib_context *ctxt = user_data;
 	struct att_data_list *list;
 	unsigned int i, err;
-	uint16_t end;
+	uint16_t start, end;
 
 	if (status == ATT_ECODE_ATTR_NOT_FOUND) {
 		err = 0;
@@ -469,9 +458,10 @@ static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	for (i = 0, end = 0; i < list->num; i++) {
 		const uint8_t *data = list->data[i];
-		char *prim;
+		struct att_primary *primary;
 		uuid_t u128, u16;
 
+		start = att_get_u16(&data[0]);
 		end = att_get_u16(&data[2]);
 
 		if (list->len == 6) {
@@ -485,8 +475,15 @@ static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
 			/* Skipping invalid data */
 			continue;
 
-		prim = bt_uuid2string(&u128);
-		ctxt->uuids = g_slist_append(ctxt->uuids, prim);
+		primary = g_try_new0(struct att_primary, 1);
+		if (!primary) {
+			err = -ENOMEM;
+			goto done;
+		}
+		primary->start = start;
+		primary->end = end;
+		sdp_uuid2strn(&u128, primary->uuid, sizeof(primary->uuid));
+		ctxt->primaries = g_slist_append(ctxt->primaries, primary);
 	}
 
 	att_data_list_free(list);
@@ -499,7 +496,7 @@ static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 done:
-	ctxt->cb(ctxt->uuids, err, ctxt->user_data);
+	ctxt->cb(ctxt->primaries, err, ctxt->user_data);
 	gattrib_context_free(ctxt);
 }
 
@@ -520,11 +517,12 @@ static void connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 
 int bt_discover_primary(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 					bt_primary_t cb, void *user_data,
+					gboolean secure,
 					bt_destroy_t destroy)
 {
 	struct gattrib_context *ctxt;
+	BtIOSecLevel sec_level;
 	GIOChannel *io;
-	GError *gerr = NULL;
 
 	ctxt = g_try_new0(struct gattrib_context, 1);
 	if (ctxt == NULL)
@@ -536,19 +534,24 @@ int bt_discover_primary(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 	ctxt->cb = cb;
 	ctxt->destroy = destroy;
 
+	if (secure == TRUE)
+		sec_level = BT_IO_SEC_HIGH;
+	else
+		sec_level = BT_IO_SEC_LOW;
+
 	if (psm < 0)
-		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, &gerr,
+		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, NULL,
 				BT_IO_OPT_SOURCE_BDADDR, src,
 				BT_IO_OPT_DEST_BDADDR, dst,
 				BT_IO_OPT_CID, GATT_CID,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 	else
-		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, &gerr,
+		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, NULL,
 				BT_IO_OPT_SOURCE_BDADDR, src,
 				BT_IO_OPT_DEST_BDADDR, dst,
 				BT_IO_OPT_PSM, psm,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 
 	if (io == NULL) {
@@ -779,26 +782,4 @@ GSList *bt_string2list(const gchar *str)
 	g_free(uuids);
 
 	return l;
-}
-
-char *bt_extract_eir_name(uint8_t *data, uint8_t *type)
-{
-	if (!data || !type)
-		return NULL;
-
-	if (data[0] == 0)
-		return NULL;
-
-	if (type)
-		*type = data[1];
-
-	switch (data[1]) {
-	case EIR_NAME_SHORT:
-	case EIR_NAME_COMPLETE:
-		if (!g_utf8_validate((char *) (data + 2), data[0] - 1, NULL))
-			return g_strdup("");
-		return g_strndup((char *) (data + 2), data[0] - 1);
-	}
-
-	return NULL;
 }
