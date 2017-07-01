@@ -38,7 +38,7 @@
 
 #include <bluetooth/sdp.h>
 
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "log.h"
 #include "telephony.h"
 #include "error.h"
@@ -113,6 +113,26 @@ enum net_registration_status {
 #define CSD_SIMPB_TYPE_EN			"EN"
 #define CSD_SIMPB_TYPE_MSISDN			"MSISDN"
 
+/* OHM plugin D-Bus definitions */
+#define OHM_BUS_NAME		"com.nokia.NonGraphicFeedback1"
+#define OHM_INTERFACE		"com.nokia.NonGraphicFeedback1"
+#define OHM_PATH		"/com/nokia/NonGraphicFeedback1"
+
+/* tone-genenerator D-Bus definitions */
+#define TONEGEN_BUS_NAME	"com.Nokia.Telephony.Tones"
+#define TONEGEN_INTERFACE	"com.Nokia.Telephony.Tones"
+#define TONEGEN_PATH		"/com/Nokia/Telephony/Tones"
+
+/* tone-generator DTMF definitions */
+#define DTMF_ASTERISK   10
+#define DTMF_HASHMARK   11
+#define DTMF_A          12
+#define DTMF_B          13
+#define DTMF_C          14
+#define DTMF_D          15
+
+#define FEEDBACK_TONE_DURATION			200
+
 struct csd_call {
 	char *object_path;
 	int status;
@@ -152,6 +172,10 @@ static GSList *pending = NULL;
 
 /* Reference count for determining the call indicator status */
 static GSList *active_calls = NULL;
+
+/* Queue of DTMF tones to play */
+static GSList *tones = NULL;
+static guint create_tones_timer = 0;
 
 static char *msisdn = NULL;	/* Subscriber number */
 static char *vmbx = NULL;	/* Voice mailbox number */
@@ -204,6 +228,55 @@ static char *call_status_str[] = {
 	"SWAP_INITIATED",
 	"???"
 };
+
+static int send_method_call(const char *dest, const char *path,
+				const char *interface, const char *method,
+				DBusPendingCallNotifyFunction cb,
+				void *user_data, int type, ...)
+{
+	DBusMessage *msg;
+	DBusPendingCall *call;
+	va_list args;
+	struct pending_req *req;
+
+	msg = dbus_message_new_method_call(dest, path, interface, method);
+	if (!msg) {
+		error("Unable to allocate new D-Bus %s message", method);
+		return -ENOMEM;
+	}
+
+	va_start(args, type);
+
+	if (!dbus_message_append_args_valist(msg, type, args)) {
+		dbus_message_unref(msg);
+		va_end(args);
+		return -EIO;
+	}
+
+	va_end(args);
+
+	if (!cb) {
+		g_dbus_send_message(connection, msg);
+		return 0;
+	}
+
+	if (!dbus_connection_send_with_reply(connection, msg, &call, -1)) {
+		error("Sending %s failed", method);
+		dbus_message_unref(msg);
+		return -EIO;
+	}
+
+	dbus_pending_call_set_notify(call, cb, user_data, NULL);
+
+	req = g_new0(struct pending_req, 1);
+	req->call = call;
+	req->user_data = user_data;
+
+	pending = g_slist_prepend(pending, req);
+	dbus_message_unref(msg);
+
+	return 0;
+}
 
 static struct csd_call *find_call(const char *path)
 {
@@ -316,6 +389,61 @@ static int answer_call(struct csd_call *call)
 	}
 
 	g_dbus_send_message(connection, msg);
+
+	return 0;
+}
+
+static struct pending_req *find_request(const DBusPendingCall *call)
+{
+	GSList *l;
+
+	for (l = pending; l; l = l->next) {
+		struct pending_req *req = l->data;
+
+		if (req->call == call)
+			return req;
+	}
+
+	return NULL;
+}
+
+static void pending_req_finalize(void *data)
+{
+	struct pending_req *req = data;
+
+	if (!dbus_pending_call_get_completed(req->call))
+		dbus_pending_call_cancel(req->call);
+
+	dbus_pending_call_unref(req->call);
+	g_free(req);
+}
+
+static void remove_pending(DBusPendingCall *call)
+{
+	struct pending_req *req = find_request(call);
+
+	pending = g_slist_remove(pending, req);
+	pending_req_finalize(req);
+}
+
+static void stop_ringtone_reply(DBusPendingCall *call, void *user_data)
+{
+	struct csd_call *coming = user_data;
+
+	remove_pending(call);
+	answer_call(coming);
+}
+
+static int stop_ringtone_and_answer(struct csd_call *call)
+{
+	int ret;
+
+	ret = send_method_call(OHM_BUS_NAME, OHM_PATH,
+				OHM_INTERFACE, "StopRingtone",
+				stop_ringtone_reply, call,
+				DBUS_TYPE_INVALID);
+	if (ret < 0)
+		return answer_call(call);
 
 	return 0;
 }
@@ -451,17 +579,6 @@ void telephony_device_connected(void *telephony_device)
 	}
 }
 
-static void pending_req_finalize(void *data)
-{
-	struct pending_req *req = data;
-
-	if (!dbus_pending_call_get_completed(req->call))
-		dbus_pending_call_cancel(req->call);
-
-	dbus_pending_call_unref(req->call);
-	g_free(req);
-}
-
 static void remove_pending_by_data(gpointer data, gpointer user_data)
 {
 	struct pending_req *req = data;
@@ -545,82 +662,11 @@ void telephony_answer_call_req(void *telephony_device)
 		return;
 	}
 
-	if (answer_call(call) < 0)
+	if (stop_ringtone_and_answer(call) < 0)
 		telephony_answer_call_rsp(telephony_device,
 						CME_ERROR_AG_FAILURE);
 	else
 		telephony_answer_call_rsp(telephony_device, CME_ERROR_NONE);
-}
-
-static int send_method_call(const char *dest, const char *path,
-				const char *interface, const char *method,
-				DBusPendingCallNotifyFunction cb,
-				void *user_data, int type, ...)
-{
-	DBusMessage *msg;
-	DBusPendingCall *call;
-	va_list args;
-	struct pending_req *req;
-
-	msg = dbus_message_new_method_call(dest, path, interface, method);
-	if (!msg) {
-		error("Unable to allocate new D-Bus %s message", method);
-		return -ENOMEM;
-	}
-
-	va_start(args, type);
-
-	if (!dbus_message_append_args_valist(msg, type, args)) {
-		dbus_message_unref(msg);
-		va_end(args);
-		return -EIO;
-	}
-
-	va_end(args);
-
-	if (!cb) {
-		g_dbus_send_message(connection, msg);
-		return 0;
-	}
-
-	if (!dbus_connection_send_with_reply(connection, msg, &call, -1)) {
-		error("Sending %s failed", method);
-		dbus_message_unref(msg);
-		return -EIO;
-	}
-
-	dbus_pending_call_set_notify(call, cb, user_data, NULL);
-
-	req = g_new0(struct pending_req, 1);
-	req->call = call;
-	req->user_data = user_data;
-
-	pending = g_slist_prepend(pending, req);
-	dbus_message_unref(msg);
-
-	return 0;
-}
-
-static struct pending_req *find_request(const DBusPendingCall *call)
-{
-	GSList *l;
-
-	for (l = pending; l; l = l->next) {
-		struct pending_req *req = l->data;
-
-		if (req->call == call)
-			return req;
-	}
-
-	return NULL;
-}
-
-static void remove_pending(DBusPendingCall *call)
-{
-	struct pending_req *req = find_request(call);
-
-	pending = g_slist_remove(pending, req);
-	pending_req_finalize(req);
 }
 
 static void create_call_reply(DBusPendingCall *call, void *user_data)
@@ -705,17 +751,41 @@ void telephony_dial_number_req(void *telephony_device, const char *number)
 						CME_ERROR_AG_FAILURE);
 }
 
-void telephony_transmit_dtmf_req(void *telephony_device, char tone)
+static void start_dtmf_reply(DBusPendingCall *call, void *user_data)
+{
+	DBusError err;
+	DBusMessage *reply;
+
+	reply = dbus_pending_call_steal_reply(call);
+
+	dbus_error_init(&err);
+	if (dbus_set_error_from_message(&err, reply)) {
+		error("csd replied with an error: %s, %s",
+				err.name, err.message);
+
+		dbus_error_free(&err);
+	} else
+		send_method_call(CSD_CALL_BUS_NAME, CSD_CALL_PATH,
+				CSD_CALL_INTERFACE, "StopDTMF",
+				NULL, NULL,
+				DBUS_TYPE_INVALID);
+
+	dbus_message_unref(reply);
+	remove_pending(call);
+}
+
+static void start_dtmf(void *telephony_device, char tone)
 {
 	int ret;
-	char buf[2] = { tone, '\0' }, *buf_ptr = buf;
 
-	DBG("telephony-maemo6: transmit dtmf: %s", buf);
-
+	/*
+	 * Stop tone immediately, modem will place it in queue and play
+	 * required time.
+	 */
 	ret = send_method_call(CSD_CALL_BUS_NAME, CSD_CALL_PATH,
-				CSD_CALL_INTERFACE, "SendDTMF",
-				NULL, NULL,
-				DBUS_TYPE_STRING, &buf_ptr,
+				CSD_CALL_INTERFACE, "StartDTMF",
+				start_dtmf_reply, NULL,
+				DBUS_TYPE_BYTE, &tone,
 				DBUS_TYPE_INVALID);
 	if (ret < 0) {
 		telephony_transmit_dtmf_rsp(telephony_device,
@@ -724,6 +794,119 @@ void telephony_transmit_dtmf_req(void *telephony_device, char tone)
 	}
 
 	telephony_transmit_dtmf_rsp(telephony_device, CME_ERROR_NONE);
+}
+
+static int tonegen_startevent(char tone)
+{
+	int ret;
+	dbus_uint32_t event_tone;
+	dbus_int32_t dbm0 = -15;
+	dbus_uint32_t duration = 150;
+
+	switch (tone) {
+	case '*':
+		event_tone = DTMF_ASTERISK;
+		break;
+	case '#':
+		event_tone = DTMF_HASHMARK;
+		break;
+	case 'A':
+		event_tone = DTMF_A;
+		break;
+	case 'B':
+		event_tone = DTMF_B;
+		break;
+	case 'C':
+		event_tone = DTMF_C;
+		break;
+	case 'D':
+		event_tone = DTMF_D;
+		break;
+	default:
+		ret = g_ascii_digit_value(tone);
+		if (ret < 0)
+			return -EINVAL;
+		event_tone = ret;
+	}
+
+	ret = send_method_call(TONEGEN_BUS_NAME, TONEGEN_PATH,
+				TONEGEN_INTERFACE, "StartEventTone",
+				NULL, NULL,
+				DBUS_TYPE_UINT32, &event_tone,
+				DBUS_TYPE_INT32, &dbm0,
+				DBUS_TYPE_UINT32, &duration,
+				DBUS_TYPE_INVALID);
+	return ret;
+}
+
+static gboolean stop_feedback_tone(gpointer user_data)
+{
+	if (g_slist_length(tones) > 0) {
+		gpointer ptone;
+		int ret;
+
+		send_method_call(TONEGEN_BUS_NAME, TONEGEN_PATH,
+				TONEGEN_INTERFACE, "StopTone",
+				NULL, NULL,
+				DBUS_TYPE_INVALID);
+
+		ptone = g_slist_nth_data(tones, 0);
+		tones = g_slist_remove(tones, ptone);
+
+		ret = tonegen_startevent(GPOINTER_TO_UINT(ptone));
+		if (ret < 0)
+			goto done;
+
+		return TRUE;
+	}
+done:
+	return FALSE;
+}
+
+static void tones_timer_notify(gpointer data)
+{
+	send_method_call(TONEGEN_BUS_NAME, TONEGEN_PATH,
+				TONEGEN_INTERFACE, "StopTone",
+				NULL, NULL,
+				DBUS_TYPE_INVALID);
+	g_slist_free(tones);
+	tones = NULL;
+
+	create_tones_timer = 0;
+}
+
+static void start_feedback_tone(char tone)
+{
+	if (!create_tones_timer) {
+		int ret;
+
+		ret = tonegen_startevent(tone);
+		if (ret < 0)
+			return;
+
+		create_tones_timer = g_timeout_add_full(G_PRIORITY_DEFAULT,
+						FEEDBACK_TONE_DURATION,
+						stop_feedback_tone,
+						NULL,
+						tones_timer_notify);
+	} else {
+		glong dtmf_tone = tone;
+
+		DBG("add %c to queue", tone);
+		tones = g_slist_append(tones, GUINT_TO_POINTER(dtmf_tone));
+	}
+}
+
+void telephony_transmit_dtmf_req(void *telephony_device, char tone)
+{
+	DBG("telephony-maemo6: transmit dtmf: %c", tone);
+
+	start_dtmf(telephony_device, tone);
+
+	if (!find_call_with_status(CSD_CALL_STATUS_ACTIVE))
+		error("No active call");
+	else
+		start_feedback_tone(tone);
 }
 
 void telephony_subscriber_number_req(void *telephony_device)
@@ -752,9 +935,20 @@ static int csd_status_to_hfp(struct csd_call *call)
 		/* PROCEEDING can happen in outgoing/incoming */
 		if (call->originating)
 			return CALL_STATUS_DIALING;
-		else
-			return CALL_STATUS_INCOMING;
+
+		/*
+		 * PROCEEDING is followed by WAITING CSD status, therefore
+		 * second incoming call status indication is set immediately
+		 * to waiting.
+		 */
+		if (g_slist_length(active_calls) > 0)
+			return CALL_STATUS_WAITING;
+
+		return CALL_STATUS_INCOMING;
 	case CSD_CALL_STATUS_COMING:
+		if (g_slist_length(active_calls) > 0)
+			return CALL_STATUS_WAITING;
+
 		return CALL_STATUS_INCOMING;
 	case CSD_CALL_STATUS_MO_ALERTING:
 		return CALL_STATUS_ALERTING;
@@ -1137,6 +1331,9 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 		if (g_slist_length(active_calls) == 0)
 			telephony_update_indicator(maemo_indicators, "call",
 							EV_CALL_INACTIVE);
+
+		if (create_tones_timer)
+			g_source_remove(create_tones_timer);
 		break;
 	case CSD_CALL_STATUS_HOLD_INITIATED:
 		break;
@@ -1157,12 +1354,16 @@ static void call_set_status(struct csd_call *call, dbus_uint32_t status)
 		break;
 	case CSD_CALL_STATUS_TERMINATED:
 		if (call->on_hold &&
-				!find_call_with_status(CSD_CALL_STATUS_HOLD))
+				!find_call_with_status(CSD_CALL_STATUS_HOLD)) {
 			telephony_update_indicator(maemo_indicators,
 							"callheld",
 							EV_CALLHELD_NONE);
-		else if (callheld == EV_CALLHELD_MULTIPLE &&
-				find_call_with_status(CSD_CALL_STATUS_HOLD))
+			return;
+		}
+
+		if (callheld == EV_CALLHELD_MULTIPLE &&
+				find_call_with_status(CSD_CALL_STATUS_HOLD) &&
+				!find_call_with_status(CSD_CALL_STATUS_ACTIVE))
 			telephony_update_indicator(maemo_indicators,
 							"callheld",
 							EV_CALLHELD_ON_HOLD);
@@ -1501,6 +1702,8 @@ static void csd_call_free(void *data)
 	g_free(call->object_path);
 	g_free(call->number);
 
+	g_slist_foreach(pending, remove_pending_by_data, call);
+
 	g_free(call);
 }
 
@@ -1656,7 +1859,7 @@ static void call_info_reply(DBusPendingCall *call, void *user_data)
 {
 	DBusError err;
 	DBusMessage *reply;
-	DBusMessageIter iter, sub;;
+	DBusMessageIter iter, sub;
 
 	get_calls_active = FALSE;
 
@@ -1988,7 +2191,7 @@ void telephony_exit(void)
 	g_slist_free_full(pending, pending_req_finalize);
 	pending = NULL;
 
-	g_slist_free_full(pending, remove_watch);
+	g_slist_free_full(watches, remove_watch);
 	watches = NULL;
 
 	dbus_connection_unref(connection);

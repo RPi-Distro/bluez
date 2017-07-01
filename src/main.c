@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/signalfd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -63,6 +64,7 @@
 #define LAST_ADAPTER_EXIT_TIMEOUT 30
 
 #define DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
+#define DEFAULT_AUTO_CONNECT_TIMEOUT  60 /* 60 seconds */
 
 struct main_opts main_opts;
 
@@ -126,6 +128,16 @@ static void parse_config(GKeyFile *config)
 		DBG("pageto=%d", val);
 		main_opts.pageto = val;
 		main_opts.flags |= 1 << HCID_SET_PAGETO;
+	}
+
+	val = g_key_file_get_integer(config, "General", "AutoConnectTimeout",
+									&err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("auto_to=%d", val);
+		main_opts.autoto = val;
 	}
 
 	str = g_key_file_get_string(config, "General", "Name", &err);
@@ -217,13 +229,6 @@ static void parse_config(GKeyFile *config)
 	else
 		main_opts.attrib_server = boolean;
 
-	boolean = g_key_file_get_boolean(config, "General",
-						"EnableLE", &err);
-	if (err)
-		g_clear_error(&err);
-	else
-		main_opts.le = boolean;
-
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
 	main_opts.link_policy = HCI_LP_RSWITCH | HCI_LP_SNIFF |
@@ -237,6 +242,7 @@ static void init_defaults(void)
 	main_opts.mode	= MODE_CONNECTABLE;
 	main_opts.name	= g_strdup("BlueZ");
 	main_opts.discovto	= DEFAULT_DISCOVERABLE_TIMEOUT;
+	main_opts.autoto = DEFAULT_AUTO_CONNECT_TIMEOUT;
 	main_opts.remember_powered = TRUE;
 	main_opts.reverse_sdp = TRUE;
 	main_opts.name_resolv = TRUE;
@@ -247,14 +253,82 @@ static void init_defaults(void)
 
 static GMainLoop *event_loop;
 
-static void sig_term(int sig)
+static unsigned int __terminated = 0;
+
+static gboolean signal_handler(GIOChannel *channel, GIOCondition cond,
+							gpointer user_data)
 {
-	g_main_loop_quit(event_loop);
+	struct signalfd_siginfo si;
+	ssize_t result;
+	int fd;
+
+	if (cond & (G_IO_NVAL | G_IO_ERR | G_IO_HUP))
+		return FALSE;
+
+	fd = g_io_channel_unix_get_fd(channel);
+
+	result = read(fd, &si, sizeof(si));
+	if (result != sizeof(si))
+		return FALSE;
+
+	switch (si.ssi_signo) {
+	case SIGINT:
+	case SIGTERM:
+		if (__terminated == 0) {
+			info("Terminating");
+			g_main_loop_quit(event_loop);
+		}
+
+		__terminated = 1;
+		break;
+	case SIGUSR2:
+		__btd_toggle_debug();
+		break;
+	case SIGPIPE:
+		/* ignore */
+		break;
+	}
+
+	return TRUE;
 }
 
-static void sig_debug(int sig)
+static guint setup_signalfd(void)
 {
-	__btd_toggle_debug();
+	GIOChannel *channel;
+	guint source;
+	sigset_t mask;
+	int fd;
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+	sigaddset(&mask, SIGUSR2);
+	sigaddset(&mask, SIGPIPE);
+
+	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
+		perror("Failed to set signal mask");
+		return 0;
+	}
+
+	fd = signalfd(-1, &mask, 0);
+	if (fd < 0) {
+		perror("Failed to create signal descriptor");
+		return 0;
+	}
+
+	channel = g_io_channel_unix_new(fd);
+
+	g_io_channel_set_close_on_unref(channel, TRUE);
+	g_io_channel_set_encoding(channel, NULL, NULL);
+	g_io_channel_set_buffered(channel, FALSE);
+
+	source = g_io_add_watch(channel,
+				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+				signal_handler, NULL);
+
+	g_io_channel_unref(channel);
+
+	return source;
 }
 
 static gchar *option_debug = NULL;
@@ -318,6 +392,7 @@ static int connect_dbus(void)
 	conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, BLUEZ_NAME, &err);
 	if (!conn) {
 		if (dbus_error_is_set(&err)) {
+			g_printerr("D-Bus setup failed: %s\n", err.message);
 			dbus_error_free(&err);
 			return -EIO;
 		}
@@ -365,9 +440,9 @@ int main(int argc, char *argv[])
 {
 	GOptionContext *context;
 	GError *err = NULL;
-	struct sigaction sa;
 	uint16_t mtu = 0;
 	GKeyFile *config;
+	guint signal;
 
 	init_defaults();
 
@@ -420,19 +495,11 @@ int main(int argc, char *argv[])
 
 	umask(0077);
 
+	event_loop = g_main_loop_new(NULL, FALSE);
+
+	signal = setup_signalfd();
+
 	__btd_log_init(option_debug, option_detach);
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_flags = SA_NOCLDSTOP;
-	sa.sa_handler = sig_term;
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT,  &sa, NULL);
-
-	sa.sa_handler = sig_debug;
-	sigaction(SIGUSR2, &sa, NULL);
-
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGPIPE, &sa, NULL);
 
 	config = load_config(CONFIGDIR "/main.conf");
 
@@ -465,8 +532,6 @@ int main(int argc, char *argv[])
 	 * daemon needs to be re-worked. */
 	plugin_init(config, option_plugin, option_noplugin);
 
-	event_loop = g_main_loop_new(NULL, FALSE);
-
 	if (adapter_ops_setup() < 0) {
 		error("adapter_ops_setup failed");
 		exit(1);
@@ -477,6 +542,8 @@ int main(int argc, char *argv[])
 	DBG("Entering main loop");
 
 	g_main_loop_run(event_loop);
+
+	g_source_remove(signal);
 
 	disconnect_dbus();
 

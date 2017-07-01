@@ -30,14 +30,13 @@
 #include <btio.h>
 #include <adapter.h>
 #include <device.h>
+#include <glib-helper.h>
+#include <log.h>
 
 #include "hdp_types.h"
 
-#include "log.h"
 #include "hdp_manager.h"
 #include "hdp.h"
-
-#include "glib-helper.h"
 
 static DBusConnection *connection = NULL;
 
@@ -76,7 +75,7 @@ static struct btd_device_driver hdp_device_driver = {
 
 int hdp_manager_init(DBusConnection *conn)
 {
-	if (hdp_manager_start(conn))
+	if (hdp_manager_start(conn) < 0)
 		return -1;
 
 	connection = dbus_connection_ref(conn);

@@ -20,17 +20,20 @@
  *
  */
 
-#include "log.h"
-#include "error.h"
-
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
 
-#include "btio.h"
+#include <glib.h>
+
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
+
+#include <btio.h>
+#include <log.h>
+#include <error.h>
+
 #include "mcap.h"
 #include "mcap_lib.h"
 #include "mcap_internal.h"
@@ -2058,7 +2061,7 @@ struct mcap_instance *mcap_create_instance(bdaddr_t *src,
 	/* Initialize random seed to generate mdlids for this instance */
 	srand(time(NULL));
 
-	return mcap_instance_ref(mi);;
+	return mcap_instance_ref(mi);
 }
 
 void mcap_release_instance(struct mcap_instance *mi)

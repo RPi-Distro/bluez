@@ -40,7 +40,7 @@
 
 #include <glib.h>
 
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "hcid.h"
 #include "sdpd.h"
 #include "btio.h"
@@ -208,7 +208,7 @@ static inline gboolean is_le_capable(int index)
 {
 	struct dev_info *dev = &devs[index];
 
-	return (main_opts.le && dev->features[4] & LMP_LE &&
+	return (dev->features[4] & LMP_LE &&
 			dev->extfeatures[0] & LMP_HOST_LE) ? TRUE : FALSE;
 }
 
@@ -1372,20 +1372,6 @@ static inline void remote_features_notify(int index, void *ptr)
 	write_features_info(&dev->bdaddr, &evt->bdaddr, NULL, evt->features);
 }
 
-static void write_le_host_complete(int index, uint8_t status)
-{
-	struct dev_info *dev = &devs[index];
-	uint8_t page_num = 0x01;
-
-	if (status)
-		return;
-
-	if (hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-				OCF_READ_LOCAL_EXT_FEATURES, 1, &page_num) < 0)
-		error("Unable to read extended local features: %s (%d)",
-						strerror(errno), errno);
-}
-
 static void read_local_version_complete(int index,
 				const read_local_version_rp *rp)
 {
@@ -1471,7 +1457,7 @@ static void update_name(int index, const char *name)
 
 	adapter = manager_find_adapter_by_id(index);
 	if (adapter)
-		adapter_update_local_name(adapter, name);
+		adapter_name_changed(adapter, name);
 
 	update_ext_inquiry_response(index);
 }
@@ -1495,21 +1481,6 @@ static void read_local_name_complete(int index, read_local_name_rp *rp)
 	hci_clear_bit(PENDING_NAME, &dev->pending);
 
 	DBG("Got name for hci%d", index);
-
-	/* Even though it shouldn't happen (assuming the kernel behaves
-	 * properly) it seems like we might miss the very first
-	 * initialization commands that the kernel sends. So check for
-	 * it here (since read_local_name is one of the last init
-	 * commands) and resend the first ones if we haven't seen
-	 * their results yet */
-
-	if (hci_test_bit(PENDING_FEATURES, &dev->pending))
-		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-					OCF_READ_LOCAL_FEATURES, 0, NULL);
-
-	if (hci_test_bit(PENDING_VERSION, &dev->pending))
-		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
-					OCF_READ_LOCAL_VERSION, 0, NULL);
 
 	if (!dev->pending && dev->up)
 		init_adapter(index);
@@ -1801,9 +1772,6 @@ static inline void cmd_complete(int index, void *ptr)
 	case cmd_opcode_pack(OGF_LINK_CTL, OCF_INQUIRY_CANCEL):
 		cc_inquiry_cancel(index, status);
 		break;
-	case cmd_opcode_pack(OGF_HOST_CTL, OCF_WRITE_LE_HOST_SUPPORTED):
-		write_le_host_complete(index, status);
-		break;
 	case cmd_opcode_pack(OGF_LE_CTL, OCF_LE_SET_SCAN_ENABLE):
 		cc_le_set_scan_enable(index, status);
 		break;
@@ -1901,7 +1869,7 @@ static inline void inquiry_result(int index, int plen, void *ptr)
 						(info->dev_class[2] << 16);
 
 		btd_event_device_found(&dev->bdaddr, &info->bdaddr, class,
-								0, NULL);
+								0, 0, NULL, 0);
 		ptr += INQUIRY_INFO_SIZE;
 	}
 }
@@ -1923,7 +1891,7 @@ static inline void inquiry_result_with_rssi(int index, int plen, void *ptr)
 						| (info->dev_class[2] << 16);
 
 			btd_event_device_found(&dev->bdaddr, &info->bdaddr,
-						class, info->rssi, NULL);
+						class, info->rssi, 0, NULL, 0);
 			ptr += INQUIRY_INFO_WITH_RSSI_AND_PSCAN_MODE_SIZE;
 		}
 	} else {
@@ -1934,7 +1902,7 @@ static inline void inquiry_result_with_rssi(int index, int plen, void *ptr)
 						| (info->dev_class[2] << 16);
 
 			btd_event_device_found(&dev->bdaddr, &info->bdaddr,
-						class, info->rssi, NULL);
+						class, info->rssi, 0, NULL, 0);
 			ptr += INQUIRY_INFO_WITH_RSSI_SIZE;
 		}
 	}
@@ -1953,7 +1921,8 @@ static inline void extended_inquiry_result(int index, int plen, void *ptr)
 					| (info->dev_class[2] << 16);
 
 		btd_event_device_found(&dev->bdaddr, &info->bdaddr, class,
-						info->rssi, info->data);
+						info->rssi, 0, info->data,
+						HCI_MAX_EIR_LENGTH);
 		ptr += EXTENDED_INQUIRY_INFO_SIZE;
 	}
 }
@@ -2172,7 +2141,7 @@ static inline void le_advertising_report(int index, evt_le_meta_event *meta)
 {
 	struct dev_info *dev = &devs[index];
 	le_advertising_info *info;
-	uint8_t num_reports, rssi, eir[HCI_MAX_EIR_LENGTH];
+	uint8_t num_reports, rssi;
 	const uint8_t RSSI_SIZE = 1;
 
 	num_reports = meta->data[0];
@@ -2180,10 +2149,8 @@ static inline void le_advertising_report(int index, evt_le_meta_event *meta)
 	info = (le_advertising_info *) &meta->data[1];
 	rssi = *(info->data + info->length);
 
-	memset(eir, 0, sizeof(eir));
-	memcpy(eir, info->data, info->length);
-
-	btd_event_device_found(&dev->bdaddr, &info->bdaddr, 0, rssi, eir);
+	btd_event_device_found(&dev->bdaddr, &info->bdaddr, 0, rssi,
+						0, info->data, info->length);
 
 	num_reports--;
 
@@ -2192,11 +2159,8 @@ static inline void le_advertising_report(int index, evt_le_meta_event *meta)
 								RSSI_SIZE);
 		rssi = *(info->data + info->length);
 
-		memset(eir, 0, sizeof(eir));
-		memcpy(eir, info->data, info->length);
-
 		btd_event_device_found(&dev->bdaddr, &info->bdaddr, 0, rssi,
-									eir);
+						0, info->data, info->length);
 	}
 }
 
@@ -2498,6 +2462,13 @@ static void device_devup_setup(int index)
 	bacpy(&dev->bdaddr, &di.bdaddr);
 	memcpy(dev->features, di.features, 8);
 
+	if (dev->features[7] & LMP_EXT_FEAT) {
+		uint8_t page_num = 0x01;
+
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+				OCF_READ_LOCAL_EXT_FEATURES, 1, &page_num);
+	}
+
 	/* Set page timeout */
 	if ((main_opts.flags & (1 << HCID_SET_PAGETO))) {
 		write_page_timeout_cp cp;
@@ -2512,8 +2483,31 @@ static void device_devup_setup(int index)
 	hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_READ_STORED_LINK_KEY,
 					READ_STORED_LINK_KEY_CP_SIZE, &cp);
 
-	if (!dev->pending)
+	if (!dev->pending) {
 		init_adapter(index);
+		return;
+	}
+
+	/* Even though it shouldn't happen (assuming the kernel behaves
+	 * properly) it seems like we might miss the very first
+	 * initialization commands that the kernel sends. So check for
+	 * it here and resend the ones we haven't seen their results yet */
+
+	if (hci_test_bit(PENDING_FEATURES, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_LOCAL_FEATURES, 0, NULL);
+
+	if (hci_test_bit(PENDING_VERSION, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_LOCAL_VERSION, 0, NULL);
+
+	if (hci_test_bit(PENDING_NAME, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_HOST_CTL,
+					OCF_READ_LOCAL_NAME, 0, 0);
+
+	if (hci_test_bit(PENDING_BDADDR, &dev->pending))
+		hci_send_cmd(dev->sk, OGF_INFO_PARAM,
+					OCF_READ_BD_ADDR, 0, NULL);
 }
 
 static void init_pending(int index)
@@ -2654,6 +2648,7 @@ static void device_event(int event, int index)
 		devs[index].up = FALSE;
 		devs[index].pending_cod = 0;
 		devs[index].cache_enable = TRUE;
+		devs[index].discov_state = DISCOV_HALTED;
 		if (!devs[index].pending) {
 			struct btd_adapter *adapter;
 
@@ -3103,7 +3098,7 @@ static int hciops_stop_discovery(int index)
 	}
 }
 
-static int hciops_fast_connectable(int index, gboolean enable)
+static int hciops_set_fast_connectable(int index, gboolean enable)
 {
 	struct dev_info *dev = &devs[index];
 	write_page_activity_cp cp;
@@ -3305,27 +3300,6 @@ static int hciops_passkey_reply(int index, bdaddr_t *bdaddr, uint32_t passkey)
 		err = -errno;
 
 	return err;
-}
-
-static int hciops_enable_le(int index)
-{
-	struct dev_info *dev = &devs[index];
-	write_le_host_supported_cp cp;
-
-	DBG("hci%d", index);
-
-	if (!(dev->features[4] & LMP_LE))
-		return -ENOTSUP;
-
-	cp.le = 0x01;
-	cp.simul = (dev->features[6] & LMP_LE_BREDR) ? 0x01 : 0x00;
-
-	if (hci_send_cmd(dev->sk, OGF_HOST_CTL,
-				OCF_WRITE_LE_HOST_SUPPORTED,
-				WRITE_LE_HOST_SUPPORTED_CP_SIZE, &cp) < 0)
-		return -errno;
-
-	return 0;
 }
 
 static uint8_t generate_service_class(int index)
@@ -3634,6 +3608,12 @@ static int hciops_remove_remote_oob_data(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
+static int hciops_confirm_name(int index, bdaddr_t *bdaddr,
+							gboolean name_known)
+{
+	return -ENOSYS;
+}
+
 static struct btd_adapter_ops hci_ops = {
 	.setup = hciops_setup,
 	.cleanup = hciops_cleanup,
@@ -3647,7 +3627,7 @@ static struct btd_adapter_ops hci_ops = {
 	.cancel_resolve_name = hciops_cancel_resolve_name,
 	.set_name = hciops_set_name,
 	.set_dev_class = hciops_set_dev_class,
-	.set_fast_connectable = hciops_fast_connectable,
+	.set_fast_connectable = hciops_set_fast_connectable,
 	.read_clock = hciops_read_clock,
 	.read_bdaddr = hciops_read_bdaddr,
 	.block_device = hciops_block_device,
@@ -3658,7 +3638,6 @@ static struct btd_adapter_ops hci_ops = {
 	.pincode_reply = hciops_pincode_reply,
 	.confirm_reply = hciops_confirm_reply,
 	.passkey_reply = hciops_passkey_reply,
-	.enable_le = hciops_enable_le,
 	.encrypt_link = hciops_encrypt_link,
 	.set_did = hciops_set_did,
 	.add_uuid = hciops_add_uuid,
@@ -3672,6 +3651,7 @@ static struct btd_adapter_ops hci_ops = {
 	.read_local_oob_data = hciops_read_local_oob_data,
 	.add_remote_oob_data = hciops_add_remote_oob_data,
 	.remove_remote_oob_data = hciops_remove_remote_oob_data,
+	.confirm_name = hciops_confirm_name,
 };
 
 static int hciops_init(void)

@@ -46,6 +46,9 @@ struct btd_device *device_create(DBusConnection *conn,
 void device_set_name(struct btd_device *device, const char *name);
 void device_get_name(struct btd_device *device, char *name, size_t len);
 device_type_t device_get_type(struct btd_device *device);
+uint16_t btd_device_get_vendor(struct btd_device *device);
+uint16_t btd_device_get_product(struct btd_device *device);
+uint16_t btd_device_get_version(struct btd_device *device);
 void device_remove(struct btd_device *device, gboolean remove_stored);
 gint device_address_cmp(struct btd_device *device, const gchar *address);
 int device_browse_primary(struct btd_device *device, DBusConnection *conn,
@@ -74,6 +77,7 @@ void device_set_paired(struct btd_device *device, gboolean paired);
 void device_set_temporary(struct btd_device *device, gboolean temporary);
 void device_set_type(struct btd_device *device, device_type_t type);
 void device_set_bonded(struct btd_device *device, gboolean bonded);
+void device_set_auto_connect(struct btd_device *device, gboolean enable);
 gboolean device_is_connected(struct btd_device *device);
 DBusMessage *device_create_bonding(struct btd_device *device,
 				DBusConnection *conn, DBusMessage *msg,
@@ -116,3 +120,8 @@ void btd_unregister_device_driver(struct btd_device_driver *driver);
 
 struct btd_device *btd_device_ref(struct btd_device *device);
 void btd_device_unref(struct btd_device *device);
+
+int device_block(DBusConnection *conn, struct btd_device *device,
+						gboolean update_only);
+int device_unblock(DBusConnection *conn, struct btd_device *device,
+					gboolean silent, gboolean update_only);

@@ -107,17 +107,18 @@ const gchar *adapter_get_path(struct btd_adapter *adapter);
 void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_set_state(struct btd_adapter *adapter, int state);
 int adapter_get_state(struct btd_adapter *adapter);
-int adapter_get_discover_type(struct btd_adapter *adapter);
 struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter,
 						struct remote_dev_info *match);
-void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-						uint32_t class, int8_t rssi,
-						uint8_t *data);
+void adapter_update_found_devices(struct btd_adapter *adapter,
+					bdaddr_t *bdaddr, uint32_t class,
+					int8_t rssi, uint8_t confirm_name,
+					uint8_t *data, uint8_t data_len);
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_emit_device_found(struct btd_adapter *adapter,
 						struct remote_dev_info *dev);
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
-int adapter_update_local_name(struct btd_adapter *adapter, const char *name);
+int adapter_set_name(struct btd_adapter *adapter, const char *name);
+void adapter_name_changed(struct btd_adapter *adapter, const char *name);
 void adapter_service_insert(struct btd_adapter *adapter, void *rec);
 void adapter_service_remove(struct btd_adapter *adapter, void *rec);
 void btd_adapter_class_changed(struct btd_adapter *adapter,
@@ -158,12 +159,12 @@ const char *adapter_any_get_path(void);
 
 const char *btd_adapter_any_request_path(void);
 void btd_adapter_any_release_path(void);
-gboolean adapter_is_pairable(struct btd_adapter *adapter);
 gboolean adapter_powering_down(struct btd_adapter *adapter);
 
 int btd_adapter_restore_powered(struct btd_adapter *adapter);
 int btd_adapter_switch_online(struct btd_adapter *adapter);
 int btd_adapter_switch_offline(struct btd_adapter *adapter);
+void btd_adapter_enable_auto_connect(struct btd_adapter *adapter);
 
 typedef ssize_t (*btd_adapter_pin_cb_t) (struct btd_adapter *adapter,
 					struct btd_device *dev, char *out);
@@ -203,7 +204,6 @@ struct btd_adapter_ops {
 							size_t pin_len);
 	int (*confirm_reply) (int index, bdaddr_t *bdaddr, gboolean success);
 	int (*passkey_reply) (int index, bdaddr_t *bdaddr, uint32_t passkey);
-	int (*enable_le) (int index);
 	int (*encrypt_link) (int index, bdaddr_t *bdaddr, bt_hci_result_t cb,
 							gpointer user_data);
 	int (*set_did) (int index, uint16_t vendor, uint16_t product,
@@ -220,6 +220,7 @@ struct btd_adapter_ops {
 	int (*add_remote_oob_data) (int index, bdaddr_t *bdaddr, uint8_t *hash,
 							uint8_t *randomizer);
 	int (*remove_remote_oob_data) (int index, bdaddr_t *bdaddr);
+	int (*confirm_name) (int index, bdaddr_t *bdaddr, gboolean name_known);
 };
 
 int btd_register_adapter_ops(struct btd_adapter_ops *ops, gboolean priority);

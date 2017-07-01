@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2006-2010  Nokia Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  BMW Car IT GmbH. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -36,7 +37,7 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "glib-helper.h"
+#include "glib-compat.h"
 #include "log.h"
 #include "device.h"
 #include "manager.h"
@@ -44,8 +45,6 @@
 #include "sink.h"
 #include "source.h"
 #include "unix.h"
-#include "media.h"
-#include "transport.h"
 #include "a2dp.h"
 #include "sdpd.h"
 
@@ -64,7 +63,7 @@
 
 struct a2dp_sep {
 	struct a2dp_server *server;
-	struct media_endpoint *endpoint;
+	struct a2dp_endpoint *endpoint;
 	uint8_t type;
 	uint8_t codec;
 	struct avdtp_local_sep *lsep;
@@ -75,6 +74,8 @@ struct a2dp_sep {
 	gboolean locked;
 	gboolean suspending;
 	gboolean starting;
+	void *user_data;
+	GDestroyNotify destroy;
 };
 
 struct a2dp_setup_cb {
@@ -372,8 +373,8 @@ static void stream_state_changed(struct avdtp_stream *stream,
 
 	sep->stream = NULL;
 
-	if (sep->endpoint)
-		media_endpoint_clear_configuration(sep->endpoint);
+	if (sep->endpoint && sep->endpoint->clear_configuration)
+		sep->endpoint->clear_configuration(sep, sep->user_data);
 }
 
 static gboolean auto_config(gpointer data)
@@ -638,12 +639,10 @@ static gboolean mpeg_getcap_ind(struct avdtp *session,
 	return TRUE;
 }
 
-static void endpoint_setconf_cb(struct media_endpoint *endpoint, void *ret,
-						int size, void *user_data)
-{
-	struct a2dp_setup *setup = user_data;
 
-	if (ret == NULL) {
+static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
+{
+	if (ret == FALSE) {
 		setup->err = g_new(struct avdtp_error, 1);
 		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
@@ -701,13 +700,16 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 			goto done;
 		}
 
-		ret = media_endpoint_set_configuration(a2dp_sep->endpoint,
+		ret = a2dp_sep->endpoint->set_configuration(a2dp_sep,
 						setup->dev, codec->data,
 						cap->length - sizeof(*codec),
-						endpoint_setconf_cb, setup);
-		if (ret)
+						setup,
+						endpoint_setconf_cb,
+						a2dp_sep->user_data);
+		if (ret == 0)
 			return TRUE;
 
+		setup->err = g_new(struct avdtp_error, 1);
 		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 		break;
@@ -741,8 +743,8 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 
 	*caps = g_slist_append(*caps, media_transport);
 
-	length = media_endpoint_get_capabilities(a2dp_sep->endpoint,
-						&capabilities);
+	length = a2dp_sep->endpoint->get_capabilities(a2dp_sep, &capabilities,
+							a2dp_sep->user_data);
 
 	codec_caps = g_malloc0(sizeof(*codec_caps) + length);
 	codec_caps->media_type = AVDTP_MEDIA_TYPE_AUDIO;
@@ -765,13 +767,11 @@ static gboolean endpoint_getcap_ind(struct avdtp *session,
 	return TRUE;
 }
 
-static void endpoint_open_cb(struct media_endpoint *endpoint, void *ret,
-						int size, void *user_data)
+static void endpoint_open_cb(struct a2dp_setup *setup, gboolean ret)
 {
-	struct a2dp_setup *setup = user_data;
 	int err;
 
-	if (ret == NULL) {
+	if (ret == FALSE) {
 		setup->stream = NULL;
 		finalize_setup_errno(setup, -EPERM, finalize_config, NULL);
 		return;
@@ -828,15 +828,18 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (a2dp_sep->endpoint) {
 		struct avdtp_service_capability *service;
 		struct avdtp_media_codec_capability *codec;
+		int err;
 
 		service = avdtp_stream_get_codec(stream);
 		codec = (struct avdtp_media_codec_capability *) service->data;
 
-		if (media_endpoint_set_configuration(a2dp_sep->endpoint, dev,
+		err = a2dp_sep->endpoint->set_configuration(a2dp_sep, dev,
 						codec->data, service->length -
 						sizeof(*codec),
-						endpoint_open_cb, setup) ==
-						TRUE)
+						setup,
+						endpoint_open_cb,
+						a2dp_sep->user_data);
+		if (err == 0)
 			return;
 
 		setup->stream = NULL;
@@ -1201,18 +1204,17 @@ static gboolean endpoint_delayreport_ind(struct avdtp *session,
 						uint8_t *err, void *user_data)
 {
 	struct a2dp_sep *a2dp_sep = user_data;
-	struct media_transport *transport;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: DelayReport_Ind", sep);
 	else
 		DBG("Source %p: DelayReport_Ind", sep);
 
-	transport = media_endpoint_get_transport(a2dp_sep->endpoint);
-	if (transport == NULL)
+	if (a2dp_sep->endpoint == NULL ||
+				a2dp_sep->endpoint->set_delay == NULL)
 		return FALSE;
 
-	media_transport_update_delay(transport, delay);
+	a2dp_sep->endpoint->set_delay(a2dp_sep, delay, a2dp_sep->user_data);
 
 	return TRUE;
 }
@@ -1506,23 +1508,25 @@ proceed:
 	if (source) {
 		for (i = 0; i < sbc_srcs; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SOURCE,
-				A2DP_CODEC_SBC, delay_reporting, NULL, NULL);
+					A2DP_CODEC_SBC, delay_reporting,
+					NULL, NULL, NULL, NULL);
 
 		for (i = 0; i < mpeg12_srcs; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SOURCE,
 					A2DP_CODEC_MPEG12, delay_reporting,
-					NULL, NULL);
+					NULL, NULL, NULL, NULL);
 	}
 	server->sink_enabled = sink;
 	if (sink) {
 		for (i = 0; i < sbc_sinks; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SINK,
-				A2DP_CODEC_SBC, delay_reporting, NULL, NULL);
+					A2DP_CODEC_SBC, delay_reporting,
+					NULL, NULL, NULL, NULL);
 
 		for (i = 0; i < mpeg12_sinks; i++)
 			a2dp_add_sep(src, AVDTP_SEP_TYPE_SINK,
 					A2DP_CODEC_MPEG12, delay_reporting,
-					NULL, NULL);
+					NULL, NULL, NULL, NULL);
 	}
 
 	return 0;
@@ -1530,8 +1534,8 @@ proceed:
 
 static void a2dp_unregister_sep(struct a2dp_sep *sep)
 {
-	if (sep->endpoint) {
-		media_endpoint_release(sep->endpoint);
+	if (sep->destroy) {
+		sep->destroy(sep->user_data);
 		sep->endpoint = NULL;
 	}
 
@@ -1572,7 +1576,9 @@ void a2dp_unregister(const bdaddr_t *src)
 
 struct a2dp_sep *a2dp_add_sep(const bdaddr_t *src, uint8_t type,
 				uint8_t codec, gboolean delay_reporting,
-				struct media_endpoint *endpoint, int *err)
+				struct a2dp_endpoint *endpoint,
+				void *user_data, GDestroyNotify destroy,
+				int *err)
 {
 	struct a2dp_server *server;
 	struct a2dp_sep *sep;
@@ -1625,6 +1631,8 @@ proceed:
 	sep->codec = codec;
 	sep->type = type;
 	sep->delay_reporting = delay_reporting;
+	sep->user_data = user_data;
+	sep->destroy = destroy;
 
 	if (type == AVDTP_SEP_TYPE_SOURCE) {
 		l = &server->sources;
@@ -1874,10 +1882,8 @@ static gboolean select_capabilities(struct avdtp *session,
 	return TRUE;
 }
 
-static void select_cb(struct media_endpoint *endpoint, void *ret, int size,
-			void *user_data)
+static void select_cb(struct a2dp_setup *setup, void *ret, int size)
 {
-	struct a2dp_setup *setup = user_data;
 	struct avdtp_service_capability *media_transport, *media_codec;
 	struct avdtp_media_codec_capability *cap;
 
@@ -1928,7 +1934,7 @@ static struct a2dp_sep *a2dp_find_sep(struct avdtp *session, GSList *list,
 			if (sep->endpoint == NULL)
 				continue;
 
-			name = media_endpoint_get_sender(sep->endpoint);
+			name = sep->endpoint->get_name(sep, sep->user_data);
 			if (g_strcmp0(sender, name) != 0)
 				continue;
 		}
@@ -1975,6 +1981,7 @@ unsigned int a2dp_select_capabilities(struct avdtp *session,
 	struct a2dp_sep *sep;
 	struct avdtp_service_capability *service;
 	struct avdtp_media_codec_capability *codec;
+	int err;
 
 	sep = a2dp_select_sep(session, type, sender);
 	if (!sep) {
@@ -2015,10 +2022,11 @@ unsigned int a2dp_select_capabilities(struct avdtp *session,
 	service = avdtp_get_codec(setup->rsep);
 	codec = (struct avdtp_media_codec_capability *) service->data;
 
-	if (media_endpoint_select_configuration(sep->endpoint, codec->data,
-						service->length - sizeof(*codec),
-						select_cb, setup) ==
-						TRUE)
+	err = sep->endpoint->select_configuration(sep, codec->data,
+					service->length - sizeof(*codec),
+					setup,
+					select_cb, sep->user_data);
+	if (err == 0)
 		return cb_data->id;
 
 fail:

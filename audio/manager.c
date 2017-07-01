@@ -53,7 +53,6 @@
 #include "../src/device.h"
 
 #include "log.h"
-#include "textfile.h"
 #include "ipc.h"
 #include "device.h"
 #include "error.h"
@@ -64,6 +63,7 @@
 #include "gateway.h"
 #include "sink.h"
 #include "source.h"
+#include "avrcp.h"
 #include "control.h"
 #include "manager.h"
 #include "sdpd.h"
@@ -117,8 +117,8 @@ static struct enabled_interfaces enabled = {
 	.sink		= TRUE,
 	.source		= FALSE,
 	.control	= TRUE,
-	.socket		= TRUE,
-	.media		= FALSE
+	.socket		= FALSE,
+	.media		= TRUE,
 };
 
 static struct audio_adapter *find_adapter(GSList *list,
@@ -219,9 +219,10 @@ static void handle_uuid(const char *uuidstr, struct audio_device *device)
 		DBG("Found AV %s", uuid16 == AV_REMOTE_SVCLASS_ID ?
 							"Remote" : "Target");
 		if (device->control)
-			control_update(device, uuid16);
+			control_update(device->control, uuid16);
 		else
 			device->control = control_init(device, uuid16);
+
 		if (device->sink && sink_is_active(device))
 			avrcp_connect(device);
 		break;
@@ -508,7 +509,8 @@ static void ag_confirm(GIOChannel *chan, gpointer data)
 		goto drop;
 	}
 
-	set_hfp_active(device, hfp_active);
+	headset_set_hfp_active(device, hfp_active);
+	headset_set_rfcomm_initiator(device, TRUE);
 
 	if (headset_connect_rfcomm(device, chan) < 0) {
 		error("headset_connect_rfcomm failed");
@@ -541,9 +543,10 @@ static void gateway_auth_cb(DBusError *derr, void *user_data)
 {
 	struct audio_device *device = user_data;
 
-	if (derr && dbus_error_is_set(derr))
+	if (derr && dbus_error_is_set(derr)) {
 		error("Access denied: %s", derr->message);
-	else {
+		gateway_set_state(device, GATEWAY_STATE_DISCONNECTED);
+	} else {
 		char ag_address[18];
 
 		ba2str(&device->dst, ag_address);
@@ -588,7 +591,7 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 			goto drop;
 	}
 
-	if (gateway_is_connected(device)) {
+	if (gateway_is_active(device)) {
 		DBG("Refusing new connection since one already exists");
 		goto drop;
 	}
@@ -602,7 +605,7 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 						gateway_auth_cb, device);
 	if (perr < 0) {
 		DBG("Authorization denied!");
-		goto drop;
+		gateway_set_state(device, GATEWAY_STATE_DISCONNECTED);
 	}
 
 	return;
@@ -1170,6 +1173,7 @@ int audio_manager_init(DBusConnection *conn, GKeyFile *conf,
 			enabled.socket = TRUE;
 		else if (g_str_equal(list[i], "Media"))
 			enabled.media = TRUE;
+
 	}
 	g_strfreev(list);
 
@@ -1383,7 +1387,7 @@ gboolean manager_allow_headset_connection(struct audio_device *device)
 		if (dev == device)
 			continue;
 
-		if (bacmp(&dev->src, &device->src))
+		if (device && bacmp(&dev->src, &device->src) != 0)
 			continue;
 
 		if (!hs)
@@ -1402,6 +1406,11 @@ gboolean manager_allow_headset_connection(struct audio_device *device)
 void manager_set_fast_connectable(gboolean enable)
 {
 	GSList *l;
+
+	if (enable && !manager_allow_headset_connection(NULL)) {
+		DBG("Refusing enabling fast connectable");
+		return;
+	}
 
 	for (l = adapters; l != NULL; l = l->next) {
 		struct audio_adapter *adapter = l->data;

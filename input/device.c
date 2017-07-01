@@ -43,7 +43,6 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "textfile.h"
 #include "uinput.h"
 
 #include "../src/adapter.h"
@@ -165,10 +164,10 @@ static int uinput_create(char *name)
 		if (fd < 0) {
 			fd = open("/dev/misc/uinput", O_RDWR);
 			if (fd < 0) {
-				err = errno;
+				err = -errno;
 				error("Can't open input device: %s (%d)",
-							strerror(err), err);
-				return -err;
+							strerror(-err), -err);
+				return err;
 			}
 		}
 	}
@@ -183,12 +182,11 @@ static int uinput_create(char *name)
 	dev.id.version = 0x0000;
 
 	if (write(fd, &dev, sizeof(dev)) < 0) {
-		err = errno;
+		err = -errno;
 		error("Can't write device information: %s (%d)",
-						strerror(err), err);
+						strerror(-err), -err);
 		close(fd);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	ioctl(fd, UI_SET_EVBIT, EV_KEY);
@@ -201,12 +199,11 @@ static int uinput_create(char *name)
 	ioctl(fd, UI_SET_KEYBIT, KEY_PAGEDOWN);
 
 	if (ioctl(fd, UI_DEV_CREATE, NULL) < 0) {
-		err = errno;
+		err = -errno;
 		error("Can't create uinput device: %s (%d)",
-						strerror(err), err);
+						strerror(-err), -err);
 		close(fd);
-		errno = err;
-		return -err;
+		return err;
 	}
 
 	return fd;
@@ -334,9 +331,11 @@ static void rfcomm_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	 */
 	fake->uinput = uinput_create(idev->name);
 	if (fake->uinput < 0) {
+		int err = fake->uinput;
+
 		g_io_channel_shutdown(chan, TRUE, NULL);
 		reply = btd_error_failed(iconn->pending_connect,
-							strerror(errno));
+							strerror(-err));
 		goto failed;
 	}
 
@@ -535,11 +534,11 @@ static int ioctl_connadd(struct hidp_connadd_req *req)
 		return -errno;
 
 	if (ioctl(ctl, HIDPCONNADD, req) < 0)
-		err = errno;
+		err = -errno;
 
 	close(ctl);
 
-	return -err;
+	return err;
 }
 
 static void encrypt_completed(uint8_t status, gpointer user_data)
@@ -597,8 +596,9 @@ static int hidp_add_connection(const struct input_device *idev,
 	extract_hid_record(rec, req);
 	sdp_record_free(rec);
 
-	read_device_id(src_addr, dst_addr, NULL,
-				&req->vendor, &req->product, &req->version);
+	req->vendor = btd_device_get_vendor(idev->device);
+	req->product = btd_device_get_product(idev->device);
+	req->version = btd_device_get_version(idev->device);
 
 	fake_hid = get_fake_hid(req->vendor, req->product);
 	if (fake_hid) {
@@ -680,7 +680,7 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	struct fake_input *fake = iconn->fake;
 	struct hidp_conndel_req req;
 	struct hidp_conninfo ci;
-	int ctl, err;
+	int ctl, err = 0;
 
 	/* Fake input disconnect */
 	if (fake) {
@@ -706,7 +706,7 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	bacpy(&ci.bdaddr, &idev->dst);
 	if ((ioctl(ctl, HIDPGETCONNINFO, &ci) < 0) ||
 				(ci.state != BT_CONNECTED)) {
-		errno = ENOTCONN;
+		err = -ENOTCONN;
 		goto fail;
 	}
 
@@ -714,21 +714,16 @@ static int connection_disconnect(struct input_conn *iconn, uint32_t flags)
 	bacpy(&req.bdaddr, &idev->dst);
 	req.flags = flags;
 	if (ioctl(ctl, HIDPCONNDEL, &req) < 0) {
+		err = -errno;
 		error("Can't delete the HID device: %s(%d)",
-				strerror(errno), errno);
+				strerror(-err), -err);
 		goto fail;
 	}
 
-	close(ctl);
-
-	return 0;
-
 fail:
-	err = errno;
 	close(ctl);
-	errno = err;
 
-	return -err;
+	return err;
 }
 
 static int disconnect(struct input_device *idev, uint32_t flags)
@@ -824,6 +819,9 @@ failed:
 	error("%s", err_msg);
 	reply = btd_error_failed(iconn->pending_connect, err_msg);
 	g_dbus_send_message(idev->conn, reply);
+
+	dbus_message_unref(iconn->pending_connect);
+	iconn->pending_connect = NULL;
 
 	/* So we guarantee the interrupt channel is closed before the
 	 * control channel (if we only do unref GLib will close it only
