@@ -202,6 +202,14 @@ void g_attrib_unref(GAttrib *attrib)
 	g_free(attrib);
 }
 
+GIOChannel *g_attrib_get_channel(GAttrib *attrib)
+{
+	if (!attrib)
+		return NULL;
+
+	return attrib->io;
+}
+
 gboolean g_attrib_set_disconnect_function(GAttrib *attrib,
 		GAttribDisconnectFunc disconnect, gpointer user_data)
 {
@@ -286,6 +294,7 @@ static gboolean received_data(GIOChannel *io, GIOCondition cond, gpointer data)
 	uint8_t buf[512], status;
 	gsize len;
 	GIOStatus iostat;
+	gboolean qempty;
 
 	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
 		attrib->read_watch = 0;
@@ -333,8 +342,7 @@ static gboolean received_data(GIOChannel *io, GIOCondition cond, gpointer data)
 	status = 0;
 
 done:
-	if (attrib->queue && g_queue_is_empty(attrib->queue) == FALSE)
-		wake_up_sender(attrib);
+	qempty = attrib->queue == NULL || g_queue_is_empty(attrib->queue);
 
 	if (cmd) {
 		if (cmd->func)
@@ -342,6 +350,9 @@ done:
 
 		command_destroy(cmd);
 	}
+
+	if (!qempty)
+		wake_up_sender(attrib);
 
 	return TRUE;
 }
@@ -368,9 +379,9 @@ GAttrib *g_attrib_new(GIOChannel *io)
 	return g_attrib_ref(attrib);
 }
 
-guint g_attrib_send(GAttrib *attrib, guint8 opcode, const guint8 *pdu,
-				guint16 len, GAttribResultFunc func,
-				gpointer user_data, GDestroyNotify notify)
+guint g_attrib_send(GAttrib *attrib, guint id, guint8 opcode,
+			const guint8 *pdu, guint16 len, GAttribResultFunc func,
+			gpointer user_data, GDestroyNotify notify)
 {
 	struct command *c;
 
@@ -386,9 +397,14 @@ guint g_attrib_send(GAttrib *attrib, guint8 opcode, const guint8 *pdu,
 	c->func = func;
 	c->user_data = user_data;
 	c->notify = notify;
-	c->id = ++attrib->next_cmd_id;
 
-	g_queue_push_tail(attrib->queue, c);
+	if (id) {
+		c->id = id;
+		g_queue_push_head(attrib->queue, c);
+	} else {
+		c->id = ++attrib->next_cmd_id;
+		g_queue_push_tail(attrib->queue, c);
+	}
 
 	if (g_queue_get_length(attrib->queue) == 1)
 		wake_up_sender(attrib);

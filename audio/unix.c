@@ -1074,6 +1074,8 @@ static void start_config(struct audio_device *dev, struct unix_client *client)
 	}
 
 	client->req_id = id;
+	g_slist_free(client->caps);
+	client->caps = NULL;
 
 	return;
 
@@ -1789,7 +1791,7 @@ static gboolean server_cb(GIOChannel *chan, GIOCondition cond, gpointer data)
 		return FALSE;
 
 	if (cond & (G_IO_HUP | G_IO_ERR)) {
-		g_io_channel_close(chan);
+		g_io_channel_shutdown(chan, TRUE, NULL);
 		return FALSE;
 	}
 

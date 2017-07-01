@@ -76,6 +76,7 @@ struct media_transport {
 	uint16_t		imtu;		/* Transport input mtu */
 	uint16_t		omtu;		/* Transport output mtu */
 	uint16_t		delay;		/* Transport delay (a2dp only) */
+	unsigned int		nrec_id;	/* Transport nrec watch (headset only) */
 	gboolean		read_lock;
 	gboolean		write_lock;
 	gboolean		in_use;
@@ -181,14 +182,6 @@ static gboolean media_transport_set_fd(struct media_transport *transport,
 
 	info("%s: fd(%d) ready", transport->path, fd);
 
-	emit_property_changed(transport->conn, transport->path,
-				MEDIA_TRANSPORT_INTERFACE, "IMTU",
-				DBUS_TYPE_UINT16, &transport->imtu);
-
-	emit_property_changed(transport->conn, transport->path,
-				MEDIA_TRANSPORT_INTERFACE, "OMTU",
-				DBUS_TYPE_UINT16, &transport->omtu);
-
 	return TRUE;
 }
 
@@ -209,6 +202,7 @@ static void a2dp_resume_complete(struct avdtp *session,
 	struct avdtp_stream *stream;
 	int fd;
 	uint16_t imtu, omtu;
+	gboolean ret;
 
 	req->id = 0;
 
@@ -219,15 +213,24 @@ static void a2dp_resume_complete(struct avdtp *session,
 	if (stream == NULL)
 		goto fail;
 
-	if (avdtp_stream_get_transport(stream, &fd, &imtu, &omtu, NULL) ==
-			FALSE)
+	ret = avdtp_stream_get_transport(stream, &fd, &imtu, &omtu, NULL);
+	if (ret == FALSE)
 		goto fail;
 
 	media_transport_set_fd(transport, fd, imtu, omtu);
 
-	if (g_dbus_send_reply(transport->conn, req->msg,
-				DBUS_TYPE_UNIX_FD, &fd,
-				DBUS_TYPE_INVALID) == FALSE)
+	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+		imtu = 0;
+
+	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+		omtu = 0;
+
+	ret = g_dbus_send_reply(transport->conn, req->msg,
+						DBUS_TYPE_UNIX_FD, &fd,
+						DBUS_TYPE_UINT16, &imtu,
+						DBUS_TYPE_UINT16, &omtu,
+						DBUS_TYPE_INVALID);
+	if (ret == FALSE)
 		goto fail;
 
 	return;
@@ -282,6 +285,8 @@ static void headset_resume_complete(struct audio_device *dev, void *user_data)
 	struct acquire_request *req = owner->request;
 	struct media_transport *transport = owner->transport;
 	int fd;
+	uint16_t imtu, omtu;
+	gboolean ret;
 
 	req->id = 0;
 
@@ -292,11 +297,23 @@ static void headset_resume_complete(struct audio_device *dev, void *user_data)
 	if (fd < 0)
 		goto fail;
 
-	media_transport_set_fd(transport, fd, 48, 48);
+	imtu = 48;
+	omtu = 48;
 
-	if (g_dbus_send_reply(transport->conn, req->msg,
-				DBUS_TYPE_UNIX_FD, &fd,
-				DBUS_TYPE_INVALID) == FALSE)
+	media_transport_set_fd(transport, fd, imtu, omtu);
+
+	if (g_strstr_len(owner->accesstype, -1, "r") == NULL)
+		imtu = 0;
+
+	if (g_strstr_len(owner->accesstype, -1, "w") == NULL)
+		omtu = 0;
+
+	ret = g_dbus_send_reply(transport->conn, req->msg,
+						DBUS_TYPE_UNIX_FD, &fd,
+						DBUS_TYPE_UINT16, &imtu,
+						DBUS_TYPE_UINT16, &omtu,
+						DBUS_TYPE_INVALID);
+	if (ret == FALSE)
 		goto fail;
 
 	return;
@@ -583,12 +600,16 @@ static void get_properties_headset(struct media_transport *transport,
 						DBusMessageIter *dict)
 {
 	gboolean nrec, inband;
+	const char *routing;
 
 	nrec = headset_get_nrec(transport->device);
 	dict_append_entry(dict, "NREC", DBUS_TYPE_BOOLEAN, &nrec);
 
 	inband = headset_get_inband(transport->device);
 	dict_append_entry(dict, "InbandRingtone", DBUS_TYPE_BOOLEAN, &inband);
+
+	routing = headset_get_sco_hci(transport->device) ? "HCI" : "PCM";
+	dict_append_entry(dict, "Routing", DBUS_TYPE_STRING, &routing);
 }
 
 void transport_get_properties(struct media_transport *transport,
@@ -606,12 +627,6 @@ void transport_get_properties(struct media_transport *transport,
 	/* Device */
 	dict_append_entry(&dict, "Device", DBUS_TYPE_OBJECT_PATH,
 						&transport->device->path);
-
-	dict_append_entry(&dict, "IMTU", DBUS_TYPE_UINT16,
-						&transport->imtu);
-
-	dict_append_entry(&dict, "OMTU", DBUS_TYPE_UINT16,
-						&transport->omtu);
 
 	uuid = media_endpoint_get_uuid(transport->endpoint);
 	dict_append_entry(&dict, "UUID", DBUS_TYPE_STRING, &uuid);
@@ -671,12 +686,27 @@ static void media_transport_free(void *data)
 	if (transport->session)
 		avdtp_unref(transport->session);
 
+	if (transport->nrec_id)
+		headset_remove_nrec_cb(transport->device, transport->nrec_id);
+
 	if (transport->conn)
 		dbus_connection_unref(transport->conn);
 
 	g_free(transport->configuration);
 	g_free(transport->path);
 	g_free(transport);
+}
+
+static void headset_nrec_changed(struct audio_device *dev, gboolean nrec,
+							void *user_data)
+{
+	struct media_transport *transport = user_data;
+
+	DBG("");
+
+	emit_property_changed(transport->conn, transport->path,
+				MEDIA_TRANSPORT_INTERFACE, "NREC",
+				DBUS_TYPE_BOOLEAN, &nrec);
 }
 
 struct media_transport *media_transport_create(DBusConnection *conn,
@@ -714,6 +744,9 @@ struct media_transport *media_transport_create(DBusConnection *conn,
 		transport->cancel = cancel_headset;
 		transport->get_properties = get_properties_headset;
 		transport->set_property = set_property_headset;
+		transport->nrec_id = headset_add_nrec_cb(device,
+							headset_nrec_changed,
+							transport);
 	} else
 		goto fail;
 

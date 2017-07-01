@@ -143,6 +143,13 @@ struct att_primary {
 	uint16_t end;
 };
 
+struct att_char {
+	char uuid[MAX_LEN_UUID_STR + 1];
+	uint16_t handle;
+	uint8_t properties;
+	uint16_t value_handle;
+};
+
 /* These functions do byte conversion */
 static inline uint8_t att_get_u8(const void *ptr)
 {
@@ -209,9 +216,13 @@ uint16_t dec_write_req(const uint8_t *pdu, int len, uint16_t *handle,
 						uint8_t *value, int *vlen);
 uint16_t enc_read_req(uint16_t handle, uint8_t *pdu, int len);
 uint16_t enc_read_blob_req(uint16_t handle, uint16_t offset, uint8_t *pdu,
-									int len);
+								int len);
 uint16_t dec_read_req(const uint8_t *pdu, int len, uint16_t *handle);
+uint16_t dec_read_blob_req(const uint8_t *pdu, int len, uint16_t *handle,
+							uint16_t *offset);
 uint16_t enc_read_resp(uint8_t *value, int vlen, uint8_t *pdu, int len);
+uint16_t enc_read_blob_resp(uint8_t *value, int vlen, uint16_t offset,
+							uint8_t *pdu, int len);
 uint16_t dec_read_resp(const uint8_t *pdu, int len, uint8_t *value, int *vlen);
 uint16_t enc_error_resp(uint8_t opcode, uint16_t handle, uint8_t status,
 							uint8_t *pdu, int len);

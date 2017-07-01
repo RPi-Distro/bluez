@@ -149,9 +149,10 @@ void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
 void adapter_update_local_name(struct btd_adapter *adapter, const char *name);
 void adapter_service_insert(struct btd_adapter *adapter, void *rec);
 void adapter_service_remove(struct btd_adapter *adapter, void *rec);
-sdp_list_t *adapter_get_services(struct btd_adapter *adapter);
 void btd_adapter_class_changed(struct btd_adapter *adapter,
 							uint32_t new_class);
+void btd_adapter_pairable_changed(struct btd_adapter *adapter,
+							gboolean pairable);
 
 struct agent *adapter_get_agent(struct btd_adapter *adapter);
 void adapter_add_connection(struct btd_adapter *adapter,
@@ -199,7 +200,6 @@ struct btd_adapter_ops {
 	int (*setup) (void);
 	void (*cleanup) (void);
 	int (*set_powered) (int index, gboolean powered);
-	int (*set_connectable) (int index, gboolean connectable);
 	int (*set_discoverable) (int index, gboolean discoverable);
 	int (*set_pairable) (int index, gboolean pairable);
 	int (*set_limited_discoverable) (int index, gboolean limited);
@@ -234,7 +234,8 @@ struct btd_adapter_ops {
 							gpointer user_data);
 	int (*set_did) (int index, uint16_t vendor, uint16_t product,
 							uint16_t version);
-	int (*services_updated) (int index);
+	int (*add_uuid) (int index, uuid_t *uuid, uint8_t svc_hint);
+	int (*remove_uuid) (int index, uuid_t *uuid);
 	int (*disable_cod_cache) (int index);
 	int (*restore_powered) (int index);
 	int (*load_keys) (int index, GSList *keys, gboolean debug_keys);
@@ -292,5 +293,3 @@ int btd_adapter_encrypt_link(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 
 int btd_adapter_set_did(struct btd_adapter *adapter, uint16_t vendor,
 					uint16_t product, uint16_t version);
-
-int btd_adapter_services_updated(struct btd_adapter *adapter);

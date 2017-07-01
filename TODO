@@ -14,17 +14,17 @@ Background
   Higher complexity tasks should be refined into several lower complexity tasks
   once the task is better understood.
 
-Low Energy
+General
 ==========
 
-- Avoid Characteristic discovery for non connectable devices. Proper parsing
-  of LE Advertising Report Event is missing. Event_Type field needs to be
-  extracted and its value shall be considered before to start the LE
-  connection on the channel 4. Characteristic discovery should not be
-  started for non connectable devices.
+- Rename glib-helper file to a more convenient name. The ideia is try to keep
+  only sdp helpers functions. bt_* prefix shall be also changed.
 
-  Priority: Medium
-  Complexity: C2
+  Priority: Low
+  Complexity: C1
+
+Low Energy
+==========
 
 - Advertising management. Adapter interface needs to be changed to manage
   connection modes, adapter type and advertising policy. See Volume 3,
@@ -54,6 +54,17 @@ Low Energy
   Priority: Medium
   Complexity: C2
 
+- Implement a tool(or extend hciconfig) to setup the advertising parameters
+  and data. Extend hciconfig passing extra arguments when enabling the
+  advertises is not the right approach, it will be almost impossible to
+  address all arguments needed in an acceptable way. For testing, we need
+  a tool to change easily the AD Flags, the UUIDs and other data that can be
+  exported through the advertising data field. Suggestions: 1) extend hciconfig
+  passing a config file when enabling advertises; 2) write a ncurses based tool
+
+  Priority: Medium
+  Complexity: C2
+
 - Device Name Characteristic is a GAP characteristic for Low Energy. This
   characteristic shall be integrated/used in the discovery procedure. The
   ideia is to report the value of this characteristic using DeviceFound signals.
@@ -68,6 +79,13 @@ Low Energy
 
 ATT/GATT
 ========
+
+- For BR/EDR, Discover All Primary Services shall be started after SDP if the
+  remote device exports a Generic Attribute Profile service record. It is
+  applied to CreateDevice and CreatePairedDevice.
+
+  Priority: Medium
+  Complexity: C1
 
 - Add ATT/GATT parsing to hcidump
 
@@ -90,6 +108,17 @@ ATT/GATT
 - gatttool should have the ability to wait for req responses before
   quitting (some servers require a small sleep even with cmd's). Maybe a
   --delay-exit or --timeout command line switch.
+
+  Priority: Low
+  Complexity: C1
+
+- Refactoring of gatt.c functions. Currently, the callbacks of the services
+  and characteristics discovery functions return the ATT PDU and the caller
+  needs to call again the same function to fetch the remaining data when
+  necessary. Investigate if all results can be returned in the callback
+  result to avoid repeated code. Before change the code, please analyze
+  if this change will not break the GATT/ATT qualification tests. Maybe
+  an interactive fetch/query is necessary to pass the tests.
 
   Priority: Low
   Complexity: C1
