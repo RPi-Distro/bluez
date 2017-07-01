@@ -26,7 +26,8 @@ Linux kernel v3.19	Version 1.8
 Linux kernel v4.1	Version 1.9
 Linux kernel v4.2	Version 1.10
 Linux kernel v4.5	Version 1.11
-Linux kernel v4.6	Version 1.12 (not yet released)
+Linux kernel v4.6	Version 1.12
+Linux kernel v4.8	Version 1.13 (not yet released)
 
 Version 1.1 introduces Set Device ID command.
 
@@ -74,6 +75,10 @@ Version 1.11 introduces Get Advertising Size Information command.
 
 Version 1.12 introduces a new limited privacy mode (value 0x02 passed to
 the Set Privacy command).
+
+Version 1.13 introduces a new authentication failure reason code for the
+Device Disconnected event.
+
 
 Example
 =======
@@ -549,6 +554,7 @@ Set Secure Simple Pairing Command
 				Not Supported
 				Invalid Parameters
 				Invalid Index
+
 
 Set High Speed Command
 ======================
@@ -2454,6 +2460,8 @@ Read Extended Controller Index List Command
 		0x04	RS232
 		0x05	PCI
 		0x06	SDIO
+		0x07	SPI
+		0x08	I2C
 
 	Controllers marked as RAW only operation are currently not listed
 	by this command.
@@ -3061,6 +3069,7 @@ Device Disconnected Event
 		1	Connection timeout
 		2	Connection terminated by local host
 		3	Connection terminated by remote host
+		4	Connection terminated due to authentication failure
 
 	Note that the local/remote distinction just determines which side
 	terminated the low-level connection, regardless of the

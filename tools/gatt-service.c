@@ -407,6 +407,8 @@ static int parse_options(DBusMessageIter *iter, const char **device)
 			dbus_message_iter_get_basic(&value, device);
 			printf("Device: %s\n", *device);
 		}
+
+		dbus_message_iter_next(&dict);
 	}
 
 	return 0;
@@ -512,10 +514,6 @@ static DBusMessage *desc_read_value(DBusConnection *conn, DBusMessage *msg,
 							"No Memory");
 
 	dbus_message_iter_init_append(reply, &iter);
-
-	if (parse_options(&iter, &device))
-		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
-							"Invalid arguments");
 
 	desc_read(desc, &iter);
 
