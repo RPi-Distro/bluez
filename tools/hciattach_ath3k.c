@@ -461,20 +461,68 @@ struct patch_entry {
 	uint8_t data[MAX_PATCH_CMD];
 };
 
+#define SET_PATCH_RAM_ID	0x0D
+#define SET_PATCH_RAM_CMD_SIZE	11
+#define ADDRESS_LEN		4
+static int set_patch_ram(int dev, char *patch_loc, int len)
+{
+	int err;
+	uint8_t cmd[20];
+	int i, j;
+	char loc_byte[3];
+	uint8_t *event;
+	uint8_t *loc_ptr = &cmd[7];
+
+	if (!patch_loc)
+		return -1;
+
+	loc_byte[2] = '\0';
+
+	load_hci_ps_hdr(cmd, SET_PATCH_RAM_ID, ADDRESS_LEN, 0);
+
+	for (i = 0, j = 3; i < 4; i++, j--) {
+		loc_byte[0] = patch_loc[0];
+		loc_byte[1] = patch_loc[1];
+		loc_ptr[j] = strtol(loc_byte, NULL, 16);
+		patch_loc += 2;
+	}
+
+	err = send_hci_cmd_sync(dev, cmd, SET_PATCH_RAM_CMD_SIZE, &event);
+	if (err < 0)
+		return err;
+
+	err = read_ps_event(event, HCI_PS_CMD_OCF);
+
+	if (event)
+		free(event);
+
+	return err;
+}
+
+#define PATCH_LOC_KEY    "DA:"
+#define PATCH_LOC_STRING_LEN    8
 static int ps_patch_download(int fd, FILE *stream)
 {
 	char byte[3];
 	char ptr[MAX_PATCH_CMD + 1];
 	int byte_cnt;
 	int patch_count = 0;
+	char patch_loc[PATCH_LOC_STRING_LEN + 1];
 
 	byte[2] = '\0';
 
 	while (fgets(ptr, MAX_PATCH_CMD, stream)) {
-		if (strlen(ptr) <= 1 || !isxdigit(ptr[0]))
+		if (strlen(ptr) <= 1)
 			continue;
-		else
+		else if (strstr(ptr, PATCH_LOC_KEY) == ptr) {
+			strncpy(patch_loc, &ptr[sizeof(PATCH_LOC_KEY) - 1],
+							PATCH_LOC_STRING_LEN);
+			if (set_patch_ram(fd, patch_loc, sizeof(patch_loc)) < 0)
+				return -1;
+		} else if (isxdigit(ptr[0]))
 			break;
+		else
+			return -1;
 	}
 
 	byte_cnt = strtol(ptr, NULL, 16);
@@ -836,6 +884,8 @@ int ath3k_post(int fd, int pm)
 	int dev_id, dd;
 	struct timespec tm = { 0, 50000 };
 
+	sleep(1);
+
 	dev_id = ioctl(fd, HCIUARTGETDEVICE, 0);
 	if (dev_id < 0) {
 		perror("cannot get device id");
@@ -848,11 +898,15 @@ int ath3k_post(int fd, int pm)
 		return dd;
 	}
 
-	sleep(2);
+	if (ioctl(dd, HCIDEVUP, dev_id) < 0 && errno != EALREADY) {
+		perror("hci down:Power management Disabled");
+		hci_close_dev(dd);
+		return -1;
+	}
 
 	/* send vendor specific command with Sleep feature Enabled */
 	if (hci_send_cmd(dd, OGF_VENDOR_CMD, HCI_SLEEP_CMD_OCF,	1, &pm) < 0)
-		perror("Power management Disabled");
+		perror("PM command failed, power management Disabled");
 
 	nanosleep(&tm, NULL);
 	hci_close_dev(dd);
@@ -868,13 +922,8 @@ int ath3k_post(int fd, int pm)
 #define WRITE_BAUD_CMD_LEN   6
 #define MAX_CMD_LEN          WRITE_BDADDR_CMD_LEN
 
-/*
- * Atheros AR300x specific initialization and configuration file
- * download
- */
-int ath3k_init(int fd, char *bdaddr, int speed)
+static int set_cntrlr_baud(int fd, int speed)
 {
-	int r;
 	int baud;
 	struct timespec tm = { 0, 500000 };
 	unsigned char cmd[MAX_CMD_LEN], rsp[HCI_MAX_EVENT_SIZE];
@@ -882,51 +931,6 @@ int ath3k_init(int fd, char *bdaddr, int speed)
 	hci_command_hdr *ch = (void *)ptr;
 
 	cmd[0] = HCI_COMMAND_PKT;
-
-	/* Download PS and patch */
-	r = ath_ps_download(fd);
-	if (r < 0) {
-		perror("Failed to Download configuration");
-		return -ETIMEDOUT;
-	}
-
-	/* Write BDADDR */
-	if (bdaddr) {
-		ch->opcode = htobs(cmd_opcode_pack(HCI_VENDOR_CMD_OGF,
-							HCI_PS_CMD_OCF));
-		ch->plen = 10;
-		ptr += HCI_COMMAND_HDR_SIZE;
-
-		ptr[0] = 0x01;
-		ptr[1] = 0x01;
-		ptr[2] = 0x00;
-		ptr[3] = 0x06;
-		str2ba(bdaddr, (bdaddr_t *)(ptr + 4));
-
-		if (write(fd, cmd, WRITE_BDADDR_CMD_LEN) !=
-					WRITE_BDADDR_CMD_LEN) {
-			perror("Failed to write BD_ADDR command\n");
-			return -ETIMEDOUT;
-		}
-
-		if (read_hci_event(fd, rsp, sizeof(rsp)) < 0) {
-			perror("Failed to set BD_ADDR\n");
-			return -ETIMEDOUT;
-		}
-	}
-
-	/* Send HCI Reset */
-	cmd[1] = 0x03;
-	cmd[2] = 0x0C;
-	cmd[3] = 0x00;
-
-	r = write(fd, cmd, 4);
-	if (r != 4)
-		return -ETIMEDOUT;
-
-	nanosleep(&tm, NULL);
-	if (read_hci_event(fd, rsp, sizeof(rsp)) < 0)
-		return -ETIMEDOUT;
 
 	/* set controller baud rate to user specified value */
 	ptr = cmd + 1;
@@ -950,4 +954,96 @@ int ath3k_init(int fd, char *bdaddr, int speed)
 		return -ETIMEDOUT;
 
 	return 0;
+}
+
+/*
+ * Atheros AR300x specific initialization and configuration file
+ * download
+ */
+int ath3k_init(int fd, int speed, int init_speed, char *bdaddr,
+						struct termios *ti)
+{
+	int r;
+	int err = 0;
+	struct timespec tm = { 0, 500000 };
+	unsigned char cmd[MAX_CMD_LEN], rsp[HCI_MAX_EVENT_SIZE];
+	unsigned char *ptr = cmd + 1;
+	hci_command_hdr *ch = (void *)ptr;
+
+	cmd[0] = HCI_COMMAND_PKT;
+
+	/* set both controller and host baud rate to maximum possible value */
+	err = set_cntrlr_baud(fd, speed);
+	if (err < 0)
+		return err;
+
+	err = set_speed(fd, ti, speed);
+	if (err < 0) {
+		perror("Can't set required baud rate");
+		return err;
+	}
+
+	/* Download PS and patch */
+	r = ath_ps_download(fd);
+	if (r < 0) {
+		perror("Failed to Download configuration");
+		err = -ETIMEDOUT;
+		goto failed;
+	}
+
+	/* Write BDADDR */
+	if (bdaddr) {
+		ch->opcode = htobs(cmd_opcode_pack(HCI_VENDOR_CMD_OGF,
+							HCI_PS_CMD_OCF));
+		ch->plen = 10;
+		ptr += HCI_COMMAND_HDR_SIZE;
+
+		ptr[0] = 0x01;
+		ptr[1] = 0x01;
+		ptr[2] = 0x00;
+		ptr[3] = 0x06;
+		str2ba(bdaddr, (bdaddr_t *)(ptr + 4));
+
+		if (write(fd, cmd, WRITE_BDADDR_CMD_LEN) !=
+					WRITE_BDADDR_CMD_LEN) {
+			perror("Failed to write BD_ADDR command\n");
+			err = -ETIMEDOUT;
+			goto failed;
+		}
+
+		if (read_hci_event(fd, rsp, sizeof(rsp)) < 0) {
+			perror("Failed to set BD_ADDR\n");
+			err = -ETIMEDOUT;
+			goto failed;
+		}
+	}
+
+	/* Send HCI Reset */
+	cmd[1] = 0x03;
+	cmd[2] = 0x0C;
+	cmd[3] = 0x00;
+
+	r = write(fd, cmd, 4);
+	if (r != 4) {
+		err = -ETIMEDOUT;
+		goto failed;
+	}
+
+	nanosleep(&tm, NULL);
+	if (read_hci_event(fd, rsp, sizeof(rsp)) < 0) {
+		err = -ETIMEDOUT;
+		goto failed;
+	}
+
+	err = set_cntrlr_baud(fd, speed);
+	if (err < 0)
+		return err;
+
+failed:
+	if (err < 0) {
+		set_cntrlr_baud(fd, init_speed);
+		set_speed(fd, ti, init_speed);
+	}
+
+	return err;
 }

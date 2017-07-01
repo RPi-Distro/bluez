@@ -40,10 +40,6 @@
 #include <assert.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/sco.h>
-#include <bluetooth/rfcomm.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
@@ -158,7 +154,6 @@ struct headset {
 	GIOChannel *tmp_rfcomm;
 	GIOChannel *sco;
 	guint sco_id;
-	guint dc_id;
 
 	gboolean auto_dc;
 
@@ -1377,6 +1372,8 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	DBG("%s: Connected to %s", dev->path, hs_address);
 
 	hs->slc = g_new0(struct headset_slc, 1);
+	hs->slc->sp_gain = 15;
+	hs->slc->mic_gain = 15;
 	hs->slc->nrec = TRUE;
 
 	/* In HFP mode wait for Service Level Connection */
@@ -2162,9 +2159,6 @@ static void headset_free(struct audio_device *dev)
 		hs->dc_timer = 0;
 	}
 
-	if (hs->dc_id)
-		device_remove_disconnect_watch(dev->btd_dev, hs->dc_id);
-
 	close_sco(dev);
 
 	headset_close_rfcomm(dev);
@@ -2477,16 +2471,6 @@ int headset_connect_sco(struct audio_device *dev, GIOChannel *io)
 	return 0;
 }
 
-static void disconnect_cb(struct btd_device *btd_dev, gboolean removal,
-				void *user_data)
-{
-	struct audio_device *device = user_data;
-
-	info("Headset: disconnect %s", device->path);
-
-	headset_shutdown(device);
-}
-
 void headset_set_state(struct audio_device *dev, headset_state_t state)
 {
 	struct headset *hs = dev->headset;
@@ -2520,8 +2504,6 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 			telephony_device_disconnected(dev);
 		}
 		active_devices = g_slist_remove(active_devices, dev);
-		device_remove_disconnect_watch(dev->btd_dev, hs->dc_id);
-		hs->dc_id = 0;
 		break;
 	case HEADSET_STATE_CONNECTING:
 		emit_property_changed(dev->conn, dev->path,
@@ -2550,9 +2532,6 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 						DBUS_TYPE_BOOLEAN, &value);
 			active_devices = g_slist_append(active_devices, dev);
 			telephony_device_connected(dev);
-			hs->dc_id = device_add_disconnect_watch(dev->btd_dev,
-								disconnect_cb,
-								dev, NULL);
 		} else if (hs->state == HEADSET_STATE_PLAYING) {
 			value = FALSE;
 			g_dbus_emit_signal(dev->conn, dev->path,
@@ -2699,6 +2678,16 @@ gboolean headset_get_nrec(struct audio_device *dev)
 		return TRUE;
 
 	return hs->slc->nrec;
+}
+
+gboolean headset_get_inband(struct audio_device *dev)
+{
+	struct headset *hs = dev->headset;
+
+	if (!hs->slc)
+		return TRUE;
+
+	return hs->slc->inband_ring;
 }
 
 gboolean headset_get_sco_hci(struct audio_device *dev)

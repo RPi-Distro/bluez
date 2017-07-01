@@ -21,6 +21,8 @@
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
+#ifndef BT_IO_H
+#define BT_IO_H
 
 #include <glib.h>
 
@@ -54,6 +56,7 @@ typedef enum {
 	BT_IO_OPT_SOURCE_CHANNEL,
 	BT_IO_OPT_DEST_CHANNEL,
 	BT_IO_OPT_PSM,
+	BT_IO_OPT_CID,
 	BT_IO_OPT_MTU,
 	BT_IO_OPT_OMTU,
 	BT_IO_OPT_IMTU,
@@ -92,3 +95,4 @@ GIOChannel *bt_io_listen(BtIOType type, BtIOConnect connect,
 				GDestroyNotify destroy, GError **err,
 				BtIOOption opt1, ...);
 
+#endif

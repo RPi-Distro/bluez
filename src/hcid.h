@@ -23,12 +23,6 @@
  *
  */
 
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-
-/* When all services should trust a remote device */
-#define GLOBAL_TRUST "[all]"
-
 /*
  * Scanning modes, used by DEV_SET_MODE
  * off: remote devices are not allowed to find or connect to this device
@@ -42,13 +36,7 @@
 #define MODE_OFF		0x00
 #define MODE_CONNECTABLE	0x01
 #define MODE_DISCOVERABLE	0x02
-#define MODE_LIMITED		0x03
 #define MODE_UNKNOWN		0xff
-
-#define HCID_DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
-
-/* Timeout for hci_send_req (milliseconds) */
-#define HCI_REQ_TIMEOUT		5000
 
 struct main_opts {
 	char		host_name[40];
@@ -65,13 +53,12 @@ struct main_opts {
 	gboolean	name_resolv;
 	gboolean	debug_keys;
 	gboolean	attrib_server;
+	gboolean	le;
 
 	uint8_t		scan;
 	uint8_t		mode;
 	uint8_t		discov_interval;
 	char		deviceid[15]; /* FIXME: */
-
-	int		sock;
 };
 
 enum {
@@ -83,28 +70,12 @@ enum {
 
 extern struct main_opts main_opts;
 
-char *expand_name(char *dst, int size, char *str, int dev_id);
-
-void hci_req_queue_remove(int dev_id, bdaddr_t *dba);
-
-void start_security_manager(int hdev);
-void stop_security_manager(int hdev);
-
 void btd_start_exit_timer(void);
 void btd_stop_exit_timer(void);
 
-void set_pin_length(bdaddr_t *sba, int length);
-
-gboolean plugin_init(GKeyFile *config);
+gboolean plugin_init(GKeyFile *config, const char *enable,
+							const char *disable);
 void plugin_cleanup(void);
 
 void rfkill_init(void);
 void rfkill_exit(void);
-
-void __probe_servers(const char *adapter);
-void __remove_servers(const char *adapter);
-
-static inline int ignore_device(struct hci_dev_info *di)
-{
-	return hci_test_bit(HCI_RAW, &di->flags) || di->type >> 4 != HCI_BREDR;
-}

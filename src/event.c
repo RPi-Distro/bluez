@@ -37,8 +37,6 @@
 #include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 #include <bluetooth/sdp.h>
 
 #include <glib.h>
@@ -57,15 +55,14 @@
 #include "dbus-common.h"
 #include "agent.h"
 #include "storage.h"
-#include "dbus-hci.h"
+#include "event.h"
 
-static DBusConnection *connection = NULL;
-
-gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
+static gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
 					struct btd_adapter **adapter,
 					struct btd_device **device,
 					gboolean create)
 {
+	DBusConnection *conn = get_dbus_connection();
 	char peer_addr[18];
 
 	*adapter = manager_find_adapter(src);
@@ -77,7 +74,7 @@ gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
 	ba2str(dst, peer_addr);
 
 	if (create)
-		*device = adapter_get_device(connection, *adapter, peer_addr);
+		*device = adapter_get_device(conn, *adapter, peer_addr);
 	else
 		*device = adapter_find_device(*adapter, peer_addr);
 
@@ -89,70 +86,6 @@ gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
 	return TRUE;
 }
 
-const char *class_to_icon(uint32_t class)
-{
-	switch ((class & 0x1f00) >> 8) {
-	case 0x01:
-		return "computer";
-	case 0x02:
-		switch ((class & 0xfc) >> 2) {
-		case 0x01:
-		case 0x02:
-		case 0x03:
-		case 0x05:
-			return "phone";
-		case 0x04:
-			return "modem";
-		}
-		break;
-	case 0x03:
-		return "network-wireless";
-	case 0x04:
-		switch ((class & 0xfc) >> 2) {
-		case 0x01:
-		case 0x02:
-			return "audio-card";	/* Headset */
-		case 0x06:
-			return "audio-card";	/* Headphone */
-		case 0x0b: /* VCR */
-		case 0x0c: /* Video Camera */
-		case 0x0d: /* Camcorder */
-			return "camera-video";
-		default:
-			return "audio-card";	/* Other audio device */
-		}
-		break;
-	case 0x05:
-		switch ((class & 0xc0) >> 6) {
-		case 0x00:
-			switch ((class & 0x1e) >> 2) {
-			case 0x01:
-			case 0x02:
-				return "input-gaming";
-			}
-			break;
-		case 0x01:
-			return "input-keyboard";
-		case 0x02:
-			switch ((class & 0x1e) >> 2) {
-			case 0x05:
-				return "input-tablet";
-			default:
-				return "input-mouse";
-			}
-		}
-		break;
-	case 0x06:
-		if (class & 0x80)
-			return "printer";
-		if (class & 0x20)
-			return "camera-photo";
-		break;
-	}
-
-	return NULL;
-}
-
 /*****************************************************************
  *
  *  Section reserved to HCI commands confirmation handling and low
@@ -160,48 +93,35 @@ const char *class_to_icon(uint32_t class)
  *
  *****************************************************************/
 
-static void pincode_cb(struct agent *agent, DBusError *err,
+static void pincode_cb(struct agent *agent, DBusError *derr,
 				const char *pincode, struct btd_device *device)
 {
 	struct btd_adapter *adapter = device_get_adapter(device);
-	pin_code_reply_cp pr;
 	bdaddr_t sba, dba;
-	size_t len;
-	int dev;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
+	int err;
 
-	dev = hci_open_dev(dev_id);
-	if (dev < 0) {
-		error("hci_open_dev(%d): %s (%d)", dev_id,
-				strerror(errno), errno);
+	device_get_address(device, &dba);
+
+	if (derr) {
+		err = btd_adapter_pincode_reply(adapter, &dba, NULL);
+		if (err < 0)
+			goto fail;
 		return;
 	}
 
+	err = btd_adapter_pincode_reply(adapter, &dba, pincode);
+	if (err < 0)
+		goto fail;
+
 	adapter_get_address(adapter, &sba);
-	device_get_address(device, &dba);
 
-	if (err) {
-		hci_send_cmd(dev, OGF_LINK_CTL,
-				OCF_PIN_CODE_NEG_REPLY, 6, &dba);
-		goto done;
-	}
+	return;
 
-	len = strlen(pincode);
-
-	set_pin_length(&sba, len);
-
-	memset(&pr, 0, sizeof(pr));
-	bacpy(&pr.bdaddr, &dba);
-	memcpy(pr.pin_code, pincode, len);
-	pr.pin_len = len;
-	hci_send_cmd(dev, OGF_LINK_CTL, OCF_PIN_CODE_REPLY,
-						PIN_CODE_REPLY_CP_SIZE, &pr);
-
-done:
-	hci_close_dev(dev);
+fail:
+	error("Sending PIN code reply failed: %s (%d)", strerror(-err), -err);
 }
 
-int hcid_dbus_request_pin(int dev, bdaddr_t *sba, struct hci_conn_info *ci)
+int btd_event_request_pin(bdaddr_t *sba, struct hci_conn_info *ci)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -221,29 +141,11 @@ int hcid_dbus_request_pin(int dev, bdaddr_t *sba, struct hci_conn_info *ci)
 static int confirm_reply(struct btd_adapter *adapter,
 				struct btd_device *device, gboolean success)
 {
-	int dd;
-	user_confirm_reply_cp cp;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
+	bdaddr_t bdaddr;
 
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		error("Unable to open hci%d", dev_id);
-		return dd;
-	}
+	device_get_address(device, &bdaddr);
 
-	memset(&cp, 0, sizeof(cp));
-	device_get_address(device, &cp.bdaddr);
-
-	if (success)
-		hci_send_cmd(dd, OGF_LINK_CTL, OCF_USER_CONFIRM_REPLY,
-					USER_CONFIRM_REPLY_CP_SIZE, &cp);
-	else
-		hci_send_cmd(dd, OGF_LINK_CTL, OCF_USER_CONFIRM_NEG_REPLY,
-					USER_CONFIRM_REPLY_CP_SIZE, &cp);
-
-	hci_close_dev(dd);
-
-	return 0;
+	return btd_adapter_confirm_reply(adapter, &bdaddr, success);
 }
 
 static void confirm_cb(struct agent *agent, DBusError *err, void *user_data)
@@ -260,70 +162,17 @@ static void passkey_cb(struct agent *agent, DBusError *err, uint32_t passkey,
 {
 	struct btd_device *device = user_data;
 	struct btd_adapter *adapter = device_get_adapter(device);
-	user_passkey_reply_cp cp;
-	bdaddr_t dba;
-	int dd;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
+	bdaddr_t bdaddr;
 
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		error("Unable to open hci%d", dev_id);
-		return;
-	}
-
-	device_get_address(device, &dba);
-
-	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, &dba);
-	cp.passkey = passkey;
+	device_get_address(device, &bdaddr);
 
 	if (err)
-		hci_send_cmd(dd, OGF_LINK_CTL,
-				OCF_USER_PASSKEY_NEG_REPLY, 6, &dba);
-	else
-		hci_send_cmd(dd, OGF_LINK_CTL, OCF_USER_PASSKEY_REPLY,
-					USER_PASSKEY_REPLY_CP_SIZE, &cp);
+		passkey = INVALID_PASSKEY;
 
-	hci_close_dev(dd);
+	btd_adapter_passkey_reply(adapter, &bdaddr, passkey);
 }
 
-static int get_auth_requirements(bdaddr_t *local, bdaddr_t *remote,
-							uint8_t *auth)
-{
-	struct hci_auth_info_req req;
-	char addr[18];
-	int err, dd, dev_id;
-
-	ba2str(local, addr);
-
-	dev_id = hci_devid(addr);
-	if (dev_id < 0)
-		return dev_id;
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0)
-		return dd;
-
-	memset(&req, 0, sizeof(req));
-	bacpy(&req.bdaddr, remote);
-
-	err = ioctl(dd, HCIGETAUTHINFO, (unsigned long) &req);
-	if (err < 0) {
-		DBG("HCIGETAUTHINFO failed: %s (%d)",
-					strerror(errno), errno);
-		hci_close_dev(dd);
-		return err;
-	}
-
-	hci_close_dev(dd);
-
-	if (auth)
-		*auth = req.type;
-
-	return 0;
-}
-
-int hcid_dbus_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
+int btd_event_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -334,7 +183,7 @@ int hcid_dbus_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 	if (!get_adapter_and_device(sba, dba, &adapter, &device, TRUE))
 		return -ENODEV;
 
-	if (get_auth_requirements(sba, dba, &loc_auth) < 0) {
+	if (btd_adapter_get_auth_info(adapter, dba, &loc_auth) < 0) {
 		error("Unable to get local authentication requirements");
 		goto fail;
 	}
@@ -388,7 +237,7 @@ fail:
 	return confirm_reply(adapter, device, FALSE);
 }
 
-int hcid_dbus_user_passkey(bdaddr_t *sba, bdaddr_t *dba)
+int btd_event_user_passkey(bdaddr_t *sba, bdaddr_t *dba)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -400,7 +249,7 @@ int hcid_dbus_user_passkey(bdaddr_t *sba, bdaddr_t *dba)
 								passkey_cb);
 }
 
-int hcid_dbus_user_notify(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
+int btd_event_user_notify(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -412,7 +261,7 @@ int hcid_dbus_user_notify(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 								passkey, NULL);
 }
 
-void hcid_dbus_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer,
+void btd_event_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer,
 								uint8_t status)
 {
 	struct btd_adapter *adapter;
@@ -436,7 +285,7 @@ void hcid_dbus_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer,
 	device_bonding_complete(device, status);
 }
 
-void hcid_dbus_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
+void btd_event_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
 								uint8_t status)
 {
 	struct btd_adapter *adapter;
@@ -450,28 +299,20 @@ void hcid_dbus_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
 	device_simple_pairing_complete(device, status);
 }
 
-static char *extract_eir_name(uint8_t *data, uint8_t *type)
+void btd_event_advertising_report(bdaddr_t *local, le_advertising_info *info)
 {
-	if (!data || !type)
-		return NULL;
+	struct btd_adapter *adapter;
 
-	if (data[0] == 0)
-		return NULL;
-
-	*type = data[1];
-
-	switch (*type) {
-	case 0x08:
-	case 0x09:
-		if (!g_utf8_validate((char *) (data + 2), data[0] - 1, NULL))
-			return strdup("");
-		return strndup((char *) (data + 2), data[0] - 1);
+	adapter = manager_find_adapter(local);
+	if (adapter == NULL) {
+		error("No matching adapter found");
+		return;
 	}
 
-	return NULL;
+	adapter_update_device_from_info(adapter, info);
 }
 
-void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
+void btd_event_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 				int8_t rssi, uint8_t *data)
 {
 	char filename[PATH_MAX + 1];
@@ -499,13 +340,13 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		write_remote_eir(local, peer, data);
 
 	/*
-	 * workaround to identify situation when the daemon started and
-	 * a standard inquiry or periodic inquiry was already running
+	 * Workaround to identify periodic inquiry: inquiry complete event is
+	 * sent after each window, however there isn't an event to indicate the
+	 * beginning of a new periodic inquiry window.
 	 */
-	if (!(adapter_get_state(adapter) & STD_INQUIRY) &&
-			!(adapter_get_state(adapter) & PERIODIC_INQUIRY)) {
-		state = adapter_get_state(adapter);
-		state |= PERIODIC_INQUIRY;
+	state = adapter_get_state(adapter);
+	if (!(state & (STATE_STDINQ | STATE_LE_SCAN | STATE_PINQ))) {
+		state |= STATE_PINQ;
 		adapter_set_state(adapter, state);
 	}
 
@@ -522,7 +363,8 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	}
 
 	/* the inquiry result can be triggered by NON D-Bus client */
-	if (adapter_get_state(adapter) & RESOLVE_NAME)
+	if (adapter_get_discover_type(adapter) & DISC_RESOLVNAME &&
+				adapter_has_discov_sessions(adapter))
 		name_status = NAME_REQUIRED;
 	else
 		name_status = NAME_NOT_REQUIRED;
@@ -545,7 +387,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	} else
 		legacy = TRUE;
 
-	tmp_name = extract_eir_name(data, &name_type);
+	tmp_name = bt_extract_eir_name(data, &name_type);
 	if (tmp_name) {
 		if (name_type == 0x09) {
 			write_device_name(local, peer, tmp_name);
@@ -574,7 +416,7 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	g_free(alias);
 }
 
-void hcid_dbus_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
+void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
 							gboolean legacy)
 {
 	struct btd_adapter *adapter;
@@ -595,17 +437,20 @@ void hcid_dbus_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
 		dev->legacy = legacy;
 }
 
-void hcid_dbus_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class)
+void btd_event_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class)
 {
 	uint32_t old_class = 0;
 	struct btd_adapter *adapter;
 	struct btd_device *device;
 	const gchar *dev_path;
+	DBusConnection *conn = get_dbus_connection();
 
 	read_remote_class(local, peer, &old_class);
 
 	if (old_class == class)
 		return;
+
+	write_remote_class(local, peer, class);
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
 		return;
@@ -615,11 +460,11 @@ void hcid_dbus_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class)
 
 	dev_path = device_get_path(device);
 
-	emit_property_changed(connection, dev_path, DEVICE_INTERFACE, "Class",
+	emit_property_changed(conn, dev_path, DEVICE_INTERFACE, "Class",
 				DBUS_TYPE_UINT32, &class);
 }
 
-void hcid_dbus_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
+void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 				char *name)
 {
 	struct btd_adapter *adapter;
@@ -627,6 +472,17 @@ void hcid_dbus_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 	int state;
 	struct btd_device *device;
 	struct remote_dev_info match, *dev_info;
+
+	if (status == 0) {
+		char *end;
+
+		/* It's ok to cast end between const and non-const since
+		 * we know it points to inside of name which is non-const */
+		if (!g_utf8_validate(name, -1, (const char **) &end))
+			*end = '\0';
+
+		write_device_name(local, peer, name);
+	}
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
 		return;
@@ -644,7 +500,7 @@ void hcid_dbus_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 	if (dev_info) {
 		g_free(dev_info->name);
 		dev_info->name = g_strdup(name);
-		adapter_emit_device_found(adapter, dev_info, NULL);
+		adapter_emit_device_found(adapter, dev_info, NULL, 0);
 	}
 
 	if (device)
@@ -659,12 +515,11 @@ proceed:
 		return;
 
 	state = adapter_get_state(adapter);
-	state &= ~PERIODIC_INQUIRY;
-	state &= ~STD_INQUIRY;
+	state &= ~STATE_RESOLVNAME;
 	adapter_set_state(adapter, state);
 }
 
-int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
+int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 				uint8_t *key, uint8_t key_type,
 				int pin_length, uint8_t old_key_type)
 {
@@ -676,12 +531,19 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return -ENODEV;
 
+	remote_auth = device_get_auth(device);
+
 	new_key_type = key_type;
 
 	if (key_type == 0x06) {
 		if (device_get_debug_key(device, NULL))
 			old_key_type = 0x03;
-		if (old_key_type != 0xff)
+		/* Some buggy controller combinations generate a changed
+		 * combination key for legacy pairing even when there's no
+		 * previous key */
+		if (remote_auth == 0xff && old_key_type == 0xff)
+			new_key_type = key_type = 0x00;
+		else if (old_key_type != 0xff)
 			new_key_type = old_key_type;
 		else
 			/* This is Changed Combination Link Key for
@@ -689,8 +551,7 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 			return 0;
 	}
 
-	get_auth_requirements(local, peer, &local_auth);
-	remote_auth = device_get_auth(device);
+	btd_adapter_get_auth_info(adapter, peer, &local_auth);
 	bonding = device_is_bonding(device, NULL);
 
 	DBG("key type 0x%02x old key type 0x%02x new key type 0x%02x",
@@ -746,18 +607,19 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	if (!device_is_connected(device))
 		device_set_secmode3_conn(device, TRUE);
 	else if (!bonding && old_key_type == 0xff)
-		hcid_dbus_bonding_process_complete(local, peer, 0);
+		btd_event_bonding_process_complete(local, peer, 0);
 
 	device_set_temporary(device, temporary);
 
 	return 0;
 }
 
-void hcid_dbus_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
+void btd_event_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 				bdaddr_t *peer)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
+	DBusConnection *conn = get_dbus_connection();
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return;
@@ -770,8 +632,7 @@ void hcid_dbus_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 		if (device_is_bonding(device, NULL))
 			device_bonding_complete(device, status);
 		if (device_is_temporary(device))
-			adapter_remove_device(connection, adapter, device,
-								secmode3);
+			adapter_remove_device(conn, adapter, device, secmode3);
 		return;
 	}
 
@@ -779,7 +640,7 @@ void hcid_dbus_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 	adapter_add_connection(adapter, device, handle);
 }
 
-void hcid_dbus_disconn_complete(bdaddr_t *local, uint8_t status,
+void btd_event_disconn_complete(bdaddr_t *local, uint8_t status,
 				uint16_t handle, uint8_t reason)
 {
 	struct btd_adapter *adapter;
@@ -807,13 +668,9 @@ void hcid_dbus_disconn_complete(bdaddr_t *local, uint8_t status,
 
 /* Section reserved to device HCI callbacks */
 
-void hcid_dbus_setscan_enable_complete(bdaddr_t *local)
+void btd_event_setscan_enable_complete(bdaddr_t *local)
 {
 	struct btd_adapter *adapter;
-	read_scan_enable_rp rp;
-	struct hci_request rq;
-	int dd = -1;
-	uint16_t dev_id;
 
 	adapter = manager_find_adapter(local);
 	if (!adapter) {
@@ -824,47 +681,13 @@ void hcid_dbus_setscan_enable_complete(bdaddr_t *local)
 	if (adapter_powering_down(adapter))
 		return;
 
-	dev_id = adapter_get_dev_id(adapter);
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		error("HCI device open failed: hci%d", dev_id);
-		return;
-	}
-
-	memset(&rq, 0, sizeof(rq));
-	rq.ogf    = OGF_HOST_CTL;
-	rq.ocf    = OCF_READ_SCAN_ENABLE;
-	rq.rparam = &rp;
-	rq.rlen   = READ_SCAN_ENABLE_RP_SIZE;
-	rq.event  = EVT_CMD_COMPLETE;
-
-	if (hci_send_req(dd, &rq, HCI_REQ_TIMEOUT) < 0) {
-		error("Sending read scan enable command failed: %s (%d)",
-				strerror(errno), errno);
-		goto failed;
-	}
-
-	if (rp.status) {
-		error("Getting scan enable failed with status 0x%02x",
-				rp.status);
-		goto failed;
-	}
-
-	adapter_mode_changed(adapter, rp.enable);
-
-failed:
-	if (dd >= 0)
-		hci_close_dev(dd);
+	btd_adapter_read_scan_enable(adapter);
 }
 
-void hcid_dbus_write_simple_pairing_mode_complete(bdaddr_t *local)
+void btd_event_le_set_scan_enable_complete(bdaddr_t *local, uint8_t status)
 {
 	struct btd_adapter *adapter;
-	int dd;
-	uint8_t mode;
-	uint16_t dev_id;
-	const gchar *path;
+	int state;
 
 	adapter = manager_find_adapter(local);
 	if (!adapter) {
@@ -872,29 +695,23 @@ void hcid_dbus_write_simple_pairing_mode_complete(bdaddr_t *local)
 		return;
 	}
 
-	dev_id = adapter_get_dev_id(adapter);
-	path = adapter_get_path(adapter);
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		error("HCI adapter open failed: %s", path);
+	if (status) {
+		error("Can't enabled/disable LE scan");
 		return;
 	}
 
-	if (hci_read_simple_pairing_mode(dd, &mode,
-						HCI_REQ_TIMEOUT) < 0) {
-		error("Can't read simple pairing mode for %s: %s(%d)",
-					path, strerror(errno), errno);
-		hci_close_dev(dd);
-		return;
-	}
+	state = adapter_get_state(adapter);
 
-	hci_close_dev(dd);
+	/* Enabling or disabling ? */
+	if (state & STATE_LE_SCAN)
+		state &= ~STATE_LE_SCAN;
+	else
+		state |= STATE_LE_SCAN;
 
-	adapter_update_ssp_mode(adapter, mode);
+	adapter_set_state(adapter, state);
 }
 
-void hcid_dbus_returned_link_key(bdaddr_t *local, bdaddr_t *peer)
+void btd_event_returned_link_key(bdaddr_t *local, bdaddr_t *peer)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
@@ -905,19 +722,21 @@ void hcid_dbus_returned_link_key(bdaddr_t *local, bdaddr_t *peer)
 	device_set_paired(device, TRUE);
 }
 
-int hcid_dbus_get_io_cap(bdaddr_t *local, bdaddr_t *remote,
+int btd_event_get_io_cap(bdaddr_t *local, bdaddr_t *remote,
 						uint8_t *cap, uint8_t *auth)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
 	struct agent *agent = NULL;
 	uint8_t agent_cap;
+	int err;
 
 	if (!get_adapter_and_device(local, remote, &adapter, &device, TRUE))
 		return -ENODEV;
 
-	if (get_auth_requirements(local, remote, auth) < 0)
-		return -1;
+	err = btd_adapter_get_auth_info(adapter, remote, auth);
+	if (err < 0)
+		return err;
 
 	DBG("initial authentication requirement is 0x%02x", *auth);
 
@@ -1005,7 +824,7 @@ done:
 	return 0;
 }
 
-int hcid_dbus_set_io_cap(bdaddr_t *local, bdaddr_t *remote,
+int btd_event_set_io_cap(bdaddr_t *local, bdaddr_t *remote,
 						uint8_t cap, uint8_t auth)
 {
 	struct btd_adapter *adapter;
@@ -1018,18 +837,4 @@ int hcid_dbus_set_io_cap(bdaddr_t *local, bdaddr_t *remote,
 	device_set_auth(device, auth);
 
 	return 0;
-}
-
-/* Most of the functions in this module require easy access to a connection so
- * we keep it global here and provide these access functions the other (few)
- * modules that require access to it */
-
-void set_dbus_connection(DBusConnection *conn)
-{
-	connection = conn;
-}
-
-DBusConnection *get_dbus_connection(void)
-{
-	return connection;
 }

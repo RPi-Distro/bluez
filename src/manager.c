@@ -34,8 +34,6 @@
 #include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 
 #include <glib.h>
 
@@ -63,7 +61,7 @@ const char *manager_get_base_path(void)
 
 void manager_update_svc(struct btd_adapter* adapter, uint8_t svc)
 {
-	adapter_update(adapter, svc);
+	adapter_set_service_classes(adapter, svc);
 }
 
 static inline DBusMessage *invalid_args(DBusMessage *msg)
@@ -197,13 +195,14 @@ static DBusMessage *get_properties(DBusConnection *conn,
 			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
 
 	array = g_new0(char *, g_slist_length(adapters) + 1);
-	for (i = 0, list = adapters; list; list = list->next, i++) {
+	for (i = 0, list = adapters; list; list = list->next) {
 		struct btd_adapter *adapter = list->data;
 
 		if (!adapter_is_ready(adapter))
 			continue;
 
 		array[i] = (char *) adapter_get_path(adapter);
+		i++;
 	}
 	dict_append_array(&dict, "Adapters", DBUS_TYPE_OBJECT_PATH, &array, i);
 	g_free(array);

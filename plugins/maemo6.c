@@ -71,7 +71,8 @@ static gboolean mce_signal_callback(DBusConnection *connection,
 
 		/* set the adapter according to the mce signal
 		   and remember the value */
-		mce_bt_set = sigvalue & MCE_RADIO_STATE_BLUETOOTH;
+		mce_bt_set = sigvalue & MCE_RADIO_STATE_BLUETOOTH ?
+								TRUE : FALSE;
 
 		if (mce_bt_set)
 			btd_adapter_switch_online(adapter);
@@ -111,7 +112,7 @@ static void read_radio_states_cb(DBusPendingCall *call, void *user_data)
 
 	DBG("radio_states: %d", radio_states);
 
-	mce_bt_set = radio_states & MCE_RADIO_STATE_BLUETOOTH;
+	mce_bt_set = radio_states & MCE_RADIO_STATE_BLUETOOTH ? TRUE : FALSE;
 
 	/* check if the adapter has not completed the initial power
 	 * cycle, if so delay action to mce_notify_powered */
@@ -165,7 +166,9 @@ static void adapter_powered(struct btd_adapter *adapter, gboolean powered)
 				DBUS_TYPE_UINT32, &radio_mask,
 				DBUS_TYPE_INVALID);
 
-	if (!dbus_connection_send(conn, msg, NULL))
+	if (dbus_connection_send(conn, msg, NULL))
+		mce_bt_set = powered;
+	else
 		error("calling %s failed", MCE_RADIO_STATES_CHANGE_REQ);
 
 	dbus_message_unref(msg);

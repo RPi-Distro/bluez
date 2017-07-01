@@ -23,11 +23,6 @@
  */
 
 typedef enum {
-	AVDTP_ERROR_ERRNO,
-	AVDTP_ERROR_ERROR_CODE
-} avdtp_error_type_t;
-
-typedef enum {
 	AVDTP_SESSION_STATE_DISCONNECTED,
 	AVDTP_SESSION_STATE_CONNECTING,
 	AVDTP_SESSION_STATE_CONNECTED
@@ -38,7 +33,7 @@ struct avdtp_stream;
 struct avdtp_local_sep;
 struct avdtp_remote_sep;
 struct avdtp_error {
-	avdtp_error_type_t type;
+	uint8_t category;
 	union {
 		uint8_t error_code;
 		int posix_errno;
@@ -54,6 +49,7 @@ struct avdtp_error {
 #define AVDTP_MULTIPLEXING			0x06
 #define AVDTP_MEDIA_CODEC			0x07
 #define AVDTP_DELAY_REPORTING			0x08
+#define AVDTP_ERRNO				0xff
 
 /* AVDTP error definitions */
 #define AVDTP_BAD_HEADER_FORMAT			0x01
@@ -132,6 +128,10 @@ typedef void (*avdtp_stream_state_cb) (struct avdtp_stream *stream,
 					struct avdtp_error *err,
 					void *user_data);
 
+typedef void (*avdtp_set_configuration_cb) (struct avdtp *session,
+						struct avdtp_stream *stream,
+						struct avdtp_error *err);
+
 /* Callbacks for when a reply is received to a command that we sent */
 struct avdtp_sep_cfm {
 	void (*set_configuration) (struct avdtp *session,
@@ -179,8 +179,9 @@ struct avdtp_sep_ind {
 	gboolean (*set_configuration) (struct avdtp *session,
 					struct avdtp_local_sep *lsep,
 					struct avdtp_stream *stream,
-					GSList *caps, uint8_t *err,
-					uint8_t *category, void *user_data);
+					GSList *caps,
+					avdtp_set_configuration_cb cb,
+					void *user_data);
 	gboolean (*get_configuration) (struct avdtp *session,
 					struct avdtp_local_sep *lsep,
 					uint8_t *err, void *user_data);
@@ -290,9 +291,8 @@ struct avdtp_local_sep *avdtp_register_sep(const bdaddr_t *src, uint8_t type,
 						void *user_data);
 
 /* Find a matching pair of local and remote SEP ID's */
-int avdtp_get_seps(struct avdtp *session, uint8_t type, uint8_t media,
-			uint8_t codec, struct avdtp_local_sep **lsep,
-			struct avdtp_remote_sep **rsep);
+struct avdtp_remote_sep *avdtp_find_remote_sep(struct avdtp *session,
+						struct avdtp_local_sep *lsep);
 
 int avdtp_unregister_sep(struct avdtp_local_sep *sep);
 
@@ -300,7 +300,7 @@ avdtp_state_t avdtp_sep_get_state(struct avdtp_local_sep *sep);
 
 void avdtp_error_init(struct avdtp_error *err, uint8_t type, int id);
 const char *avdtp_strerror(struct avdtp_error *err);
-avdtp_error_type_t avdtp_error_type(struct avdtp_error *err);
+uint8_t avdtp_error_category(struct avdtp_error *err);
 int avdtp_error_error_code(struct avdtp_error *err);
 int avdtp_error_posix_errno(struct avdtp_error *err);
 
@@ -308,6 +308,7 @@ void avdtp_get_peers(struct avdtp *session, bdaddr_t *src, bdaddr_t *dst);
 
 void avdtp_set_auto_disconnect(struct avdtp *session, gboolean auto_dc);
 gboolean avdtp_stream_setup_active(struct avdtp *session);
+void avdtp_set_device_disconnect(struct avdtp *session, gboolean dev_dc);
 
 int avdtp_init(const bdaddr_t *src, GKeyFile *config, uint16_t *version);
 void avdtp_exit(const bdaddr_t *src);
