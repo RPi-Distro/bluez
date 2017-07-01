@@ -2666,7 +2666,6 @@ static int send_req(struct avdtp *session, gboolean priority,
 		goto failed;
 	}
 
-
 	session->req = req;
 
 	req->timeout = g_timeout_add_seconds(req->signal_id == AVDTP_ABORT ?
@@ -3188,6 +3187,12 @@ gboolean avdtp_stream_has_capabilities(struct avdtp_stream *stream,
 	}
 
 	return TRUE;
+}
+
+struct avdtp_remote_sep *avdtp_stream_get_remote_sep(
+						struct avdtp_stream *stream)
+{
+	return avdtp_get_remote_sep(stream->session, stream->rseid);
 }
 
 gboolean avdtp_stream_get_transport(struct avdtp_stream *stream, int *sock,

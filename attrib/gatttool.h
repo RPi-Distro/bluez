@@ -2,8 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2010  Nokia Corporation
- *  Copyright (C) 2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011  Nokia Corporation
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -22,14 +21,7 @@
  *
  */
 
-int attrib_server_init(void);
-void attrib_server_exit(void);
-
-int attrib_db_add(uint16_t handle, uuid_t *uuid, int read_reqs, int write_reqs,
-						const uint8_t *value, int len);
-int attrib_db_update(uint16_t handle, uuid_t *uuid, const uint8_t *value,
-								int len);
-int attrib_db_del(uint16_t handle);
-int attrib_gap_set(uint16_t uuid, const uint8_t *value, int len);
-uint32_t attrib_create_sdp(uint16_t handle, const char *name);
-void attrib_free_sdp(uint32_t sdp_handle);
+int interactive(gchar *dst, gboolean le);
+GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
+			const gchar *sec_level, int psm, int mtu,
+			BtIOConnect connect_cb);

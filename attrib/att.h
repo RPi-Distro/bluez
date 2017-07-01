@@ -180,7 +180,7 @@ static inline void att_put_u16(uint16_t src, void *dst)
 	bt_put_unaligned(htobs(src), (uint16_t *) dst);
 }
 
-static inline void att_put_u32(uint16_t src, void *dst)
+static inline void att_put_u32(uint32_t src, void *dst)
 {
 	bt_put_unaligned(htobl(src), (uint32_t *) dst);
 }
@@ -215,6 +215,8 @@ uint16_t enc_write_req(uint16_t handle, const uint8_t *value, int vlen,
 							uint8_t *pdu, int len);
 uint16_t dec_write_req(const uint8_t *pdu, int len, uint16_t *handle,
 						uint8_t *value, int *vlen);
+uint16_t enc_write_resp(uint8_t *pdu, int len);
+uint16_t dec_write_resp(const uint8_t *pdu, int len);
 uint16_t enc_read_req(uint16_t handle, uint8_t *pdu, int len);
 uint16_t enc_read_blob_req(uint16_t handle, uint16_t offset, uint8_t *pdu,
 								int len);

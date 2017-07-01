@@ -356,6 +356,7 @@ static int l2cap_connect(struct gatt_service *gatt, GError **gerr,
 
 	if (gatt->attrib != NULL) {
 		gatt->attrib = g_attrib_ref(gatt->attrib);
+		gatt->listen = listen;
 		return 0;
 	}
 
@@ -940,6 +941,7 @@ static DBusMessage *prim_get_properties(DBusConnection *conn, DBusMessage *msg,
 	DBusMessageIter dict;
 	GSList *l;
 	char **chars;
+	const char *uuid;
 	int i;
 
 	reply = dbus_message_new_method_return(msg);
@@ -962,6 +964,9 @@ static DBusMessage *prim_get_properties(DBusConnection *conn, DBusMessage *msg,
 
 	dict_append_array(&dict, "Characteristics", DBUS_TYPE_OBJECT_PATH,
 								&chars, i);
+	uuid = prim->att->uuid;
+	dict_append_entry(&dict, "UUID", DBUS_TYPE_STRING, &uuid);
+
 	g_free(chars);
 
 	dbus_message_iter_close_container(&iter, &dict);
