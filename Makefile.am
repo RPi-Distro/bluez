@@ -80,7 +80,7 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:6:18
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:9:18
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -257,6 +257,9 @@ EXTRA_DIST += doc/alert-api.txt \
 
 EXTRA_DIST += doc/obex-api.txt doc/obex-agent-api.txt
 
+EXTRA_DIST += doc/pics-opp.txt doc/pixit-opp.txt \
+		doc/pts-opp.txt
+
 EXTRA_DIST += tools/magic.btsnoop
 
 AM_CFLAGS += @DBUS_CFLAGS@ @GLIB_CFLAGS@
@@ -423,6 +426,12 @@ AM_TESTS_ENVIRONMENT = MALLOC_CHECK_=3 MALLOC_PERTURB_=69
 
 if DBUS_RUN_SESSION
 AM_TESTS_ENVIRONMENT += dbus-run-session --
+endif
+
+if VALGRIND
+LOG_COMPILER = valgrind --error-exitcode=1 --num-callers=30
+LOG_FLAGS = --trace-children=yes --leak-check=full --show-reachable=no \
+		--suppressions=$(srcdir)/tools/valgrind.supp --quiet
 endif
 
 pkgconfigdir = $(libdir)/pkgconfig

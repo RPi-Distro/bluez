@@ -1,3 +1,31 @@
+ver 5.36:
+	Fix issue with PBAP headers for size query.
+	Fix issue with AVRCP current player handling.
+	Fix issue with device information handling.
+	Fix issue with device disconnect handling.
+	Fix issue with duplicate connect handling.
+	Fix issue with attribute claiming for drivers.
+
+ver 5.35:
+	Fix issue with connected devices after discovery.
+	Fix issue with profile support and LTK loading.
+	Fix issue with AVRCP events for volume control.
+	Fix issue with OBEX session owner handling.
+	Fix issue with HID over GATT setup failures.
+	Fix issue with GATT notification registration.
+	Fix issue with GATT cache validation feature.
+	Add support for persistent GATT database.
+	Add support for controller enabling option.
+
+ver 5.34:
+	Fix issue with GATT profiles and auto-connect.
+	Fix issue with missing GoepL2CapPsm SDP data.
+	Fix issue with suspending AVDTP endpoints.
+	Fix issue with audio service state on disconnect.
+	Add support for AVRCP Set Addressed Player feature.
+	Add support for AVRCP Get Folder Items feature.
+	Add support for Android 5.1 HFP WBS callbacks.
+
 ver 5.33:
 	Fix issue with memory leak in GATT database.
 	Fix issue with AVDTP set configuration handling.

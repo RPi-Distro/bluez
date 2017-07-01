@@ -154,7 +154,8 @@ static int attach_proto(const char *path, unsigned int proto,
 		}
 
 		bt_hci_send(hci, BT_HCI_CMD_READ_LOCAL_VERSION, NULL, 0,
-					local_version_callback, NULL, NULL);
+					local_version_callback, hci,
+					(bt_hci_destroy_func_t) bt_hci_unref);
 	}
 
 	return fd;
@@ -212,6 +213,7 @@ static const struct {
 	{ "ath3k", HCI_UART_ATH3K },
 	{ "intel", HCI_UART_INTEL },
 	{ "bcm",   HCI_UART_BCM   },
+	{ "qca",   HCI_UART_QCA   },
 	{ }
 };
 

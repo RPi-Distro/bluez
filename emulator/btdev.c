@@ -420,19 +420,32 @@ static void set_le_commands(struct btdev *btdev)
 	btdev->commands[25] |= 0x01;	/* LE Set Event Mask */
 	btdev->commands[25] |= 0x02;	/* LE Read Buffer Size */
 	btdev->commands[25] |= 0x04;	/* LE Read Local Features */
+	btdev->commands[25] |= 0x10;	/* LE Set Random Address */
 	btdev->commands[25] |= 0x20;	/* LE Set Adv Parameters */
 	btdev->commands[25] |= 0x40;	/* LE Read Adv TX Power */
 	btdev->commands[25] |= 0x80;	/* LE Set Adv Data */
+	btdev->commands[26] |= 0x01;	/* LE Set Scan Response Data */
 	btdev->commands[26] |= 0x02;	/* LE Set Adv Enable */
 	btdev->commands[26] |= 0x04;	/* LE Set Scan Parameters */
 	btdev->commands[26] |= 0x08;	/* LE Set Scan Enable */
+	btdev->commands[26] |= 0x10;	/* LE Create Connection */
 	btdev->commands[26] |= 0x40;	/* LE Read White List Size */
+	btdev->commands[26] |= 0x80;	/* LE Clear White List */
+	btdev->commands[27] |= 0x04;	/* LE Connection Update */
+	btdev->commands[27] |= 0x20;	/* LE Read Remote Used Features */
 	btdev->commands[27] |= 0x40;	/* LE Encrypt */
 	btdev->commands[27] |= 0x80;	/* LE Rand */
+	btdev->commands[28] |= 0x01;	/* LE Start Encryption */
+	btdev->commands[28] |= 0x02;	/* LE Long Term Key Request Reply */
+	btdev->commands[28] |= 0x04;	/* LE Long Term Key Request Neg Reply */
 	btdev->commands[28] |= 0x08;	/* LE Read Supported States */
 	btdev->commands[28] |= 0x10;	/* LE Receiver Test */
 	btdev->commands[28] |= 0x20;	/* LE Transmitter Test */
 	btdev->commands[28] |= 0x40;	/* LE Test End */
+
+	/* Extra LE commands for >= 4.1 adapters */
+	btdev->commands[33] |= 0x10;	/* LE Remote Conn Param Req Reply */
+	btdev->commands[33] |= 0x20;	/* LE Remote Conn Param Req Neg Reply */
 
 	/* Extra LE commands for >= 4.2 adapters */
 	btdev->commands[34] |= 0x02;	/* LE Read Local P-256 Public Key */
@@ -553,6 +566,8 @@ static void set_le_features(struct btdev *btdev)
 	btdev->max_page = 1;
 
 	btdev->le_features[0] |= 0x01;	/* LE Encryption */
+	btdev->le_features[0] |= 0x02;	/* Connection Parameters Request */
+	btdev->le_features[0] |= 0x08;	/* Slave-initiated Features Exchange */
 }
 
 static void set_amp_features(struct btdev *btdev)
@@ -1086,8 +1101,8 @@ static void sco_conn_complete(struct btdev *btdev, uint8_t status)
 }
 
 static void le_conn_complete(struct btdev *btdev,
-					const uint8_t *bdaddr, uint8_t bdaddr_type,
-					uint8_t status)
+				const struct bt_hci_cmd_le_create_conn *lecc,
+				uint8_t status)
 {
 	char buf[1 + sizeof(struct bt_hci_evt_le_conn_complete)];
 	struct bt_hci_evt_le_conn_complete *cc = (void *) &buf[1];
@@ -1097,8 +1112,10 @@ static void le_conn_complete(struct btdev *btdev,
 	buf[0] = BT_HCI_EVT_LE_CONN_COMPLETE;
 
 	if (!status) {
-		struct btdev *remote = find_btdev_by_bdaddr_type(bdaddr,
-								bdaddr_type);
+		struct btdev *remote;
+
+		remote = find_btdev_by_bdaddr_type(lecc->peer_addr,
+							lecc->peer_addr_type);
 
 		btdev->conn = remote;
 		btdev->le_adv_enable = 0;
@@ -1114,15 +1131,16 @@ static void le_conn_complete(struct btdev *btdev,
 
 		cc->role = 0x01;
 		cc->handle = cpu_to_le16(42);
+		cc->interval = lecc->max_interval;
+		cc->latency = lecc->latency;
+		cc->supv_timeout = lecc->supv_timeout;
 
 		send_event(remote, BT_HCI_EVT_LE_META_EVENT, buf, sizeof(buf));
-
-		cc->handle = cpu_to_le16(42);
 	}
 
 	cc->status = status;
-	cc->peer_addr_type = bdaddr_type;
-	memcpy(cc->peer_addr, bdaddr, 6);
+	cc->peer_addr_type = lecc->peer_addr_type;
+	memcpy(cc->peer_addr, lecc->peer_addr, 6);
 	cc->role = 0x00;
 
 	send_event(btdev, BT_HCI_EVT_LE_META_EVENT, buf, sizeof(buf));
@@ -1164,16 +1182,17 @@ static bool adv_connectable(struct btdev *btdev)
 	return btdev->le_adv_type != 0x03;
 }
 
-static void le_conn_request(struct btdev *btdev, const uint8_t *bdaddr,
-							uint8_t bdaddr_type)
+static void le_conn_request(struct btdev *btdev,
+				const struct bt_hci_cmd_le_create_conn *lecc)
 {
-	struct btdev *remote = find_btdev_by_bdaddr_type(bdaddr, bdaddr_type);
+	struct btdev *remote = find_btdev_by_bdaddr_type(lecc->peer_addr,
+							lecc->peer_addr_type);
 
 	if (remote && adv_connectable(remote) && adv_match(btdev, remote) &&
-					remote->le_adv_own_addr == bdaddr_type)
-		le_conn_complete(btdev, bdaddr, bdaddr_type, 0);
+				remote->le_adv_own_addr == lecc->peer_addr_type)
+		le_conn_complete(btdev, lecc, 0);
 	else
-		le_conn_complete(btdev, bdaddr, bdaddr_type,
+		le_conn_complete(btdev, lecc,
 					BT_HCI_ERR_CONN_FAILED_TO_ESTABLISH);
 }
 
@@ -1194,8 +1213,27 @@ static void conn_request(struct btdev *btdev, const uint8_t *bdaddr)
 	}
 }
 
+static void rej_le_conn_update(struct btdev *btdev, uint16_t handle,
+								uint8_t reason)
+{
+	struct btdev *remote = btdev->conn;
+	struct __packed {
+		uint8_t subevent;
+		struct bt_hci_evt_le_conn_update_complete ev;
+	} ev;
+
+	if (!remote)
+		return;
+
+	ev.subevent = BT_HCI_EVT_LE_CONN_UPDATE_COMPLETE;
+	ev.ev.handle = cpu_to_le16(handle);
+	ev.ev.status = cpu_to_le16(reason);
+
+	send_event(remote, BT_HCI_EVT_LE_META_EVENT, &ev, sizeof(ev));
+}
+
 static void le_conn_update(struct btdev *btdev, uint16_t handle,
-				uint16_t max_interval, uint16_t min_interval,
+				uint16_t min_interval, uint16_t max_interval,
 				uint16_t latency, uint16_t supv_timeout,
 				uint16_t min_length, uint16_t max_length)
 {
@@ -1220,6 +1258,30 @@ static void le_conn_update(struct btdev *btdev, uint16_t handle,
 
 	if (remote)
 		send_event(remote, BT_HCI_EVT_LE_META_EVENT, &ev, sizeof(ev));
+}
+
+static void le_conn_param_req(struct btdev *btdev, uint16_t handle,
+				uint16_t min_interval, uint16_t max_interval,
+				uint16_t latency, uint16_t supv_timeout,
+				uint16_t min_length, uint16_t max_length)
+{
+	struct btdev *remote = btdev->conn;
+	struct __packed {
+		uint8_t subevent;
+		struct bt_hci_evt_le_conn_param_request ev;
+	} ev;
+
+	if (!remote)
+		return;
+
+	ev.subevent = BT_HCI_EVT_LE_CONN_PARAM_REQUEST;
+	ev.ev.handle = cpu_to_le16(handle);
+	ev.ev.min_interval = cpu_to_le16(min_interval);
+	ev.ev.max_interval = cpu_to_le16(max_interval);
+	ev.ev.latency = cpu_to_le16(latency);
+	ev.ev.supv_timeout = cpu_to_le16(supv_timeout);
+
+	send_event(remote, BT_HCI_EVT_LE_META_EVENT, &ev, sizeof(ev));
 }
 
 static void disconnect_complete(struct btdev *btdev, uint16_t handle,
@@ -1991,6 +2053,8 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 	const struct bt_hci_cmd_le_ltk_req_reply *llrr;
 	const struct bt_hci_cmd_le_encrypt *lenc_cmd;
 	const struct bt_hci_cmd_le_generate_dhkey *dh;
+	const struct bt_hci_cmd_le_conn_param_req_reply *lcprr_cmd;
+	const struct bt_hci_cmd_le_conn_param_req_neg_reply *lcprnr_cmd;
 	const struct bt_hci_cmd_read_local_amp_assoc *rlaa_cmd;
 	const struct bt_hci_cmd_read_rssi *rrssi;
 	const struct bt_hci_cmd_read_tx_power *rtxp;
@@ -2032,6 +2096,8 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 	struct bt_hci_rsp_read_local_amp_info rlai;
 	struct bt_hci_rsp_read_local_amp_assoc rlaa_rsp;
 	struct bt_hci_rsp_get_mws_transport_config *gmtc;
+	struct bt_hci_rsp_le_conn_param_req_reply lcprr_rsp;
+	struct bt_hci_rsp_le_conn_param_req_neg_reply lcprnr_rsp;
 	struct bt_hci_rsp_le_read_buffer_size lrbs;
 	struct bt_hci_rsp_le_read_local_features lrlf;
 	struct bt_hci_rsp_le_read_adv_tx_power lratp;
@@ -2939,8 +3005,6 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 			status = BT_HCI_ERR_SUCCESS;
 		}
 		cmd_complete(btdev, opcode, &status, sizeof(status));
-		if (status == BT_HCI_ERR_SUCCESS && btdev->le_scan_enable)
-			le_set_scan_enable_complete(btdev);
 		break;
 
 	case BT_HCI_CMD_LE_CREATE_CONN:
@@ -3136,6 +3200,22 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 		cmd_complete(btdev, opcode, &lte, sizeof(lte));
 		break;
 
+	case BT_HCI_CMD_LE_CONN_PARAM_REQ_REPLY:
+		if (btdev->type == BTDEV_TYPE_BREDR)
+			goto unsupported;
+		lcprr_cmd = data;
+		lcprr_rsp.handle = lcprr_cmd->handle;
+		lcprr_rsp.status = BT_HCI_ERR_SUCCESS;
+		cmd_complete(btdev, opcode, &lcprr_rsp, sizeof(lcprr_rsp));
+		break;
+	case BT_HCI_CMD_LE_CONN_PARAM_REQ_NEG_REPLY:
+		if (btdev->type == BTDEV_TYPE_BREDR)
+			goto unsupported;
+		lcprnr_cmd = data;
+		lcprnr_rsp.handle = lcprnr_cmd->handle;
+		lcprnr_rsp.status = BT_HCI_ERR_SUCCESS;
+		cmd_complete(btdev, opcode, &lcprnr_rsp, sizeof(lcprnr_rsp));
+		break;
 	default:
 		goto unsupported;
 	}
@@ -3170,6 +3250,9 @@ static void default_cmd_completion(struct btdev *btdev, uint16_t opcode,
 	const struct bt_hci_cmd_read_clock_offset *rco;
 	const struct bt_hci_cmd_le_create_conn *lecc;
 	const struct bt_hci_cmd_le_conn_update *lecu;
+	const struct bt_hci_cmd_le_conn_param_req_reply *lcprr;
+	const struct bt_hci_cmd_le_conn_param_req_neg_reply *lcprnr;
+	const struct bt_hci_cmd_le_set_scan_enable *lsse;
 
 	switch (opcode) {
 	case BT_HCI_CMD_INQUIRY:
@@ -3314,21 +3397,57 @@ static void default_cmd_completion(struct btdev *btdev, uint16_t opcode,
 			return;
 		lecc = data;
 		btdev->le_scan_own_addr_type = lecc->own_addr_type;
-		le_conn_request(btdev, lecc->peer_addr, lecc->peer_addr_type);
+		le_conn_request(btdev, lecc);
 		break;
 
 	case BT_HCI_CMD_LE_CONN_UPDATE:
 		if (btdev->type == BTDEV_TYPE_BREDR)
 			return;
 		lecu = data;
-		le_conn_update(btdev, le16_to_cpu(lecu->handle),
-				le16_to_cpu(lecu->min_interval),
-				le16_to_cpu(lecu->max_interval),
-				le16_to_cpu(lecu->latency),
-				le16_to_cpu(lecu->supv_timeout),
-				le16_to_cpu(lecu->min_length),
-				le16_to_cpu(lecu->max_length));
+		if (btdev->le_features[0] & 0x02)
+			le_conn_param_req(btdev, le16_to_cpu(lecu->handle),
+					le16_to_cpu(lecu->min_interval),
+					le16_to_cpu(lecu->max_interval),
+					le16_to_cpu(lecu->latency),
+					le16_to_cpu(lecu->supv_timeout),
+					le16_to_cpu(lecu->min_length),
+					le16_to_cpu(lecu->max_length));
+		else
+			le_conn_update(btdev, le16_to_cpu(lecu->handle),
+					le16_to_cpu(lecu->min_interval),
+					le16_to_cpu(lecu->max_interval),
+					le16_to_cpu(lecu->latency),
+					le16_to_cpu(lecu->supv_timeout),
+					le16_to_cpu(lecu->min_length),
+					le16_to_cpu(lecu->max_length));
 		break;
+	case BT_HCI_CMD_LE_CONN_PARAM_REQ_REPLY:
+		if (btdev->type == BTDEV_TYPE_BREDR)
+			return;
+		lcprr = data;
+		le_conn_update(btdev, le16_to_cpu(lcprr->handle),
+				le16_to_cpu(lcprr->min_interval),
+				le16_to_cpu(lcprr->max_interval),
+				le16_to_cpu(lcprr->latency),
+				le16_to_cpu(lcprr->supv_timeout),
+				le16_to_cpu(lcprr->min_length),
+				le16_to_cpu(lcprr->max_length));
+		break;
+	case BT_HCI_CMD_LE_CONN_PARAM_REQ_NEG_REPLY:
+		if (btdev->type == BTDEV_TYPE_BREDR)
+			return;
+		lcprnr = data;
+		rej_le_conn_update(btdev, le16_to_cpu(lcprnr->handle),
+					le16_to_cpu(lcprnr->reason));
+		break;
+		break;
+	case BT_HCI_CMD_LE_SET_SCAN_ENABLE:
+		if (btdev->type == BTDEV_TYPE_BREDR)
+			return;
+		lsse = data;
+		if (btdev->le_scan_enable && lsse->enable)
+			le_set_scan_enable_complete(btdev);
+
 	}
 }
 
