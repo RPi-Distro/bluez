@@ -25,7 +25,6 @@
 #define DEVICE_INTERFACE	"org.bluez.Device"
 
 struct btd_device;
-struct att_primary;
 
 typedef enum {
 	AUTH_TYPE_PINCODE,
@@ -57,8 +56,10 @@ void device_probe_drivers(struct btd_device *device, GSList *profiles);
 const sdp_record_t *btd_device_get_record(struct btd_device *device,
 						const char *uuid);
 GSList *btd_device_get_primaries(struct btd_device *device);
-void btd_device_add_service(struct btd_device *device, const char *path);
-void device_add_primary(struct btd_device *device, struct att_primary *prim);
+void device_register_services(DBusConnection *conn, struct btd_device *device,
+						GSList *prim_list, int psm);
+GSList *device_services_from_record(struct btd_device *device,
+							GSList *profiles);
 void btd_device_add_uuid(struct btd_device *device, const char *uuid);
 struct btd_adapter *device_get_adapter(struct btd_device *device);
 void device_get_address(struct btd_device *device, bdaddr_t *bdaddr);
@@ -70,11 +71,7 @@ gboolean device_is_paired(struct btd_device *device);
 gboolean device_is_trusted(struct btd_device *device);
 void device_set_paired(struct btd_device *device, gboolean paired);
 void device_set_temporary(struct btd_device *device, gboolean temporary);
-void device_set_cap(struct btd_device *device, uint8_t cap);
 void device_set_type(struct btd_device *device, device_type_t type);
-uint8_t device_get_cap(struct btd_device *device);
-void device_set_auth(struct btd_device *device, uint8_t auth);
-uint8_t device_get_auth(struct btd_device *device);
 gboolean device_is_connected(struct btd_device *device);
 DBusMessage *device_create_bonding(struct btd_device *device,
 				DBusConnection *conn, DBusMessage *msg,

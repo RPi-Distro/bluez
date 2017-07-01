@@ -51,6 +51,10 @@ struct mgmt_rp_read_index_list {
 	uint16_t index[0];
 } __packed;
 
+/* Reserve one extra byte for names in management messages so that they
+ * are always guaranteed to be nul-terminated */
+#define MGMT_MAX_NAME_LENGTH		(HCI_MAX_NAME_LENGTH + 1)
+
 #define MGMT_OP_READ_INFO		0x0004
 struct mgmt_rp_read_info {
 	uint8_t type;
@@ -65,7 +69,7 @@ struct mgmt_rp_read_info {
 	uint16_t manufacturer;
 	uint8_t hci_ver;
 	uint16_t hci_rev;
-	uint8_t name[249];
+	uint8_t name[MGMT_MAX_NAME_LENGTH];
 } __packed;
 
 struct mgmt_mode {
@@ -176,7 +180,7 @@ struct mgmt_rp_user_confirm_reply {
 
 #define MGMT_OP_SET_LOCAL_NAME		0x0017
 struct mgmt_cp_set_local_name {
-	uint8_t name[249];
+	uint8_t name[MGMT_MAX_NAME_LENGTH];
 } __packed;
 
 #define MGMT_OP_READ_LOCAL_OOB_DATA	0x0018
@@ -196,6 +200,10 @@ struct mgmt_cp_add_remote_oob_data {
 struct mgmt_cp_remove_remote_oob_data {
 	bdaddr_t bdaddr;
 } __packed;
+
+#define MGMT_OP_START_DISCOVERY		0x001B
+
+#define MGMT_OP_STOP_DISCOVERY		0x001C
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
@@ -228,8 +236,8 @@ struct mgmt_ev_controller_error {
 
 #define MGMT_EV_NEW_KEY			0x000A
 struct mgmt_ev_new_key {
+	uint8_t store_hint;
 	struct mgmt_key_info key;
-	uint8_t old_key_type;
 } __packed;
 
 #define MGMT_EV_DEVICE_CONNECTED	0x000B
@@ -251,11 +259,13 @@ struct mgmt_ev_connect_failed {
 #define MGMT_EV_PIN_CODE_REQUEST	0x000E
 struct mgmt_ev_pin_code_request {
 	bdaddr_t bdaddr;
+	uint8_t secure;
 } __packed;
 
 #define MGMT_EV_USER_CONFIRM_REQUEST	0x000F
 struct mgmt_ev_user_confirm_request {
 	bdaddr_t bdaddr;
+	uint8_t confirm_hint;
 	uint32_t value;
 } __packed;
 
@@ -267,5 +277,21 @@ struct mgmt_ev_auth_failed {
 
 #define MGMT_EV_LOCAL_NAME_CHANGED	0x0011
 struct mgmt_ev_local_name_changed {
-	uint8_t name[249];
+	uint8_t name[MGMT_MAX_NAME_LENGTH];
 } __packed;
+
+#define MGMT_EV_DEVICE_FOUND		0x0012
+struct mgmt_ev_device_found {
+	bdaddr_t bdaddr;
+	uint8_t dev_class[3];
+	int8_t rssi;
+	uint8_t eir[HCI_MAX_EIR_LENGTH];
+} __packed;
+
+#define MGMT_EV_REMOTE_NAME		0x0013
+struct mgmt_ev_remote_name {
+	bdaddr_t bdaddr;
+	uint8_t name[MGMT_MAX_NAME_LENGTH];
+} __packed;
+
+#define MGMT_EV_DISCOVERING		0x0014

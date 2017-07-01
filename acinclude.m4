@@ -84,13 +84,11 @@ AC_DEFUN([AC_INIT_BLUEZ], [
 	AC_SUBST(CONFIGDIR, "${configdir}")
 	AC_SUBST(STORAGEDIR, "${storagedir}")
 
-	UDEV_DATADIR="`$PKG_CONFIG --variable=udevdir udev`"
-	if (test -z "${UDEV_DATADIR}"); then
-		UDEV_DATADIR="${sysconfdir}/udev/rules.d"
-	else
-		UDEV_DATADIR="${UDEV_DATADIR}/rules.d"
+	UDEV_DIR="`$PKG_CONFIG --variable=udevdir udev`"
+	if (test -z "${UDEV_DIR}"); then
+		UDEV_DIR="/lib/udev"
 	fi
-	AC_SUBST(UDEV_DATADIR)
+	AC_SUBST(UDEV_DIR)
 ])
 
 AC_DEFUN([AC_PATH_DBUS], [
@@ -148,6 +146,12 @@ AC_DEFUN([AC_PATH_USB], [
 			[Define to 1 if you need the usb_interrupt_read() function.]))
 ])
 
+AC_DEFUN([AC_PATH_UDEV], [
+	PKG_CHECK_MODULES(UDEV, libudev, udev_found=yes, udev_found=no)
+	AC_SUBST(UDEV_CFLAGS)
+	AC_SUBST(UDEV_LIBS)
+])
+
 AC_DEFUN([AC_PATH_SNDFILE], [
 	PKG_CHECK_MODULES(SNDFILE, sndfile, sndfile_found=yes, sndfile_found=no)
 	AC_SUBST(SNDFILE_CFLAGS)
@@ -189,7 +193,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	service_enable=yes
 	health_enable=no
 	pnat_enable=no
-	attrib_enable=no
+	gatt_example_enable=no
 	tracer_enable=no
 	tools_enable=yes
 	hidd_enable=no
@@ -257,8 +261,8 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		pnat_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(attrib, AC_HELP_STRING([--enable-attrib], [enable attrib plugin]), [
-		attrib_enable=${enableval}
+	AC_ARG_ENABLE(gatt-example, AC_HELP_STRING([--enable-gatt-example], [enable GATT example plugin]), [
+		gatt_example_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(gstreamer, AC_HELP_STRING([--enable-gstreamer], [enable GStreamer support]), [
@@ -384,7 +388,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(MCAP, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(HAL, test "${hal_enable}" = "yes")
 	AM_CONDITIONAL(READLINE, test "${readline_found}" = "yes")
-	AM_CONDITIONAL(ATTRIBPLUGIN, test "${attrib_enable}" = "yes")
+	AM_CONDITIONAL(GATT_EXAMPLE_PLUGIN, test "${gatt_example_enable}" = "yes")
 	AM_CONDITIONAL(ECHOPLUGIN, test "no" = "yes")
 	AM_CONDITIONAL(PNATPLUGIN, test "${pnat_enable}" = "yes")
 	AM_CONDITIONAL(TRACER, test "${tracer_enable}" = "yes")

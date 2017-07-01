@@ -89,26 +89,12 @@ struct remote_dev_info {
 	uint8_t flags;
 };
 
-struct hci_dev {
-	uint8_t  features[8];
-	uint8_t  extfeatures[8];
-	uint8_t  lmp_ver;
-	uint16_t lmp_subver;
-	uint16_t hci_rev;
-	uint16_t manufacturer;
-
-	uint8_t  ssp_mode;
-	char     name[MAX_NAME_LENGTH + 1];
-};
-
 void btd_adapter_start(struct btd_adapter *adapter);
 
 int btd_adapter_stop(struct btd_adapter *adapter);
 
 void btd_adapter_get_mode(struct btd_adapter *adapter, uint8_t *mode,
 					uint8_t *on_mode, gboolean *pairable);
-
-int adapter_update_ssp_mode(struct btd_adapter *adapter, uint8_t mode);
 
 struct btd_device *adapter_get_device(DBusConnection *conn,
 				struct btd_adapter *adapter, const char *address);
@@ -217,7 +203,6 @@ struct btd_adapter_ops {
 	int (*block_device) (int index, bdaddr_t *bdaddr);
 	int (*unblock_device) (int index, bdaddr_t *bdaddr);
 	int (*get_conn_list) (int index, GSList **conns);
-	int (*read_local_version) (int index, struct hci_version *ver);
 	int (*read_local_features) (int index, uint8_t *features);
 	int (*disconnect) (int index, bdaddr_t *bdaddr);
 	int (*remove_bonding) (int index, bdaddr_t *bdaddr);

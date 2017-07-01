@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
-lib_libbluetooth_la_LDFLAGS = -version-info 14:0:11
+lib_libbluetooth_la_LDFLAGS = -version-info 14:1:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -89,7 +89,8 @@ endif
 endif
 
 attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
-		attrib/gattrib.h attrib/gattrib.c
+		attrib/gattrib.h attrib/gattrib.c attrib/client.h \
+		attrib/client.c
 
 gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
 					gdbus/object.c gdbus/polkit.c
@@ -188,24 +189,9 @@ builtin_modules += service
 builtin_sources += plugins/service.c
 endif
 
-if ATTRIBPLUGIN
-
-if READLINE
-bin_PROGRAMS += attrib/gatttool
-
-attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
-				attrib/gattrib.c btio/btio.c \
-				src/glib-helper.h src/glib-helper.c \
-				attrib/gatttool.h attrib/interactive.c \
-				attrib/utils.c
-attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @READLINE_LIBS@
-endif
-
-builtin_modules += attrib
-builtin_sources += attrib/main.c \
-		attrib/manager.h attrib/manager.c \
-		attrib/client.h attrib/client.c \
-		attrib/example.h attrib/example.c
+if GATT_EXAMPLE_PLUGIN
+builtin_modules += gatt_example
+builtin_sources += plugins/gatt-example.c
 endif
 
 if HEALTHPLUGIN
@@ -348,7 +334,7 @@ EXTRA_DIST += audio/bluetooth.conf
 include Makefile.tools
 
 if UDEVRULES
-rulesdir = @UDEV_DATADIR@
+rulesdir = @UDEV_DIR@/rules.d
 
 udev_files = scripts/bluetooth.rules
 
@@ -399,7 +385,7 @@ pkgconfigdir = $(libdir)/pkgconfig
 
 pkgconfig_DATA = bluez.pc
 
-DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules --enable-attrib
+DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
 
 DISTCLEANFILES = $(pkgconfig_DATA)
 

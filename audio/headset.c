@@ -318,7 +318,8 @@ static int headset_send_valist(struct headset *hs, char *format, va_list ap)
 	return 0;
 }
 
-static int headset_send(struct headset *hs, char *format, ...)
+static int __attribute__((format(printf, 2, 3)))
+			headset_send(struct headset *hs, char *format, ...)
 {
 	va_list ap;
 	int ret;
@@ -411,7 +412,7 @@ static int report_indicators(struct audio_device *device, const char *buf)
 	else
 		str = indicator_values(ag.indicators);
 
-	err = headset_send(hs, str);
+	err = headset_send(hs, "%s", str);
 
 	g_free(str);
 
@@ -502,7 +503,8 @@ static unsigned int connect_cb_new(struct headset *hs,
 	return cb->id;
 }
 
-static void send_foreach_headset(GSList *devices,
+static void __attribute__((format(printf, 3, 4)))
+		send_foreach_headset(GSList *devices,
 					int (*cmp) (struct headset *hs),
 					char *format, ...)
 {
@@ -687,14 +689,17 @@ static int telephony_generic_rsp(struct audio_device *device, cme_error_t err)
 	struct headset *hs = device->headset;
 	struct headset_slc *slc = hs->slc;
 
-	if (err != CME_ERROR_NONE) {
-		if (slc->cme_enabled)
-			return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
-		else
-			return headset_send(hs, "\r\nERROR\r\n");
-	}
+	if ((err != CME_ERROR_NONE) && slc->cme_enabled)
+		return headset_send(hs, "\r\n+CME ERROR: %d\r\n", err);
 
-	return headset_send(hs, "\r\nOK\r\n");
+	switch (err) {
+	case CME_ERROR_NONE:
+		return headset_send(hs, "\r\nOK\r\n");
+	case CME_ERROR_NO_NETWORK_SERVICE:
+		return headset_send(hs, "\r\nNO CARRIER\r\n");
+	default:
+		return headset_send(hs, "\r\nERROR\r\n");
+	}
 }
 
 int telephony_event_reporting_rsp(void *telephony_device, cme_error_t err)
@@ -901,7 +906,7 @@ static int response_and_hold(struct audio_device *device, const char *buf)
 	if (ag.rh >= 0)
 		headset_send(hs, "\r\n+BTRH: %d\r\n", ag.rh);
 
-	return headset_send(hs, "\r\nOK\r\n", ag.rh);
+	return headset_send(hs, "\r\nOK\r\n");
 }
 
 int telephony_last_dialed_number_rsp(void *telephony_device, cme_error_t err)
@@ -1195,6 +1200,13 @@ static int voice_dial(struct audio_device *device, const char *buf)
 	return 0;
 }
 
+static int apple_command(struct audio_device *device, const char *buf)
+{
+	DBG("Got Apple command: %s", buf);
+
+	return telephony_generic_rsp(device, CME_ERROR_NONE);
+}
+
 static struct event event_callbacks[] = {
 	{ "ATA", answer_call },
 	{ "ATD", dial_number },
@@ -1216,6 +1228,8 @@ static struct event event_callbacks[] = {
 	{ "AT+COPS", operator_selection },
 	{ "AT+NREC", nr_and_ec },
 	{ "AT+BVRA", voice_dial },
+	{ "AT+XAPL", apple_command },
+	{ "AT+IPHONEACCEV", apple_command },
 	{ 0 }
 };
 
@@ -2397,10 +2411,16 @@ unsigned int headset_suspend_stream(struct audio_device *dev,
 		hs->dc_timer = 0;
 	}
 
-	sock = g_io_channel_unix_get_fd(hs->sco);
+	if (hs->sco) {
+		sock = g_io_channel_unix_get_fd(hs->sco);
 
-	/* shutdown but leave the socket open and wait for hup */
-	shutdown(sock, SHUT_RDWR);
+		/* shutdown but leave the socket open and wait for hup */
+		shutdown(sock, SHUT_RDWR);
+	} else {
+		headset_set_state(dev, HEADSET_STATE_CONNECTED);
+
+		g_idle_add((GSourceFunc) dummy_connect_complete, dev);
+	}
 
 	id = connect_cb_new(hs, HEADSET_STATE_CONNECTED, cb, user_data);
 
@@ -2541,8 +2561,11 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 		emit_property_changed(dev->conn, dev->path,
 					AUDIO_HEADSET_INTERFACE, "State",
 					DBUS_TYPE_STRING, &state_str);
+
+		/* Do not watch HUP since we need to know when the link is
+		   really disconnected */
 		hs->sco_id = g_io_add_watch(hs->sco,
-					G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					G_IO_ERR | G_IO_NVAL,
 					(GIOFunc) sco_cb, dev);
 
 		g_dbus_emit_signal(dev->conn, dev->path,
