@@ -68,6 +68,11 @@ struct uuid_info {
 	uint8_t svc_hint;
 };
 
+struct acl_connection {
+	bdaddr_t bdaddr;
+	uint16_t handle;
+};
+
 static int max_dev = -1;
 static struct dev_info {
 	int sk;
@@ -100,9 +105,11 @@ static struct dev_info {
 
 	gboolean debug_keys;
 	GSList *keys;
-	int pin_length;
+	uint8_t pin_length;
 
 	GSList *uuids;
+
+	GSList *connections;
 } *devs = NULL;
 
 static int ignore_device(struct hci_dev_info *di)
@@ -117,7 +124,6 @@ static void init_dev_info(int index, int sk, gboolean registered)
 	memset(dev, 0, sizeof(*dev));
 
 	dev->sk = sk;
-	dev->pin_length = -1;
 	dev->cache_enable = TRUE;
 	dev->registered = registered;
 }
@@ -576,28 +582,22 @@ static int hciops_set_did(int index, uint16_t vendor, uint16_t product,
 static int get_handle(int index, const bdaddr_t *bdaddr, uint16_t *handle)
 {
 	struct dev_info *dev = &devs[index];
-	struct hci_conn_info_req *cr;
+	struct acl_connection *conn;
+	GSList *match;
 	char addr[18];
-	int err;
 
 	ba2str(bdaddr, addr);
 	DBG("hci%d dba %s", index, addr);
 
-	cr = g_malloc0(sizeof(*cr) + sizeof(struct hci_conn_info));
-	bacpy(&cr->bdaddr, bdaddr);
-	cr->type = ACL_LINK;
+	match = g_slist_find_custom(dev->connections, bdaddr,
+							(GCompareFunc) bacmp);
+	if (match == NULL)
+		return -ENOENT;
 
-	if (ioctl(dev->sk, HCIGETCONNINFO, (unsigned long) cr) < 0) {
-		err = -errno;
-		goto fail;
-	}
+	conn = match->data;
+	*handle = conn->handle;
 
-	err = 0;
-	*handle = cr->conn_info->handle;
-
-fail:
-	g_free(cr);
-	return err;
+	return 0;
 }
 
 static int disconnect_addr(int index, bdaddr_t *dba, uint8_t reason)
@@ -749,7 +749,7 @@ static void link_key_notify(int index, void *ptr)
 	err = btd_event_link_key_notify(&dev->bdaddr, dba, evt->link_key,
 					evt->key_type, dev->pin_length,
 					old_key_type);
-	dev->pin_length = -1;
+	dev->pin_length = 0;
 
 	if (err == 0) {
 		dev->keys = g_slist_append(dev->keys, key_info);
@@ -1712,8 +1712,18 @@ static inline void conn_complete(int index, void *ptr)
 	if (evt->link_type != ACL_LINK)
 		return;
 
-	btd_event_conn_complete(&dev->bdaddr, evt->status,
-					btohs(evt->handle), &evt->bdaddr);
+	if (evt->status == 0) {
+		struct acl_connection *conn;
+
+		conn = g_new0(struct acl_connection, 1);
+
+		bacpy(&conn->bdaddr, &evt->bdaddr);
+		conn->handle = evt->handle;
+
+		dev->connections = g_slist_append(dev->connections, conn);
+	}
+
+	btd_event_conn_complete(&dev->bdaddr, evt->status, &evt->bdaddr);
 
 	if (evt->status)
 		return;
@@ -1739,8 +1749,18 @@ static inline void le_conn_complete(int index, void *ptr)
 	char filename[PATH_MAX];
 	char local_addr[18], peer_addr[18], *str;
 
-	btd_event_conn_complete(&dev->bdaddr, evt->status,
-					btohs(evt->handle), &evt->peer_bdaddr);
+	if (evt->status == 0) {
+		struct acl_connection *conn;
+
+		conn = g_new0(struct acl_connection, 1);
+
+		bacpy(&conn->bdaddr, &evt->peer_bdaddr);
+		conn->handle = evt->handle;
+
+		dev->connections = g_slist_append(dev->connections, conn);
+	}
+
+	btd_event_conn_complete(&dev->bdaddr, evt->status, &evt->peer_bdaddr);
 
 	if (evt->status)
 		return;
@@ -1759,13 +1779,38 @@ static inline void le_conn_complete(int index, void *ptr)
 		free(str);
 }
 
+static int conn_handle_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct acl_connection *conn = a;
+	uint16_t handle = *((uint16_t *) b);
+
+	return (int) conn->handle - (int) handle;
+}
+
 static inline void disconn_complete(int index, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
 	evt_disconn_complete *evt = ptr;
+	struct acl_connection *conn;
+	uint16_t handle;
+	GSList *match;
 
-	btd_event_disconn_complete(&dev->bdaddr, evt->status,
-					btohs(evt->handle), evt->reason);
+	if (evt->status != 0)
+		return;
+
+	handle = btohs(evt->handle);
+	match = g_slist_find_custom(dev->connections, &handle,
+							conn_handle_cmp);
+	if (match == NULL)
+		return;
+
+	conn = match->data;
+
+	dev->connections = g_slist_delete_link(dev->connections, match);
+
+	btd_event_disconn_complete(&dev->bdaddr, &conn->bdaddr);
+
+	g_free(conn);
 }
 
 static inline void auth_complete(int index, void *ptr)
@@ -1857,6 +1902,9 @@ static void stop_hci_dev(int index)
 
 	g_slist_foreach(dev->uuids, (GFunc) g_free, NULL);
 	g_slist_free(dev->uuids);
+
+	g_slist_foreach(dev->connections, (GFunc) g_free, NULL);
+	g_slist_free(dev->connections);
 
 	init_dev_info(index, -1, dev->registered);
 }
@@ -2066,7 +2114,7 @@ static void start_hci_dev(int index)
 						io_security_event,
 						GINT_TO_POINTER(index), NULL);
 	dev->io = chan;
-	dev->pin_length = -1;
+	dev->pin_length = 0;
 
 }
 
@@ -2205,23 +2253,45 @@ fail:
 	exit(1);
 }
 
-static void device_devreg_setup(int index)
+static void init_conn_list(int index)
 {
-	struct hci_dev_info di;
+	struct dev_info *dev = &devs[index];
+	struct hci_conn_list_req *cl;
+	struct hci_conn_info *ci;
+	int err, i;
 
 	DBG("hci%d", index);
 
-	init_device(index);
+	cl = g_malloc0(10 * sizeof(*ci) + sizeof(*cl));
 
-	memset(&di, 0, sizeof(di));
+	cl->dev_id = index;
+	cl->conn_num = 10;
+	ci = cl->conn_info;
 
-	if (hci_devinfo(index, &di) < 0)
-		return;
+	if (ioctl(dev->sk, HCIGETCONNLIST, cl) < 0) {
+		error("Unable to get connection list: %s (%d)",
+						strerror(errno), errno);
+		goto failed;
+	}
 
-	if (ignore_device(&di))
-		return;
+	for (i = 0; i < cl->conn_num; i++, ci++) {
+		struct acl_connection *conn;
 
-	devs[index].already_up = hci_test_bit(HCI_UP, &di.flags);
+		if (ci->type != ACL_LINK)
+			continue;
+
+		conn = g_new0(struct acl_connection, 1);
+
+		bacpy(&conn->bdaddr, &ci->bdaddr);
+		conn->handle = ci->handle;
+
+		dev->connections = g_slist_append(dev->connections, conn);
+	}
+
+	err = 0;
+
+failed:
+	g_free(cl);
 }
 
 static void device_event(int event, int index)
@@ -2229,9 +2299,7 @@ static void device_event(int event, int index)
 	switch (event) {
 	case HCI_DEV_REG:
 		info("HCI dev %d registered", index);
-		device_devreg_setup(index);
-		if (devs[index].already_up)
-			device_event(HCI_DEV_UP, index);
+		init_device(index);
 		break;
 
 	case HCI_DEV_UNREG:
@@ -2327,6 +2395,7 @@ static gboolean init_known_adapters(gpointer user_data)
 		if (!dev->already_up)
 			continue;
 
+		init_conn_list(dr->dev_id);
 		hciops_stop_inquiry(dr->dev_id);
 
 		dev->pending = 0;
@@ -2774,32 +2843,20 @@ static int hciops_unblock_device(int index, bdaddr_t *bdaddr)
 static int hciops_get_conn_list(int index, GSList **conns)
 {
 	struct dev_info *dev = &devs[index];
-	struct hci_conn_list_req *cl;
-	struct hci_conn_info *ci;
-	int err, i;
+	GSList *l;
 
 	DBG("hci%d", index);
 
-	cl = g_malloc0(10 * sizeof(*ci) + sizeof(*cl));
-
-	cl->dev_id = index;
-	cl->conn_num = 10;
-	ci = cl->conn_info;
-
-	if (ioctl(dev->sk, HCIGETCONNLIST, cl) < 0) {
-		err = -errno;
-		goto fail;
-	}
-
-	err = 0;
 	*conns = NULL;
 
-	for (i = 0; i < cl->conn_num; i++, ci++)
-		*conns = g_slist_append(*conns, g_memdup(ci, sizeof(*ci)));
+	for (l = dev->connections; l != NULL; l = g_slist_next(l)) {
+		struct acl_connection *conn = l->data;
 
-fail:
-	g_free(cl);
-	return err;
+		*conns = g_slist_append(*conns,
+				g_memdup(&conn->bdaddr, sizeof(bdaddr_t)));
+	}
+
+	return 0;
 }
 
 static int hciops_read_local_version(int index, struct hci_version *ver)
@@ -2824,22 +2881,11 @@ static int hciops_read_local_features(int index, uint8_t *features)
 	return  0;
 }
 
-static int hciops_disconnect(int index, uint16_t handle)
+static int hciops_disconnect(int index, bdaddr_t *bdaddr)
 {
-	struct dev_info *dev = &devs[index];
-	disconnect_cp cp;
+	DBG("hci%d", index);
 
-	DBG("hci%d handle %u", index, handle);
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = htobs(handle);
-	cp.reason = HCI_OE_USER_ENDED_CONNECTION;
-
-	if (hci_send_cmd(dev->sk, OGF_LINK_CTL, OCF_DISCONNECT,
-						DISCONNECT_CP_SIZE, &cp) < 0)
-		return -errno;
-
-	return 0;
+	return disconnect_addr(index, bdaddr, HCI_OE_USER_ENDED_CONNECTION);
 }
 
 static int hciops_remove_bonding(int index, bdaddr_t *bdaddr)
@@ -2869,12 +2915,18 @@ static int hciops_remove_bonding(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
-static int hciops_request_authentication(int index, uint16_t handle)
+static int hciops_request_authentication(int index, bdaddr_t *bdaddr)
 {
 	struct dev_info *dev = &devs[index];
 	auth_requested_cp cp;
+	uint16_t handle;
+	int err;
 
-	DBG("hci%d handle %u", index, handle);
+	DBG("hci%d", index);
+
+	err = get_handle(index, bdaddr, &handle);
+	if (err < 0)
+		return err;
 
 	memset(&cp, 0, sizeof(cp));
 	cp.handle = htobs(handle);
@@ -3163,6 +3215,11 @@ static int hciops_load_keys(int index, GSList *keys, gboolean debug_keys)
 	return 0;
 }
 
+static int hciops_set_io_capability(int index, uint8_t io_capability)
+{
+	return 0;
+}
+
 static struct btd_adapter_ops hci_ops = {
 	.setup = hciops_setup,
 	.cleanup = hciops_cleanup,
@@ -3202,6 +3259,7 @@ static struct btd_adapter_ops hci_ops = {
 	.disable_cod_cache = hciops_disable_cod_cache,
 	.restore_powered = hciops_restore_powered,
 	.load_keys = hciops_load_keys,
+	.set_io_capability = hciops_set_io_capability,
 };
 
 static int hciops_init(void)

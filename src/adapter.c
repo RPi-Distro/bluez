@@ -947,21 +947,6 @@ struct btd_device *adapter_find_device(struct btd_adapter *adapter,
 	return device;
 }
 
-struct btd_device *adapter_find_connection(struct btd_adapter *adapter,
-						uint16_t handle)
-{
-	GSList *l;
-
-	for (l = adapter->connections; l; l = l->next) {
-		struct btd_device *device = l->data;
-
-		if (device_has_connection(device, handle))
-			return device;
-	}
-
-	return NULL;
-}
-
 static void adapter_update_devices(struct btd_adapter *adapter)
 {
 	char **devices;
@@ -1849,6 +1834,9 @@ static DBusMessage *find_device(DBusConnection *conn, DBusMessage *msg,
 
 static void agent_removed(struct agent *agent, struct btd_adapter *adapter)
 {
+	adapter_ops->set_io_capability(adapter->dev_id,
+					IO_CAPABILITY_NOINPUTNOOUTPUT);
+
 	adapter->agent = NULL;
 }
 
@@ -1882,6 +1870,8 @@ static DBusMessage *register_agent(DBusConnection *conn, DBusMessage *msg,
 
 	DBG("Agent registered for hci%d at %s:%s", adapter->dev_id, name,
 			path);
+
+	adapter_ops->set_io_capability(adapter->dev_id, cap);
 
 	return dbus_message_new_method_return(msg);
 }
@@ -1975,6 +1965,7 @@ static struct link_key_info *get_key_info(const char *addr, const char *value)
 {
 	struct link_key_info *info;
 	char tmp[3];
+	long int l;
 	int i;
 
 	if (strlen(value) < 36) {
@@ -1997,7 +1988,10 @@ static struct link_key_info *get_key_info(const char *addr, const char *value)
 	info->type = (uint8_t) strtol(tmp, NULL, 10);
 
 	memcpy(tmp, value + 35, 2);
-	info->pin_len = strtol(tmp, NULL, 10);
+	l = strtol(tmp, NULL, 10);
+	if (l < 0)
+		l = 0;
+	info->pin_len = l;
 
 	return info;
 }
@@ -2235,14 +2229,16 @@ static void load_connections(struct btd_adapter *adapter)
 	}
 
 	for (l = conns; l != NULL; l = g_slist_next(l)) {
-		struct hci_conn_info *ci = l->data;
+		bdaddr_t *bdaddr = l->data;
 		struct btd_device *device;
 		char address[18];
 
-		ba2str(&ci->bdaddr, address);
+		ba2str(bdaddr, address);
+		DBG("Adding existing connection to %s", address);
+
 		device = adapter_get_device(connection, adapter, address);
 		if (device)
-			adapter_add_connection(adapter, device, ci->handle);
+			adapter_add_connection(adapter, device);
 	}
 
 	g_slist_foreach(conns, (GFunc) g_free, NULL);
@@ -2509,7 +2505,7 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 
 	while (adapter->connections) {
 		struct btd_device *device = adapter->connections->data;
-		adapter_remove_connection(adapter, device, 0);
+		adapter_remove_connection(adapter, device);
 	}
 
 	if (adapter->scan_mode == (SCAN_PAGE | SCAN_INQUIRY)) {
@@ -3187,29 +3183,29 @@ struct agent *adapter_get_agent(struct btd_adapter *adapter)
 }
 
 void adapter_add_connection(struct btd_adapter *adapter,
-				struct btd_device *device, uint16_t handle)
+						struct btd_device *device)
 {
 	if (g_slist_find(adapter->connections, device)) {
-		error("Unable to add connection %d", handle);
+		error("Device is already marked as connected");
 		return;
 	}
 
-	device_add_connection(device, connection, handle);
+	device_add_connection(device, connection);
 
 	adapter->connections = g_slist_append(adapter->connections, device);
 }
 
 void adapter_remove_connection(struct btd_adapter *adapter,
-				struct btd_device *device, uint16_t handle)
+						struct btd_device *device)
 {
 	bdaddr_t bdaddr;
 
 	if (!g_slist_find(adapter->connections, device)) {
-		error("No matching connection for handle %u", handle);
+		error("No matching connection for device");
 		return;
 	}
 
-	device_remove_connection(device, connection, handle);
+	device_remove_connection(device, connection);
 
 	adapter->connections = g_slist_remove(adapter->connections, device);
 
@@ -3590,9 +3586,9 @@ int btd_adapter_read_clock(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 						timeout, clock, accuracy);
 }
 
-int btd_adapter_disconnect_device(struct btd_adapter *adapter, uint16_t handle)
+int btd_adapter_disconnect_device(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 {
-	return adapter_ops->disconnect(adapter->dev_id, handle);
+	return adapter_ops->disconnect(adapter->dev_id, bdaddr);
 }
 
 int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
@@ -3601,9 +3597,9 @@ int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 }
 
 int btd_adapter_request_authentication(struct btd_adapter *adapter,
-							uint16_t handle)
+							bdaddr_t *bdaddr)
 {
-	return adapter_ops->request_authentication(adapter->dev_id, handle);
+	return adapter_ops->request_authentication(adapter->dev_id, bdaddr);
 }
 
 int btd_adapter_pincode_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
