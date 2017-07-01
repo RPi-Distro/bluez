@@ -47,6 +47,13 @@ endif
 
 plugindir = $(libdir)/bluetooth/plugins
 
+if MAINTAINER_MODE
+build_plugindir = $(abs_top_srcdir)/plugins/.libs
+else
+build_plugindir = $(plugindir)
+endif
+
+
 plugin_LTLIBRARIES =
 
 
@@ -55,7 +62,7 @@ lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 
-BUILT_SOURCES = $(local_headers)
+BUILT_SOURCES = $(local_headers) src/builtin.h
 
 include_HEADERS += $(lib_headers)
 
@@ -63,8 +70,12 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
-lib_libbluetooth_la_LDFLAGS = -version-info 14:4:11
+lib_libbluetooth_la_LDFLAGS = -version-info 14:5:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
+
+noinst_LTLIBRARIES += lib/libbluetooth-private.la
+
+lib_libbluetooth_private_la_SOURCES = $(lib_libbluetooth_la_SOURCES)
 
 if SBC
 noinst_LTLIBRARIES += sbc/libsbc.la
@@ -76,7 +87,7 @@ sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 			sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c \
 			sbc/sbc_primitives_armv6.h sbc/sbc_primitives_armv6.c
 
-sbc_libsbc_la_CFLAGS = -finline-functions -fgcse-after-reload \
+sbc_libsbc_la_CFLAGS = $(AM_CFLAGS) -finline-functions -fgcse-after-reload \
 					-funswitch-loops -funroll-loops
 
 noinst_PROGRAMS += sbc/sbcinfo sbc/sbcdec sbc/sbcenc
@@ -91,13 +102,13 @@ if SNDFILE
 noinst_PROGRAMS += sbc/sbctester
 
 sbc_sbctester_LDADD = @SNDFILE_LIBS@ -lm
-sbc_sbctest_CFLAGS = @SNDFILE_CFLAGS@
+sbc_sbctest_CFLAGS = $(AM_CFLAGS) @SNDFILE_CFLAGS@
 endif
 endif
 
 attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
 		attrib/gattrib.h attrib/gattrib.c attrib/client.h \
-		attrib/client.c
+		attrib/client.c attrib/gatt-service.h attrib/gatt-service.c
 
 gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
 					gdbus/object.c gdbus/polkit.c
@@ -132,6 +143,8 @@ builtin_sources += audio/main.c \
 			audio/gateway.h audio/gateway.c \
 			audio/headset.h audio/headset.c \
 			audio/control.h audio/control.c \
+			audio/avctp.h audio/avctp.c \
+			audio/avrcp.h audio/avrcp.c \
 			audio/device.h audio/device.c \
 			audio/source.h audio/source.c \
 			audio/sink.h audio/sink.c \
@@ -195,7 +208,8 @@ if PROXIMITYPLUGIN
 builtin_modules += proximity
 builtin_sources += proximity/main.c \
 			proximity/manager.h proximity/manager.c \
-			proximity/monitor.h proximity/monitor.c
+			proximity/monitor.h proximity/monitor.c \
+			proximity/reporter.h proximity/reporter.c
 endif
 
 if SERVICEPLUGIN
@@ -206,6 +220,18 @@ endif
 if GATT_EXAMPLE_PLUGIN
 builtin_modules += gatt_example
 builtin_sources += plugins/gatt-example.c
+endif
+
+if TIMEPLUGIN
+builtin_modules += time
+builtin_sources += time/main.c \
+		   time/server.h time/server.c
+endif
+
+if ALERTPLUGIN
+builtin_modules += alert
+builtin_sources += alert/main.c \
+		   alert/server.h alert/server.c
 endif
 
 if HEALTHPLUGIN
@@ -257,6 +283,13 @@ builtin_modules += dbusoob
 builtin_sources += plugins/dbusoob.c
 endif
 
+if MAINTAINER_MODE
+plugin_LTLIBRARIES += plugins/external-dummy.la
+plugins_external_dummy_la_SOURCES = plugins/external-dummy.c
+plugins_external_dummy_la_LDFLAGS = -module -avoid-version -no-undefined
+plugins_external_dummy_la_CFLAGS = $(AM_CFLAGS) -fvisibility=hidden
+endif
+
 sbin_PROGRAMS += src/bluetoothd
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
@@ -268,7 +301,8 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/sdpd-service.c src/sdpd-database.c \
 			src/attrib-server.h src/attrib-server.c \
 			src/sdp-xml.h src/sdp-xml.c \
-			src/textfile.h src/textfile.c \
+			src/sdp-client.h src/sdp-client.c \
+			src/textfile.h src/textfile.c src/glib-compat.h \
 			src/glib-helper.h src/glib-helper.c \
 			src/oui.h src/oui.c src/uinput.h src/ppoll.h \
 			src/plugin.h src/plugin.c \
@@ -281,12 +315,16 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/dbus-common.c src/dbus-common.h \
 			src/event.h src/event.c \
 			src/oob.h src/oob.c src/eir.h src/eir.c
-src_bluetoothd_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @DBUS_LIBS@ \
+src_bluetoothd_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @DBUS_LIBS@ \
 							@CAPNG_LIBS@ -ldl -lrt
 src_bluetoothd_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/bluetooth.ver
 
-src_bluetoothd_DEPENDENCIES = lib/libbluetooth.la
+src_bluetoothd_DEPENDENCIES = lib/libbluetooth-private.la
+
+src_bluetoothd_CFLAGS = $(AM_CFLAGS) -DBLUETOOTH_PLUGIN_BUILTIN \
+					-DPLUGINDIR=\""$(build_plugindir)"\"
+src_bluetoothd_SHORTNAME = bluetoothd
 
 builtin_files = src/builtin.h $(builtin_nodist)
 
@@ -305,8 +343,8 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
 			audio/telephony-maemo5.c audio/telephony-ofono.c \
-			audio/telephony-maemo6.c sap/sap-dummy.c sap/sap-u8500.c
-
+			audio/telephony-maemo6.c sap/sap-dummy.c sap/sap-u8500.c \
+			proximity/proximity.conf
 
 if ALSA
 alsadir = $(libdir)/alsa-lib
@@ -318,14 +356,15 @@ audio_libasound_module_pcm_bluetooth_la_SOURCES = audio/pcm_bluetooth.c \
 					audio/rtp.h audio/ipc.h audio/ipc.c
 audio_libasound_module_pcm_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_pcm_.*
 audio_libasound_module_pcm_bluetooth_la_LIBADD = sbc/libsbc.la \
-						lib/libbluetooth.la @ALSA_LIBS@
-audio_libasound_module_pcm_bluetooth_la_CFLAGS = @ALSA_CFLAGS@
+					lib/libbluetooth-private.la @ALSA_LIBS@
+audio_libasound_module_pcm_bluetooth_la_CFLAGS = $(AM_CFLAGS) @ALSA_CFLAGS@
 
 audio_libasound_module_ctl_bluetooth_la_SOURCES = audio/ctl_bluetooth.c \
 					audio/rtp.h audio/ipc.h audio/ipc.c
 audio_libasound_module_ctl_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_ctl_.*
-audio_libasound_module_ctl_bluetooth_la_LIBADD = lib/libbluetooth.la @ALSA_LIBS@
-audio_libasound_module_ctl_bluetooth_la_CFLAGS = @ALSA_CFLAGS@
+audio_libasound_module_ctl_bluetooth_la_LIBADD = \
+					lib/libbluetooth-private.la @ALSA_LIBS@
+audio_libasound_module_ctl_bluetooth_la_CFLAGS = $(AM_CLAGS) @ALSA_CFLAGS@
 
 if DATAFILES
 alsaconfdir = $(datadir)/alsa
@@ -350,10 +389,11 @@ audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
 				audio/gstrtpsbcpay.h audio/gstrtpsbcpay.c \
 				audio/rtp.h audio/ipc.h audio/ipc.c
 audio_libgstbluetooth_la_LDFLAGS = -module -avoid-version
-audio_libgstbluetooth_la_LIBADD = sbc/libsbc.la lib/libbluetooth.la \
-				@DBUS_LIBS@ @GSTREAMER_LIBS@ -lgstaudio-0.10 -lgstrtp-0.10
+audio_libgstbluetooth_la_LIBADD = sbc/libsbc.la lib/libbluetooth-private.la \
+						@DBUS_LIBS@ @GSTREAMER_LIBS@ \
+						-lgstaudio-0.10 -lgstrtp-0.10
 audio_libgstbluetooth_la_CFLAGS = -fvisibility=hidden -fno-strict-aliasing \
-						$(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
+				$(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
 endif
 endif
 
@@ -397,8 +437,7 @@ EXTRA_DIST += doc/manager-api.txt \
 
 AM_YFLAGS = -d
 
-AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ \
-		-DBLUETOOTH_PLUGIN_BUILTIN -DPLUGINDIR=\""$(plugindir)"\"
+AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
@@ -407,6 +446,20 @@ INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 if MCAP
 INCLUDES += -I$(builddir)/health
 endif
+
+unit_objects =
+
+unit_tests = unit/test-eir
+
+noinst_PROGRAMS += $(unit_tests)
+
+unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/glib-helper.c
+unit_test_eir_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @CHECK_LIBS@
+unit_test_eir_CFLAGS = $(AM_CFLAGS) @CHECK_CFLAGS@
+unit_test_eir_SHORTNAME = unit
+unit_objects += $(unit_test_eir_OBJECTS)
+
+TESTS = $(unit_tests)
 
 pkgconfigdir = $(libdir)/pkgconfig
 
@@ -419,8 +472,6 @@ DISTCLEANFILES = $(pkgconfig_DATA)
 MAINTAINERCLEANFILES = Makefile.in \
 	aclocal.m4 configure config.h.in config.sub config.guess \
 	ltmain.sh depcomp compile missing install-sh mkinstalldirs ylwrap
-
-src/plugin.$(OBJEXT): src/builtin.h
 
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@

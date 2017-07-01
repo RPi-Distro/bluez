@@ -33,31 +33,22 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/param.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
 
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus.h>
 
 #include "log.h"
-#include "textfile.h"
 
 #include "adapter.h"
 #include "manager.h"
 #include "device.h"
 #include "error.h"
-#include "glib-helper.h"
 #include "dbus-common.h"
 #include "agent.h"
 #include "storage.h"
 #include "event.h"
-#include "sdpd.h"
-#include "eir.h"
 
 static gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
 					struct btd_adapter **adapter,
@@ -274,7 +265,8 @@ static void update_lastused(bdaddr_t *sba, bdaddr_t *dba)
 }
 
 void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
-				int8_t rssi, uint8_t *data)
+					int8_t rssi, uint8_t confirm_name,
+					uint8_t *data, uint8_t data_len)
 {
 	struct btd_adapter *adapter;
 
@@ -290,7 +282,8 @@ void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	if (data)
 		write_remote_eir(local, peer, data);
 
-	adapter_update_found_devices(adapter, peer, class, rssi, data);
+	adapter_update_found_devices(adapter, peer, class, rssi,
+						confirm_name, data, data_len);
 }
 
 void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
@@ -467,6 +460,32 @@ void btd_event_disconn_complete(bdaddr_t *local, bdaddr_t *peer)
 		return;
 
 	adapter_remove_connection(adapter, device);
+}
+
+void btd_event_device_blocked(bdaddr_t *local, bdaddr_t *peer)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+
+	DBusConnection *conn = get_dbus_connection();
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
+		return;
+
+	device_block(conn, device, TRUE);
+}
+
+void btd_event_device_unblocked(bdaddr_t *local, bdaddr_t *peer)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+
+	DBusConnection *conn = get_dbus_connection();
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
+		return;
+
+	device_unblock(conn, device, FALSE, TRUE);
 }
 
 /* Section reserved to device HCI callbacks */

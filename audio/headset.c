@@ -53,7 +53,8 @@
 #include "error.h"
 #include "telephony.h"
 #include "headset.h"
-#include "glib-helper.h"
+#include "glib-compat.h"
+#include "sdp-client.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "../src/adapter.h"
@@ -167,6 +168,7 @@ struct headset {
 
 	gboolean hfp_active;
 	gboolean search_hfp;
+	gboolean rfcomm_initiator;
 
 	headset_state_t state;
 	struct pending_connect *pending;
@@ -1513,7 +1515,6 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 
 		sdp_list_free(classes, free);
 
-
 		if (sdp_uuid_cmp(&class, &uuid) == 0)
 			break;
 	}
@@ -1536,7 +1537,8 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 	if (err < 0) {
 		error("Unable to connect: %s (%d)", strerror(-err), -err);
 		p->err = -err;
-		error_connect_failed(dev->conn, p->msg, p->err);
+		if (p->msg != NULL)
+			error_connect_failed(dev->conn, p->msg, p->err);
 		goto failed;
 	}
 
@@ -1633,6 +1635,7 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 	}
 
 	hs->hfp_active = hs->hfp_handle != 0 ? TRUE : FALSE;
+	hs->rfcomm_initiator = FALSE;
 
 	headset_set_state(dev, HEADSET_STATE_CONNECTING);
 
@@ -2428,18 +2431,33 @@ unsigned int headset_suspend_stream(struct audio_device *dev,
 	return id;
 }
 
-gboolean get_hfp_active(struct audio_device *dev)
+gboolean headset_get_hfp_active(struct audio_device *dev)
 {
 	struct headset *hs = dev->headset;
 
 	return hs->hfp_active;
 }
 
-void set_hfp_active(struct audio_device *dev, gboolean active)
+void headset_set_hfp_active(struct audio_device *dev, gboolean active)
 {
 	struct headset *hs = dev->headset;
 
 	hs->hfp_active = active;
+}
+
+gboolean headset_get_rfcomm_initiator(struct audio_device *dev)
+{
+	struct headset *hs = dev->headset;
+
+	return hs->rfcomm_initiator;
+}
+
+void headset_set_rfcomm_initiator(struct audio_device *dev,
+					gboolean initiator)
+{
+	struct headset *hs = dev->headset;
+
+	hs->rfcomm_initiator = initiator;
 }
 
 GIOChannel *headset_get_rfcomm(struct audio_device *dev)

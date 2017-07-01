@@ -73,10 +73,10 @@ static const char *chassis_map[] = {
 	"Rack Mount Chassis",    "unknown",
 	"Sealed-case PC",        "unknown",
 	"Multi-system",          "unknown",
-	"CompactPCI",            "unknonw",
+	"CompactPCI",            "unknown",
 	"AdvancedTCA",           "unknown",
 	"Blade",                 "server",
-	"Blade Enclosure"        "unknown", /* 0x1D */
+	"Blade Enclosure",       "unknown", /* 0x1D */
 	NULL
 };
 
@@ -104,7 +104,7 @@ static int formfactor_probe(struct btd_adapter *adapter)
 		return 0;
 	}
 
-	formfactor = chassis_map[chassis_type * 2 + 1];
+	formfactor = chassis_map[chassis_type * 2 - 1];
 	if (formfactor != NULL) {
 		if (g_str_equal(formfactor, "laptop") == TRUE)
 			minor |= (1 << 2) | (1 << 3);

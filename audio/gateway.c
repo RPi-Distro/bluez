@@ -42,7 +42,8 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "glib-helper.h"
+#include "glib-compat.h"
+#include "sdp-client.h"
 #include "device.h"
 #include "gateway.h"
 #include "log.h"
@@ -60,17 +61,38 @@ struct hf_agent {
 	guint watch;	/* Disconnect watch */
 };
 
+struct connect_cb {
+	unsigned int id;
+	gateway_stream_cb_t cb;
+	void *cb_data;
+};
+
 struct gateway {
 	gateway_state_t state;
 	GIOChannel *rfcomm;
 	GIOChannel *sco;
-	gateway_stream_cb_t sco_start_cb;
-	void *sco_start_cb_data;
+	GIOChannel *incoming;
+	GSList *callbacks;
 	struct hf_agent *agent;
 	DBusMessage *msg;
+	int version;
+	gateway_lock_t lock;
 };
 
+struct gateway_state_callback {
+	gateway_state_cb cb;
+	void *user_data;
+	unsigned int id;
+};
+
+static GSList *gateway_callbacks = NULL;
+
 int gateway_close(struct audio_device *device);
+
+GQuark gateway_error_quark(void)
+{
+	return g_quark_from_static_string("gateway-error-quark");
+}
 
 static const char *state2str(gateway_state_t state)
 {
@@ -102,16 +124,37 @@ static void change_state(struct audio_device *dev, gateway_state_t new_state)
 {
 	struct gateway *gw = dev->gateway;
 	const char *val;
+	GSList *l;
+	gateway_state_t old_state;
 
 	if (gw->state == new_state)
 		return;
 
 	val = state2str(new_state);
+	old_state = gw->state;
 	gw->state = new_state;
 
 	emit_property_changed(dev->conn, dev->path,
 			AUDIO_GATEWAY_INTERFACE, "State",
 			DBUS_TYPE_STRING, &val);
+
+	for (l = gateway_callbacks; l != NULL; l = l->next) {
+		struct gateway_state_callback *cb = l->data;
+		cb->cb(dev, old_state, new_state, cb->user_data);
+	}
+}
+
+void gateway_set_state(struct audio_device *dev, gateway_state_t new_state)
+{
+	switch (new_state) {
+	case GATEWAY_STATE_DISCONNECTED:
+		gateway_close(dev);
+		break;
+	case GATEWAY_STATE_CONNECTING:
+	case GATEWAY_STATE_CONNECTED:
+	case GATEWAY_STATE_PLAYING:
+		break;
+	}
 }
 
 static void agent_disconnect(struct audio_device *dev, struct hf_agent *agent)
@@ -128,6 +171,7 @@ static gboolean agent_sendfd(struct hf_agent *agent, int fd,
 		DBusPendingCallNotifyFunction notify, void *data)
 {
 	struct audio_device *dev = data;
+	struct gateway *gw = dev->gateway;
 	DBusMessage *msg;
 	DBusPendingCall *call;
 
@@ -135,6 +179,7 @@ static gboolean agent_sendfd(struct hf_agent *agent, int fd,
 			"org.bluez.HandsfreeAgent", "NewConnection");
 
 	dbus_message_append_args(msg, DBUS_TYPE_UNIX_FD, &fd,
+					DBUS_TYPE_UINT16, &gw->version,
 					DBUS_TYPE_INVALID);
 
 	if (dbus_connection_send_with_reply(dev->conn, msg, &call, -1) == FALSE)
@@ -142,8 +187,44 @@ static gboolean agent_sendfd(struct hf_agent *agent, int fd,
 
 	dbus_pending_call_set_notify(call, notify, dev, NULL);
 	dbus_pending_call_unref(call);
+	dbus_message_unref(msg);
 
 	return TRUE;
+}
+
+static unsigned int connect_cb_new(struct gateway *gw,
+					gateway_stream_cb_t func,
+					void *user_data)
+{
+	struct connect_cb *cb;
+	static unsigned int free_cb_id = 1;
+
+	if (!func)
+		return 0;
+
+	cb = g_new(struct connect_cb, 1);
+
+	cb->cb = func;
+	cb->cb_data = user_data;
+	cb->id = free_cb_id++;
+
+	gw->callbacks = g_slist_append(gw->callbacks, cb);
+
+	return cb->id;
+}
+
+static void run_connect_cb(struct audio_device *dev, GError *err)
+{
+	struct gateway *gw = dev->gateway;
+	GSList *l;
+
+	for (l = gw->callbacks; l != NULL; l = l->next) {
+		struct connect_cb *cb = l->data;
+		cb->cb(dev, err, cb->cb_data);
+	}
+
+	g_slist_free_full(gw->callbacks, g_free);
+	gw->callbacks = NULL;
 }
 
 static gboolean sco_io_cb(GIOChannel *chan, GIOCondition cond,
@@ -154,16 +235,13 @@ static gboolean sco_io_cb(GIOChannel *chan, GIOCondition cond,
 	if (cond & G_IO_NVAL)
 		return FALSE;
 
-	if (cond & (G_IO_ERR | G_IO_HUP)) {
-		DBG("sco connection is released");
-		g_io_channel_shutdown(gw->sco, TRUE, NULL);
-		g_io_channel_unref(gw->sco);
-		gw->sco = NULL;
-		change_state(dev, GATEWAY_STATE_CONNECTED);
-		return FALSE;
-	}
+	DBG("sco connection is released");
+	g_io_channel_shutdown(gw->sco, TRUE, NULL);
+	g_io_channel_unref(gw->sco);
+	gw->sco = NULL;
+	change_state(dev, GATEWAY_STATE_CONNECTED);
 
-	return TRUE;
+	return FALSE;
 }
 
 static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
@@ -175,9 +253,6 @@ static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 
 	gw->sco = g_io_channel_ref(chan);
 
-	if (gw->sco_start_cb)
-		gw->sco_start_cb(dev, err, gw->sco_start_cb_data);
-
 	if (err) {
 		error("sco_connect_cb(): %s", err->message);
 		gateway_close(dev);
@@ -186,11 +261,26 @@ static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 
 	g_io_add_watch(gw->sco, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
 				(GIOFunc) sco_io_cb, dev);
+
+	change_state(dev, GATEWAY_STATE_PLAYING);
+	run_connect_cb(dev, NULL);
+}
+
+static gboolean rfcomm_disconnect_cb(GIOChannel *chan, GIOCondition cond,
+			struct audio_device *dev)
+{
+	if (cond & G_IO_NVAL)
+		return FALSE;
+
+	gateway_close(dev);
+
+	return FALSE;
 }
 
 static void newconnection_reply(DBusPendingCall *call, void *data)
 {
 	struct audio_device *dev = data;
+	struct gateway *gw = dev->gateway;
 	DBusMessage *reply = dbus_pending_call_steal_reply(call);
 	DBusError derr;
 
@@ -202,6 +292,8 @@ static void newconnection_reply(DBusPendingCall *call, void *data)
 	dbus_error_init(&derr);
 	if (!dbus_set_error_from_message(&derr, reply)) {
 		DBG("Agent reply: file descriptor passed successfully");
+		g_io_add_watch(gw->rfcomm, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+					(GIOFunc) rfcomm_disconnect_cb, dev);
 		change_state(dev, GATEWAY_STATE_CONNECTED);
 		goto done;
 	}
@@ -225,8 +317,6 @@ static void rfcomm_connect_cb(GIOChannel *chan, GError *err,
 
 	if (err) {
 		error("connect(): %s", err->message);
-		if (gw->sco_start_cb)
-			gw->sco_start_cb(dev, err, gw->sco_start_cb_data);
 		goto fail;
 	}
 
@@ -237,7 +327,8 @@ static void rfcomm_connect_cb(GIOChannel *chan, GError *err,
 
 	sk = g_io_channel_unix_get_fd(chan);
 
-	gw->rfcomm = g_io_channel_ref(chan);
+	if (gw->rfcomm == NULL)
+		gw->rfcomm = g_io_channel_ref(chan);
 
 	ret = agent_sendfd(gw->agent, sk, newconnection_reply, dev);
 
@@ -260,7 +351,90 @@ fail:
 		g_dbus_send_message(dev->conn, reply);
 	}
 
-	change_state(dev, GATEWAY_STATE_DISCONNECTED);
+	gateway_close(dev);
+}
+
+static int get_remote_profile_version(sdp_record_t *rec)
+{
+	uuid_t uuid;
+	sdp_list_t *profiles;
+	sdp_profile_desc_t *desc;
+	int ver = 0;
+
+	sdp_uuid16_create(&uuid, HANDSFREE_PROFILE_ID);
+
+	sdp_get_profile_descs(rec, &profiles);
+	if (profiles == NULL)
+		goto done;
+
+	desc = profiles->data;
+
+	if (sdp_uuid16_cmp(&desc->uuid, &uuid) == 0)
+		ver = desc->version;
+
+	sdp_list_free(profiles, free);
+
+done:
+	return ver;
+}
+
+static void get_incoming_record_cb(sdp_list_t *recs, int err,
+					gpointer user_data)
+{
+	struct audio_device *dev = user_data;
+	struct gateway *gw = dev->gateway;
+	GError *gerr = NULL;
+
+	if (err < 0) {
+		error("Unable to get service record: %s (%d)", strerror(-err),
+					-err);
+		goto fail;
+	}
+
+	if (!recs || !recs->data) {
+		error("No records found");
+		goto fail;
+	}
+
+	gw->version = get_remote_profile_version(recs->data);
+	if (gw->version == 0)
+		goto fail;
+
+	rfcomm_connect_cb(gw->incoming, gerr, dev);
+	return;
+
+fail:
+	gateway_close(dev);
+}
+
+static void unregister_incoming(gpointer user_data)
+{
+	struct audio_device *dev = user_data;
+	struct gateway *gw = dev->gateway;
+
+	if (gw->incoming) {
+		g_io_channel_unref(gw->incoming);
+		gw->incoming = NULL;
+	}
+}
+
+static void rfcomm_incoming_cb(GIOChannel *chan, GError *err,
+				gpointer user_data)
+{
+	struct audio_device *dev = user_data;
+	struct gateway *gw = dev->gateway;
+	uuid_t uuid;
+
+	gw->incoming = g_io_channel_ref(chan);
+
+	sdp_uuid16_create(&uuid, HANDSFREE_AGW_SVCLASS_ID);
+	if (bt_search_service(&dev->src, &dev->dst, &uuid,
+						get_incoming_record_cb, dev,
+						unregister_incoming) == 0)
+		return;
+
+	unregister_incoming(dev);
+	gateway_close(dev);
 }
 
 static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
@@ -297,6 +471,13 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 		goto fail;
 	}
 
+	gw->version = get_remote_profile_version(recs->data);
+	if (gw->version == 0) {
+		error("Unable to get profile version from record");
+		err = -EINVAL;
+		goto fail;
+	}
+
 	memcpy(&uuid, classes->data, sizeof(uuid));
 	sdp_list_free(classes, free);
 
@@ -324,13 +505,10 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 				BT_IO_OPT_INVALID);
 	if (!io) {
 		error("Unable to connect: %s", gerr->message);
-		gateway_close(dev);
 		goto fail;
 	}
 
 	g_io_channel_unref(io);
-
-	change_state(dev, GATEWAY_STATE_CONNECTING);
 	return;
 
 fail:
@@ -340,22 +518,17 @@ fail:
 		g_dbus_send_message(dev->conn, reply);
 	}
 
-	change_state(dev, GATEWAY_STATE_DISCONNECTED);
+	gateway_close(dev);
 
-	if (!gerr)
-		g_set_error(&gerr, BT_IO_ERROR, BT_IO_ERROR_FAILED,
-				"connect: %s (%d)", strerror(-err), -err);
-
-	if (gw->sco_start_cb)
-		gw->sco_start_cb(dev, gerr, gw->sco_start_cb_data);
-
-	g_error_free(gerr);
+	if (gerr)
+		g_error_free(gerr);
 }
 
 static int get_records(struct audio_device *device)
 {
 	uuid_t uuid;
 
+	change_state(device, GATEWAY_STATE_CONNECTING);
 	sdp_uuid16_create(&uuid, HANDSFREE_AGW_SVCLASS_ID);
 	return bt_search_service(&device->src, &device->dst, &uuid,
 				get_record_cb, device, NULL);
@@ -382,6 +555,7 @@ static DBusMessage *ag_connect(DBusConnection *conn, DBusMessage *msg,
 
 int gateway_close(struct audio_device *device)
 {
+	GError *gerr = NULL;
 	struct gateway *gw = device->gateway;
 	int sock;
 
@@ -398,11 +572,13 @@ int gateway_close(struct audio_device *device)
 		g_io_channel_shutdown(gw->sco, TRUE, NULL);
 		g_io_channel_unref(gw->sco);
 		gw->sco = NULL;
-		gw->sco_start_cb = NULL;
-		gw->sco_start_cb_data = NULL;
 	}
 
 	change_state(device, GATEWAY_STATE_DISCONNECTED);
+	g_set_error(&gerr, GATEWAY_ERROR,
+			GATEWAY_ERROR_DISCONNECTED, "Disconnected");
+	run_connect_cb(device, gerr);
+	g_error_free(gerr);
 
 	return 0;
 }
@@ -581,13 +757,26 @@ struct gateway *gateway_init(struct audio_device *dev)
 		return NULL;
 
 	return g_new0(struct gateway, 1);
-
 }
 
 gboolean gateway_is_connected(struct audio_device *dev)
 {
-	return (dev && dev->gateway &&
-			dev->gateway->state == GATEWAY_STATE_CONNECTED);
+	struct gateway *gw = dev->gateway;
+
+	if (gw->state == GATEWAY_STATE_CONNECTED)
+		return TRUE;
+
+	return FALSE;
+}
+
+gboolean gateway_is_active(struct audio_device *dev)
+{
+	struct gateway *gw = dev->gateway;
+
+	if (gw->state != GATEWAY_STATE_DISCONNECTED)
+		return TRUE;
+
+	return FALSE;
 }
 
 int gateway_connect_rfcomm(struct audio_device *dev, GIOChannel *io)
@@ -596,6 +785,8 @@ int gateway_connect_rfcomm(struct audio_device *dev, GIOChannel *io)
 		return -EINVAL;
 
 	dev->gateway->rfcomm = g_io_channel_ref(io);
+
+	change_state(dev, GATEWAY_STATE_CONNECTING);
 
 	return 0;
 }
@@ -625,28 +816,34 @@ void gateway_start_service(struct audio_device *dev)
 	if (gw->rfcomm == NULL)
 		return;
 
-	if (!bt_io_accept(gw->rfcomm, rfcomm_connect_cb, dev, NULL, &err)) {
+	if (!bt_io_accept(gw->rfcomm, rfcomm_incoming_cb, dev, NULL, &err)) {
 		error("bt_io_accept: %s", err->message);
 		g_error_free(err);
+		gateway_close(dev);
 	}
+}
+
+static gboolean request_stream_cb(gpointer data)
+{
+	run_connect_cb(data, NULL);
+	return FALSE;
 }
 
 /* These are functions to be called from unix.c for audio system
  * ifaces (alsa, gstreamer, etc.) */
-gboolean gateway_request_stream(struct audio_device *dev,
+unsigned int gateway_request_stream(struct audio_device *dev,
 				gateway_stream_cb_t cb, void *user_data)
 {
 	struct gateway *gw = dev->gateway;
+	unsigned int id;
 	GError *err = NULL;
 	GIOChannel *io;
 
-	if (!gw->rfcomm) {
-		gw->sco_start_cb = cb;
-		gw->sco_start_cb_data = user_data;
+	id = connect_cb_new(gw, cb, user_data);
+
+	if (!gw->rfcomm)
 		get_records(dev);
-	} else if (!gw->sco) {
-		gw->sco_start_cb = cb;
-		gw->sco_start_cb_data = user_data;
+	else if (!gw->sco) {
 		io = bt_io_connect(BT_IO_SCO, sco_connect_cb, dev, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, &dev->src,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
@@ -654,34 +851,53 @@ gboolean gateway_request_stream(struct audio_device *dev,
 		if (!io) {
 			error("%s", err->message);
 			g_error_free(err);
-			return FALSE;
+			return 0;
 		}
-	} else if (cb)
-		cb(dev, err, user_data);
+	} else
+		g_idle_add(request_stream_cb, dev);
 
-	return TRUE;
+	return id;
 }
 
-int gateway_config_stream(struct audio_device *dev, gateway_stream_cb_t sco_cb,
+int gateway_config_stream(struct audio_device *dev, gateway_stream_cb_t cb,
 				void *user_data)
 {
 	struct gateway *gw = dev->gateway;
+	unsigned int id;
 
-	if (!gw->rfcomm) {
-		gw->sco_start_cb = sco_cb;
-		gw->sco_start_cb_data = user_data;
-		return get_records(dev);
-	}
+	id = connect_cb_new(gw, cb, user_data);
 
-	if (sco_cb)
-		sco_cb(dev, NULL, user_data);
+	if (!gw->rfcomm)
+		get_records(dev);
+	else if (cb)
+		g_idle_add(request_stream_cb, dev);
 
-	return 0;
+	return id;
 }
 
 gboolean gateway_cancel_stream(struct audio_device *dev, unsigned int id)
 {
-	gateway_close(dev);
+	struct gateway *gw = dev->gateway;
+	GSList *l;
+	struct connect_cb *cb = NULL;
+
+	for (l = gw->callbacks; l != NULL; l = l->next) {
+		struct connect_cb *tmp = l->data;
+
+		if (tmp->id == id) {
+			cb = tmp;
+			break;
+		}
+	}
+
+	if (!cb)
+		return FALSE;
+
+	gw->callbacks = g_slist_remove(gw->callbacks, cb);
+	g_free(cb);
+
+	gateway_suspend_stream(dev);
+
 	return TRUE;
 }
 
@@ -697,6 +913,7 @@ int gateway_get_sco_fd(struct audio_device *dev)
 
 void gateway_suspend_stream(struct audio_device *dev)
 {
+	GError *gerr = NULL;
 	struct gateway *gw = dev->gateway;
 
 	if (!gw || !gw->sco)
@@ -705,7 +922,77 @@ void gateway_suspend_stream(struct audio_device *dev)
 	g_io_channel_shutdown(gw->sco, TRUE, NULL);
 	g_io_channel_unref(gw->sco);
 	gw->sco = NULL;
-	gw->sco_start_cb = NULL;
-	gw->sco_start_cb_data = NULL;
+	g_set_error(&gerr, GATEWAY_ERROR, GATEWAY_ERROR_SUSPENDED, "Suspended");
+	run_connect_cb(dev, gerr);
+	g_error_free(gerr);
 	change_state(dev, GATEWAY_STATE_CONNECTED);
+}
+
+unsigned int gateway_add_state_cb(gateway_state_cb cb, void *user_data)
+{
+	struct gateway_state_callback *state_cb;
+	static unsigned int id = 0;
+
+	state_cb = g_new(struct gateway_state_callback, 1);
+	state_cb->cb = cb;
+	state_cb->user_data = user_data;
+	state_cb->id = ++id;
+
+	gateway_callbacks = g_slist_append(gateway_callbacks, state_cb);
+
+	return state_cb->id;
+}
+
+gboolean gateway_remove_state_cb(unsigned int id)
+{
+	GSList *l;
+
+	for (l = gateway_callbacks; l != NULL; l = l->next) {
+		struct gateway_state_callback *cb = l->data;
+		if (cb && cb->id == id) {
+			gateway_callbacks = g_slist_remove(gateway_callbacks,
+									cb);
+			g_free(cb);
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+gateway_lock_t gateway_get_lock(struct audio_device *dev)
+{
+	struct gateway *gw = dev->gateway;
+
+	return gw->lock;
+}
+
+gboolean gateway_lock(struct audio_device *dev, gateway_lock_t lock)
+{
+	struct gateway *gw = dev->gateway;
+
+	if (gw->lock & lock)
+		return FALSE;
+
+	gw->lock |= lock;
+
+	return TRUE;
+}
+
+gboolean gateway_unlock(struct audio_device *dev, gateway_lock_t lock)
+{
+	struct gateway *gw = dev->gateway;
+
+	if (!(gw->lock & lock))
+		return FALSE;
+
+	gw->lock &= ~lock;
+
+	if (gw->lock)
+		return TRUE;
+
+	if (gw->state == GATEWAY_STATE_PLAYING)
+		gateway_suspend_stream(dev);
+
+	return TRUE;
 }

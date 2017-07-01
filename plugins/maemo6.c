@@ -46,11 +46,36 @@
 #define MCE_RADIO_STATES_CHANGE_REQ	"req_radio_states_change"
 #define MCE_RADIO_STATES_GET		"get_radio_states"
 #define MCE_RADIO_STATES_SIG		"radio_states_ind"
+#define MCE_TKLOCK_MODE_SIG		"tklock_mode_ind"
 
 static guint watch_id;
+static guint tklock_watch_id;
 static DBusConnection *conn = NULL;
 static gboolean mce_bt_set = FALSE;
-static gboolean collision = FALSE;
+static gboolean mce_bt_on = FALSE;
+
+static gboolean mce_tklock_mode_cb(DBusConnection *connection,
+					DBusMessage *message, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+	DBusMessageIter args;
+	const char *sigvalue;
+
+	if (!dbus_message_iter_init(message, &args)) {
+		error("message has no arguments");
+	} else if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_STRING) {
+		error("argument is not string");
+	} else {
+
+		dbus_message_iter_get_basic(&args, &sigvalue);
+		DBG("got signal with value %s", sigvalue);
+
+		if (g_strcmp0("unlocked", sigvalue) == 0 && mce_bt_on)
+			btd_adapter_enable_auto_connect(adapter);
+	}
+
+	return TRUE;
+}
 
 static gboolean mce_signal_callback(DBusConnection *connection,
 					DBusMessage *message, void *user_data)
@@ -58,6 +83,7 @@ static gboolean mce_signal_callback(DBusConnection *connection,
 	DBusMessageIter args;
 	uint32_t sigvalue;
 	struct btd_adapter *adapter = user_data;
+	int err;
 
 	DBG("received mce signal");
 
@@ -71,13 +97,16 @@ static gboolean mce_signal_callback(DBusConnection *connection,
 
 		/* set the adapter according to the mce signal
 		   and remember the value */
-		mce_bt_set = sigvalue & MCE_RADIO_STATE_BLUETOOTH ?
-								TRUE : FALSE;
+		mce_bt_on = sigvalue & MCE_RADIO_STATE_BLUETOOTH ? TRUE : FALSE;
 
-		if (mce_bt_set)
-			btd_adapter_switch_online(adapter);
+		if (mce_bt_on)
+			err = btd_adapter_switch_online(adapter);
 		else
-			btd_adapter_switch_offline(adapter);
+			err = btd_adapter_switch_offline(adapter);
+
+		if (err == 0)
+			mce_bt_set = TRUE;
+
 	}
 
 	return TRUE;
@@ -85,46 +114,43 @@ static gboolean mce_signal_callback(DBusConnection *connection,
 
 static void read_radio_states_cb(DBusPendingCall *call, void *user_data)
 {
-	DBusError err;
+	DBusError derr;
 	DBusMessage *reply;
 	dbus_uint32_t radio_states;
 	struct btd_adapter *adapter = user_data;
+	int err;
 
 	reply = dbus_pending_call_steal_reply(call);
 
-	dbus_error_init(&err);
-	if (dbus_set_error_from_message(&err, reply)) {
+	dbus_error_init(&derr);
+	if (dbus_set_error_from_message(&derr, reply)) {
 		error("mce replied with an error: %s, %s",
-				err.name, err.message);
-		dbus_error_free(&err);
+				derr.name, derr.message);
+		dbus_error_free(&derr);
 		goto done;
 	}
 
-	dbus_error_init(&err);
-	if (dbus_message_get_args(reply, &err,
+	dbus_error_init(&derr);
+	if (dbus_message_get_args(reply, &derr,
 				DBUS_TYPE_UINT32, &radio_states,
 				DBUS_TYPE_INVALID) == FALSE) {
 		error("unable to parse get_radio_states reply: %s, %s",
-							err.name, err.message);
-		dbus_error_free(&err);
+							derr.name, derr.message);
+		dbus_error_free(&derr);
 		goto done;
 	}
 
 	DBG("radio_states: %d", radio_states);
 
-	mce_bt_set = radio_states & MCE_RADIO_STATE_BLUETOOTH ? TRUE : FALSE;
+	mce_bt_on = radio_states & MCE_RADIO_STATE_BLUETOOTH ? TRUE : FALSE;
 
-	/* check if the adapter has not completed the initial power
-	 * cycle, if so delay action to mce_notify_powered */
-	collision = mce_bt_set && adapter_powering_down(adapter);
-
-	if (collision)
-		goto done;
-
-	if (mce_bt_set)
-		btd_adapter_switch_online(adapter);
+	if (mce_bt_on)
+		err = btd_adapter_switch_online(adapter);
 	else
-		btd_adapter_switch_offline(adapter);
+		err = btd_adapter_switch_offline(adapter);
+
+	if (err == 0)
+		mce_bt_set = TRUE;
 
 done:
 	dbus_message_unref(reply);
@@ -133,76 +159,79 @@ done:
 static void adapter_powered(struct btd_adapter *adapter, gboolean powered)
 {
 	DBusMessage *msg;
-	dbus_uint32_t radio_states = 0;
-	dbus_uint32_t radio_mask = MCE_RADIO_STATE_BLUETOOTH;
 	static gboolean startup = TRUE;
 
 	DBG("adapter_powered called with %d", powered);
 
 	if (startup) {
+		DBusPendingCall *call;
+
+		/* Initialization: sync adapter state and MCE radio state */
+
+		DBG("Startup: reading MCE Bluetooth radio state...");
 		startup = FALSE;
+
+		msg = dbus_message_new_method_call(MCE_SERVICE,
+					MCE_REQUEST_PATH, MCE_REQUEST_IF,
+					MCE_RADIO_STATES_GET);
+
+		if (!dbus_connection_send_with_reply(conn, msg, &call, -1)) {
+			error("calling %s failed", MCE_RADIO_STATES_GET);
+			dbus_message_unref(msg);
+			return;
+		}
+
+		dbus_pending_call_set_notify(call, read_radio_states_cb,
+								adapter, NULL);
+		dbus_pending_call_unref(call);
+		dbus_message_unref(msg);
 		return;
 	}
 
-	/* check if the plugin got the get_radio_states reply from the
-	 * mce when the adapter was not yet down during the power
-	 * cycling when bluetoothd is started */
-	if (collision) {
-		error("maemo6: powered state collision");
-		collision = FALSE;
-
-		if (mce_bt_set)
-			btd_adapter_switch_online(adapter);
-
+	/* MCE initiated operation */
+	if (mce_bt_set == TRUE) {
+		mce_bt_set = FALSE;
 		return;
 	}
 
-	/* nothing to do if the states match */
-	if (mce_bt_set == powered)
-		return;
+	/* Non MCE operation: set MCE according to adapter state */
+	if (mce_bt_on != powered) {
+		dbus_uint32_t radio_states;
+		dbus_uint32_t radio_mask = MCE_RADIO_STATE_BLUETOOTH;
 
-	/* set the mce value according to the state of the adapter */
-	msg = dbus_message_new_method_call(MCE_SERVICE, MCE_REQUEST_PATH,
-				MCE_REQUEST_IF, MCE_RADIO_STATES_CHANGE_REQ);
+		msg = dbus_message_new_method_call(MCE_SERVICE,
+					MCE_REQUEST_PATH, MCE_REQUEST_IF,
+					MCE_RADIO_STATES_CHANGE_REQ);
 
-	if (powered)
-		radio_states = MCE_RADIO_STATE_BLUETOOTH;
+		radio_states = (powered ? MCE_RADIO_STATE_BLUETOOTH : 0);
 
-	dbus_message_append_args(msg, DBUS_TYPE_UINT32, &radio_states,
-				DBUS_TYPE_UINT32, &radio_mask,
-				DBUS_TYPE_INVALID);
+		DBG("Changing MCE Bluetooth radio state to: %d", radio_states);
 
-	if (dbus_connection_send(conn, msg, NULL))
-		mce_bt_set = powered;
-	else
-		error("calling %s failed", MCE_RADIO_STATES_CHANGE_REQ);
+		dbus_message_append_args(msg, DBUS_TYPE_UINT32, &radio_states,
+					DBUS_TYPE_UINT32, &radio_mask,
+					DBUS_TYPE_INVALID);
 
-	dbus_message_unref(msg);
+		if (dbus_connection_send(conn, msg, NULL))
+			mce_bt_on = powered;
+		else
+			error("calling %s failed", MCE_RADIO_STATES_CHANGE_REQ);
+
+		dbus_message_unref(msg);
+	}
 }
 
 static int mce_probe(struct btd_adapter *adapter)
 {
-	DBusMessage *msg;
-	DBusPendingCall *call;
 
 	DBG("path %s", adapter_get_path(adapter));
-
-	msg = dbus_message_new_method_call(MCE_SERVICE, MCE_REQUEST_PATH,
-					MCE_REQUEST_IF, MCE_RADIO_STATES_GET);
-
-	if (!dbus_connection_send_with_reply(conn, msg, &call, -1)) {
-		error("calling %s failed", MCE_RADIO_STATES_GET);
-		dbus_message_unref(msg);
-		return -1;
-	}
-
-	dbus_pending_call_set_notify(call, read_radio_states_cb, adapter, NULL);
-	dbus_pending_call_unref(call);
-	dbus_message_unref(msg);
 
 	watch_id = g_dbus_add_signal_watch(conn, NULL, MCE_SIGNAL_PATH,
 					MCE_SIGNAL_IF, MCE_RADIO_STATES_SIG,
 					mce_signal_callback, adapter, NULL);
+
+	tklock_watch_id = g_dbus_add_signal_watch(conn, NULL, MCE_SIGNAL_PATH,
+					MCE_SIGNAL_IF, MCE_TKLOCK_MODE_SIG,
+					mce_tklock_mode_cb, adapter, NULL);
 
 	btd_adapter_register_powered_callback(adapter, adapter_powered);
 
@@ -215,6 +244,9 @@ static void mce_remove(struct btd_adapter *adapter)
 
 	if (watch_id > 0)
 		g_dbus_remove_watch(conn, watch_id);
+
+	if (tklock_watch_id > 0)
+		g_dbus_remove_watch(conn, tklock_watch_id);
 
 	btd_adapter_unregister_powered_callback(adapter, adapter_powered);
 }

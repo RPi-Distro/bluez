@@ -78,7 +78,8 @@ enum ste_protocol {
 	STE_GET_ATR_RSP		= 0x2E07,
 	STE_GET_STATUS_REQ	= 0x2D08,
 	STE_GET_STATUS_RSP	= 0x2E08,
-	STE_STATUS_IND		= 0x2F02
+	STE_STATUS_IND		= 0x2F02,
+	STE_SIM_READY_IND	= 0x2F03,
 };
 
 enum ste_msg {
@@ -94,6 +95,7 @@ enum ste_msg {
 enum ste_status {
 	STE_STATUS_OK		= 0x00000000,
 	STE_STATUS_FAILURE	= 0x00000001,
+	STE_STATUS_BUSY_CALL	= 0x00000002,
 };
 
 enum ste_card_status {
@@ -118,6 +120,7 @@ enum ste_state {
 	STE_POWERED_OFF,	/* Card in the reader but powered off */
 	STE_NO_CARD,		/* No card in the reader */
 	STE_ENABLED,		/* Card in the reader and powered on */
+	STE_SIM_BUSY,		/* Modem is busy with ongoing call.*/
 	STE_STATE_MAX
 };
 
@@ -377,6 +380,42 @@ static void simd_close(void)
 	u8500.sap_data = NULL;
 }
 
+static void recv_sim_ready()
+{
+	sap_info("sim is ready. Try to connect again");
+
+	if (send_request(u8500.io, STE_START_SAP_REQ, NULL) < 0) {
+		sap_connect_rsp(u8500.sap_data, SAP_STATUS_CONNECTION_FAILED,
+								SAP_BUF_SIZE);
+		simd_close();
+	}
+}
+
+static void recv_connect_rsp(uint32_t status)
+{
+	switch (status) {
+	case STE_STATUS_OK:
+		if (u8500.state != STE_SIM_BUSY)
+			sap_connect_rsp(u8500.sap_data,
+					SAP_STATUS_OK, 0);
+		break;
+	case STE_STATUS_BUSY_CALL:
+		if (u8500.state != STE_SIM_BUSY) {
+			sap_connect_rsp(u8500.sap_data,
+				SAP_STATUS_OK_ONGOING_CALL,
+				SAP_BUF_SIZE);
+
+			u8500.state = STE_SIM_BUSY;
+		}
+		break;
+	default:
+		sap_connect_rsp(u8500.sap_data,
+				SAP_STATUS_CONNECTION_FAILED, 0);
+		simd_close();
+		break;
+	}
+}
+
 static void recv_response(struct ste_message *msg)
 {
 	uint32_t status;
@@ -398,15 +437,8 @@ static void recv_response(struct ste_message *msg)
 
 	switch (msg->id) {
 	case STE_START_SAP_RSP:
-		if (status == STE_STATUS_OK) {
-			sap_connect_rsp(u8500.sap_data, SAP_STATUS_OK, 0);
-		} else {
-			sap_connect_rsp(u8500.sap_data,
-					SAP_STATUS_CONNECTION_FAILED, 0);
-			simd_close();
-		}
+		recv_connect_rsp(status);
 		break;
-
 	case STE_SEND_APDU_RSP:
 		recv_pdu(STE_SEND_APDU_MSG, msg, status, param,
 							sap_transfer_apdu_rsp);
@@ -438,6 +470,10 @@ static void recv_response(struct ste_message *msg)
 
 	case STE_STATUS_IND:
 		recv_status(status);
+		break;
+
+	case STE_SIM_READY_IND:
+		recv_sim_ready();
 		break;
 
 	default:
@@ -535,9 +571,9 @@ static int simd_connect(void *sap_data)
 
 	sock = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sock < 0) {
-		err = errno;
-		sap_error("creating socket failed: %s", strerror(err));
-		return -err;
+		err = -errno;
+		sap_error("creating socket failed: %s", strerror(-err));
+		return err;
 	}
 
 	memset(&addr, 0, sizeof(addr));
@@ -545,14 +581,14 @@ static int simd_connect(void *sap_data)
 	memcpy(addr.sun_path, STE_SIMD_SOCK, sizeof(STE_SIMD_SOCK) - 1);
 
 	if (connect(sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		err = errno;
-		sap_error("connect to the socket failed: %s", strerror(err));
+		err = -errno;
+		sap_error("connect to the socket failed: %s", strerror(-err));
 		goto failed;
 	}
 
 	if (fcntl(sock, F_SETFL, O_NONBLOCK) > 0) {
-		err = errno;
-		sap_error("setting up socket failed: %s", strerror(err));
+		err = -errno;
+		sap_error("setting up socket failed: %s", strerror(-err));
 		goto failed;
 	}
 
@@ -562,7 +598,7 @@ static int simd_connect(void *sap_data)
 
 failed:
 	close(sock);
-	return -err;
+	return err;
 }
 
 void sap_connect_req(void *sap_device, uint16_t maxmsgsize)
