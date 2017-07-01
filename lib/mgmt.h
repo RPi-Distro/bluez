@@ -67,7 +67,11 @@ struct mgmt_rp_read_info {
 	uint16_t hci_rev;
 } __packed;
 
-#define MGMT_OP_READ_STATISTICS		0x0005
+#define MGMT_OP_SET_POWERED		0x0005
+struct mgmt_cp_set_powered {
+	uint16_t index;
+	uint8_t powered;
+} __packed;
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {

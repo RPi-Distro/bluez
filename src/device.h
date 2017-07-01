@@ -25,6 +25,7 @@
 #define DEVICE_INTERFACE	"org.bluez.Device"
 
 struct btd_device;
+struct att_primary;
 
 typedef enum {
 	AUTH_TYPE_PINCODE,
@@ -46,14 +47,19 @@ struct btd_device *device_create(DBusConnection *conn,
 				const gchar *address, device_type_t type);
 void device_set_name(struct btd_device *device, const char *name);
 void device_get_name(struct btd_device *device, char *name, size_t len);
+device_type_t device_get_type(struct btd_device *device);
 void device_remove(struct btd_device *device, gboolean remove_stored);
 gint device_address_cmp(struct btd_device *device, const gchar *address);
-int device_browse(struct btd_device *device, DBusConnection *conn,
+int device_browse_primary(struct btd_device *device, DBusConnection *conn,
+				DBusMessage *msg, gboolean secure);
+int device_browse_sdp(struct btd_device *device, DBusConnection *conn,
 			DBusMessage *msg, uuid_t *search, gboolean reverse);
 void device_probe_drivers(struct btd_device *device, GSList *profiles);
 const sdp_record_t *btd_device_get_record(struct btd_device *device,
 						const char *uuid);
-void device_add_service(struct btd_device *device, const char *path);
+GSList *btd_device_get_primaries(struct btd_device *device);
+void btd_device_add_service(struct btd_device *device, const char *path);
+void device_add_primary(struct btd_device *device, struct att_primary *prim);
 void btd_device_add_uuid(struct btd_device *device, const char *uuid);
 struct btd_adapter *device_get_adapter(struct btd_device *device);
 void device_get_address(struct btd_device *device, bdaddr_t *bdaddr);
@@ -66,6 +72,7 @@ gboolean device_is_trusted(struct btd_device *device);
 void device_set_paired(struct btd_device *device, gboolean paired);
 void device_set_temporary(struct btd_device *device, gboolean temporary);
 void device_set_cap(struct btd_device *device, uint8_t cap);
+void device_set_type(struct btd_device *device, device_type_t type);
 uint8_t device_get_cap(struct btd_device *device);
 void device_set_auth(struct btd_device *device, uint8_t auth);
 uint8_t device_get_auth(struct btd_device *device);
@@ -77,6 +84,7 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 				const char *agent_path, uint8_t capability);
 void device_remove_bonding(struct btd_device *device);
 void device_bonding_complete(struct btd_device *device, uint8_t status);
+void device_authentication_complete(struct btd_device *device);
 void device_simple_pairing_complete(struct btd_device *device, uint8_t status);
 gboolean device_is_creating(struct btd_device *device, const char *sender);
 gboolean device_is_bonding(struct btd_device *device, const char *sender);

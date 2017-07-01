@@ -47,8 +47,8 @@
 #include "textfile.h"
 
 #include "hcid.h"
-#include "manager.h"
 #include "adapter.h"
+#include "manager.h"
 #include "device.h"
 #include "error.h"
 #include "glib-helper.h"
@@ -56,6 +56,14 @@
 #include "agent.h"
 #include "storage.h"
 #include "event.h"
+#include "sdpd.h"
+
+struct eir_data {
+	GSList *services;
+	uint8_t flags;
+	char *name;
+	gboolean name_complete;
+};
 
 static gboolean get_adapter_and_device(bdaddr_t *src, bdaddr_t *dst,
 					struct btd_adapter **adapter,
@@ -121,18 +129,27 @@ fail:
 	error("Sending PIN code reply failed: %s (%d)", strerror(-err), -err);
 }
 
-int btd_event_request_pin(bdaddr_t *sba, struct hci_conn_info *ci)
+int btd_event_request_pin(bdaddr_t *sba, bdaddr_t *dba)
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
+	char pin[17];
+	int pinlen;
 
-	if (!get_adapter_and_device(sba, &ci->bdaddr, &adapter, &device, TRUE))
+	if (!get_adapter_and_device(sba, dba, &adapter, &device, TRUE))
 		return -ENODEV;
 
 	/* Check if the adapter is not pairable and if there isn't a bonding in
 	 * progress */
 	if (!adapter_is_pairable(adapter) && !device_is_bonding(device, NULL))
 		return -EPERM;
+
+	memset(pin, 0, sizeof(pin));
+	pinlen = read_pin_code(sba, dba, pin);
+	if (pinlen > 0) {
+		btd_adapter_pincode_reply(adapter, dba, pin);
+		return 0;
+	}
 
 	return device_request_authentication(device, AUTH_TYPE_PINCODE, 0,
 								pincode_cb);
@@ -272,6 +289,9 @@ void btd_event_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer,
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return;
 
+	if (status == 0)
+		device_set_paired(device, TRUE);
+
 	if (!device_is_authenticating(device)) {
 		/* This means that there was no pending PIN or SSP token
 		 * request from the controller, i.e. this is not a new
@@ -299,9 +319,131 @@ void btd_event_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
 	device_simple_pairing_complete(device, status);
 }
 
+static int parse_eir_data(struct eir_data *eir, uint8_t *eir_data,
+							size_t eir_length)
+{
+	uint16_t len = 0;
+	size_t total;
+	size_t uuid16_count = 0;
+	size_t uuid32_count = 0;
+	size_t uuid128_count = 0;
+	uint8_t *uuid16 = NULL;
+	uint8_t *uuid32 = NULL;
+	uint8_t *uuid128 = NULL;
+	uuid_t service;
+	char *uuid_str;
+	unsigned int i;
+
+	/* No EIR data to parse */
+	if (eir_data == NULL || eir_length == 0)
+		return 0;
+
+	while (len < eir_length - 1) {
+		uint8_t field_len = eir_data[0];
+
+		/* Check for the end of EIR */
+		if (field_len == 0)
+			break;
+
+		switch (eir_data[1]) {
+		case EIR_UUID16_SOME:
+		case EIR_UUID16_ALL:
+			uuid16_count = field_len / 2;
+			uuid16 = &eir_data[2];
+			break;
+		case EIR_UUID32_SOME:
+		case EIR_UUID32_ALL:
+			uuid32_count = field_len / 4;
+			uuid32 = &eir_data[2];
+			break;
+		case EIR_UUID128_SOME:
+		case EIR_UUID128_ALL:
+			uuid128_count = field_len / 16;
+			uuid128 = &eir_data[2];
+			break;
+		case EIR_FLAGS:
+			eir->flags = eir_data[2];
+			break;
+		case EIR_NAME_SHORT:
+		case EIR_NAME_COMPLETE:
+			if (g_utf8_validate((char *) &eir_data[2],
+							field_len - 1, NULL))
+				eir->name = g_strndup((char *) &eir_data[2],
+								field_len - 1);
+			else
+				eir->name = g_strdup("");
+			eir->name_complete = eir_data[1] == EIR_NAME_COMPLETE;
+			break;
+		}
+
+		len += field_len + 1;
+		eir_data += field_len + 1;
+	}
+
+	/* Bail out if got incorrect length */
+	if (len > eir_length)
+		return -EINVAL;
+
+	total = uuid16_count + uuid32_count + uuid128_count;
+
+	/* No UUIDs were parsed, so skip code below */
+	if (!total)
+		return 0;
+
+	/* Generate uuids in SDP format (EIR data is Little Endian) */
+	service.type = SDP_UUID16;
+	for (i = 0; i < uuid16_count; i++) {
+		uint16_t val16 = uuid16[1];
+
+		val16 = (val16 << 8) + uuid16[0];
+		service.value.uuid16 = val16;
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+		uuid16 += 2;
+	}
+
+	service.type = SDP_UUID32;
+	for (i = uuid16_count; i < uuid32_count + uuid16_count; i++) {
+		uint32_t val32 = uuid32[3];
+		int k;
+
+		for (k = 2; k >= 0; k--)
+			val32 = (val32 << 8) + uuid32[k];
+
+		service.value.uuid32 = val32;
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+		uuid32 += 4;
+	}
+
+	service.type = SDP_UUID128;
+	for (i = uuid32_count + uuid16_count; i < total; i++) {
+		int k;
+
+		for (k = 0; k < 16; k++)
+			service.value.uuid128.data[k] = uuid128[16 - k - 1];
+
+		uuid_str = bt_uuid2string(&service);
+		eir->services = g_slist_append(eir->services, uuid_str);
+		uuid128 += 16;
+	}
+
+	return 0;
+}
+
+static void free_eir_data(struct eir_data *eir)
+{
+	g_slist_foreach(eir->services, (GFunc) g_free, NULL);
+	g_slist_free(eir->services);
+	g_free(eir->name);
+}
+
 void btd_event_advertising_report(bdaddr_t *local, le_advertising_info *info)
 {
 	struct btd_adapter *adapter;
+	struct eir_data eir_data;
+	int8_t rssi;
+	int err;
 
 	adapter = manager_find_adapter(local);
 	if (adapter == NULL) {
@@ -309,22 +451,56 @@ void btd_event_advertising_report(bdaddr_t *local, le_advertising_info *info)
 		return;
 	}
 
-	adapter_update_device_from_info(adapter, info);
+	memset(&eir_data, 0, sizeof(eir_data));
+	err = parse_eir_data(&eir_data, info->data, info->length);
+	if (err < 0)
+		error("Error parsing advertising data: %s (%d)",
+							strerror(-err), -err);
+
+	rssi = *(info->data + info->length);
+
+	adapter_update_device_from_info(adapter, info->bdaddr, rssi,
+					info->evt_type, eir_data.name,
+					eir_data.services, eir_data.flags);
+
+	free_eir_data(&eir_data);
 }
 
-void btd_event_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
+static void update_lastseen(bdaddr_t *sba, bdaddr_t *dba)
+{
+	time_t t;
+	struct tm *tm;
+
+	t = time(NULL);
+	tm = gmtime(&t);
+
+	write_lastseen_info(sba, dba, tm);
+}
+
+static void update_lastused(bdaddr_t *sba, bdaddr_t *dba)
+{
+	time_t t;
+	struct tm *tm;
+
+	t = time(NULL);
+	tm = gmtime(&t);
+
+	write_lastused_info(sba, dba, tm);
+}
+
+void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 				int8_t rssi, uint8_t *data)
 {
 	char filename[PATH_MAX + 1];
 	struct btd_adapter *adapter;
 	struct btd_device *device;
-	char local_addr[18], peer_addr[18], *alias, *name, *tmp_name;
-	struct remote_dev_info *dev, match;
-	uint8_t name_type = 0x00;
+	char local_addr[18], peer_addr[18], *alias, *name;
 	name_status_t name_status;
-	int state;
+	struct eir_data eir_data;
+	int state, err;
 	dbus_bool_t legacy;
 	unsigned char features[8];
+	const char *dev_name;
 
 	ba2str(local, local_addr);
 	ba2str(peer, peer_addr);
@@ -334,6 +510,7 @@ void btd_event_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 		return;
 	}
 
+	update_lastseen(local, peer);
 	write_remote_class(local, peer, class);
 
 	if (data)
@@ -348,18 +525,6 @@ void btd_event_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	if (!(state & (STATE_STDINQ | STATE_LE_SCAN | STATE_PINQ))) {
 		state |= STATE_PINQ;
 		adapter_set_state(adapter, state);
-	}
-
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, peer);
-	match.name_status = NAME_SENT;
-	/* if found: don't send the name again */
-	dev = adapter_search_found_devices(adapter, &match);
-	if (dev) {
-		adapter_update_found_devices(adapter, peer, rssi, class,
-						NULL, NULL, dev->legacy,
-						NAME_NOT_REQUIRED, data);
-		return;
 	}
 
 	/* the inquiry result can be triggered by NON D-Bus client */
@@ -387,33 +552,30 @@ void btd_event_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	} else
 		legacy = TRUE;
 
-	tmp_name = bt_extract_eir_name(data, &name_type);
-	if (tmp_name) {
-		if (name_type == 0x09) {
-			write_device_name(local, peer, tmp_name);
+	memset(&eir_data, 0, sizeof(eir_data));
+	err = parse_eir_data(&eir_data, data, EIR_DATA_LENGTH);
+	if (err < 0)
+		error("Error parsing EIR data: %s (%d)", strerror(-err), -err);
+
+	/* Complete EIR names are always used. Shortened EIR names are only
+	 * used if there is no name already in storage. */
+	dev_name = name;
+	if (eir_data.name != NULL) {
+		if (eir_data.name_complete) {
+			write_device_name(local, peer, eir_data.name);
 			name_status = NAME_NOT_REQUIRED;
-
-			if (name)
-				g_free(name);
-
-			name = tmp_name;
-		} else {
-			if (name)
-				free(tmp_name);
-			else
-				name = tmp_name;
-		}
+			dev_name = eir_data.name;
+		} else if (name == NULL)
+			dev_name = eir_data.name;
 	}
 
-	if (name && name_type != 0x08)
-		name_status = NAME_SENT;
+	adapter_update_found_devices(adapter, peer, rssi, class, dev_name,
+					alias, legacy, eir_data.services,
+					name_status);
 
-	/* add in the list to track name sent/pending */
-	adapter_update_found_devices(adapter, peer, rssi, class, name, alias,
-					legacy, name_status, data);
-
-	g_free(name);
-	g_free(alias);
+	free_eir_data(&eir_data);
+	free(name);
+	free(alias);
 }
 
 void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
@@ -500,7 +662,7 @@ void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 	if (dev_info) {
 		g_free(dev_info->name);
 		dev_info->name = g_strdup(name);
-		adapter_emit_device_found(adapter, dev_info, NULL, 0);
+		adapter_emit_device_found(adapter, dev_info);
 	}
 
 	if (device)
@@ -526,7 +688,7 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	struct btd_device *device;
 	struct btd_adapter *adapter;
 	uint8_t local_auth = 0xff, remote_auth, new_key_type;
-	gboolean bonding, temporary = FALSE;
+	gboolean temporary = FALSE;
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return -ENODEV;
@@ -536,8 +698,6 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	new_key_type = key_type;
 
 	if (key_type == 0x06) {
-		if (device_get_debug_key(device, NULL))
-			old_key_type = 0x03;
 		/* Some buggy controller combinations generate a changed
 		 * combination key for legacy pairing even when there's no
 		 * previous key */
@@ -552,16 +712,12 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	}
 
 	btd_adapter_get_auth_info(adapter, peer, &local_auth);
-	bonding = device_is_bonding(device, NULL);
 
 	DBG("key type 0x%02x old key type 0x%02x new key type 0x%02x",
 					key_type, old_key_type, new_key_type);
 
 	DBG("local auth 0x%02x and remote auth 0x%02x",
 					local_auth, remote_auth);
-
-	/* Clear any previous debug key */
-	device_set_debug_key(device, NULL);
 
 	/* If this is not the first link key set a flag so a subsequent auth
 	 * complete event doesn't trigger SDP and remove any stored key */
@@ -570,9 +726,11 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 		device_remove_bonding(device);
 	}
 
-	/* Store the link key only in runtime memory if it's a debug
-	 * key, else store the link key persistently if one of the
-	 * following is true:
+	/* Skip the storage check if this is a debug key */
+	if (new_key_type == 0x03)
+		goto proceed;
+
+	/* Store the link key persistently if one of the following is true:
 	 * 1. this is a legacy link key
 	 * 2. this is a changed combination key and there was a previously
 	 *    stored one
@@ -583,11 +741,7 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	 * If none of the above match only keep the link key around for
 	 * this connection and set the temporary flag for the device.
 	 */
-	if (new_key_type == 0x03) {
-		DBG("Storing debug key in runtime memory");
-		device_set_debug_key(device, key);
-	} else if (key_type < 0x03 ||
-				(key_type == 0x06 && old_key_type != 0xff) ||
+	if (key_type < 0x03 || (key_type == 0x06 && old_key_type != 0xff) ||
 				(local_auth > 0x01 && remote_auth > 0x01) ||
 				(local_auth == 0x02 || local_auth == 0x03) ||
 				(remote_auth == 0x02 || remote_auth == 0x03)) {
@@ -604,10 +758,15 @@ int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	} else
 		temporary = TRUE;
 
+proceed:
 	if (!device_is_connected(device))
 		device_set_secmode3_conn(device, TRUE);
-	else if (!bonding && old_key_type == 0xff)
-		btd_event_bonding_process_complete(local, peer, 0);
+	else if (!device_is_bonding(device, NULL)) {
+		if (old_key_type == 0xff)
+			btd_event_bonding_process_complete(local, peer, 0);
+		else
+			device_authentication_complete(device);
+	}
 
 	device_set_temporary(device, temporary);
 
@@ -634,7 +793,9 @@ void btd_event_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 		if (device_is_temporary(device))
 			adapter_remove_device(conn, adapter, device, secmode3);
 		return;
-	}
+	} else
+		update_lastused(local, peer);
+
 
 	/* add in the device connetions list */
 	adapter_add_connection(adapter, device, handle);
