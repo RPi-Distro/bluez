@@ -59,25 +59,6 @@ const char *manager_get_base_path(void)
 	return base_path;
 }
 
-void manager_update_svc(struct btd_adapter* adapter, uint8_t svc)
-{
-	adapter_set_service_classes(adapter, svc);
-}
-
-static inline DBusMessage *invalid_args(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg,
-			ERROR_INTERFACE ".InvalidArguments",
-			"Invalid arguments in method call");
-}
-
-static inline DBusMessage *no_such_adapter(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg,
-			ERROR_INTERFACE ".NoSuchAdapter",
-			"No such adapter");
-}
-
 static DBusMessage *default_adapter(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
@@ -87,7 +68,7 @@ static DBusMessage *default_adapter(DBusConnection *conn,
 
 	adapter = manager_find_adapter_by_id(default_adapter_id);
 	if (!adapter)
-		return no_such_adapter(msg);
+		return btd_error_no_such_adapter(msg);
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -120,7 +101,7 @@ static DBusMessage *find_adapter(DBusConnection *conn,
 		path = adapter_any_get_path();
 		if (path != NULL)
 			goto done;
-		return no_such_adapter(msg);
+		return btd_error_no_such_adapter(msg);
 	} else if (!strncmp(pattern, "hci", 3) && strlen(pattern) >= 4) {
 		dev_id = atoi(pattern + 3);
 		adapter = manager_find_adapter_by_id(dev_id);
@@ -128,7 +109,7 @@ static DBusMessage *find_adapter(DBusConnection *conn,
 		adapter = manager_find_adapter_by_address(pattern);
 
 	if (!adapter)
-		return no_such_adapter(msg);
+		return btd_error_no_such_adapter(msg);
 
 	path = adapter_get_path(adapter);
 
@@ -509,5 +490,16 @@ void btd_manager_set_offline(gboolean offline)
 			btd_adapter_switch_offline(adapter);
 		else
 			btd_adapter_restore_powered(adapter);
+	}
+}
+
+void btd_manager_set_did(uint16_t vendor, uint16_t product, uint16_t version)
+{
+	GSList *l;
+
+	for (l = adapters; l != NULL; l = g_slist_next(l)) {
+		struct btd_adapter *adapter = l->data;
+
+		btd_adapter_set_did(adapter, vendor, product, version);
 	}
 }

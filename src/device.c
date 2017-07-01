@@ -107,7 +107,7 @@ struct browse_req {
 
 struct btd_device {
 	bdaddr_t	bdaddr;
-	gboolean	le;
+	device_type_t	type;
 	gchar		*path;
 	char		name[MAX_NAME_LENGTH + 1];
 	char		*alias;
@@ -157,32 +157,6 @@ static uint16_t uuid_list[] = {
 
 static GSList *device_drivers = NULL;
 
-static DBusHandlerResult error_failed(DBusConnection *conn,
-					DBusMessage *msg, const char * desc)
-{
-	return error_common_reply(conn, msg, ERROR_INTERFACE ".Failed", desc);
-}
-
-static DBusHandlerResult error_failed_errno(DBusConnection *conn,
-						DBusMessage *msg, int err)
-{
-	const char *desc = strerror(err);
-
-	return error_failed(conn, msg, desc);
-}
-
-static inline DBusMessage *no_such_adapter(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".NoSuchAdapter",
-							"No such adapter");
-}
-
-static inline DBusMessage *in_progress(DBusMessage *msg, const char *str)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress",
-								"%s", str);
-}
-
 static void browse_request_free(struct browse_req *req)
 {
 	if (req->listener_id)
@@ -212,8 +186,7 @@ static void browse_request_cancel(struct browse_req *req)
 
 	adapter_get_address(adapter, &src);
 
-	if (device->le == FALSE)
-		bt_cancel_discovery(&src, &device->bdaddr);
+	bt_cancel_discovery(&src, &device->bdaddr);
 
 	device->browse = NULL;
 	browse_request_free(req);
@@ -392,9 +365,7 @@ static DBusMessage *set_alias(DBusConnection *conn, DBusMessage *msg,
 	err = write_device_alias(srcaddr, dstaddr,
 			g_str_equal(alias, "") ? NULL : alias);
 	if (err < 0)
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"%s", strerror(-err));
+		return btd_error_failed(msg, strerror(-err));
 
 	g_free(device->alias);
 	device->alias = g_str_equal(alias, "") ? NULL : g_strdup(alias);
@@ -424,9 +395,7 @@ static DBusMessage *set_trust(DBusConnection *conn, DBusMessage *msg,
 
 	err = write_trust(srcaddr, dstaddr, GLOBAL_TRUST, value);
 	if (err < 0)
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"%s", strerror(-err));
+		return btd_error_failed(msg, strerror(-err));
 
 	device->trusted = value;
 
@@ -538,19 +507,10 @@ static DBusMessage *set_blocked(DBusConnection *conn, DBusMessage *msg,
 	case 0:
 		return dbus_message_new_method_return(msg);
 	case EINVAL:
-		return g_dbus_create_error(msg,
-					ERROR_INTERFACE ".NotSupported",
-					"Kernel lacks blacklist support");
+		return btd_error_failed(msg, "Kernel lacks blacklist support");
 	default:
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"%s", strerror(-err));
+		return btd_error_failed(msg, strerror(-err));
 	}
-}
-
-static inline DBusMessage *invalid_args(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InvalidArguments",
-					"Invalid arguments in method call");
 }
 
 static DBusMessage *set_property(DBusConnection *conn,
@@ -561,22 +521,22 @@ static DBusMessage *set_property(DBusConnection *conn,
 	const char *property;
 
 	if (!dbus_message_iter_init(msg, &iter))
-		return invalid_args(msg);
+		return btd_error_invalid_args(msg);
 
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
-		return invalid_args(msg);
+		return btd_error_invalid_args(msg);
 
 	dbus_message_iter_get_basic(&iter, &property);
 	dbus_message_iter_next(&iter);
 
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
-		return invalid_args(msg);
+		return btd_error_invalid_args(msg);
 	dbus_message_iter_recurse(&iter, &sub);
 
 	if (g_str_equal("Trusted", property)) {
 		dbus_bool_t value;
 		if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
-			return invalid_args(msg);
+			return btd_error_invalid_args(msg);
 		dbus_message_iter_get_basic(&sub, &value);
 
 		return set_trust(conn, msg, value, data);
@@ -584,7 +544,7 @@ static DBusMessage *set_property(DBusConnection *conn,
 		const char *alias;
 
 		if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_STRING)
-			return invalid_args(msg);
+			return btd_error_invalid_args(msg);
 		dbus_message_iter_get_basic(&sub, &alias);
 
 		return set_alias(conn, msg, alias, data);
@@ -592,14 +552,14 @@ static DBusMessage *set_property(DBusConnection *conn,
 		dbus_bool_t value;
 
 		if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_BOOLEAN)
-			return invalid_args(msg);
+			return btd_error_invalid_args(msg);
 
 		dbus_message_iter_get_basic(&sub, &value);
 
 		return set_blocked(conn, msg, value, data);
 	}
 
-	return invalid_args(msg);
+	return btd_error_invalid_args(msg);
 }
 
 static void discover_services_req_exit(DBusConnection *conn, void *user_data)
@@ -619,12 +579,11 @@ static DBusMessage *discover_services(DBusConnection *conn,
 	int err;
 
 	if (device->browse)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress",
-						"Discover in progress");
+		return btd_error_in_progress(msg);
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &pattern,
 						DBUS_TYPE_INVALID) == FALSE)
-		goto fail;
+		return btd_error_invalid_args(msg);
 
 	if (strlen(pattern) == 0) {
 		err = device_browse(device, conn, msg, NULL, FALSE);
@@ -634,7 +593,7 @@ static DBusMessage *discover_services(DBusConnection *conn,
 		uuid_t uuid;
 
 		if (bt_string2uuid(&uuid, pattern) < 0)
-			return invalid_args(msg);
+			return btd_error_invalid_args(msg);
 
 		sdp_uuid128_to_uuid(&uuid);
 
@@ -646,8 +605,7 @@ static DBusMessage *discover_services(DBusConnection *conn,
 	return NULL;
 
 fail:
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-					"Discovery Failed");
+	return btd_error_failed(msg, strerror(-err));
 }
 
 static const char *browse_request_get_requestor(struct browse_req *req)
@@ -736,23 +694,17 @@ static DBusMessage *cancel_discover(DBusConnection *conn,
 	const char *requestor;
 
 	if (!device->browse)
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".Failed",
-				"No pending discovery");
+		return btd_error_does_not_exist(msg);
 
 	if (!dbus_message_is_method_call(device->browse->msg, DEVICE_INTERFACE,
 					"DiscoverServices"))
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".NotAuthorized",
-				"Not Authorized");
+		return btd_error_not_authorized(msg);
 
 	requestor = browse_request_get_requestor(device->browse);
 
 	/* only the discover requestor can cancel the inquiry process */
 	if (!requestor || !g_str_equal(requestor, sender))
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".NotAuthorized",
-				"Not Authorized");
+		return btd_error_not_authorized(msg);
 
 	discover_services_reply(device->browse, -ECANCELED, NULL);
 
@@ -818,9 +770,7 @@ static DBusMessage *disconnect(DBusConnection *conn, DBusMessage *msg,
 	struct btd_device *device = user_data;
 
 	if (!device->handle)
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".NotConnected",
-				"Device is not connected");
+		return btd_error_not_connected(msg);
 
 	device_request_disconnect(device, msg);
 
@@ -964,8 +914,8 @@ void device_set_secmode3_conn(struct btd_device *device, gboolean enable)
 }
 
 struct btd_device *device_create(DBusConnection *conn,
-					struct btd_adapter *adapter,
-					const gchar *address, gboolean le)
+				struct btd_adapter *adapter,
+				const gchar *address, device_type_t type)
 {
 	gchar *address_up;
 	struct btd_device *device;
@@ -993,7 +943,7 @@ struct btd_device *device_create(DBusConnection *conn,
 
 	str2ba(address, &device->bdaddr);
 	device->adapter = adapter;
-	device->le = le;
+	device->type = type;
 	adapter_get_address(adapter, &src);
 	ba2str(&src, srcaddr);
 	read_device_name(srcaddr, address, device->name);
@@ -1500,7 +1450,9 @@ send_reply:
 	else if (dbus_message_is_method_call(req->msg, ADAPTER_INTERFACE,
 						"CreateDevice")) {
 		if (err < 0) {
-			error_failed_errno(req->conn, req->msg, -err);
+			DBusMessage *reply;
+			reply = btd_error_failed(req->msg, strerror(-err));
+			g_dbus_send_message(req->conn, reply);
 			goto cleanup;
 		}
 
@@ -1571,15 +1523,17 @@ static void primary_cb(GSList *services, int err, gpointer user_data)
 	struct btd_device *device = req->device;
 
 	if (err) {
-		error_failed_errno(req->conn, req->msg, -err);
+		DBusMessage *reply;
+		reply = btd_error_failed(req->msg, strerror(-err));
+		g_dbus_send_message(req->conn, reply);
 		goto done;
 	}
 
-	services_changed(req->device);
-	device_set_temporary(req->device, FALSE);
-	device_probe_drivers(req->device, services);
+	services_changed(device);
+	device_set_temporary(device, FALSE);
+	device_probe_drivers(device, services);
 
-	create_device_reply(req->device, req);
+	create_device_reply(device, req);
 
 done:
 	device->browse = NULL;
@@ -1656,7 +1610,7 @@ int device_browse(struct btd_device *device, DBusConnection *conn,
 	if (device->browse)
 		return -EBUSY;
 
-	if (device->le)
+	if (device->type == DEVICE_TYPE_LE)
 		req = browse_primary(device, &err);
 	else
 		req = browse_sdp(device, search, reverse, &err);
@@ -1999,7 +1953,7 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 	ba2str(&device->bdaddr, dstaddr);
 
 	if (device->bonding)
-		return in_progress(msg, "Bonding in progress");
+		return btd_error_in_progress(msg);
 
 	/* check if a link key already exists */
 	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr,
@@ -2008,9 +1962,7 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 	str = textfile_caseget(filename, dstaddr);
 	if (str) {
 		free(str);
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".AlreadyExists",
-				"Bonding already exists");
+		return btd_error_already_exists(msg);
 	}
 
 	/* If our IO capability is NoInputNoOutput use medium security
@@ -2029,9 +1981,7 @@ DBusMessage *device_create_bonding(struct btd_device *device,
 				BT_IO_OPT_INVALID);
 	if (io == NULL) {
 		DBusMessage *reply;
-		reply = g_dbus_create_error(msg,
-				ERROR_INTERFACE ".ConnectionAttemptFailed",
-				"%s", err->message);
+		reply = btd_error_failed(msg, err->message);
 		error("bt_io_connect: %s", err->message);
 		g_error_free(err);
 		return reply;

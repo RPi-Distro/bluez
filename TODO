@@ -79,11 +79,6 @@ ATT/GATT
   Priority: Medium
   Complexity: C2
 
-- GATT server: fix read by UUID (read by handle works)
-
-  Priority: Medium
-  Complexity: C2
-
 - gatttool: add an interactive command prompt mode. Many LE devices
   expect the connection to stay up a long time and disable advertising
   after a disconnection so it's inconvenient to use gatttool in the
@@ -132,13 +127,6 @@ ATT/GATT
   Complexity: C1
 
 - Long reads/writes don't work (consisting of multiple request packets)
-
-  Priority: Low
-  Complexity: C2
-
-- Attribute server shall implement attribute permission verification,
-  returning an error code if necessary. See Volume 3, Part F, 3.2.5
-  for more information.
 
   Priority: Low
   Complexity: C2

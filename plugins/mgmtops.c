@@ -55,11 +55,14 @@ static struct controller_info {
 	uint8_t type;
 	bdaddr_t bdaddr;
 	uint8_t features[8];
+	uint8_t dev_class[3];
 	uint16_t manufacturer;
 	uint8_t hci_ver;
 	uint16_t hci_rev;
 	gboolean enabled;
-	uint8_t mode;
+	gboolean discoverable;
+	gboolean pairable;
+	uint8_t sec_mode;
 } *controllers = NULL;
 
 static int mgmt_sock = -1;
@@ -168,21 +171,26 @@ static void mgmt_index_removed(int sk, void *buf, size_t len)
 	remove_controller(index);
 }
 
-static void read_mode(int sk, uint16_t index)
+static void mgmt_powered(int sk, void *buf, size_t len)
 {
-	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_read_mode)];
-	struct mgmt_hdr *hdr = (void *) buf;
-	struct mgmt_cp_read_mode *cp = (void *) &buf[sizeof(*hdr)];
+	struct mgmt_ev_powered *ev = buf;
+	uint16_t index;
 
-	memset(buf, 0, sizeof(buf));
-	hdr->opcode = MGMT_OP_READ_MODE;
-	hdr->len = htobs(sizeof(*cp));
+	if (len < sizeof(*ev)) {
+		error("Too small powered event");
+		return;
+	}
 
-	cp->index = htobs(index);
+	index = btohs(bt_get_unaligned(&ev->index));
 
-	if (write(sk, buf, sizeof(buf)) < 0)
-		error("Unable to send read_mode command: %s (%d)",
-						strerror(errno), errno);
+	if (index > max_index) {
+		DBG("Ignoring powered event for unknown controller %u", index);
+		return;
+	}
+
+	controllers[index].enabled = ev->powered;
+
+	DBG("Controller %u powered %s", index, ev->powered ? "on" : "off");
 }
 
 static void read_index_list_complete(int sk, void *buf, size_t len)
@@ -225,12 +233,6 @@ static void read_info_complete(int sk, void *buf, size_t len)
 		return;
 	}
 
-	if (rp->status != 0) {
-		error("Reading controller info failed: %s (%u)",
-					strerror(rp->status), rp->status);
-		return;
-	}
-
 	index = btohs(bt_get_unaligned(&rp->index));
 	if (index > max_index) {
 		error("Unexpected index %u in read info complete", index);
@@ -239,49 +241,26 @@ static void read_info_complete(int sk, void *buf, size_t len)
 
 	info = &controllers[index];
 	info->type = rp->type;
+	info->enabled = rp->powered;
+	info->discoverable = rp->discoverable;
+	info->pairable = rp->pairable;
+	info->sec_mode = rp->sec_mode;
 	bacpy(&info->bdaddr, &rp->bdaddr);
+	memcpy(info->dev_class, rp->dev_class, 3);
 	memcpy(info->features, rp->features, 8);
 	info->manufacturer = btohs(bt_get_unaligned(&rp->manufacturer));
 	info->hci_ver = rp->hci_ver;
 	info->hci_rev = btohs(bt_get_unaligned(&rp->hci_rev));
 
 	ba2str(&info->bdaddr, addr);
-	DBG("hci%u addr %s type %u manufacturer %d hci ver %d:%d",
-				index, addr, info->type, info->manufacturer,
-				info->hci_ver, info->hci_rev);
-
-	read_mode(sk, index);
-}
-
-static void read_mode_complete(int sk, void *buf, size_t len)
-{
-	struct mgmt_rp_read_mode *rp = buf;
-	struct controller_info *info;
-	uint16_t index;
-
-	if (len < sizeof(*rp)) {
-		error("Too small read mode complete event (%zu != %zu)",
-							len, sizeof(*rp));
-		return;
-	}
-
-	if (rp->status != 0) {
-		error("Reading controller mode failed: %s (%u)",
-					strerror(rp->status), rp->status);
-		return;
-	}
-
-	index = btohs(bt_get_unaligned(&rp->index));
-	if (index > max_index) {
-		error("Unexpected index %u in read mode complete", index);
-		return;
-	}
-
-	info = &controllers[index];
-	info->enabled = rp->enabled ? TRUE : FALSE;
-	info->mode = rp->mode;
-
-	DBG("hci%u enabled %u mode %u", index, info->enabled, info->mode);
+	DBG("hci%u type %u addr %s", index, info->type, addr);
+	DBG("hci%u class 0x%02x%02x%02x", index,
+		info->dev_class[2], info->dev_class[1], info->dev_class[0]);
+	DBG("hci%u manufacturer %d HCI ver %d:%d", index, info->manufacturer,
+						info->hci_ver, info->hci_rev);
+	DBG("hci%u enabled %u discoverable %u pairable %u sec_mode %u", index,
+					info->enabled, info->discoverable,
+					info->pairable, info->sec_mode);
 
 	manager_register_adapter(index, info->enabled);
 
@@ -312,9 +291,6 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 		break;
 	case MGMT_OP_READ_INFO:
 		read_info_complete(sk, ev->data, len - sizeof(*ev));
-		break;
-	case MGMT_OP_READ_MODE:
-		read_mode_complete(sk, ev->data, len - sizeof(*ev));
 		break;
 	default:
 		error("Unknown command complete for opcode %u", opcode);
@@ -410,6 +386,9 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 	case MGMT_EV_INDEX_REMOVED:
 		mgmt_index_removed(sk, buf + MGMT_HDR_SIZE, len);
 		break;
+	case MGMT_EV_POWERED:
+		mgmt_powered(sk, buf + MGMT_HDR_SIZE, len);
+		break;
 	default:
 		error("Unknown Management opcode %u", opcode);
 		break;
@@ -492,7 +471,7 @@ static int mgmt_stop(int index)
 	return -ENOSYS;
 }
 
-static int mgmt_powered(int index, gboolean powered)
+static int mgmt_set_powered(int index, gboolean powered)
 {
 	DBG("index %d powered %d", index, powered);
 	return -ENOSYS;
@@ -510,16 +489,15 @@ static int mgmt_discoverable(int index)
 	return -ENOSYS;
 }
 
-static int mgmt_set_class(int index, uint32_t class)
+static int mgmt_set_dev_class(int index, uint8_t major, uint8_t minor)
 {
-	DBG("index %d class %u", index, class);
+	DBG("index %d major %u minor %u", index, major, minor);
 	return -ENOSYS;
 }
 
-static int mgmt_set_limited_discoverable(int index, uint32_t class,
-							gboolean limited)
+static int mgmt_set_limited_discoverable(int index, gboolean limited)
 {
-	DBG("index %d class %u, limited %d", index, class, limited);
+	DBG("index %d limited %d", index, limited);
 	return -ENOSYS;
 }
 
@@ -597,12 +575,6 @@ static int mgmt_conn_handle(int index, const bdaddr_t *bdaddr, int *handle)
 	return -ENOSYS;
 }
 
-static int mgmt_write_eir_data(int index, uint8_t *data)
-{
-	DBG("index %d", index);
-	return -ENOSYS;
-}
-
 static int mgmt_read_bdaddr(int index, bdaddr_t *bdaddr)
 {
 	char addr[18];
@@ -677,12 +649,6 @@ static int mgmt_read_local_features(int index, uint8_t *features)
 }
 
 static int mgmt_read_local_ext_features(int index)
-{
-	DBG("index %d", index);
-	return -ENOSYS;
-}
-
-static int mgmt_read_link_policy(int index)
 {
 	DBG("index %d", index);
 	return -ENOSYS;
@@ -785,7 +751,7 @@ static struct btd_adapter_ops mgmt_ops = {
 	.cleanup = mgmt_cleanup,
 	.start = mgmt_start,
 	.stop = mgmt_stop,
-	.set_powered = mgmt_powered,
+	.set_powered = mgmt_set_powered,
 	.set_connectable = mgmt_connectable,
 	.set_discoverable = mgmt_discoverable,
 	.set_limited_discoverable = mgmt_set_limited_discoverable,
@@ -796,11 +762,10 @@ static struct btd_adapter_ops mgmt_ops = {
 	.resolve_name = mgmt_resolve_name,
 	.cancel_resolve_name = mgmt_cancel_resolve_name,
 	.set_name = mgmt_set_name,
-	.set_class = mgmt_set_class,
+	.set_dev_class = mgmt_set_dev_class,
 	.set_fast_connectable = mgmt_fast_connectable,
 	.read_clock = mgmt_read_clock,
 	.get_conn_handle = mgmt_conn_handle,
-	.write_eir_data = mgmt_write_eir_data,
 	.read_bdaddr = mgmt_read_bdaddr,
 	.block_device = mgmt_block_device,
 	.unblock_device = mgmt_unblock_device,
@@ -808,7 +773,6 @@ static struct btd_adapter_ops mgmt_ops = {
 	.read_local_version = mgmt_read_local_version,
 	.read_local_features = mgmt_read_local_features,
 	.read_local_ext_features = mgmt_read_local_ext_features,
-	.read_link_policy = mgmt_read_link_policy,
 	.disconnect = mgmt_disconnect,
 	.remove_bonding = mgmt_remove_bonding,
 	.request_authentication = mgmt_request_authentication,
