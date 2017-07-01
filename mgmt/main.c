@@ -37,90 +37,12 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
+#include <bluetooth/sdp.h>
+#include <bluetooth/sdp_lib.h>
 #include <bluetooth/mgmt.h>
 
-#ifndef NELEM
-#define NELEM(x) (sizeof(x) / sizeof((x)[0]))
-#endif
-
-static const char *mgmt_op[] = {
-	"<0x0000>",
-	"Read Version",
-	"Read Features",
-	"Read Index List",
-	"Read Controller Info",
-	"Set Powered",
-	"Set Discoverable",
-	"Set Connectable",
-	"Set Pairable",			/* 0x0008 */
-	"Add UUID",
-	"Remove UUID",
-	"Set Dev Class",
-	"Set Service Cache",
-	"Load Link Keys",
-	"Remove Keys",
-	"Disconnect",
-	"Get Connections",		/* 0x0010 */
-	"PIN Code Reply",
-	"PIN Code Neg Reply",
-	"Set IO Capability",
-	"Pair Device",
-	"User Confirm Reply",
-	"User Confirm Neg Reply",
-	"Set Local Name",
-	"Read Local OOB Data",		/* 0x0018 */
-	"Add Remote OOB Data",
-	"Remove Remove OOB Data",
-	"Start Discoery",
-	"Block Device",
-	"Unblock Device",
-	"Set Fast Connectable",
-};
-
-static const char *mgmt_ev[] = {
-	"<0x0000>",
-	"Command Complete",
-	"Command Status",
-	"Controller Error",
-	"Index Added",
-	"Index Removed",
-	"Powered",
-	"Discoverable",
-	"Connectable",			/* 0x0008 */
-	"Pairable",
-	"New Link Key",
-	"Device Connected",
-	"Device Disconnected",
-	"Connect Failed",
-	"PIN Code Request",
-	"User Confirm Request",
-	"Authentication Failed",	/* 0x0010 */
-	"Local Name Changed",
-	"Device Found",
-	"Remote Name",
-	"Discovering",
-	"Device Blocked",
-	"Device Unblocked",
-};
-
-static const char *mgmt_status[] = {
-	"Success",
-	"Unknown Command",
-	"Not Connected",
-	"Failed",
-	"Connect Failed",
-	"Authentication Failed",
-	"Not Paired",
-	"No Resources",
-	"Timeout",
-	"Already Connected",
-	"Busy",
-	"Rejected",
-	"Not Supported",
-	"Invalid Parameters",
-	"Disconnected",
-	"Not Powered",
-};
+#include <glib.h>
+#include "glib-helper.h"
 
 static bool monitor = false;
 static bool discovery = false;
@@ -136,27 +58,6 @@ static struct pending_cmd {
 	void *user_data;
 	struct pending_cmd *next;
 } *pending = NULL;
-
-static const char *mgmt_opstr(uint16_t op)
-{
-	if (op >= NELEM(mgmt_op))
-		return "<unknown opcode>";
-	return mgmt_op[op];
-}
-
-static const char *mgmt_evstr(uint16_t ev)
-{
-	if (ev >= NELEM(mgmt_ev))
-		return "<unknown event>";
-	return mgmt_ev[ev];
-}
-
-static const char *mgmt_errstr(uint8_t status)
-{
-	if (status >= NELEM(mgmt_status))
-		return "<unknown status>";
-	return mgmt_status[status];
-}
 
 static int mgmt_send_cmd(int mgmt_sk, uint16_t op, uint16_t id, void *data,
 				size_t len, cmd_cb func, void *user_data)
@@ -262,7 +163,7 @@ static int mgmt_cmd_complete(int mgmt_sk, uint16_t index,
 		printf("%s complete, opcode 0x%04x len %u\n", mgmt_opstr(op),
 								op, len);
 
-	mgmt_check_pending(mgmt_sk, op, index, 0, ev->data, len);
+	mgmt_check_pending(mgmt_sk, op, index, ev->status, ev->data, len);
 
 	return 0;
 }
@@ -362,7 +263,7 @@ static int mgmt_new_settings(int mgmt_sk, uint16_t index,
 }
 
 static int mgmt_discovering(int mgmt_sk, uint16_t index,
-					struct mgmt_mode *ev, uint16_t len)
+				struct mgmt_ev_discovering *ev, uint16_t len)
 {
 	if (len < sizeof(*ev)) {
 		fprintf(stderr, "Too short (%u bytes) discovering event\n",
@@ -370,12 +271,12 @@ static int mgmt_discovering(int mgmt_sk, uint16_t index,
 		return -EINVAL;
 	}
 
-	if (ev->val == 0 && discovery)
+	if (ev->discovering == 0 && discovery)
 		exit(EXIT_SUCCESS);
 
 	if (monitor)
-		printf("hci%u discovering %s\n", index,
-						ev->val ? "on" : "off");
+		printf("hci%u type %u discovering %s\n", index,
+				ev->type, ev->discovering ? "on" : "off");
 
 	return 0;
 }
@@ -392,7 +293,7 @@ static int mgmt_new_link_key(int mgmt_sk, uint16_t index,
 
 	if (monitor) {
 		char addr[18];
-		ba2str(&ev->key.bdaddr, addr);
+		ba2str(&ev->key.addr.bdaddr, addr);
 		printf("hci%u new_link_key %s type 0x%02x pin_len %d "
 				"store_hint %u\n", index, addr, ev->key.type,
 				ev->key.pin_len, ev->store_hint);
@@ -411,22 +312,49 @@ static const char *typestr(uint8_t type)
 	return "(unknown)";
 }
 
-static int mgmt_connected(int mgmt_sk, uint16_t index, bool connected,
+static int mgmt_connected(int mgmt_sk, uint16_t index,
+					struct mgmt_ev_device_connected *ev,
+					uint16_t len)
+{
+	uint16_t eir_len;
+
+	if (len < sizeof(*ev)) {
+		fprintf(stderr,
+			"Invalid connected event length (%u bytes)\n", len);
+		return -EINVAL;
+	}
+
+	eir_len = bt_get_le16(&ev->eir_len);
+	if (len != sizeof(*ev) + eir_len) {
+		fprintf(stderr, "Invalid connected event length "
+			"(%u bytes, eir_len %u bytes)\n", len, eir_len);
+		return -EINVAL;
+	}
+
+	if (monitor) {
+		char addr[18];
+		ba2str(&ev->addr.bdaddr, addr);
+		printf("hci%u %s type %s connected eir_len %u\n", index, addr,
+					typestr(ev->addr.type), eir_len);
+	}
+
+	return 0;
+}
+
+static int mgmt_disconnected(int mgmt_sk, uint16_t index,
 				struct mgmt_addr_info *ev, uint16_t len)
 {
-	const char *ev_name = connected ? "connected" : "disconnected";
-
 	if (len != sizeof(*ev)) {
 		fprintf(stderr,
-			"Invalid %s event length (%u bytes)\n", ev_name, len);
+			"Invalid disconnected event length (%u bytes)\n", len);
 		return -EINVAL;
 	}
 
 	if (monitor) {
 		char addr[18];
 		ba2str(&ev->bdaddr, addr);
-		printf("hci%u %s type %s %s\n", index, addr,
-						typestr(ev->type), ev_name);
+		printf("hci%u %s type %s disconnected\n", index, addr,
+							typestr(ev->type));
 	}
 
 	return 0;
@@ -465,7 +393,7 @@ static int mgmt_auth_failed(int mgmt_sk, uint16_t index,
 
 	if (monitor) {
 		char addr[18];
-		ba2str(&ev->bdaddr, addr);
+		ba2str(&ev->addr.bdaddr, addr);
 		printf("hci%u %s auth failed with status 0x%02x (%s)\n",
 			index, addr, ev->status, mgmt_errstr(ev->status));
 	}
@@ -496,7 +424,7 @@ static void confirm_name_rsp(int mgmt_sk, uint16_t op, uint16_t id,
 	struct mgmt_rp_confirm_name *rp = rsp;
 	char addr[18];
 
-	if (status != 0) {
+	if (len == 0 && status != 0) {
 		fprintf(stderr,
 			"hci%u confirm_name failed with status 0x%02x (%s)\n",
 					id, status, mgmt_errstr(status));
@@ -510,12 +438,12 @@ static void confirm_name_rsp(int mgmt_sk, uint16_t op, uint16_t id,
 		return;
 	}
 
-	ba2str(&rp->bdaddr, addr);
+	ba2str(&rp->addr.bdaddr, addr);
 
-	if (rp->status != 0)
+	if (status != 0)
 		fprintf(stderr,
 			"hci%u confirm_name for %s failed: 0x%02x (%s)\n",
-			id, addr, rp->status, mgmt_errstr(status));
+			id, addr, status, mgmt_errstr(status));
 	else
 		printf("hci%u confirm_name succeeded for %s\n", id, addr);
 }
@@ -523,28 +451,37 @@ static void confirm_name_rsp(int mgmt_sk, uint16_t op, uint16_t id,
 static int mgmt_device_found(int mgmt_sk, uint16_t index,
 				struct mgmt_ev_device_found *ev, uint16_t len)
 {
-	if (len != sizeof(*ev)) {
+	uint32_t flags;
+	uint16_t eir_len;
+
+	if (len < sizeof(*ev)) {
 		fprintf(stderr,
-			"Invalid device_found event length (%u bytes)\n", len);
+			"Too short device_found length (%u bytes)\n", len);
+		return -EINVAL;
+	}
+
+	flags = btohs(ev->flags);
+
+	eir_len = bt_get_le16(&ev->eir_len);
+	if (len != sizeof(*ev) + eir_len) {
+		fprintf(stderr, "dev_found: expected %zu bytes, got %u bytes",
+						sizeof(*ev) + eir_len, len);
 		return -EINVAL;
 	}
 
 	if (monitor || discovery) {
 		char addr[18];
 		ba2str(&ev->addr.bdaddr, addr);
-		printf("hci%u dev_found: %s type %s class 0x%02x%02x%02x "
-			"rssi %d confirm_name %u eir (%s)\n", index, addr,
-			typestr(ev->addr.type),
-			ev->dev_class[2], ev->dev_class[1], ev->dev_class[0],
-			ev->rssi, ev->confirm_name,
-			ev->eir[0] == 0 ? "no" : "yes");
+		printf("hci%u dev_found: %s type %s rssi %d "
+			"flags 0x%04x eir_len %u\n", index, addr,
+			typestr(ev->addr.type), ev->rssi, flags, eir_len);
 	}
 
-	if (discovery && ev->confirm_name) {
+	if (discovery && (flags & MGMT_DEV_FOUND_CONFIRM_NAME)) {
 		struct mgmt_cp_confirm_name cp;
 
 		memset(&cp, 0, sizeof(cp));
-		bacpy(&cp.bdaddr, &ev->addr.bdaddr);
+		memcpy(&cp.addr, &ev->addr, sizeof(cp.addr));
 		if (resolve_names)
 			cp.name_known = 0;
 		else
@@ -553,24 +490,6 @@ static int mgmt_device_found(int mgmt_sk, uint16_t index,
 		mgmt_send_cmd(mgmt_sk, MGMT_OP_CONFIRM_NAME, index,
 					&cp, sizeof(cp), confirm_name_rsp,
 					NULL);
-	}
-
-	return 0;
-}
-
-static int mgmt_remote_name(int mgmt_sk, uint16_t index,
-				struct mgmt_ev_remote_name *ev, uint16_t len)
-{
-	if (len != sizeof(*ev)) {
-		fprintf(stderr,
-			"Invalid remote_name event length (%u bytes)\n", len);
-		return -EINVAL;
-	}
-
-	if (monitor || discovery) {
-		char addr[18];
-		ba2str(&ev->bdaddr, addr);
-		printf("hci%u %s name %s\n", index, addr, ev->name);
 	}
 
 	return 0;
@@ -589,13 +508,14 @@ static void pin_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 	printf("hci%u PIN Reply successful\n", id);
 }
 
-static int mgmt_pin_reply(int mgmt_sk, uint16_t index, bdaddr_t *bdaddr,
+static int mgmt_pin_reply(int mgmt_sk, uint16_t index,
+						struct mgmt_addr_info *addr,
 						const char *pin, size_t len)
 {
 	struct mgmt_cp_pin_code_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
+	memcpy(&cp.addr, addr, sizeof(cp.addr));
 	cp.pin_len = len;
 	memcpy(cp.pin_code, pin, len);
 
@@ -616,12 +536,13 @@ static void pin_neg_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 	printf("hci%u PIN Negative Reply successful\n", id);
 }
 
-static int mgmt_pin_neg_reply(int mgmt_sk, uint16_t index, bdaddr_t *bdaddr)
+static int mgmt_pin_neg_reply(int mgmt_sk, uint16_t index,
+						struct mgmt_addr_info *addr)
 {
 	struct mgmt_cp_pin_code_neg_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
+	memcpy(&cp.addr, addr, sizeof(cp.addr));
 
 	return mgmt_send_cmd(mgmt_sk, MGMT_OP_PIN_CODE_NEG_REPLY, index,
 					&cp, sizeof(cp), pin_neg_rsp, NULL);
@@ -642,7 +563,7 @@ static int mgmt_request_pin(int mgmt_sk, uint16_t index,
 
 	if (monitor) {
 		char addr[18];
-		ba2str(&ev->bdaddr, addr);
+		ba2str(&ev->addr.bdaddr, addr);
 		printf("hci%u %s request PIN\n", index, addr);
 	}
 
@@ -652,7 +573,7 @@ static int mgmt_request_pin(int mgmt_sk, uint16_t index,
 	memset(pin, 0, sizeof(pin));
 
 	if (fgets(pin, sizeof(pin), stdin) == NULL || pin[0] == '\n')
-		return mgmt_pin_neg_reply(mgmt_sk, index, &ev->bdaddr);
+		return mgmt_pin_neg_reply(mgmt_sk, index, &ev->addr);
 
 	pin_len = strlen(pin);
 	if (pin[pin_len - 1] == '\n') {
@@ -660,7 +581,7 @@ static int mgmt_request_pin(int mgmt_sk, uint16_t index,
 		pin_len--;
 	}
 
-	return mgmt_pin_reply(mgmt_sk, index, &ev->bdaddr, pin, pin_len);
+	return mgmt_pin_reply(mgmt_sk, index, &ev->addr, pin, pin_len);
 }
 
 static void confirm_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
@@ -681,7 +602,7 @@ static int mgmt_confirm_reply(int mgmt_sk, uint16_t index, bdaddr_t *bdaddr)
 	struct mgmt_cp_user_confirm_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
+	bacpy(&cp.addr.bdaddr, bdaddr);
 
 	return mgmt_send_cmd(mgmt_sk, MGMT_OP_USER_CONFIRM_REPLY, index,
 					&cp, sizeof(cp), confirm_rsp, NULL);
@@ -707,7 +628,7 @@ static int mgmt_confirm_neg_reply(int mgmt_sk, uint16_t index,
 	struct mgmt_cp_user_confirm_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.bdaddr, bdaddr);
+	bacpy(&cp.addr.bdaddr, bdaddr);
 
 	return mgmt_send_cmd(mgmt_sk, MGMT_OP_USER_CONFIRM_NEG_REPLY, index,
 				&cp, sizeof(cp), confirm_neg_rsp, NULL);
@@ -729,7 +650,7 @@ static int mgmt_user_confirm(int mgmt_sk, uint16_t index,
 		return -EINVAL;
 	}
 
-	ba2str(&ev->bdaddr, addr);
+	ba2str(&ev->addr.bdaddr, addr);
 	val = bt_get_le32(&ev->value);
 
 	if (monitor)
@@ -746,7 +667,7 @@ static int mgmt_user_confirm(int mgmt_sk, uint16_t index,
 	memset(rsp, 0, sizeof(rsp));
 
 	if (fgets(rsp, sizeof(rsp), stdin) == NULL || rsp[0] == '\n')
-		return mgmt_confirm_neg_reply(mgmt_sk, index, &ev->bdaddr);
+		return mgmt_confirm_neg_reply(mgmt_sk, index, &ev->addr.bdaddr);
 
 	rsp_len = strlen(rsp);
 	if (rsp[rsp_len - 1] == '\n') {
@@ -755,9 +676,9 @@ static int mgmt_user_confirm(int mgmt_sk, uint16_t index,
 	}
 
 	if (rsp[0] == 'y' || rsp[0] == 'Y')
-		return mgmt_confirm_reply(mgmt_sk, index, &ev->bdaddr);
+		return mgmt_confirm_reply(mgmt_sk, index, &ev->addr.bdaddr);
 	else
-		return mgmt_confirm_neg_reply(mgmt_sk, index, &ev->bdaddr);
+		return mgmt_confirm_neg_reply(mgmt_sk, index, &ev->addr.bdaddr);
 }
 
 static int mgmt_handle_event(int mgmt_sk, uint16_t ev, uint16_t index,
@@ -784,9 +705,9 @@ static int mgmt_handle_event(int mgmt_sk, uint16_t ev, uint16_t index,
 	case MGMT_EV_NEW_LINK_KEY:
 		return mgmt_new_link_key(mgmt_sk, index, data, len);
 	case MGMT_EV_DEVICE_CONNECTED:
-		return mgmt_connected(mgmt_sk, index, true, data, len);
+		return mgmt_connected(mgmt_sk, index, data, len);
 	case MGMT_EV_DEVICE_DISCONNECTED:
-		return mgmt_connected(mgmt_sk, index, false, data, len);
+		return mgmt_disconnected(mgmt_sk, index, data, len);
 	case MGMT_EV_CONNECT_FAILED:
 		return mgmt_conn_failed(mgmt_sk, index, data, len);
 	case MGMT_EV_AUTH_FAILED:
@@ -795,8 +716,6 @@ static int mgmt_handle_event(int mgmt_sk, uint16_t ev, uint16_t index,
 		return mgmt_name_changed(mgmt_sk, index, data, len);
 	case MGMT_EV_DEVICE_FOUND:
 		return mgmt_device_found(mgmt_sk, index, data, len);
-	case MGMT_EV_REMOTE_NAME:
-		return mgmt_remote_name(mgmt_sk, index, data, len);
 	case MGMT_EV_PIN_CODE_REQUEST:
 		return mgmt_request_pin(mgmt_sk, index, data, len);
 	case MGMT_EV_USER_CONFIRM_REQUEST:
@@ -848,6 +767,94 @@ static void cmd_monitor(int mgmt_sk, uint16_t index, int argc, char **argv)
 {
 	printf("Monitoring mgmt events...\n");
 	monitor = true;
+}
+
+static void version_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
+				void *rsp, uint16_t len, void *user_data)
+{
+	struct mgmt_rp_read_version *rp = rsp;
+
+	if (status != 0) {
+		fprintf(stderr, "Reading mgmt version failed with status"
+			" 0x%02x (%s)\n", status, mgmt_errstr(status));
+		exit(EXIT_FAILURE);
+	}
+
+	if (len < sizeof(*rp)) {
+		fprintf(stderr, "Too small version reply (%u bytes)\n", len);
+		exit(EXIT_FAILURE);
+	}
+
+	printf("MGMT Version %u, revision %u\n", rp->version,
+						bt_get_le16(&rp->revision));
+
+	exit(EXIT_SUCCESS);
+}
+
+static void cmd_version(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_READ_VERSION, MGMT_INDEX_NONE,
+					NULL, 0, version_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send read_version cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void commands_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
+				void *rsp, uint16_t len, void *user_data)
+{
+	struct mgmt_rp_read_commands *rp = rsp;
+	uint16_t num_commands, num_events, *opcode;
+	size_t expected_len;
+	int i;
+
+	if (status != 0) {
+		fprintf(stderr, "Reading supported commands failed with status"
+			" 0x%02x (%s)\n", status, mgmt_errstr(status));
+		exit(EXIT_FAILURE);
+	}
+
+	if (len < sizeof(*rp)) {
+		fprintf(stderr, "Too small commands reply (%u bytes)\n", len);
+		exit(EXIT_FAILURE);
+	}
+
+	num_commands = bt_get_le16(&rp->num_commands);
+	num_events = bt_get_le16(&rp->num_events);
+
+	expected_len = sizeof(*rp) + num_commands * sizeof(uint16_t) +
+						num_events * sizeof(uint16_t);
+
+	if (len < expected_len) {
+		fprintf(stderr, "Too small commands reply (%u != %zu)\n",
+							len, expected_len);
+		exit(EXIT_FAILURE);
+	}
+
+	opcode = rp->opcodes;
+
+	printf("%u commands:\n", num_commands);
+	for (i = 0; i < num_commands; i++) {
+		uint16_t op = bt_get_le16(opcode++);
+		printf("\t%s (0x%04x)\n", mgmt_opstr(op), op);
+	}
+
+	printf("%u events:\n", num_events);
+	for (i = 0; i < num_events; i++) {
+		uint16_t ev = bt_get_le16(opcode++);
+		printf("\t%s (0x%04x)\n", mgmt_evstr(ev), ev);
+	}
+
+	exit(EXIT_SUCCESS);
+}
+
+static void cmd_commands(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_READ_COMMANDS, MGMT_INDEX_NONE,
+					NULL, 0, commands_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send read_commands cmd\n");
+		exit(EXIT_FAILURE);
+	}
 }
 
 static void info_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
@@ -1063,17 +1070,45 @@ static void cmd_pairable(int mgmt_sk, uint16_t index, int argc, char **argv)
 	cmd_setting(mgmt_sk, index, MGMT_OP_SET_PAIRABLE, argc, argv);
 }
 
+static void cmd_linksec(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	cmd_setting(mgmt_sk, index, MGMT_OP_SET_LINK_SECURITY, argc, argv);
+}
+
+static void cmd_ssp(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	cmd_setting(mgmt_sk, index, MGMT_OP_SET_SSP, argc, argv);
+}
+
+static void cmd_hs(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	cmd_setting(mgmt_sk, index, MGMT_OP_SET_HS, argc, argv);
+}
+
+static void cmd_le(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	cmd_setting(mgmt_sk, index, MGMT_OP_SET_LE, argc, argv);
+}
+
 static void class_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 				void *rsp, uint16_t len, void *user_data)
 {
-	if (status != 0) {
-		fprintf(stderr,
-			"Setting hci%u class failed with status 0x%02x (%s)",
-					id, status, mgmt_errstr(status));
+	struct mgmt_ev_class_of_dev_changed *rp = rsp;
+
+	if (len == 0 && status != 0) {
+		fprintf(stderr, "%s failed, status 0x%02x (%s)\n",
+				mgmt_opstr(op), status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
 	}
 
-	printf("hci%u class changed\n", id);
+	if (len != sizeof(*rp)) {
+		fprintf(stderr, "Unexpected %s len %u\n", mgmt_opstr(op), len);
+		exit(EXIT_FAILURE);
+	}
+
+	printf("%s succeeded. Class 0x%02x%02x%02x\n", mgmt_opstr(op),
+		rp->class_of_dev[2], rp->class_of_dev[1], rp->class_of_dev[0]);
+
 	exit(EXIT_SUCCESS);
 }
 
@@ -1106,7 +1141,7 @@ static void disconnect_rsp(int mgmt_sk, uint16_t op, uint16_t id,
 	struct mgmt_rp_disconnect *rp = rsp;
 	char addr[18];
 
-	if (status != 0) {
+	if (len == 0 && status != 0) {
 		fprintf(stderr, "Disconnect failed with status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
@@ -1118,15 +1153,15 @@ static void disconnect_rsp(int mgmt_sk, uint16_t op, uint16_t id,
 		exit(EXIT_FAILURE);
 	}
 
-	ba2str(&rp->bdaddr, addr);
+	ba2str(&rp->addr.bdaddr, addr);
 
-	if (rp->status == 0) {
+	if (status == 0) {
 		printf("%s disconnected\n", addr);
 		exit(EXIT_SUCCESS);
 	} else {
 		fprintf(stderr,
 			"Disconnecting %s failed with status 0x%02x (%s)\n",
-				addr, rp->status, mgmt_errstr(rp->status));
+				addr, status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
 	}
 }
@@ -1140,7 +1175,7 @@ static void cmd_disconnect(int mgmt_sk, uint16_t index, int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	str2ba(argv[1], &cp.bdaddr);
+	str2ba(argv[1], &cp.addr.bdaddr);
 
 	if (index == MGMT_INDEX_NONE)
 		index = 0;
@@ -1208,10 +1243,23 @@ static void find_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 	discovery = true;
 }
 
+static void find_usage(void)
+{
+	printf("Usage: btmgmt find [-l|-b]>\n");
+}
+
+static struct option find_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "le-only",	1, 0, 'l' },
+	{ "bredr-only",	1, 0, 'b' },
+	{ 0, 0, 0, 0 }
+};
+
 static void cmd_find(int mgmt_sk, uint16_t index, int argc, char **argv)
 {
 	struct mgmt_cp_start_discovery cp;
 	uint8_t type;
+	int opt;
 
 	if (index == MGMT_INDEX_NONE)
 		index = 0;
@@ -1220,6 +1268,30 @@ static void cmd_find(int mgmt_sk, uint16_t index, int argc, char **argv)
 	hci_set_bit(MGMT_ADDR_BREDR, &type);
 	hci_set_bit(MGMT_ADDR_LE_PUBLIC, &type);
 	hci_set_bit(MGMT_ADDR_LE_RANDOM, &type);
+
+	while ((opt = getopt_long(argc, argv, "+lbh", find_options,
+								NULL)) != -1) {
+		switch (opt) {
+		case 'l':
+			hci_clear_bit(MGMT_ADDR_BREDR, &type);
+			hci_set_bit(MGMT_ADDR_LE_PUBLIC, &type);
+			hci_set_bit(MGMT_ADDR_LE_RANDOM, &type);
+			break;
+		case 'b':
+			hci_set_bit(MGMT_ADDR_BREDR, &type);
+			hci_clear_bit(MGMT_ADDR_LE_PUBLIC, &type);
+			hci_clear_bit(MGMT_ADDR_LE_RANDOM, &type);
+			break;
+		case 'h':
+		default:
+			find_usage();
+			exit(EXIT_SUCCESS);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+	optind = 0;
 
 	memset(&cp, 0, sizeof(cp));
 	cp.type = type;
@@ -1248,7 +1320,7 @@ static void cmd_name(int mgmt_sk, uint16_t index, int argc, char **argv)
 	struct mgmt_cp_set_local_name cp;
 
 	if (argc < 2) {
-		printf("Usage: btmgmt %s <name>\n", argv[0]);
+		printf("Usage: btmgmt %s <name> [shortname]\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -1257,6 +1329,9 @@ static void cmd_name(int mgmt_sk, uint16_t index, int argc, char **argv)
 
 	memset(&cp, 0, sizeof(cp));
 	strncpy((char *) cp.name, argv[1], HCI_MAX_NAME_LENGTH);
+	if (argc > 2)
+		strncpy((char *) cp.short_name, argv[2],
+					MGMT_MAX_SHORT_NAME_LENGTH);
 
 	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_SET_LOCAL_NAME, index,
 					&cp, sizeof(cp), name_rsp, NULL) < 0) {
@@ -1271,7 +1346,7 @@ static void pair_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 	struct mgmt_rp_pair_device *rp = rsp;
 	char addr[18];
 
-	if (status != 0) {
+	if (len == 0 && status != 0) {
 		fprintf(stderr, "Pairing failed with status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
@@ -1284,11 +1359,11 @@ static void pair_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 
 	ba2str(&rp->addr.bdaddr, addr);
 
-	if (rp->status != 0) {
+	if (status != 0) {
 		fprintf(stderr,
 			"Pairing with %s (%s) failed. status 0x%02x (%s)\n",
-			addr, typestr(rp->addr.type), rp->status,
-			mgmt_errstr(rp->status));
+			addr, typestr(rp->addr.type), status,
+			mgmt_errstr(status));
 		exit(EXIT_FAILURE);
 	}
 
@@ -1356,40 +1431,40 @@ static void cmd_pair(int mgmt_sk, uint16_t index, int argc, char **argv)
 	}
 }
 
-static void remove_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
+static void unpair_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
 				void *rsp, uint16_t len, void *user_data)
 {
-	struct mgmt_rp_remove_keys *rp = rsp;
+	struct mgmt_rp_unpair_device *rp = rsp;
 	char addr[18];
 
-	if (status != 0) {
-		fprintf(stderr, "Remove keys failed with status 0x%02x (%s)\n",
+	if (len == 0 && status != 0) {
+		fprintf(stderr, "Unpair device failed. status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
 	}
 
 	if (len != sizeof(*rp)) {
-		fprintf(stderr, "Unexpected remove_keys_rsp len %u\n", len);
+		fprintf(stderr, "Unexpected unpair_device_rsp len %u\n", len);
 		exit(EXIT_FAILURE);
 	}
 
-	ba2str(&rp->bdaddr, addr);
+	ba2str(&rp->addr.bdaddr, addr);
 
-	if (rp->status != 0) {
+	if (status != 0) {
 		fprintf(stderr,
-			"Removing keys for %s failed. status 0x%02x (%s)\n",
-				addr, rp->status, mgmt_errstr(rp->status));
+			"Unpairing %s failed. status 0x%02x (%s)\n",
+				addr, status, mgmt_errstr(status));
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Removed keys for %s\n", addr);
+	printf("%s unpaired\n", addr);
 
 	exit(EXIT_SUCCESS);
 }
 
-static void cmd_remove(int mgmt_sk, uint16_t index, int argc, char **argv)
+static void cmd_unpair(int mgmt_sk, uint16_t index, int argc, char **argv)
 {
-	struct mgmt_cp_remove_keys cp;
+	struct mgmt_cp_unpair_device cp;
 
 	if (argc < 2) {
 		printf("Usage: btmgmt %s <remote address>\n", argv[0]);
@@ -1400,12 +1475,12 @@ static void cmd_remove(int mgmt_sk, uint16_t index, int argc, char **argv)
 		index = 0;
 
 	memset(&cp, 0, sizeof(cp));
-	str2ba(argv[1], &cp.bdaddr);
+	str2ba(argv[1], &cp.addr.bdaddr);
 	cp.disconnect = 1;
 
-	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_REMOVE_KEYS, index, &cp, sizeof(cp),
-						remove_rsp, NULL) < 0) {
-		fprintf(stderr, "Unable to send remove_keys cmd\n");
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_UNPAIR_DEVICE, index, &cp,
+					sizeof(cp), unpair_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send unpair_device cmd\n");
 		exit(EXIT_FAILURE);
 	}
 }
@@ -1440,25 +1515,251 @@ static void cmd_keys(int mgmt_sk, uint16_t index, int argc, char **argv)
 	}
 }
 
+static void block_rsp(int mgmt_sk, uint16_t op, uint16_t id, uint8_t status,
+				void *rsp, uint16_t len, void *user_data)
+{
+	struct mgmt_addr_info *rp = rsp;
+	char addr[18];
+
+	if (len == 0 && status != 0) {
+		fprintf(stderr, "%s failed, status 0x%02x (%s)\n",
+				mgmt_opstr(op), status, mgmt_errstr(status));
+		exit(EXIT_FAILURE);
+	}
+
+	if (len != sizeof(*rp)) {
+		fprintf(stderr, "Unexpected %s len %u\n", mgmt_opstr(op), len);
+		exit(EXIT_FAILURE);
+	}
+
+	ba2str(&rp->bdaddr, addr);
+
+	if (status != 0) {
+		fprintf(stderr, "%s %s (%s) failed. status 0x%02x (%s)\n",
+				mgmt_opstr(op), addr, typestr(rp->type),
+				status, mgmt_errstr(status));
+		exit(EXIT_FAILURE);
+	}
+
+	printf("%s %s succeeded\n", mgmt_opstr(op), addr);
+
+	exit(EXIT_SUCCESS);
+}
+
+static void block_usage(void)
+{
+	printf("Usage: btmgmt block [-t type] <remote address>\n");
+}
+
+static struct option block_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "type",	1, 0, 't' },
+	{ 0, 0, 0, 0 }
+};
+
+static void cmd_block(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_block_device cp;
+	uint8_t type = MGMT_ADDR_BREDR;
+	int opt;
+
+	while ((opt = getopt_long(argc, argv, "+t:h", block_options,
+							NULL)) != -1) {
+		switch (opt) {
+		case 't':
+			type = strtol(optarg, NULL, 0);
+			break;
+		case 'h':
+		default:
+			block_usage();
+			exit(EXIT_SUCCESS);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+	optind = 0;
+
+	if (argc < 1) {
+		block_usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	memset(&cp, 0, sizeof(cp));
+	str2ba(argv[0], &cp.addr.bdaddr);
+	cp.addr.type = type;
+
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_BLOCK_DEVICE, index,
+				&cp, sizeof(cp), block_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send block_device cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void unblock_usage(void)
+{
+	printf("Usage: btmgmt unblock [-t type] <remote address>\n");
+}
+
+static void cmd_unblock(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_unblock_device cp;
+	uint8_t type = MGMT_ADDR_BREDR;
+	int opt;
+
+	while ((opt = getopt_long(argc, argv, "+t:h", block_options,
+							NULL)) != -1) {
+		switch (opt) {
+		case 't':
+			type = strtol(optarg, NULL, 0);
+			break;
+		case 'h':
+		default:
+			unblock_usage();
+			exit(EXIT_SUCCESS);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+	optind = 0;
+
+	if (argc < 1) {
+		unblock_usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	memset(&cp, 0, sizeof(cp));
+	str2ba(argv[0], &cp.addr.bdaddr);
+	cp.addr.type = type;
+
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_UNBLOCK_DEVICE, index,
+				&cp, sizeof(cp), block_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send unblock_device cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void uuid_to_uuid128(uuid_t *uuid128, const uuid_t *uuid)
+{
+	if (uuid->type == SDP_UUID16)
+		sdp_uuid16_to_uuid128(uuid128, uuid);
+	else if (uuid->type == SDP_UUID32)
+		sdp_uuid32_to_uuid128(uuid128, uuid);
+	else
+		memcpy(uuid128, uuid, sizeof(*uuid));
+}
+
+static void cmd_add_uuid(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_add_uuid cp;
+	uint128_t uint128;
+	uuid_t uuid, uuid128;
+
+	if (argc < 3) {
+		printf("UUID and service hint needed\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	if (bt_string2uuid(&uuid, argv[1]) < 0) {
+		printf("Invalid UUID: %s\n", argv[1]);
+		exit(EXIT_FAILURE);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+
+	uuid_to_uuid128(&uuid128, &uuid);
+	ntoh128((uint128_t *) uuid128.value.uuid128.data, &uint128);
+	htob128(&uint128, (uint128_t *) cp.uuid);
+
+	cp.svc_hint = atoi(argv[2]);
+
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_ADD_UUID, index,
+				&cp, sizeof(cp), class_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send add_uuid cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void cmd_remove_uuid(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_remove_uuid cp;
+	uint128_t uint128;
+	uuid_t uuid, uuid128;
+
+	if (argc < 2) {
+		printf("UUID needed\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	if (bt_string2uuid(&uuid, argv[1]) < 0) {
+		printf("Invalid UUID: %s\n", argv[1]);
+		exit(EXIT_FAILURE);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+
+	uuid_to_uuid128(&uuid128, &uuid);
+	ntoh128((uint128_t *) uuid128.value.uuid128.data, &uint128);
+	htob128(&uint128, (uint128_t *) cp.uuid);
+
+	if (mgmt_send_cmd(mgmt_sk, MGMT_OP_REMOVE_UUID, index,
+				&cp, sizeof(cp), class_rsp, NULL) < 0) {
+		fprintf(stderr, "Unable to send remove_uuid cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void cmd_clr_uuids(int mgmt_sk, uint16_t index, int argc, char **argv)
+{
+	char *uuid_any = "00000000-0000-0000-0000-000000000000";
+	char *rm_argv[] = { "rm-uuid", uuid_any, NULL };
+
+	cmd_remove_uuid(mgmt_sk, index, 2, rm_argv);
+}
+
 static struct {
 	char *cmd;
 	void (*func)(int mgmt_sk, uint16_t index, int argc, char **argv);
 	char *doc;
 } command[] = {
 	{ "monitor",	cmd_monitor,	"Monitor events"		},
+	{ "version",	cmd_version,	"Get the MGMT Version"		},
+	{ "commands",	cmd_commands,	"List supported commands"	},
 	{ "info",	cmd_info,	"Show controller info"		},
 	{ "power",	cmd_power,	"Toggle powered state"		},
 	{ "discov",	cmd_discov,	"Toggle discoverable state"	},
 	{ "connectable",cmd_connectable,"Toggle connectable state"	},
 	{ "pairable",	cmd_pairable,	"Toggle pairable state"		},
+	{ "linksec",	cmd_linksec,	"Toggle link level security"	},
+	{ "ssp",	cmd_ssp,	"Toggle SSP mode"		},
+	{ "hs",		cmd_hs,		"Toggle HS Support"		},
+	{ "le",		cmd_le,		"Toggle LE Support"		},
 	{ "class",	cmd_class,	"Set device major/minor class"	},
 	{ "disconnect", cmd_disconnect, "Disconnect device"		},
 	{ "con",	cmd_con,	"List connections"		},
 	{ "find",	cmd_find,	"Discover nearby devices"	},
 	{ "name",	cmd_name,	"Set local name"		},
 	{ "pair",	cmd_pair,	"Pair with a remote device"	},
-	{ "remove",	cmd_remove,	"Remove pairing (all keys)"	},
+	{ "unpair",	cmd_unpair,	"Unpair device"			},
 	{ "keys",	cmd_keys,	"Load Keys"			},
+	{ "block",	cmd_block,	"Block Device"			},
+	{ "unblock",	cmd_unblock,	"Unblock Device"		},
+	{ "add-uuid",	cmd_add_uuid,	"Add UUID"			},
+	{ "rm-uuid",	cmd_add_uuid,	"Remove UUID"			},
+	{ "clr-uuids",	cmd_clr_uuids,	"Clear UUIDs",			},
 	{ NULL, NULL, 0 }
 };
 

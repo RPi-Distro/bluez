@@ -59,7 +59,7 @@ plugin_LTLIBRARIES =
 
 lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h lib/uuid.h \
-		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
+		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h lib/a2mp.h
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 
 BUILT_SOURCES = $(local_headers) src/builtin.h
@@ -70,7 +70,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
-lib_libbluetooth_la_LDFLAGS = -version-info 14:5:11
+lib_libbluetooth_la_LDFLAGS = -version-info 15:0:12
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 noinst_LTLIBRARIES += lib/libbluetooth-private.la
@@ -437,7 +437,7 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
 			-I$(srcdir)/attrib -I$(srcdir)/btio -I$(srcdir)/tools \
-			-I$(builddir)/tools
+			-I$(builddir)/tools -I$(srcdir)/monitor
 
 if MCAP
 INCLUDES += -I$(builddir)/health

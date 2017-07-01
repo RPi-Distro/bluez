@@ -359,13 +359,14 @@ int read_device_name(const char *src, const char *dst, char *name)
 	return 0;
 }
 
-int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data)
+int write_remote_eir(bdaddr_t *local, bdaddr_t *peer, uint8_t *data,
+							uint8_t data_len)
 {
 	char filename[PATH_MAX + 1], addr[18], str[481];
 	int i;
 
 	memset(str, 0, sizeof(str));
-	for (i = 0; i < HCI_MAX_EIR_LENGTH; i++)
+	for (i = 0; i < data_len; i++)
 		sprintf(str + (i * 2), "%2.2X", data[i]);
 
 	create_filename(filename, PATH_MAX, local, "eir");
@@ -1309,4 +1310,36 @@ void delete_device_ccc(bdaddr_t *local, bdaddr_t *peer)
 	/* Deleting all CCC values of a given address */
 	create_filename(filename, PATH_MAX, local, "ccc");
 	delete_by_pattern(filename, addr);
+}
+
+int write_longtermkeys(bdaddr_t *local, bdaddr_t *peer, const char *key)
+{
+	char filename[PATH_MAX + 1], addr[18];
+
+	if (!key)
+		return -EINVAL;
+
+	create_filename(filename, PATH_MAX, local, "longtermkeys");
+
+	create_file(filename, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+	ba2str(peer, addr);
+	return textfile_put(filename, addr, key);
+}
+
+gboolean has_longtermkeys(bdaddr_t *local, bdaddr_t *peer)
+{
+	char filename[PATH_MAX + 1], addr[18], *str;
+
+	create_filename(filename, PATH_MAX, local, "longtermkeys");
+
+	ba2str(peer, addr);
+
+	str = textfile_caseget(filename, addr);
+	if (str) {
+		free(str);
+		return TRUE;
+	}
+
+	return FALSE;
 }

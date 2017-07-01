@@ -116,11 +116,14 @@ static int timestamp = 0;
 static int defer_setup = 0;
 static int priority = -1;
 static int rcvbuf = 0;
+static int chan_policy = -1;
 
-static struct {
+struct lookup_table {
 	char	*name;
 	int	flag;
-} l2cap_modes[] = {
+};
+
+static struct lookup_table l2cap_modes[] = {
 	{ "basic",	L2CAP_MODE_BASIC	},
 	/* Not implemented
 	{ "flowctl",	L2CAP_MODE_FLOWCTL	},
@@ -131,14 +134,32 @@ static struct {
 	{ 0 }
 };
 
-static void list_l2cap_modes(void)
+static struct lookup_table chan_policies[] = {
+	{ "bredr",	BT_CHANNEL_POLICY_BREDR_ONLY		},
+	{ "bredr_pref",	BT_CHANNEL_POLICY_BREDR_PREFERRED	},
+	{ "amp_pref",	BT_CHANNEL_POLICY_AMP_PREFERRED		},
+	{ NULL,		0					},
+};
+
+static int get_lookup_flag(struct lookup_table *table, char *name)
 {
 	int i;
 
-	printf("l2test - L2CAP testing\n"
-		"List L2CAP modes:\n");
-	for (i=0; l2cap_modes[i].name; i++)
-		printf("\t%s\n", l2cap_modes[i].name);
+	for (i = 0; table[i].name; i++)
+		if (!strcasecmp(table[i].name, name))
+			return table[i].flag;
+
+	return -1;
+}
+
+static void print_lookup_values(struct lookup_table *table, char *header)
+{
+	int i;
+
+	printf("%s\n", header);
+
+	for (i = 0; table[i].name; i++)
+		printf("\t%s\n", table[i].name);
 }
 
 static float tv2fl(struct timeval tv)
@@ -282,6 +303,15 @@ static int do_connect(char *svr)
 		}
 	}
 #endif
+
+	if (chan_policy != -1) {
+		if (setsockopt(sk, SOL_BLUETOOTH, BT_CHANNEL_POLICY,
+				&chan_policy, sizeof(chan_policy)) < 0) {
+			syslog(LOG_ERR, "Can't enable chan policy : %s (%d)",
+							strerror(errno), errno);
+			goto error;
+		}
+	}
 
 	/* Enable SO_LINGER */
 	if (linger) {
@@ -1181,6 +1211,7 @@ static void usage(void)
 		"\t[-D milliseconds] delay after sending num frames (default = 0)\n"
 		"\t[-K milliseconds] delay before receiving (default = 0)\n"
 		"\t[-X mode] l2cap mode (help for list, default = basic)\n"
+		"\t[-a policy] chan policy (help for list, default = bredr)\n"
 		"\t[-F fcs] use CRC16 check (default = 1)\n"
 		"\t[-Q num] Max Transmit value (default = 3)\n"
 		"\t[-Z size] Transmission Window size (default = 63)\n"
@@ -1199,12 +1230,13 @@ static void usage(void)
 int main(int argc, char *argv[])
 {
 	struct sigaction sa;
-	int opt, sk, i, mode = RECV, need_addr = 0;
+	int opt, sk, mode = RECV, need_addr = 0;
 
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt=getopt(argc,argv,"rdscuwmntqxyzpb:i:P:I:O:J:B:N:L:W:C:D:X:F:Q:Z:Y:H:K:RUGAESMT")) != EOF) {
-		switch(opt) {
+	while ((opt = getopt(argc, argv, "rdscuwmntqxyzpb:a:"
+		"i:P:I:O:J:B:N:L:W:C:D:X:F:Q:Z:Y:H:K:RUGAESMT")) != EOF) {
+		switch (opt) {
 		case 'r':
 			mode = RECV;
 			break;
@@ -1321,14 +1353,22 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'X':
-			rfcmode = -1;
+			rfcmode = get_lookup_flag(l2cap_modes, optarg);
 
-			for (i = 0; l2cap_modes[i].name; i++)
-				if (!strcasecmp(l2cap_modes[i].name, optarg))
-					rfcmode = l2cap_modes[i].flag;
+			if (rfcmode == -1) {
+				print_lookup_values(l2cap_modes,
+						"List L2CAP modes:");
+				exit(1);
+			}
 
-			if (!strcasecmp(optarg, "help") || rfcmode == -1) {
-				list_l2cap_modes();
+			break;
+
+		case 'a':
+			chan_policy = get_lookup_flag(chan_policies, optarg);
+
+			if (chan_policy == -1) {
+				print_lookup_values(chan_policies,
+						"List L2CAP chan policies:");
 				exit(1);
 			}
 
