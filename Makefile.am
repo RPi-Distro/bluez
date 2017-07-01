@@ -3,6 +3,8 @@ AM_MAKEFLAGS = --no-print-directory
 
 lib_LTLIBRARIES =
 
+noinst_LIBRARIES =
+
 noinst_LTLIBRARIES =
 
 bin_PROGRAMS =
@@ -23,7 +25,7 @@ includedir = @includedir@/bluetooth
 
 include_HEADERS =
 
-if CONFIGFILES
+if DATAFILES
 dbusdir = $(sysconfdir)/dbus-1/system.d
 
 dbus_DATA = src/bluetooth.conf
@@ -35,6 +37,12 @@ conf_DATA =
 statedir = $(localstatedir)/lib/bluetooth
 
 state_DATA =
+
+if SYSTEMD
+systemdunitdir = @SYSTEMD_UNITDIR@
+
+systemdunit_DATA = src/bluetooth.service
+endif
 endif
 
 plugindir = $(libdir)/bluetooth/plugins
@@ -47,17 +55,16 @@ lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 
+BUILT_SOURCES = $(local_headers)
+
 include_HEADERS += $(lib_headers)
 
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
-lib_libbluetooth_la_LDFLAGS = -version-info 14:2:11
+lib_libbluetooth_la_LDFLAGS = -version-info 14:4:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
-
-CLEANFILES += $(local_headers)
-
 
 if SBC
 noinst_LTLIBRARIES += sbc/libsbc.la
@@ -137,7 +144,7 @@ builtin_sources += audio/main.c \
 			audio/telephony.h audio/a2dp-codecs.h
 builtin_nodist += audio/telephony.c
 
-noinst_LIBRARIES = audio/libtelephony.a
+noinst_LIBRARIES += audio/libtelephony.a
 
 audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
 				audio/telephony-maemo5.c audio/telephony-ofono.c \
@@ -153,9 +160,9 @@ builtin_sources += sap/main.c \
 
 builtin_nodist += sap/sap.c
 
-noinst_LIBRARIES = sap/libsap.a
+noinst_LIBRARIES += sap/libsap.a
 
-sap_libsap_a_SOURCES = sap/sap.h sap/sap-dummy.c
+sap_libsap_a_SOURCES = sap/sap.h sap/sap-dummy.c sap/sap-u8500.c
 endif
 
 if INPUTPLUGIN
@@ -184,6 +191,13 @@ builtin_sources += network/main.c \
 			network/connection.h network/connection.c
 endif
 
+if PROXIMITYPLUGIN
+builtin_modules += proximity
+builtin_sources += proximity/main.c \
+			proximity/manager.h proximity/manager.c \
+			proximity/monitor.h proximity/monitor.c
+endif
+
 if SERVICEPLUGIN
 builtin_modules += service
 builtin_sources += plugins/service.c
@@ -202,6 +216,13 @@ builtin_sources += health/hdp_main.c health/hdp_types.h \
 			health/hdp_util.h health/hdp_util.c
 endif
 
+if THERMOMETERPLUGIN
+builtin_modules += thermometer
+builtin_sources += thermometer/main.c \
+			thermometer/manager.h thermometer/manager.c \
+			thermometer/thermometer.h thermometer/thermometer.c
+endif
+
 builtin_modules += hciops mgmtops
 builtin_sources += plugins/hciops.c plugins/mgmtops.c
 
@@ -217,6 +238,14 @@ EXTRA_DIST += plugins/hal.c plugins/formfactor.c
 
 builtin_modules += storage
 builtin_sources += plugins/storage.c
+
+builtin_modules += adaptername
+builtin_sources += plugins/adaptername.c
+
+if WIIMOTEPLUGIN
+builtin_modules += wiimote
+builtin_sources += plugins/wiimote.c
+endif
 
 if MAEMO6PLUGIN
 builtin_modules += maemo6
@@ -248,7 +277,7 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/error.h src/error.c \
 			src/manager.h src/manager.c \
 			src/adapter.h src/adapter.c \
-			src/device.h src/device.c \
+			src/device.h src/device.c src/attio.h \
 			src/dbus-common.c src/dbus-common.h \
 			src/event.h src/event.c \
 			src/oob.h src/oob.c src/eir.h src/eir.c
@@ -267,7 +296,7 @@ CLEANFILES += $(builtin_files)
 
 man_MANS = src/bluetoothd.8
 
-if CONFIGFILES
+if DATAFILES
 conf_DATA += src/main.conf
 endif
 
@@ -276,7 +305,7 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
 			audio/telephony-maemo5.c audio/telephony-ofono.c \
-			audio/telephony-maemo6.c sap/sap-dummy.c
+			audio/telephony-maemo6.c sap/sap-dummy.c sap/sap-u8500.c
 
 
 if ALSA
@@ -298,7 +327,7 @@ audio_libasound_module_ctl_bluetooth_la_LDFLAGS = -module -avoid-version #-expor
 audio_libasound_module_ctl_bluetooth_la_LIBADD = lib/libbluetooth.la @ALSA_LIBS@
 audio_libasound_module_ctl_bluetooth_la_CFLAGS = @ALSA_CFLAGS@
 
-if CONFIGFILES
+if DATAFILES
 alsaconfdir = $(datadir)/alsa
 
 alsaconf_DATA = audio/bluetooth.conf
@@ -333,7 +362,7 @@ EXTRA_DIST += audio/bluetooth.conf
 
 include Makefile.tools
 
-if UDEVRULES
+if DATAFILES
 rulesdir = @UDEV_DIR@/rules.d
 
 udev_files = scripts/bluetooth.rules
@@ -343,7 +372,11 @@ udev_files += scripts/bluetooth-hid2hci.rules
 endif
 
 if PCMCIA
+udevdir = @UDEV_DIR@
+
 udev_files += scripts/bluetooth-serial.rules
+
+dist_udev_SCRIPTS = scripts/bluetooth_serial
 endif
 
 rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
@@ -353,12 +386,6 @@ CLEANFILES += $(rules_DATA)
 
 EXTRA_DIST += scripts/bluetooth.rules \
 		scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules
-
-if PCMCIA
-udevdir = @UDEV_DIR@
-
-dist_udev_SCRIPTS = scripts/bluetooth_serial
-endif
 
 EXTRA_DIST += doc/manager-api.txt \
 		doc/adapter-api.txt doc/device-api.txt \
@@ -385,7 +412,7 @@ pkgconfigdir = $(libdir)/pkgconfig
 
 pkgconfig_DATA = bluez.pc
 
-DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
+DISTCHECK_CONFIGURE_FLAGS = --disable-datafiles
 
 DISTCLEANFILES = $(pkgconfig_DATA)
 

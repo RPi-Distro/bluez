@@ -41,7 +41,6 @@
 
 #include "log.h"
 
-#include "hcid.h"
 #include "adapter.h"
 #include "device.h"
 #include "agent.h"
@@ -424,9 +423,12 @@ done:
 }
 
 static int pincode_request_new(struct agent_request *req, const char *device_path,
-				dbus_bool_t numeric)
+				dbus_bool_t secure)
 {
 	struct agent *agent = req->agent;
+
+	/* TODO: Add a new method or a new param to Agent interface to request
+		secure pin. */
 
 	req->msg = dbus_message_new_method_call(agent->name, agent->path,
 					"org.bluez.Agent", "RequestPinCode");
@@ -449,8 +451,8 @@ static int pincode_request_new(struct agent_request *req, const char *device_pat
 }
 
 int agent_request_pincode(struct agent *agent, struct btd_device *device,
-				agent_pincode_cb cb, void *user_data,
-				GDestroyNotify destroy)
+				agent_pincode_cb cb, gboolean secure,
+				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
 	const gchar *dev_path = device_get_path(device);
@@ -462,7 +464,7 @@ int agent_request_pincode(struct agent *agent, struct btd_device *device,
 	req = agent_request_new(agent, AGENT_REQUEST_PINCODE, cb,
 							user_data, destroy);
 
-	err = pincode_request_new(req, dev_path, FALSE);
+	err = pincode_request_new(req, dev_path, secure);
 	if (err < 0)
 		goto failed;
 

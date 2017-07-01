@@ -83,6 +83,18 @@ struct l2cap_conninfo {
 #define L2CAP_INFO_REQ		0x0a
 #define L2CAP_INFO_RSP		0x0b
 
+/* L2CAP extended feature mask */
+#define L2CAP_FEAT_FLOWCTL	0x00000001
+#define L2CAP_FEAT_RETRANS	0x00000002
+#define L2CAP_FEAT_BIDIR_QOS	0x00000004
+#define L2CAP_FEAT_ERTM		0x00000008
+#define L2CAP_FEAT_STREAMING	0x00000010
+#define L2CAP_FEAT_FCS		0x00000020
+#define L2CAP_FEAT_EXT_FLOW	0x00000040
+#define L2CAP_FEAT_FIXED_CHAN	0x00000080
+#define L2CAP_FEAT_EXT_WINDOW	0x00000100
+#define L2CAP_FEAT_UCD		0x00000200
+
 /* L2CAP structures */
 typedef struct {
 	uint16_t	len;
@@ -147,6 +159,8 @@ typedef struct {
 #define L2CAP_CONF_UNACCEPT	0x0001
 #define L2CAP_CONF_REJECT	0x0002
 #define L2CAP_CONF_UNKNOWN	0x0003
+#define L2CAP_CONF_PENDING	0x0004
+#define L2CAP_CONF_EFS_REJECT	0x0005
 
 typedef struct {
 	uint8_t		type;
@@ -160,6 +174,7 @@ typedef struct {
 #define L2CAP_CONF_QOS		0x03
 #define L2CAP_CONF_RFC		0x04
 #define L2CAP_CONF_FCS		0x05
+#define L2CAP_CONF_EFS		0x06
 
 #define L2CAP_CONF_MAX_SIZE	22
 
@@ -168,6 +183,10 @@ typedef struct {
 #define L2CAP_MODE_FLOWCTL	0x02
 #define L2CAP_MODE_ERTM		0x03
 #define L2CAP_MODE_STREAMING	0x04
+
+#define L2CAP_SERVTYPE_NOTRAFFIC	0x00
+#define L2CAP_SERVTYPE_BESTEFFORT	0x01
+#define L2CAP_SERVTYPE_GUARANTEED	0x02
 
 typedef struct {
 	uint16_t	dcid;

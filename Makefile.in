@@ -75,51 +75,65 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 @AUDIOPLUGIN_TRUE@			audio/telephony.h audio/a2dp-codecs.h
 
 @AUDIOPLUGIN_TRUE@am__append_11 = audio/telephony.c
-@SAPPLUGIN_TRUE@am__append_12 = sap
-@SAPPLUGIN_TRUE@am__append_13 = sap/main.c \
+@AUDIOPLUGIN_TRUE@am__append_12 = audio/libtelephony.a
+@SAPPLUGIN_TRUE@am__append_13 = sap
+@SAPPLUGIN_TRUE@am__append_14 = sap/main.c \
 @SAPPLUGIN_TRUE@			sap/manager.h sap/manager.c \
 @SAPPLUGIN_TRUE@			sap/server.h sap/server.c \
 @SAPPLUGIN_TRUE@			sap/sap.h
 
-@SAPPLUGIN_TRUE@am__append_14 = sap/sap.c
-@INPUTPLUGIN_TRUE@am__append_15 = input
-@INPUTPLUGIN_TRUE@am__append_16 = input/main.c \
+@SAPPLUGIN_TRUE@am__append_15 = sap/sap.c
+@SAPPLUGIN_TRUE@am__append_16 = sap/libsap.a
+@INPUTPLUGIN_TRUE@am__append_17 = input
+@INPUTPLUGIN_TRUE@am__append_18 = input/main.c \
 @INPUTPLUGIN_TRUE@			input/manager.h input/manager.c \
 @INPUTPLUGIN_TRUE@			input/server.h input/server.c \
 @INPUTPLUGIN_TRUE@			input/device.h input/device.c \
 @INPUTPLUGIN_TRUE@			input/fakehid.c input/fakehid.h
 
-@SERIALPLUGIN_TRUE@am__append_17 = serial
-@SERIALPLUGIN_TRUE@am__append_18 = serial/main.c \
+@SERIALPLUGIN_TRUE@am__append_19 = serial
+@SERIALPLUGIN_TRUE@am__append_20 = serial/main.c \
 @SERIALPLUGIN_TRUE@			serial/manager.h serial/manager.c \
 @SERIALPLUGIN_TRUE@			serial/proxy.h serial/proxy.c \
 @SERIALPLUGIN_TRUE@			serial/port.h serial/port.c
 
-@NETWORKPLUGIN_TRUE@am__append_19 = network
-@NETWORKPLUGIN_TRUE@am__append_20 = network/main.c \
+@NETWORKPLUGIN_TRUE@am__append_21 = network
+@NETWORKPLUGIN_TRUE@am__append_22 = network/main.c \
 @NETWORKPLUGIN_TRUE@			network/manager.h network/manager.c \
 @NETWORKPLUGIN_TRUE@			network/common.h network/common.c \
 @NETWORKPLUGIN_TRUE@			network/server.h network/server.c \
 @NETWORKPLUGIN_TRUE@			network/connection.h network/connection.c
 
-@SERVICEPLUGIN_TRUE@am__append_21 = service
-@SERVICEPLUGIN_TRUE@am__append_22 = plugins/service.c
-@GATT_EXAMPLE_PLUGIN_TRUE@am__append_23 = gatt_example
-@GATT_EXAMPLE_PLUGIN_TRUE@am__append_24 = plugins/gatt-example.c
-@HEALTHPLUGIN_TRUE@am__append_25 = health
-@HEALTHPLUGIN_TRUE@am__append_26 = health/hdp_main.c health/hdp_types.h \
+@PROXIMITYPLUGIN_TRUE@am__append_23 = proximity
+@PROXIMITYPLUGIN_TRUE@am__append_24 = proximity/main.c \
+@PROXIMITYPLUGIN_TRUE@			proximity/manager.h proximity/manager.c \
+@PROXIMITYPLUGIN_TRUE@			proximity/monitor.h proximity/monitor.c
+
+@SERVICEPLUGIN_TRUE@am__append_25 = service
+@SERVICEPLUGIN_TRUE@am__append_26 = plugins/service.c
+@GATT_EXAMPLE_PLUGIN_TRUE@am__append_27 = gatt_example
+@GATT_EXAMPLE_PLUGIN_TRUE@am__append_28 = plugins/gatt-example.c
+@HEALTHPLUGIN_TRUE@am__append_29 = health
+@HEALTHPLUGIN_TRUE@am__append_30 = health/hdp_main.c health/hdp_types.h \
 @HEALTHPLUGIN_TRUE@			health/hdp_manager.h health/hdp_manager.c \
 @HEALTHPLUGIN_TRUE@			health/hdp.h health/hdp.c \
 @HEALTHPLUGIN_TRUE@			health/hdp_util.h health/hdp_util.c
 
-@HAL_TRUE@am__append_27 = hal
-@HAL_TRUE@am__append_28 = plugins/hal.c
-@HAL_FALSE@am__append_29 = formfactor
-@HAL_FALSE@am__append_30 = plugins/formfactor.c
-@MAEMO6PLUGIN_TRUE@am__append_31 = maemo6
-@MAEMO6PLUGIN_TRUE@am__append_32 = plugins/maemo6.c
-@DBUSOOBPLUGIN_TRUE@am__append_33 = dbusoob
-@DBUSOOBPLUGIN_TRUE@am__append_34 = plugins/dbusoob.c
+@THERMOMETERPLUGIN_TRUE@am__append_31 = thermometer
+@THERMOMETERPLUGIN_TRUE@am__append_32 = thermometer/main.c \
+@THERMOMETERPLUGIN_TRUE@			thermometer/manager.h thermometer/manager.c \
+@THERMOMETERPLUGIN_TRUE@			thermometer/thermometer.h thermometer/thermometer.c
+
+@HAL_TRUE@am__append_33 = hal
+@HAL_TRUE@am__append_34 = plugins/hal.c
+@HAL_FALSE@am__append_35 = formfactor
+@HAL_FALSE@am__append_36 = plugins/formfactor.c
+@WIIMOTEPLUGIN_TRUE@am__append_37 = wiimote
+@WIIMOTEPLUGIN_TRUE@am__append_38 = plugins/wiimote.c
+@MAEMO6PLUGIN_TRUE@am__append_39 = maemo6
+@MAEMO6PLUGIN_TRUE@am__append_40 = plugins/maemo6.c
+@DBUSOOBPLUGIN_TRUE@am__append_41 = dbusoob
+@DBUSOOBPLUGIN_TRUE@am__append_42 = plugins/dbusoob.c
 DIST_COMMON = README $(am__configure_deps) \
 	$(am__dist_udev_SCRIPTS_DIST) $(dist_man_MANS) \
 	$(include_HEADERS) $(srcdir)/Makefile.am $(srcdir)/Makefile.in \
@@ -127,64 +141,65 @@ DIST_COMMON = README $(am__configure_deps) \
 	$(srcdir)/config.h.in $(top_srcdir)/configure \
 	$(top_srcdir)/doc/version.xml.in \
 	$(top_srcdir)/scripts/bluetooth.rules.in \
+	$(top_srcdir)/src/bluetooth.service.in \
 	$(top_srcdir)/src/bluetoothd.8.in AUTHORS COPYING COPYING.LIB \
 	ChangeLog INSTALL NEWS TODO compile config.guess config.sub \
 	depcomp install-sh ltmain.sh missing tools/lexer.c \
 	tools/parser.c tools/parser.h ylwrap
-@CONFIGFILES_TRUE@@TOOLS_TRUE@am__append_35 = tools/rfcomm.conf
-@TOOLS_TRUE@am__append_36 = tools/rfcomm tools/l2ping \
+@DATAFILES_TRUE@@TOOLS_TRUE@am__append_43 = tools/rfcomm.conf
+@TOOLS_TRUE@am__append_44 = tools/rfcomm tools/l2ping \
 @TOOLS_TRUE@				tools/hcitool tools/sdptool tools/ciptool
 
-@TOOLS_TRUE@am__append_37 = tools/hciattach tools/hciconfig
-@TOOLS_TRUE@am__append_38 = tools/avinfo tools/ppporc \
+@TOOLS_TRUE@am__append_45 = tools/hciattach tools/hciconfig
+@TOOLS_TRUE@am__append_46 = tools/avinfo tools/ppporc \
 @TOOLS_TRUE@				tools/hcieventmask tools/hcisecfilter
 
-@READLINE_TRUE@@TOOLS_TRUE@am__append_39 = attrib/gatttool
-@TOOLS_TRUE@am__append_40 = tools/rfcomm.1 tools/l2ping.8 \
+@READLINE_TRUE@@TOOLS_TRUE@am__append_47 = attrib/gatttool
+@TOOLS_TRUE@am__append_48 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_TRUE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_TRUE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TOOLS_FALSE@am__append_41 = tools/rfcomm.1 tools/l2ping.8 \
+@TOOLS_FALSE@am__append_49 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_FALSE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_FALSE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TRACER_TRUE@am__append_42 = tracer/hcitrace
-@BCCMD_TRUE@am__append_43 = tools/bccmd
-@BCCMD_TRUE@@USB_TRUE@am__append_44 = tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__append_45 = @USB_LIBS@
-@BCCMD_TRUE@am__append_46 = tools/bccmd.8
-@BCCMD_FALSE@am__append_47 = tools/bccmd.8
+@TRACER_TRUE@am__append_50 = tracer/hcitrace
+@BCCMD_TRUE@am__append_51 = tools/bccmd
+@BCCMD_TRUE@@USB_TRUE@am__append_52 = tools/csr_usb.c
+@BCCMD_TRUE@@USB_TRUE@am__append_53 = @USB_LIBS@
+@BCCMD_TRUE@am__append_54 = tools/bccmd.8
+@BCCMD_FALSE@am__append_55 = tools/bccmd.8
 @HID2HCI_TRUE@udev_PROGRAMS = tools/hid2hci$(EXEEXT)
-@HID2HCI_TRUE@am__append_48 = tools/hid2hci.8
-@HID2HCI_FALSE@am__append_49 = tools/hid2hci.8
-@DFUTOOL_TRUE@am__append_50 = tools/dfutool
-@DFUTOOL_TRUE@am__append_51 = tools/dfutool.1
-@DFUTOOL_FALSE@am__append_52 = tools/dfutool.1
-@USB_TRUE@am__append_53 = tools/dfubabel tools/avctrl
+@HID2HCI_TRUE@am__append_56 = tools/hid2hci.8
+@HID2HCI_FALSE@am__append_57 = tools/hid2hci.8
+@DFUTOOL_TRUE@am__append_58 = tools/dfutool
+@DFUTOOL_TRUE@am__append_59 = tools/dfutool.1
+@DFUTOOL_FALSE@am__append_60 = tools/dfutool.1
+@USB_TRUE@am__append_61 = tools/dfubabel tools/avctrl
 @CUPS_TRUE@cups_PROGRAMS = cups/bluetooth$(EXEEXT)
-@TEST_TRUE@am__append_54 = test/hciemu
-@TEST_TRUE@am__append_55 = test/l2test test/rctest
-@TEST_TRUE@am__append_56 = test/gaptest test/sdptest test/scotest \
+@TEST_TRUE@am__append_62 = test/hciemu
+@TEST_TRUE@am__append_63 = test/l2test test/rctest
+@TEST_TRUE@am__append_64 = test/gaptest test/sdptest test/scotest \
 @TEST_TRUE@			test/attest test/hstest test/avtest test/ipctest \
 @TEST_TRUE@					test/lmptest test/bdaddr test/agent \
 @TEST_TRUE@					test/btiotest test/test-textfile \
 @TEST_TRUE@					test/uuidtest
 
-@TEST_TRUE@am__append_57 = test/rctest.1 test/hciemu.1
-@TEST_TRUE@am__append_58 = test/bdaddr.8
-@TEST_FALSE@am__append_59 = test/rctest.1 test/hciemu.1 test/bdaddr.8
-@HIDD_TRUE@am__append_60 = compat/hidd
-@HIDD_TRUE@am__append_61 = compat/hidd.1
-@HIDD_FALSE@am__append_62 = compat/hidd.1
-@PAND_TRUE@am__append_63 = compat/pand
-@PAND_TRUE@am__append_64 = compat/pand.1
-@PAND_FALSE@am__append_65 = compat/pand.1
-@DUND_TRUE@am__append_66 = compat/dund
-@DUND_TRUE@am__append_67 = compat/dund.1
-@DUND_FALSE@am__append_68 = compat/dund.1
-@HID2HCI_TRUE@@UDEVRULES_TRUE@am__append_69 = scripts/bluetooth-hid2hci.rules
-@PCMCIA_TRUE@@UDEVRULES_TRUE@am__append_70 = scripts/bluetooth-serial.rules
-@MCAP_TRUE@am__append_71 = -I$(builddir)/health
+@TEST_TRUE@am__append_65 = test/rctest.1 test/hciemu.1
+@TEST_TRUE@am__append_66 = test/bdaddr.8
+@TEST_FALSE@am__append_67 = test/rctest.1 test/hciemu.1 test/bdaddr.8
+@HIDD_TRUE@am__append_68 = compat/hidd
+@HIDD_TRUE@am__append_69 = compat/hidd.1
+@HIDD_FALSE@am__append_70 = compat/hidd.1
+@PAND_TRUE@am__append_71 = compat/pand
+@PAND_TRUE@am__append_72 = compat/pand.1
+@PAND_FALSE@am__append_73 = compat/pand.1
+@DUND_TRUE@am__append_74 = compat/dund
+@DUND_TRUE@am__append_75 = compat/dund.1
+@DUND_FALSE@am__append_76 = compat/dund.1
+@DATAFILES_TRUE@@HID2HCI_TRUE@am__append_77 = scripts/bluetooth-hid2hci.rules
+@DATAFILES_TRUE@@PCMCIA_TRUE@am__append_78 = scripts/bluetooth-serial.rules
+@MCAP_TRUE@am__append_79 = -I$(builddir)/health
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
@@ -196,7 +211,7 @@ am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
 CONFIG_CLEAN_FILES = scripts/bluetooth.rules doc/version.xml \
-	src/bluetoothd.8 bluez.pc
+	src/bluetoothd.8 src/bluetooth.service bluez.pc
 CONFIG_CLEAN_VPATH_FILES =
 LIBRARIES = $(noinst_LIBRARIES)
 ARFLAGS = cru
@@ -220,8 +235,10 @@ am__dirstamp = $(am__leading_dot)dirstamp
 audio_libtelephony_a_OBJECTS = $(am_audio_libtelephony_a_OBJECTS)
 sap_libsap_a_AR = $(AR) $(ARFLAGS)
 sap_libsap_a_LIBADD =
-am__sap_libsap_a_SOURCES_DIST = sap/sap.h sap/sap-dummy.c
-@SAPPLUGIN_TRUE@am_sap_libsap_a_OBJECTS = sap/sap-dummy.$(OBJEXT)
+am__sap_libsap_a_SOURCES_DIST = sap/sap.h sap/sap-dummy.c \
+	sap/sap-u8500.c
+@SAPPLUGIN_TRUE@am_sap_libsap_a_OBJECTS = sap/sap-dummy.$(OBJEXT) \
+@SAPPLUGIN_TRUE@	sap/sap-u8500.$(OBJEXT)
 sap_libsap_a_OBJECTS = $(am_sap_libsap_a_OBJECTS)
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -252,7 +269,8 @@ am__installdirs = "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" \
 	"$(DESTDIR)$(man8dir)" "$(DESTDIR)$(alsaconfdir)" \
 	"$(DESTDIR)$(confdir)" "$(DESTDIR)$(dbusdir)" \
 	"$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(rulesdir)" \
-	"$(DESTDIR)$(statedir)" "$(DESTDIR)$(includedir)"
+	"$(DESTDIR)$(statedir)" "$(DESTDIR)$(systemdunitdir)" \
+	"$(DESTDIR)$(includedir)"
 LTLIBRARIES = $(alsa_LTLIBRARIES) $(gstreamer_LTLIBRARIES) \
 	$(lib_LTLIBRARIES) $(noinst_LTLIBRARIES) $(plugin_LTLIBRARIES)
 @ALSA_TRUE@audio_libasound_module_ctl_bluetooth_la_DEPENDENCIES =  \
@@ -453,28 +471,33 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 	serial/proxy.c serial/port.h serial/port.c network/main.c \
 	network/manager.h network/manager.c network/common.h \
 	network/common.c network/server.h network/server.c \
-	network/connection.h network/connection.c plugins/service.c \
-	plugins/gatt-example.c health/hdp_main.c health/hdp_types.h \
-	health/hdp_manager.h health/hdp_manager.c health/hdp.h \
-	health/hdp.c health/hdp_util.h health/hdp_util.c \
+	network/connection.h network/connection.c proximity/main.c \
+	proximity/manager.h proximity/manager.c proximity/monitor.h \
+	proximity/monitor.c plugins/service.c plugins/gatt-example.c \
+	health/hdp_main.c health/hdp_types.h health/hdp_manager.h \
+	health/hdp_manager.c health/hdp.h health/hdp.c \
+	health/hdp_util.h health/hdp_util.c thermometer/main.c \
+	thermometer/manager.h thermometer/manager.c \
+	thermometer/thermometer.h thermometer/thermometer.c \
 	plugins/hciops.c plugins/mgmtops.c plugins/hal.c \
-	plugins/formfactor.c plugins/storage.c plugins/maemo6.c \
-	plugins/dbusoob.c attrib/att.h attrib/att.c attrib/gatt.h \
-	attrib/gatt.c attrib/gattrib.h attrib/gattrib.c \
-	attrib/client.h attrib/client.c btio/btio.h btio/btio.c \
-	health/mcap_lib.h health/mcap_internal.h health/mcap.h \
-	health/mcap.c health/mcap_sync.c src/bluetooth.ver src/main.c \
-	src/log.h src/log.c src/rfkill.c src/hcid.h src/sdpd.h \
-	src/sdpd-server.c src/sdpd-request.c src/sdpd-service.c \
-	src/sdpd-database.c src/attrib-server.h src/attrib-server.c \
-	src/sdp-xml.h src/sdp-xml.c src/textfile.h src/textfile.c \
-	src/glib-helper.h src/glib-helper.c src/oui.h src/oui.c \
-	src/uinput.h src/ppoll.h src/plugin.h src/plugin.c \
-	src/storage.h src/storage.c src/agent.h src/agent.c \
-	src/error.h src/error.c src/manager.h src/manager.c \
-	src/adapter.h src/adapter.c src/device.h src/device.c \
-	src/dbus-common.c src/dbus-common.h src/event.h src/event.c \
-	src/oob.h src/oob.c src/eir.h src/eir.c
+	plugins/formfactor.c plugins/storage.c plugins/adaptername.c \
+	plugins/wiimote.c plugins/maemo6.c plugins/dbusoob.c \
+	attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
+	attrib/gattrib.h attrib/gattrib.c attrib/client.h \
+	attrib/client.c btio/btio.h btio/btio.c health/mcap_lib.h \
+	health/mcap_internal.h health/mcap.h health/mcap.c \
+	health/mcap_sync.c src/bluetooth.ver src/main.c src/log.h \
+	src/log.c src/rfkill.c src/hcid.h src/sdpd.h src/sdpd-server.c \
+	src/sdpd-request.c src/sdpd-service.c src/sdpd-database.c \
+	src/attrib-server.h src/attrib-server.c src/sdp-xml.h \
+	src/sdp-xml.c src/textfile.h src/textfile.c src/glib-helper.h \
+	src/glib-helper.c src/oui.h src/oui.c src/uinput.h src/ppoll.h \
+	src/plugin.h src/plugin.c src/storage.h src/storage.c \
+	src/agent.h src/agent.c src/error.h src/error.c src/manager.h \
+	src/manager.c src/adapter.h src/adapter.c src/device.h \
+	src/device.c src/attio.h src/dbus-common.c src/dbus-common.h \
+	src/event.h src/event.c src/oob.h src/oob.c src/eir.h \
+	src/eir.c
 @PNATPLUGIN_TRUE@am__objects_3 = plugins/pnat.$(OBJEXT)
 @ECHOPLUGIN_TRUE@am__objects_4 = plugins/echo.$(OBJEXT)
 @AUDIOPLUGIN_TRUE@am__objects_5 = audio/main.$(OBJEXT) \
@@ -504,31 +527,40 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 @NETWORKPLUGIN_TRUE@	network/common.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/server.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/connection.$(OBJEXT)
-@SERVICEPLUGIN_TRUE@am__objects_10 = plugins/service.$(OBJEXT)
-@GATT_EXAMPLE_PLUGIN_TRUE@am__objects_11 =  \
+@PROXIMITYPLUGIN_TRUE@am__objects_10 = proximity/main.$(OBJEXT) \
+@PROXIMITYPLUGIN_TRUE@	proximity/manager.$(OBJEXT) \
+@PROXIMITYPLUGIN_TRUE@	proximity/monitor.$(OBJEXT)
+@SERVICEPLUGIN_TRUE@am__objects_11 = plugins/service.$(OBJEXT)
+@GATT_EXAMPLE_PLUGIN_TRUE@am__objects_12 =  \
 @GATT_EXAMPLE_PLUGIN_TRUE@	plugins/gatt-example.$(OBJEXT)
-@HEALTHPLUGIN_TRUE@am__objects_12 = health/hdp_main.$(OBJEXT) \
+@HEALTHPLUGIN_TRUE@am__objects_13 = health/hdp_main.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/hdp_manager.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/hdp.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/hdp_util.$(OBJEXT)
-@HAL_TRUE@am__objects_13 = plugins/hal.$(OBJEXT)
-@HAL_FALSE@am__objects_14 = plugins/formfactor.$(OBJEXT)
-@MAEMO6PLUGIN_TRUE@am__objects_15 = plugins/maemo6.$(OBJEXT)
-@DBUSOOBPLUGIN_TRUE@am__objects_16 = plugins/dbusoob.$(OBJEXT)
-am__objects_17 = $(am__objects_3) $(am__objects_4) $(am__objects_5) \
+@THERMOMETERPLUGIN_TRUE@am__objects_14 = thermometer/main.$(OBJEXT) \
+@THERMOMETERPLUGIN_TRUE@	thermometer/manager.$(OBJEXT) \
+@THERMOMETERPLUGIN_TRUE@	thermometer/thermometer.$(OBJEXT)
+@HAL_TRUE@am__objects_15 = plugins/hal.$(OBJEXT)
+@HAL_FALSE@am__objects_16 = plugins/formfactor.$(OBJEXT)
+@WIIMOTEPLUGIN_TRUE@am__objects_17 = plugins/wiimote.$(OBJEXT)
+@MAEMO6PLUGIN_TRUE@am__objects_18 = plugins/maemo6.$(OBJEXT)
+@DBUSOOBPLUGIN_TRUE@am__objects_19 = plugins/dbusoob.$(OBJEXT)
+am__objects_20 = $(am__objects_3) $(am__objects_4) $(am__objects_5) \
 	$(am__objects_6) $(am__objects_7) $(am__objects_8) \
 	$(am__objects_9) $(am__objects_10) $(am__objects_11) \
-	$(am__objects_12) plugins/hciops.$(OBJEXT) \
-	plugins/mgmtops.$(OBJEXT) $(am__objects_13) $(am__objects_14) \
-	plugins/storage.$(OBJEXT) $(am__objects_15) $(am__objects_16)
-am__objects_18 = attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
+	$(am__objects_12) $(am__objects_13) $(am__objects_14) \
+	plugins/hciops.$(OBJEXT) plugins/mgmtops.$(OBJEXT) \
+	$(am__objects_15) $(am__objects_16) plugins/storage.$(OBJEXT) \
+	plugins/adaptername.$(OBJEXT) $(am__objects_17) \
+	$(am__objects_18) $(am__objects_19)
+am__objects_21 = attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
 	attrib/gattrib.$(OBJEXT) attrib/client.$(OBJEXT)
-am__objects_19 = btio/btio.$(OBJEXT)
-@MCAP_TRUE@am__objects_20 = health/mcap.$(OBJEXT) \
+am__objects_22 = btio/btio.$(OBJEXT)
+@MCAP_TRUE@am__objects_23 = health/mcap.$(OBJEXT) \
 @MCAP_TRUE@	health/mcap_sync.$(OBJEXT)
-am__objects_21 = $(am__objects_20)
-am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_17) \
-	$(am__objects_18) $(am__objects_19) $(am__objects_21) \
+am__objects_24 = $(am__objects_23)
+am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_20) \
+	$(am__objects_21) $(am__objects_22) $(am__objects_24) \
 	src/main.$(OBJEXT) src/log.$(OBJEXT) src/rfkill.$(OBJEXT) \
 	src/sdpd-server.$(OBJEXT) src/sdpd-request.$(OBJEXT) \
 	src/sdpd-service.$(OBJEXT) src/sdpd-database.$(OBJEXT) \
@@ -539,11 +571,11 @@ am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_17) \
 	src/adapter.$(OBJEXT) src/device.$(OBJEXT) \
 	src/dbus-common.$(OBJEXT) src/event.$(OBJEXT) \
 	src/oob.$(OBJEXT) src/eir.$(OBJEXT)
-@AUDIOPLUGIN_TRUE@am__objects_22 = audio/telephony.$(OBJEXT)
-@SAPPLUGIN_TRUE@am__objects_23 = sap/sap.$(OBJEXT)
-am__objects_24 = $(am__objects_22) $(am__objects_23)
-am__objects_25 = $(am__objects_24)
-nodist_src_bluetoothd_OBJECTS = $(am__objects_25)
+@AUDIOPLUGIN_TRUE@am__objects_25 = audio/telephony.$(OBJEXT)
+@SAPPLUGIN_TRUE@am__objects_26 = sap/sap.$(OBJEXT)
+am__objects_27 = $(am__objects_25) $(am__objects_26)
+am__objects_28 = $(am__objects_27)
+nodist_src_bluetoothd_OBJECTS = $(am__objects_28)
 src_bluetoothd_OBJECTS = $(am_src_bluetoothd_OBJECTS) \
 	$(nodist_src_bluetoothd_OBJECTS)
 src_bluetoothd_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -618,12 +650,12 @@ tools_avinfo_OBJECTS = tools/avinfo.$(OBJEXT)
 am__tools_bccmd_SOURCES_DIST = tools/bccmd.c tools/csr.h tools/csr.c \
 	tools/csr_hci.c tools/csr_h4.c tools/csr_3wire.c \
 	tools/csr_bcsp.c tools/ubcsp.h tools/ubcsp.c tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__objects_26 = tools/csr_usb.$(OBJEXT)
+@BCCMD_TRUE@@USB_TRUE@am__objects_29 = tools/csr_usb.$(OBJEXT)
 @BCCMD_TRUE@am_tools_bccmd_OBJECTS = tools/bccmd.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr.$(OBJEXT) tools/csr_hci.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_h4.$(OBJEXT) tools/csr_3wire.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_bcsp.$(OBJEXT) tools/ubcsp.$(OBJEXT) \
-@BCCMD_TRUE@	$(am__objects_26)
+@BCCMD_TRUE@	$(am__objects_29)
 tools_bccmd_OBJECTS = $(am_tools_bccmd_OBJECTS)
 am__DEPENDENCIES_1 =
 @BCCMD_TRUE@tools_bccmd_DEPENDENCIES = lib/libbluetooth.la \
@@ -796,7 +828,7 @@ man8dir = $(mandir)/man8
 NROFF = nroff
 MANS = $(dist_man_MANS) $(man_MANS)
 DATA = $(alsaconf_DATA) $(conf_DATA) $(dbus_DATA) $(pkgconfig_DATA) \
-	$(rules_DATA) $(state_DATA)
+	$(rules_DATA) $(state_DATA) $(systemdunit_DATA)
 HEADERS = $(include_HEADERS)
 ETAGS = etags
 CTAGS = ctags
@@ -891,6 +923,7 @@ SNDFILE_CFLAGS = @SNDFILE_CFLAGS@
 SNDFILE_LIBS = @SNDFILE_LIBS@
 STORAGEDIR = @STORAGEDIR@
 STRIP = @STRIP@
+SYSTEMD_UNITDIR = @SYSTEMD_UNITDIR@
 TELEPHONY_DRIVER = @TELEPHONY_DRIVER@
 UDEV_CFLAGS = @UDEV_CFLAGS@
 UDEV_DIR = @UDEV_DIR@
@@ -954,23 +987,24 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AM_MAKEFLAGS = --no-print-directory
 lib_LTLIBRARIES = lib/libbluetooth.la
+noinst_LIBRARIES = $(am__append_12) $(am__append_16)
 noinst_LTLIBRARIES = $(am__append_1)
-dist_man_MANS = $(am__append_40) $(am__append_46) $(am__append_48) \
-	$(am__append_51) $(am__append_57) $(am__append_61) \
-	$(am__append_64) $(am__append_67)
+dist_man_MANS = $(am__append_48) $(am__append_54) $(am__append_56) \
+	$(am__append_59) $(am__append_65) $(am__append_69) \
+	$(am__append_72) $(am__append_75)
 dist_noinst_MANS = 
-CLEANFILES = $(local_headers) $(builtin_files) tools/lexer.c \
-	tools/parser.c tools/parser.h $(rules_DATA)
+CLEANFILES = $(builtin_files) tools/lexer.c tools/parser.c \
+	tools/parser.h $(rules_DATA)
 EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	src/bluetooth.conf src/main.conf network/network.conf \
 	input/input.conf serial/serial.conf audio/audio.conf \
 	audio/telephony-dummy.c audio/telephony-maemo5.c \
 	audio/telephony-ofono.c audio/telephony-maemo6.c \
-	sap/sap-dummy.c audio/bluetooth.conf $(am__append_41) \
-	tools/rfcomm.conf $(am__append_47) $(am__append_49) \
-	$(am__append_52) tools/dfubabel.1 tools/avctrl.8 \
-	$(am__append_58) $(am__append_59) test/apitest test/sap-client \
-	test/hsplay test/hsmicro test/dbusdef.py \
+	sap/sap-dummy.c sap/sap-u8500.c audio/bluetooth.conf \
+	$(am__append_49) tools/rfcomm.conf $(am__append_55) \
+	$(am__append_57) $(am__append_60) tools/dfubabel.1 \
+	tools/avctrl.8 $(am__append_66) $(am__append_67) test/apitest \
+	test/sap-client test/hsplay test/hsmicro test/dbusdef.py \
 	test/monitor-bluetooth test/list-devices test/test-discovery \
 	test/test-manager test/test-adapter test/test-device \
 	test/test-service test/test-serial test/test-telephony \
@@ -979,7 +1013,7 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	test/test-attrib test/test-sap-server test/test-oob \
 	test/service-record.dtd test/service-did.xml \
 	test/service-spp.xml test/service-opp.xml test/service-ftp.xml \
-	$(am__append_62) $(am__append_65) $(am__append_68) \
+	$(am__append_70) $(am__append_73) $(am__append_76) \
 	scripts/bluetooth.rules scripts/bluetooth-hid2hci.rules \
 	scripts/bluetooth-serial.rules doc/manager-api.txt \
 	doc/adapter-api.txt doc/device-api.txt doc/service-api.txt \
@@ -988,12 +1022,14 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	doc/control-api.txt doc/hfp-api.txt doc/health-api.txt \
 	doc/sap-api.txt doc/media-api.txt doc/assigned-numbers.txt
 include_HEADERS = $(lib_headers)
-@CONFIGFILES_TRUE@dbusdir = $(sysconfdir)/dbus-1/system.d
-@CONFIGFILES_TRUE@dbus_DATA = src/bluetooth.conf
-@CONFIGFILES_TRUE@confdir = $(sysconfdir)/bluetooth
-@CONFIGFILES_TRUE@conf_DATA = src/main.conf $(am__append_35)
-@CONFIGFILES_TRUE@statedir = $(localstatedir)/lib/bluetooth
-@CONFIGFILES_TRUE@state_DATA = 
+@DATAFILES_TRUE@dbusdir = $(sysconfdir)/dbus-1/system.d
+@DATAFILES_TRUE@dbus_DATA = src/bluetooth.conf
+@DATAFILES_TRUE@confdir = $(sysconfdir)/bluetooth
+@DATAFILES_TRUE@conf_DATA = src/main.conf $(am__append_43)
+@DATAFILES_TRUE@statedir = $(localstatedir)/lib/bluetooth
+@DATAFILES_TRUE@state_DATA = 
+@DATAFILES_TRUE@@SYSTEMD_TRUE@systemdunitdir = @SYSTEMD_UNITDIR@
+@DATAFILES_TRUE@@SYSTEMD_TRUE@systemdunit_DATA = src/bluetooth.service
 plugindir = $(libdir)/bluetooth/plugins
 plugin_LTLIBRARIES = 
 lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
@@ -1001,10 +1037,11 @@ lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
+BUILT_SOURCES = $(local_headers)
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 14:2:11
+lib_libbluetooth_la_LDFLAGS = -version-info 14:4:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 @SBC_TRUE@			sbc/sbc_primitives.h sbc/sbc_primitives.c \
@@ -1031,25 +1068,25 @@ gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
 
 btio_sources = btio/btio.h btio/btio.c
 builtin_modules = $(am__append_5) $(am__append_7) $(am__append_9) \
-	$(am__append_12) $(am__append_15) $(am__append_17) \
-	$(am__append_19) $(am__append_21) $(am__append_23) \
-	$(am__append_25) hciops mgmtops $(am__append_27) \
-	$(am__append_29) storage $(am__append_31) $(am__append_33)
+	$(am__append_13) $(am__append_17) $(am__append_19) \
+	$(am__append_21) $(am__append_23) $(am__append_25) \
+	$(am__append_27) $(am__append_29) $(am__append_31) hciops \
+	mgmtops $(am__append_33) $(am__append_35) storage adaptername \
+	$(am__append_37) $(am__append_39) $(am__append_41)
 builtin_sources = $(am__append_6) $(am__append_8) $(am__append_10) \
-	$(am__append_13) $(am__append_16) $(am__append_18) \
-	$(am__append_20) $(am__append_22) $(am__append_24) \
-	$(am__append_26) plugins/hciops.c plugins/mgmtops.c \
-	$(am__append_28) $(am__append_30) plugins/storage.c \
-	$(am__append_32) $(am__append_34)
-builtin_nodist = $(am__append_11) $(am__append_14)
+	$(am__append_14) $(am__append_18) $(am__append_20) \
+	$(am__append_22) $(am__append_24) $(am__append_26) \
+	$(am__append_28) $(am__append_30) $(am__append_32) \
+	plugins/hciops.c plugins/mgmtops.c $(am__append_34) \
+	$(am__append_36) plugins/storage.c plugins/adaptername.c \
+	$(am__append_38) $(am__append_40) $(am__append_42)
+builtin_nodist = $(am__append_11) $(am__append_15)
 mcap_sources = $(am__append_4)
-@AUDIOPLUGIN_TRUE@noinst_LIBRARIES = audio/libtelephony.a
-@SAPPLUGIN_TRUE@noinst_LIBRARIES = sap/libsap.a
 @AUDIOPLUGIN_TRUE@audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
 @AUDIOPLUGIN_TRUE@				audio/telephony-maemo5.c audio/telephony-ofono.c \
 @AUDIOPLUGIN_TRUE@				audio/telephony-maemo6.c
 
-@SAPPLUGIN_TRUE@sap_libsap_a_SOURCES = sap/sap.h sap/sap-dummy.c
+@SAPPLUGIN_TRUE@sap_libsap_a_SOURCES = sap/sap.h sap/sap-dummy.c sap/sap-u8500.c
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			$(attrib_sources) $(btio_sources) \
 			$(mcap_sources) src/bluetooth.ver \
@@ -1068,7 +1105,7 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/error.h src/error.c \
 			src/manager.h src/manager.c \
 			src/adapter.h src/adapter.c \
-			src/device.h src/device.c \
+			src/device.h src/device.c src/attio.h \
 			src/dbus-common.c src/dbus-common.h \
 			src/event.h src/event.c \
 			src/oob.h src/oob.c src/eir.h src/eir.c
@@ -1101,8 +1138,8 @@ man_MANS = src/bluetoothd.8
 @ALSA_TRUE@audio_libasound_module_ctl_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_ctl_.*
 @ALSA_TRUE@audio_libasound_module_ctl_bluetooth_la_LIBADD = lib/libbluetooth.la @ALSA_LIBS@
 @ALSA_TRUE@audio_libasound_module_ctl_bluetooth_la_CFLAGS = @ALSA_CFLAGS@
-@ALSA_TRUE@@CONFIGFILES_TRUE@alsaconfdir = $(datadir)/alsa
-@ALSA_TRUE@@CONFIGFILES_TRUE@alsaconf_DATA = audio/bluetooth.conf
+@ALSA_TRUE@@DATAFILES_TRUE@alsaconfdir = $(datadir)/alsa
+@ALSA_TRUE@@DATAFILES_TRUE@alsaconf_DATA = audio/bluetooth.conf
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamerdir = $(libdir)/gstreamer-0.10
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamer_LTLIBRARIES = audio/libgstbluetooth.la
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
@@ -1166,10 +1203,10 @@ man_MANS = src/bluetoothd.8
 @BCCMD_TRUE@tools_bccmd_SOURCES = tools/bccmd.c tools/csr.h \
 @BCCMD_TRUE@	tools/csr.c tools/csr_hci.c tools/csr_h4.c \
 @BCCMD_TRUE@	tools/csr_3wire.c tools/csr_bcsp.c tools/ubcsp.h \
-@BCCMD_TRUE@	tools/ubcsp.c $(am__append_44)
-@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_45)
+@BCCMD_TRUE@	tools/ubcsp.c $(am__append_52)
+@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_53)
+@DATAFILES_TRUE@@PCMCIA_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@udevdir = @UDEV_DIR@
-@PCMCIA_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@ @UDEV_LIBS@
 @DFUTOOL_TRUE@tools_dfutool_SOURCES = tools/dfutool.c tools/dfu.h tools/dfu.c
 @DFUTOOL_TRUE@tools_dfutool_LDADD = @USB_LIBS@
@@ -1215,27 +1252,27 @@ man_MANS = src/bluetoothd.8
 @DUND_TRUE@						src/textfile.h src/textfile.c
 
 @DUND_TRUE@compat_dund_LDADD = lib/libbluetooth.la
-@UDEVRULES_TRUE@rulesdir = @UDEV_DIR@/rules.d
-@UDEVRULES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_69) \
-@UDEVRULES_TRUE@	$(am__append_70)
-@UDEVRULES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
-@PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
+@DATAFILES_TRUE@rulesdir = @UDEV_DIR@/rules.d
+@DATAFILES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_77) \
+@DATAFILES_TRUE@	$(am__append_78)
+@DATAFILES_TRUE@@PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
+@DATAFILES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
 AM_YFLAGS = -d
 AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ \
 		-DBLUETOOTH_PLUGIN_BUILTIN -DPLUGINDIR=\""$(plugindir)"\"
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 	-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
-	-I$(srcdir)/attrib -I$(srcdir)/btio $(am__append_71)
+	-I$(srcdir)/attrib -I$(srcdir)/btio $(am__append_79)
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = bluez.pc
-DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
+DISTCHECK_CONFIGURE_FLAGS = --disable-datafiles
 DISTCLEANFILES = $(pkgconfig_DATA)
 MAINTAINERCLEANFILES = Makefile.in \
 	aclocal.m4 configure config.h.in config.sub config.guess \
 	ltmain.sh depcomp compile missing install-sh mkinstalldirs ylwrap
 
-all: config.h
+all: $(BUILT_SOURCES) config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am
 
 .SUFFIXES:
@@ -1297,6 +1334,8 @@ doc/version.xml: $(top_builddir)/config.status $(top_srcdir)/doc/version.xml.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 src/bluetoothd.8: $(top_builddir)/config.status $(top_srcdir)/src/bluetoothd.8.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
+src/bluetooth.service: $(top_builddir)/config.status $(top_srcdir)/src/bluetooth.service.in
+	cd $(top_builddir) && $(SHELL) ./config.status $@
 bluez.pc: $(top_builddir)/config.status $(srcdir)/bluez.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 
@@ -1327,6 +1366,8 @@ sap/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) sap/$(DEPDIR)
 	@: > sap/$(DEPDIR)/$(am__dirstamp)
 sap/sap-dummy.$(OBJEXT): sap/$(am__dirstamp) \
+	sap/$(DEPDIR)/$(am__dirstamp)
+sap/sap-u8500.$(OBJEXT): sap/$(am__dirstamp) \
 	sap/$(DEPDIR)/$(am__dirstamp)
 sap/libsap.a: $(sap_libsap_a_OBJECTS) $(sap_libsap_a_DEPENDENCIES) sap/$(am__dirstamp)
 	$(AM_V_at)-rm -f sap/libsap.a
@@ -1918,6 +1959,18 @@ network/server.$(OBJEXT): network/$(am__dirstamp) \
 	network/$(DEPDIR)/$(am__dirstamp)
 network/connection.$(OBJEXT): network/$(am__dirstamp) \
 	network/$(DEPDIR)/$(am__dirstamp)
+proximity/$(am__dirstamp):
+	@$(MKDIR_P) proximity
+	@: > proximity/$(am__dirstamp)
+proximity/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) proximity/$(DEPDIR)
+	@: > proximity/$(DEPDIR)/$(am__dirstamp)
+proximity/main.$(OBJEXT): proximity/$(am__dirstamp) \
+	proximity/$(DEPDIR)/$(am__dirstamp)
+proximity/manager.$(OBJEXT): proximity/$(am__dirstamp) \
+	proximity/$(DEPDIR)/$(am__dirstamp)
+proximity/monitor.$(OBJEXT): proximity/$(am__dirstamp) \
+	proximity/$(DEPDIR)/$(am__dirstamp)
 plugins/service.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/gatt-example.$(OBJEXT): plugins/$(am__dirstamp) \
@@ -1936,6 +1989,18 @@ health/hdp.$(OBJEXT): health/$(am__dirstamp) \
 	health/$(DEPDIR)/$(am__dirstamp)
 health/hdp_util.$(OBJEXT): health/$(am__dirstamp) \
 	health/$(DEPDIR)/$(am__dirstamp)
+thermometer/$(am__dirstamp):
+	@$(MKDIR_P) thermometer
+	@: > thermometer/$(am__dirstamp)
+thermometer/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) thermometer/$(DEPDIR)
+	@: > thermometer/$(DEPDIR)/$(am__dirstamp)
+thermometer/main.$(OBJEXT): thermometer/$(am__dirstamp) \
+	thermometer/$(DEPDIR)/$(am__dirstamp)
+thermometer/manager.$(OBJEXT): thermometer/$(am__dirstamp) \
+	thermometer/$(DEPDIR)/$(am__dirstamp)
+thermometer/thermometer.$(OBJEXT): thermometer/$(am__dirstamp) \
+	thermometer/$(DEPDIR)/$(am__dirstamp)
 plugins/hciops.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/mgmtops.$(OBJEXT): plugins/$(am__dirstamp) \
@@ -1945,6 +2010,10 @@ plugins/hal.$(OBJEXT): plugins/$(am__dirstamp) \
 plugins/formfactor.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/storage.$(OBJEXT): plugins/$(am__dirstamp) \
+	plugins/$(DEPDIR)/$(am__dirstamp)
+plugins/adaptername.$(OBJEXT): plugins/$(am__dirstamp) \
+	plugins/$(DEPDIR)/$(am__dirstamp)
+plugins/wiimote.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/maemo6.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
@@ -2348,6 +2417,7 @@ mostlyclean-compile:
 	-rm -f network/main.$(OBJEXT)
 	-rm -f network/manager.$(OBJEXT)
 	-rm -f network/server.$(OBJEXT)
+	-rm -f plugins/adaptername.$(OBJEXT)
 	-rm -f plugins/dbusoob.$(OBJEXT)
 	-rm -f plugins/echo.$(OBJEXT)
 	-rm -f plugins/formfactor.$(OBJEXT)
@@ -2359,9 +2429,14 @@ mostlyclean-compile:
 	-rm -f plugins/pnat.$(OBJEXT)
 	-rm -f plugins/service.$(OBJEXT)
 	-rm -f plugins/storage.$(OBJEXT)
+	-rm -f plugins/wiimote.$(OBJEXT)
+	-rm -f proximity/main.$(OBJEXT)
+	-rm -f proximity/manager.$(OBJEXT)
+	-rm -f proximity/monitor.$(OBJEXT)
 	-rm -f sap/main.$(OBJEXT)
 	-rm -f sap/manager.$(OBJEXT)
 	-rm -f sap/sap-dummy.$(OBJEXT)
+	-rm -f sap/sap-u8500.$(OBJEXT)
 	-rm -f sap/sap.$(OBJEXT)
 	-rm -f sap/server.$(OBJEXT)
 	-rm -f sbc/sbc_libsbc_la-sbc.$(OBJEXT)
@@ -2423,6 +2498,9 @@ mostlyclean-compile:
 	-rm -f test/sdptest.$(OBJEXT)
 	-rm -f test/test-textfile.$(OBJEXT)
 	-rm -f test/uuidtest.$(OBJEXT)
+	-rm -f thermometer/main.$(OBJEXT)
+	-rm -f thermometer/manager.$(OBJEXT)
+	-rm -f thermometer/thermometer.$(OBJEXT)
 	-rm -f tools/avctrl.$(OBJEXT)
 	-rm -f tools/avinfo.$(OBJEXT)
 	-rm -f tools/bccmd.$(OBJEXT)
@@ -2536,6 +2614,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/manager.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/server.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/adaptername.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/dbusoob.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/echo.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/formfactor.Po@am__quote@
@@ -2547,9 +2626,14 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/pnat.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/service.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/storage.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/wiimote.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@proximity/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@proximity/$(DEPDIR)/manager.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@proximity/$(DEPDIR)/monitor.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/manager.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/sap-dummy.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/sap-u8500.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/sap.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sap/$(DEPDIR)/server.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc.Plo@am__quote@
@@ -2605,6 +2689,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/sdptest.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/test-textfile.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/uuidtest.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@thermometer/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@thermometer/$(DEPDIR)/manager.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@thermometer/$(DEPDIR)/thermometer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/avctrl.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/avinfo.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/bccmd.Po@am__quote@
@@ -3038,6 +3125,26 @@ uninstall-stateDATA:
 	test -n "$$files" || exit 0; \
 	echo " ( cd '$(DESTDIR)$(statedir)' && rm -f" $$files ")"; \
 	cd "$(DESTDIR)$(statedir)" && rm -f $$files
+install-systemdunitDATA: $(systemdunit_DATA)
+	@$(NORMAL_INSTALL)
+	test -z "$(systemdunitdir)" || $(MKDIR_P) "$(DESTDIR)$(systemdunitdir)"
+	@list='$(systemdunit_DATA)'; test -n "$(systemdunitdir)" || list=; \
+	for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  echo "$$d$$p"; \
+	done | $(am__base_list) | \
+	while read files; do \
+	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(systemdunitdir)'"; \
+	  $(INSTALL_DATA) $$files "$(DESTDIR)$(systemdunitdir)" || exit $$?; \
+	done
+
+uninstall-systemdunitDATA:
+	@$(NORMAL_UNINSTALL)
+	@list='$(systemdunit_DATA)'; test -n "$(systemdunitdir)" || list=; \
+	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
+	test -n "$$files" || exit 0; \
+	echo " ( cd '$(DESTDIR)$(systemdunitdir)' && rm -f" $$files ")"; \
+	cd "$(DESTDIR)$(systemdunitdir)" && rm -f $$files
 install-includeHEADERS: $(include_HEADERS)
 	@$(NORMAL_INSTALL)
 	test -z "$(includedir)" || $(MKDIR_P) "$(DESTDIR)$(includedir)"
@@ -3272,16 +3379,18 @@ distcleancheck: distclean
 	       $(distcleancheck_listfiles) ; \
 	       exit 1; } >&2
 check-am: all-am
-check: check-am
+check: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) check-am
 all-am: Makefile $(LIBRARIES) $(LTLIBRARIES) $(PROGRAMS) $(SCRIPTS) \
 		$(MANS) $(DATA) $(HEADERS) config.h
 install-binPROGRAMS: install-libLTLIBRARIES
 
 installdirs:
-	for dir in "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" "$(DESTDIR)$(libdir)" "$(DESTDIR)$(plugindir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(cupsdir)" "$(DESTDIR)$(sbindir)" "$(DESTDIR)$(udevdir)" "$(DESTDIR)$(udevdir)" "$(DESTDIR)$(man1dir)" "$(DESTDIR)$(man8dir)" "$(DESTDIR)$(alsaconfdir)" "$(DESTDIR)$(confdir)" "$(DESTDIR)$(dbusdir)" "$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(rulesdir)" "$(DESTDIR)$(statedir)" "$(DESTDIR)$(includedir)"; do \
+	for dir in "$(DESTDIR)$(alsadir)" "$(DESTDIR)$(gstreamerdir)" "$(DESTDIR)$(libdir)" "$(DESTDIR)$(plugindir)" "$(DESTDIR)$(bindir)" "$(DESTDIR)$(cupsdir)" "$(DESTDIR)$(sbindir)" "$(DESTDIR)$(udevdir)" "$(DESTDIR)$(udevdir)" "$(DESTDIR)$(man1dir)" "$(DESTDIR)$(man8dir)" "$(DESTDIR)$(alsaconfdir)" "$(DESTDIR)$(confdir)" "$(DESTDIR)$(dbusdir)" "$(DESTDIR)$(pkgconfigdir)" "$(DESTDIR)$(rulesdir)" "$(DESTDIR)$(statedir)" "$(DESTDIR)$(systemdunitdir)" "$(DESTDIR)$(includedir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
-install: install-am
+install: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) install-am
 install-exec: install-exec-am
 install-data: install-data-am
 uninstall: uninstall-am
@@ -3325,6 +3434,8 @@ distclean-generic:
 	-rm -f network/$(am__dirstamp)
 	-rm -f plugins/$(DEPDIR)/$(am__dirstamp)
 	-rm -f plugins/$(am__dirstamp)
+	-rm -f proximity/$(DEPDIR)/$(am__dirstamp)
+	-rm -f proximity/$(am__dirstamp)
 	-rm -f sap/$(DEPDIR)/$(am__dirstamp)
 	-rm -f sap/$(am__dirstamp)
 	-rm -f sbc/$(DEPDIR)/$(am__dirstamp)
@@ -3335,6 +3446,8 @@ distclean-generic:
 	-rm -f src/$(am__dirstamp)
 	-rm -f test/$(DEPDIR)/$(am__dirstamp)
 	-rm -f test/$(am__dirstamp)
+	-rm -f thermometer/$(DEPDIR)/$(am__dirstamp)
+	-rm -f thermometer/$(am__dirstamp)
 	-rm -f tools/$(DEPDIR)/$(am__dirstamp)
 	-rm -f tools/$(am__dirstamp)
 	-rm -f tracer/$(DEPDIR)/$(am__dirstamp)
@@ -3347,6 +3460,7 @@ maintainer-clean-generic:
 	-rm -f tools/lexer.c
 	-rm -f tools/parser.c
 	-rm -f tools/parser.h
+	-test -z "$(BUILT_SOURCES)" || rm -f $(BUILT_SOURCES)
 	-test -z "$(MAINTAINERCLEANFILES)" || rm -f $(MAINTAINERCLEANFILES)
 clean: clean-am
 
@@ -3359,7 +3473,7 @@ clean-am: clean-alsaLTLIBRARIES clean-binPROGRAMS clean-cupsPROGRAMS \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
+	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -3381,7 +3495,7 @@ install-data-am: install-alsaLTLIBRARIES install-alsaconfDATA \
 	install-dist_udevSCRIPTS install-gstreamerLTLIBRARIES \
 	install-includeHEADERS install-man install-pkgconfigDATA \
 	install-pluginLTLIBRARIES install-rulesDATA install-stateDATA \
-	install-udevPROGRAMS
+	install-systemdunitDATA install-udevPROGRAMS
 
 install-dvi: install-dvi-am
 
@@ -3413,7 +3527,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
+	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) proximity/$(DEPDIR) sap/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) thermometer/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
@@ -3438,11 +3552,11 @@ uninstall-am: uninstall-alsaLTLIBRARIES uninstall-alsaconfDATA \
 	uninstall-man uninstall-pkgconfigDATA \
 	uninstall-pluginLTLIBRARIES uninstall-rulesDATA \
 	uninstall-sbinPROGRAMS uninstall-stateDATA \
-	uninstall-udevPROGRAMS
+	uninstall-systemdunitDATA uninstall-udevPROGRAMS
 
 uninstall-man: uninstall-man1 uninstall-man8
 
-.MAKE: all install-am install-strip
+.MAKE: all check install install-am install-strip
 
 .PHONY: CTAGS GTAGS all all-am am--refresh check check-am clean \
 	clean-alsaLTLIBRARIES clean-binPROGRAMS clean-cupsPROGRAMS \
@@ -3466,8 +3580,8 @@ uninstall-man: uninstall-man1 uninstall-man8
 	install-pdf install-pdf-am install-pkgconfigDATA \
 	install-pluginLTLIBRARIES install-ps install-ps-am \
 	install-rulesDATA install-sbinPROGRAMS install-stateDATA \
-	install-strip install-udevPROGRAMS installcheck \
-	installcheck-am installdirs maintainer-clean \
+	install-strip install-systemdunitDATA install-udevPROGRAMS \
+	installcheck installcheck-am installdirs maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-compile \
 	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
 	tags uninstall uninstall-alsaLTLIBRARIES \
@@ -3478,7 +3592,7 @@ uninstall-man: uninstall-man1 uninstall-man8
 	uninstall-man uninstall-man1 uninstall-man8 \
 	uninstall-pkgconfigDATA uninstall-pluginLTLIBRARIES \
 	uninstall-rulesDATA uninstall-sbinPROGRAMS uninstall-stateDATA \
-	uninstall-udevPROGRAMS
+	uninstall-systemdunitDATA uninstall-udevPROGRAMS
 
 
 @TOOLS_TRUE@tools/kword.c: tools/parser.h

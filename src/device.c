@@ -49,12 +49,13 @@
 #include "att.h"
 #include "hcid.h"
 #include "adapter.h"
+#include "gattrib.h"
+#include "attio.h"
 #include "device.h"
 #include "dbus-common.h"
 #include "event.h"
 #include "error.h"
 #include "glib-helper.h"
-#include "gattrib.h"
 #include "gatt.h"
 #include "agent.h"
 #include "sdp-xml.h"
@@ -64,6 +65,7 @@
 
 #define DISCONNECT_TIMER	2
 #define DISCOVERY_TIMER		2
+#define AUTOCONNECT_INTERVAL	45
 
 /* When all services should trust a remote device */
 #define GLOBAL_TRUST "[all]"
@@ -93,6 +95,7 @@ struct authentication_req {
 struct browse_req {
 	DBusConnection *conn;
 	DBusMessage *msg;
+	GIOChannel *io;
 	GAttrib *attrib;
 	struct btd_device *device;
 	GSList *match_uuids;
@@ -102,6 +105,13 @@ struct browse_req {
 	int search_uuid;
 	int reconnect_attempt;
 	guint listener_id;
+};
+
+struct attio_data {
+	guint id;
+	attio_connect_cb cfunc;
+	attio_disconnect_cb dcfunc;
+	gpointer user_data;
 };
 
 struct btd_device {
@@ -124,6 +134,10 @@ struct btd_device {
 	struct bonding_req *bonding;
 	struct authentication_req *authr;	/* authentication request */
 	GSList		*disconnects;		/* disconnects message */
+	GAttrib		*attrib;
+	GSList		*attios;
+	GSList		*attios_offline;
+	guint		attioid;
 
 	gboolean	connected;
 
@@ -132,6 +146,7 @@ struct btd_device {
 	gboolean	trusted;
 	gboolean	paired;
 	gboolean	blocked;
+	gboolean	bonded;
 
 	gboolean	authorizing;
 	gint		ref;
@@ -146,24 +161,27 @@ static uint16_t uuid_list[] = {
 
 static GSList *device_drivers = NULL;
 
-static void browse_request_free(struct browse_req *req)
+static void browse_request_free(struct browse_req *req, gboolean shutdown)
 {
 	if (req->listener_id)
 		g_dbus_remove_watch(req->conn, req->listener_id);
+	if (req->attrib)
+		g_attrib_unref(req->attrib);
+	if (req->io) {
+		if (shutdown)
+			g_io_channel_shutdown(req->io, FALSE, NULL);
+		g_io_channel_unref(req->io);
+	}
 	if (req->msg)
 		dbus_message_unref(req->msg);
 	if (req->conn)
 		dbus_connection_unref(req->conn);
 	if (req->device)
 		btd_device_unref(req->device);
-	g_slist_foreach(req->profiles_added, (GFunc) g_free, NULL);
-	g_slist_free(req->profiles_added);
+	g_slist_free_full(req->profiles_added, g_free);
 	g_slist_free(req->profiles_removed);
 	if (req->records)
 		sdp_list_free(req->records, (sdp_free_func_t) sdp_record_free);
-
-	if (req->attrib)
-		g_attrib_unref(req->attrib);
 
 	g_free(req);
 }
@@ -182,7 +200,7 @@ static void browse_request_cancel(struct browse_req *req)
 	bt_cancel_discovery(&src, &device->bdaddr);
 
 	device->browse = NULL;
-	browse_request_free(req);
+	browse_request_free(req, TRUE);
 }
 
 static void device_free(gpointer user_data)
@@ -198,14 +216,13 @@ static void device_free(gpointer user_data)
 				agent_is_busy(agent, device->authr)))
 		agent_cancel(agent);
 
-	g_slist_foreach(device->services, (GFunc) g_free, NULL);
-	g_slist_free(device->services);
+	g_slist_free_full(device->services, g_free);
+	g_slist_free_full(device->uuids, g_free);
+	g_slist_free_full(device->primaries, g_free);
+	g_slist_free_full(device->attios, g_free);
+	g_slist_free_full(device->attios_offline, g_free);
 
-	g_slist_foreach(device->uuids, (GFunc) g_free, NULL);
-	g_slist_free(device->uuids);
-
-	g_slist_foreach(device->primaries, (GFunc) g_free, NULL);
-	g_slist_free(device->primaries);
+	g_attrib_unref(device->attrib);
 
 	if (device->tmp_records)
 		sdp_list_free(device->tmp_records,
@@ -216,6 +233,9 @@ static void device_free(gpointer user_data)
 
 	if (device->discov_timer)
 		g_source_remove(device->discov_timer);
+
+	if (device->attioid)
+		g_source_remove(device->attioid);
 
 	DBG("%p", device);
 
@@ -228,6 +248,11 @@ static void device_free(gpointer user_data)
 gboolean device_is_paired(struct btd_device *device)
 {
 	return device->paired;
+}
+
+gboolean device_is_bonded(struct btd_device *device)
+{
+	return device->bonded;
 }
 
 gboolean device_is_trusted(struct btd_device *device)
@@ -830,6 +855,9 @@ void device_remove_connection(struct btd_device *device, DBusConnection *conn)
 		device->disconnects = g_slist_remove(device->disconnects, msg);
 	}
 
+	if (device_is_paired(device) && !device_is_bonded(device))
+		device_set_paired(device, FALSE);
+
 	emit_property_changed(conn, device->path,
 					DEVICE_INTERFACE, "Connected",
 					DBUS_TYPE_BOOLEAN, &device->connected);
@@ -912,8 +940,10 @@ struct btd_device *device_create(DBusConnection *conn,
 	if (read_blocked(&src, &device->bdaddr))
 		device_block(conn, device);
 
-	if (read_link_key(&src, &device->bdaddr, NULL, NULL) == 0)
-		device->paired = TRUE;
+	if (read_link_key(&src, &device->bdaddr, NULL, NULL) == 0) {
+		device_set_paired(device, TRUE);
+		device_set_bonded(device, TRUE);
+	}
 
 	return btd_device_ref(device);
 }
@@ -949,25 +979,6 @@ device_type_t device_get_type(struct btd_device *device)
 	return device->type;
 }
 
-void device_remove_bonding(struct btd_device *device)
-{
-	char filename[PATH_MAX + 1];
-	char srcaddr[18], dstaddr[18];
-	bdaddr_t bdaddr;
-
-	adapter_get_address(device->adapter, &bdaddr);
-	ba2str(&bdaddr, srcaddr);
-	ba2str(&device->bdaddr, dstaddr);
-
-	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr,
-			"linkkeys");
-
-	/* Delete the link key from storage */
-	textfile_casedel(filename, dstaddr);
-
-	btd_adapter_remove_bonding(device->adapter, &device->bdaddr);
-}
-
 static void device_remove_stored(struct btd_device *device)
 {
 	bdaddr_t src;
@@ -977,8 +988,13 @@ static void device_remove_stored(struct btd_device *device)
 	adapter_get_address(device->adapter, &src);
 	ba2str(&device->bdaddr, addr);
 
-	if (device->paired)
-		device_remove_bonding(device);
+	if (device_is_bonded(device)) {
+		delete_entry(&src, "linkkeys", addr);
+		delete_entry(&src, "aliases", addr);
+		device_set_bonded(device, FALSE);
+		device_set_paired(device, FALSE);
+		btd_adapter_remove_bonding(device->adapter, &device->bdaddr);
+	}
 	delete_entry(&src, "profiles", addr);
 	delete_entry(&src, "trusts", addr);
 	delete_entry(&src, "types", addr);
@@ -1024,7 +1040,7 @@ void device_remove(struct btd_device *device, gboolean remove_stored)
 	g_slist_free(device->drivers);
 	device->drivers = NULL;
 
-	attrib_client_unregister(device);
+	attrib_client_unregister(device->services);
 
 	btd_device_unref(device);
 }
@@ -1435,12 +1451,12 @@ static void search_cb(sdp_list_t *recs, int err, gpointer user_data)
 	if (req->profiles_added) {
 		GSList *list;
 
-		device_probe_drivers(device, req->profiles_added);
-
 		list = device_services_from_record(device, req->profiles_added);
 		if (list)
 			device_register_services(req->conn, device, list,
 								ATT_PSM);
+
+		device_probe_drivers(device, req->profiles_added);
 	}
 
 	/* Remove drivers for services removed */
@@ -1485,7 +1501,7 @@ cleanup:
 	}
 
 	device->browse = NULL;
-	browse_request_free(req);
+	browse_request_free(req, FALSE);
 }
 
 static void browse_cb(sdp_list_t *recs, int err, gpointer user_data)
@@ -1575,16 +1591,52 @@ static void store_services(struct btd_device *device)
 	g_free(str);
 }
 
+static void attio_connected(gpointer data, gpointer user_data)
+{
+	struct attio_data *attio = data;
+	GAttrib *attrib = user_data;
+
+	if (attio->cfunc)
+		attio->cfunc(attrib, attio->user_data);
+}
+
+static void attio_disconnected(gpointer data, gpointer user_data)
+{
+	struct attio_data *attio = data;
+
+	if (attio->dcfunc)
+		attio->dcfunc(attio->user_data);
+}
+
+static gboolean att_auto_connect(gpointer user_data);
+
+static void attrib_disconnected(gpointer user_data)
+{
+	struct btd_device *device = user_data;
+
+	g_slist_foreach(device->attios, attio_disconnected, NULL);
+
+	if ((device->attios || device->attios_offline) && device->attioid == 0)
+		device->attioid = g_timeout_add_seconds(AUTOCONNECT_INTERVAL,
+							att_auto_connect,
+							device);
+
+	g_attrib_unref(device->attrib);
+	device->attrib = NULL;
+}
+
 static void primary_cb(GSList *services, guint8 status, gpointer user_data)
 {
 	struct browse_req *req = user_data;
 	struct btd_device *device = req->device;
 	GSList *l, *uuids = NULL;
+	gboolean shutdown;
 
 	if (status) {
 		DBusMessage *reply;
 		reply = btd_error_failed(req->msg, att_ecode2str(status));
 		g_dbus_send_message(req->conn, reply);
+		shutdown = TRUE;
 		goto done;
 	}
 
@@ -1596,44 +1648,112 @@ static void primary_cb(GSList *services, guint8 status, gpointer user_data)
 		uuids = g_slist_append(uuids, prim->uuid);
 	}
 
-	device_probe_drivers(device, uuids);
+	/*
+	 * Profiles may register attio callbacks in the probing callback.
+	 * GAttrib reference can be released if the registered callbacks
+	 * list is emtpy.
+	 */
+	device->attrib = g_attrib_ref(req->attrib);
 
 	device_register_services(req->conn, device, g_slist_copy(services), -1);
+	device_probe_drivers(device, uuids);
+
+	if (device->attios == NULL && device->attios_offline == NULL) {
+		g_attrib_unref(device->attrib);
+		device->attrib = NULL;
+	}
 
 	g_slist_free(uuids);
 
 	create_device_reply(device, req);
 
 	store_services(device);
+	shutdown = FALSE;
 
 done:
 	device->browse = NULL;
-	browse_request_free(req);
+	browse_request_free(req, shutdown);
 }
 
-static void gatt_connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
+static void att_connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 {
-	struct browse_req *req = user_data;
-	struct btd_device *device = req->device;
+	struct btd_device *device = user_data;
+	struct browse_req *req = device->browse;
 
 	if (gerr) {
 		DBusMessage *reply;
 
 		DBG("%s", gerr->message);
 
-		reply = btd_error_failed(req->msg, gerr->message);
-		g_dbus_send_message(req->conn, reply);
+		if (req) {
+			reply = btd_error_failed(req->msg, gerr->message);
+			g_dbus_send_message(req->conn, reply);
 
-		device->browse = NULL;
-		browse_request_free(req);
+			device->browse = NULL;
+			browse_request_free(req, TRUE);
+		}
 
 		return;
 	}
 
-	req->attrib = g_attrib_new(io);
+	if (device->attioid) {
+		g_source_remove(device->attioid);
+		device->attioid = 0;
+	}
+
+	if (req) {
+		req->attrib = g_attrib_new(io);
+		gatt_discover_primary(req->attrib, NULL, primary_cb, req);
+	} else if (device->attios) {
+		device->attrib = g_attrib_new(io);
+		g_attrib_set_disconnect_function(device->attrib,
+						attrib_disconnected, device);
+		g_slist_foreach(device->attios, attio_connected,
+							device->attrib);
+	}
+}
+
+static gboolean att_auto_connect(gpointer user_data)
+{
+	struct btd_device *device = user_data;
+	struct btd_adapter *adapter = device->adapter;
+	GIOChannel *io;
+	GError *gerr = NULL;
+	char addr[18];
+	bdaddr_t sba;
+
+	adapter_get_address(adapter, &sba);
+	ba2str(&device->bdaddr, addr);
+
+	DBG("Connection attempt to: %s", addr);
+
+	if (device->type != DEVICE_TYPE_LE) {
+		io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
+					device, NULL, &gerr,
+					BT_IO_OPT_SOURCE_BDADDR, &sba,
+					BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
+					BT_IO_OPT_PSM, ATT_PSM,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+					BT_IO_OPT_INVALID);
+	} else {
+		io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
+					device, NULL, &gerr,
+					BT_IO_OPT_SOURCE_BDADDR, &sba,
+					BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
+					BT_IO_OPT_CID, ATT_CID,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+					BT_IO_OPT_INVALID);
+	}
+
+	if (io == NULL) {
+		error("ATT bt_io_connect(%s): %s", addr, gerr->message);
+		g_error_free(gerr);
+		return TRUE;
+	}
+
 	g_io_channel_unref(io);
 
-	gatt_discover_primary(req->attrib, NULL, primary_cb, req);
+	return TRUE;
 }
 
 int device_browse_primary(struct btd_device *device, DBusConnection *conn,
@@ -1642,7 +1762,6 @@ int device_browse_primary(struct btd_device *device, DBusConnection *conn,
 	struct btd_adapter *adapter = device->adapter;
 	struct browse_req *req;
 	BtIOSecLevel sec_level;
-	GIOChannel *io;
 	bdaddr_t src;
 
 	if (device->browse)
@@ -1655,20 +1774,18 @@ int device_browse_primary(struct btd_device *device, DBusConnection *conn,
 
 	sec_level = secure ? BT_IO_SEC_HIGH : BT_IO_SEC_LOW;
 
-	io = bt_io_connect(BT_IO_L2CAP, gatt_connect_cb, req, NULL, NULL,
+	req->io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
+				device, NULL, NULL,
 				BT_IO_OPT_SOURCE_BDADDR, &src,
 				BT_IO_OPT_DEST_BDADDR, &device->bdaddr,
 				BT_IO_OPT_CID, ATT_CID,
 				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 
-	if (io == NULL ) {
-		browse_request_free(req);
+	if (req->io == NULL) {
+		browse_request_free(req, FALSE);
 		return -EIO;
 	}
-
-	if (conn == NULL)
-		conn = get_dbus_connection();
 
 	req->conn = dbus_connection_ref(conn);
 	device->browse = req;
@@ -1716,7 +1833,7 @@ int device_browse_sdp(struct btd_device *device, DBusConnection *conn,
 
 	err = bt_search_service(&src, &device->bdaddr, &uuid, cb, req, NULL);
 	if (err < 0) {
-		browse_request_free(req);
+		browse_request_free(req, FALSE);
 		return err;
 	}
 
@@ -1791,6 +1908,16 @@ void device_set_temporary(struct btd_device *device, gboolean temporary)
 	DBG("temporary %d", temporary);
 
 	device->temporary = temporary;
+}
+
+void device_set_bonded(struct btd_device *device, gboolean bonded)
+{
+	if (!device)
+		return;
+
+	DBG("bonded %d", bonded);
+
+	device->bonded = bonded;
 }
 
 void device_set_type(struct btd_device *device, device_type_t type)
@@ -2214,7 +2341,7 @@ static void passkey_cb(struct agent *agent, DBusError *err,
 }
 
 int device_request_authentication(struct btd_device *device, auth_type_t type,
-						uint32_t passkey, void *cb)
+				uint32_t passkey, gboolean secure, void *cb)
 {
 	struct authentication_req *auth;
 	struct agent *agent;
@@ -2244,7 +2371,7 @@ int device_request_authentication(struct btd_device *device, auth_type_t type,
 
 	switch (type) {
 	case AUTH_TYPE_PINCODE:
-		err = agent_request_pincode(agent, device, pincode_cb,
+		err = agent_request_pincode(agent, device, pincode_cb, secure,
 								auth, NULL);
 		break;
 	case AUTH_TYPE_PASSKEY:
@@ -2342,9 +2469,9 @@ void device_set_authorizing(struct btd_device *device, gboolean auth)
 void device_register_services(DBusConnection *conn, struct btd_device *device,
 						GSList *prim_list, int psm)
 {
+	device->primaries = g_slist_concat(device->primaries, prim_list);
 	device->services = attrib_client_register(conn, device, psm, NULL,
 								prim_list);
-	device->primaries = g_slist_concat(device->primaries, prim_list);
 }
 
 GSList *btd_device_get_primaries(struct btd_device *device)
@@ -2441,4 +2568,96 @@ void device_set_class(struct btd_device *device, uint32_t value)
 
 	emit_property_changed(conn, device->path, DEVICE_INTERFACE, "Class",
 				DBUS_TYPE_UINT32, &value);
+}
+
+static gboolean notify_attios(gpointer user_data)
+{
+	struct btd_device *device = user_data;
+
+	if (device->attrib == NULL)
+		return FALSE;
+
+	g_slist_foreach(device->attios_offline, attio_connected, device->attrib);
+	device->attios = g_slist_concat(device->attios, device->attios_offline);
+	device->attios_offline = NULL;
+
+	return FALSE;
+}
+
+guint btd_device_add_attio_callback(struct btd_device *device,
+						attio_connect_cb cfunc,
+						attio_disconnect_cb dcfunc,
+						gpointer user_data)
+{
+	struct attio_data *attio;
+	static guint attio_id = 0;
+
+	DBG("%p registered ATT connection callback", device);
+
+	attio = g_new0(struct attio_data, 1);
+	attio->id = ++attio_id;
+	attio->cfunc = cfunc;
+	attio->dcfunc = dcfunc;
+	attio->user_data = user_data;
+
+	if (device->attrib && cfunc) {
+		device->attios_offline = g_slist_append(device->attios_offline,
+									attio);
+		g_idle_add(notify_attios, device);
+	} else if (device->attioid == 0) {
+		att_auto_connect(device);
+		device->attioid = g_timeout_add_seconds(AUTOCONNECT_INTERVAL,
+							att_auto_connect,
+							device);
+		device->attios = g_slist_append(device->attios, attio);
+	}
+
+	return attio->id;
+}
+
+static int attio_id_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct attio_data *attio = a;
+	guint id = GPOINTER_TO_UINT(b);
+
+	return attio->id - id;
+}
+
+gboolean btd_device_remove_attio_callback(struct btd_device *device, guint id)
+{
+	struct attio_data *attio;
+	GSList *l;
+
+	l = g_slist_find_custom(device->attios, GUINT_TO_POINTER(id),
+								attio_id_cmp);
+	if (l) {
+		attio = l->data;
+		device->attios = g_slist_remove(device->attios, attio);
+	} else {
+		l = g_slist_find_custom(device->attios_offline,
+					GUINT_TO_POINTER(id), attio_id_cmp);
+		if (!l)
+			return FALSE;
+
+		attio = l->data;
+		device->attios_offline = g_slist_remove(device->attios_offline,
+									attio);
+	}
+
+	g_free(attio);
+
+	if (device->attios != NULL || device->attios_offline != NULL)
+		return TRUE;
+
+	if (device->attioid) {
+		g_source_remove(device->attioid);
+		device->attioid = 0;
+	}
+
+	if (device->attrib) {
+		g_attrib_unref(device->attrib);
+		device->attrib = NULL;
+	}
+
+	return TRUE;
 }

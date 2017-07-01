@@ -77,6 +77,8 @@
 
 #define check_address(address) bachk(address)
 
+#define OFF_TIMER 3
+
 static DBusConnection *connection = NULL;
 static GSList *adapter_drivers = NULL;
 
@@ -109,6 +111,7 @@ struct btd_adapter {
 	bdaddr_t bdaddr;		/* adapter Bluetooth Address */
 	uint32_t dev_class;		/* Class of Device */
 	char name[MAX_NAME_LENGTH + 1]; /* adapter name */
+	gboolean allow_name_changes;	/* whether the adapter name can be changed */
 	guint discov_timeout_id;	/* discoverable timeout id */
 	guint stop_discov_id;		/* stop inquiry/scanning id */
 	uint32_t discov_timeout;	/* discoverable time(sec) */
@@ -133,8 +136,6 @@ struct btd_adapter {
 	guint scheduler_id;		/* Scheduler handle */
 	sdp_list_t *services;		/* Services associated to adapter */
 
-	uint8_t  features[8];
-
 	gboolean pairable;		/* pairable state */
 	gboolean initialized;
 
@@ -142,9 +143,10 @@ struct btd_adapter {
 
 	gint ref;
 
-	GSList *powered_callbacks;
+	guint off_timer;
 
-	gboolean name_stored;
+	GSList *powered_callbacks;
+	GSList *pin_callbacks;
 
 	GSList *loaded_drivers;
 };
@@ -172,72 +174,15 @@ static int found_device_cmp(const struct remote_dev_info *d1,
 	return 0;
 }
 
-static void dev_info_free(struct remote_dev_info *dev)
+static void dev_info_free(void *data)
 {
+	struct remote_dev_info *dev = data;
+
 	g_free(dev->name);
 	g_free(dev->alias);
-	g_slist_foreach(dev->services, (GFunc) g_free, NULL);
-	g_slist_free(dev->services);
+	g_slist_free_full(dev->services, g_free);
 	g_strfreev(dev->uuids);
 	g_free(dev);
-}
-
-/*
- * Device name expansion
- *   %d - device id
- */
-static char *expand_name(char *dst, int size, char *str, int dev_id)
-{
-	register int sp, np, olen;
-	char *opt, buf[10];
-
-	if (!str || !dst)
-		return NULL;
-
-	sp = np = 0;
-	while (np < size - 1 && str[sp]) {
-		switch (str[sp]) {
-		case '%':
-			opt = NULL;
-
-			switch (str[sp+1]) {
-			case 'd':
-				sprintf(buf, "%d", dev_id);
-				opt = buf;
-				break;
-
-			case 'h':
-				opt = main_opts.host_name;
-				break;
-
-			case '%':
-				dst[np++] = str[sp++];
-				/* fall through */
-			default:
-				sp++;
-				continue;
-			}
-
-			if (opt) {
-				/* substitute */
-				olen = strlen(opt);
-				if (np + olen < size - 1)
-					memcpy(dst + np, opt, olen);
-				np += olen;
-			}
-			sp += 2;
-			continue;
-
-		case '\\':
-			sp++;
-			/* fall through */
-		default:
-			dst[np++] = str[sp++];
-			break;
-		}
-	}
-	dst[np] = '\0';
-	return dst;
 }
 
 int btd_adapter_set_class(struct btd_adapter *adapter, uint8_t major,
@@ -755,8 +700,10 @@ static void session_remove(struct session_req *req)
 	}
 }
 
-static void session_free(struct session_req *req)
+static void session_free(void *data)
 {
+	struct session_req *req = data;
+
 	if (req->id)
 		g_dbus_remove_watch(req->conn, req->id);
 
@@ -912,10 +859,20 @@ void btd_adapter_class_changed(struct btd_adapter *adapter, uint32_t new_class)
 				DBUS_TYPE_UINT32, &new_class);
 }
 
-void adapter_update_local_name(struct btd_adapter *adapter, const char *name)
+int adapter_update_local_name(struct btd_adapter *adapter, const char *name)
 {
+	char *name_ptr;
+
+	if (adapter->allow_name_changes == FALSE)
+		return -EPERM;
+
 	if (strncmp(name, adapter->name, MAX_NAME_LENGTH) == 0)
-		return;
+		return 0;
+
+	if (!g_utf8_validate(name, -1, NULL)) {
+		error("Name change failed: supplied name isn't valid UTF-8");
+		return -EINVAL;
+	}
 
 	strncpy(adapter->name, name, MAX_NAME_LENGTH);
 
@@ -923,49 +880,36 @@ void adapter_update_local_name(struct btd_adapter *adapter, const char *name)
 		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
 			(const uint8_t *) adapter->name, strlen(adapter->name));
 
-	if (!adapter->name_stored) {
-		char *name_ptr = adapter->name;
+	name_ptr = adapter->name;
 
-		write_local_name(&adapter->bdaddr, adapter->name);
+	write_local_name(&adapter->bdaddr, adapter->name);
 
-		if (connection)
-			emit_property_changed(connection, adapter->path,
-						ADAPTER_INTERFACE, "Name",
-						DBUS_TYPE_STRING, &name_ptr);
-	}
-
-	adapter->name_stored = FALSE;
-}
-
-static DBusMessage *set_name(DBusConnection *conn, DBusMessage *msg,
-					const char *name, void *data)
-{
-	struct btd_adapter *adapter = data;
-	char *name_ptr = adapter->name;
-
-	if (!g_utf8_validate(name, -1, NULL)) {
-		error("Name change failed: supplied name isn't valid UTF-8");
-		return btd_error_invalid_args(msg);
-	}
-
-	if (strncmp(name, adapter->name, MAX_NAME_LENGTH) == 0)
-		goto done;
-
-	strncpy(adapter->name, name, MAX_NAME_LENGTH);
-	write_local_name(&adapter->bdaddr, name);
-	emit_property_changed(connection, adapter->path,
+	if (connection)
+		emit_property_changed(connection, adapter->path,
 					ADAPTER_INTERFACE, "Name",
 					DBUS_TYPE_STRING, &name_ptr);
 
 	if (adapter->up) {
 		int err = adapter_ops->set_name(adapter->dev_id, name);
 		if (err < 0)
-			return btd_error_failed(msg, strerror(-err));
-
-		adapter->name_stored = TRUE;
+			return err;
 	}
 
-done:
+	return 0;
+}
+
+static DBusMessage *set_name(DBusConnection *conn, DBusMessage *msg,
+					const char *name, void *data)
+{
+	struct btd_adapter *adapter = data;
+	int ret;
+
+	ret = adapter_update_local_name(adapter, name);
+	if (ret == -EINVAL)
+		return btd_error_invalid_args(msg);
+	else if (ret < 0)
+		return btd_error_failed(msg, strerror(-ret));
+
 	return dbus_message_new_method_return(msg);
 }
 
@@ -1241,8 +1185,7 @@ static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 	if (adapter->disc_sessions)
 		goto done;
 
-	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->found_devices);
+	g_slist_free_full(adapter->found_devices, dev_info_free);
 	adapter->found_devices = NULL;
 
 	g_slist_free(adapter->oor_devices);
@@ -1934,13 +1877,13 @@ static void create_stored_device_from_profiles(char *key, char *value,
 	device_set_temporary(device, FALSE);
 	adapter->devices = g_slist_append(adapter->devices, device);
 
-	device_probe_drivers(device, uuids);
 	list = device_services_from_record(device, uuids);
 	if (list)
 		device_register_services(connection, device, list, ATT_PSM);
 
-	g_slist_foreach(uuids, (GFunc) g_free, NULL);
-	g_slist_free(uuids);
+	device_probe_drivers(device, uuids);
+
+	g_slist_free_full(uuids, g_free);
 }
 
 struct adapter_keys {
@@ -2110,8 +2053,9 @@ static void create_stored_device_from_primary(char *key, char *value,
 		uuids = g_slist_append(uuids, prim->uuid);
 	}
 
-	device_probe_drivers(device, uuids);
 	device_register_services(connection, device, services, -1);
+
+	device_probe_drivers(device, uuids);
 
 	g_slist_free(uuids);
 }
@@ -2141,8 +2085,7 @@ static void load_devices(struct btd_adapter *adapter)
 	if (err < 0) {
 		error("Unable to load keys to adapter_ops: %s (%d)",
 							strerror(-err), -err);
-		g_slist_foreach(keys.keys, (GFunc) g_free, NULL);
-		g_slist_free(keys.keys);
+		g_slist_free_full(keys.keys, g_free);
 	}
 
 	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr, "blocked");
@@ -2226,8 +2169,7 @@ static void load_connections(struct btd_adapter *adapter)
 			adapter_add_connection(adapter, device);
 	}
 
-	g_slist_foreach(conns, (GFunc) g_free, NULL);
-	g_slist_free(conns);
+	g_slist_free_full(conns, g_free);
 }
 
 static int get_discoverable_timeout(const char *src)
@@ -2282,8 +2224,7 @@ static void emit_device_disappeared(gpointer data, gpointer user_data)
 static void update_oor_devices(struct btd_adapter *adapter)
 {
 	g_slist_foreach(adapter->oor_devices, emit_device_disappeared, adapter);
-	g_slist_foreach(adapter->oor_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->oor_devices);
+	g_slist_free_full(adapter->oor_devices, dev_info_free);
 	adapter->oor_devices =  g_slist_copy(adapter->found_devices);
 }
 
@@ -2331,6 +2272,7 @@ void btd_adapter_start(struct btd_adapter *adapter)
 	adapter->pairable_timeout = get_pairable_timeout(address);
 	adapter->state = STATE_IDLE;
 	adapter->mode = MODE_CONNECTABLE;
+	adapter->off_timer = 0;
 
 	if (main_opts.le)
 		adapter_ops->enable_le(adapter->dev_id);
@@ -2459,9 +2401,7 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 	stop_discovery(adapter);
 
 	if (adapter->disc_sessions) {
-		g_slist_foreach(adapter->disc_sessions, (GFunc) session_free,
-				NULL);
-		g_slist_free(adapter->disc_sessions);
+		g_slist_free_full(adapter->disc_sessions, session_free);
 		adapter->disc_sessions = NULL;
 	}
 
@@ -2493,7 +2433,6 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 	adapter->mode = MODE_OFF;
 	adapter->state = STATE_IDLE;
 	adapter->off_requested = FALSE;
-	adapter->name_stored = FALSE;
 
 	call_adapter_powered_callbacks(adapter, FALSE);
 
@@ -2502,6 +2441,12 @@ int btd_adapter_stop(struct btd_adapter *adapter)
 	set_mode_complete(adapter);
 
 	return 0;
+}
+
+static void off_timer_remove(struct btd_adapter *adapter)
+{
+	g_source_remove(adapter->off_timer);
+	adapter->off_timer = 0;
 }
 
 static void adapter_free(gpointer user_data)
@@ -2516,10 +2461,12 @@ static void adapter_free(gpointer user_data)
 	if (adapter->auth_idle_id)
 		g_source_remove(adapter->auth_idle_id);
 
+	if (adapter->off_timer)
+		off_timer_remove(adapter);
+
 	sdp_list_free(adapter->services, NULL);
 
-	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
-	g_slist_free(adapter->found_devices);
+	g_slist_free_full(adapter->found_devices, dev_info_free);
 
 	g_slist_free(adapter->oor_devices);
 
@@ -2556,11 +2503,11 @@ void btd_adapter_unref(struct btd_adapter *adapter)
 
 gboolean adapter_init(struct btd_adapter *adapter)
 {
-	int err;
-
 	/* adapter_ops makes sure that newly registered adapters always
 	 * start off as powered */
 	adapter->up = TRUE;
+
+	adapter->allow_name_changes = TRUE;
 
 	adapter_ops->read_bdaddr(adapter->dev_id, &adapter->bdaddr);
 
@@ -2568,22 +2515,6 @@ gboolean adapter_init(struct btd_adapter *adapter)
 		error("No address available for hci%d", adapter->dev_id);
 		return FALSE;
 	}
-
-	err = adapter_ops->read_local_features(adapter->dev_id,
-							adapter->features);
-	if (err < 0) {
-		error("Can't read features for hci%d: %s (%d)",
-					adapter->dev_id, strerror(-err), -err);
-		return FALSE;
-	}
-
-	if (read_local_name(&adapter->bdaddr, adapter->name) < 0)
-		expand_name(adapter->name, MAX_NAME_LENGTH, main_opts.name,
-							adapter->dev_id);
-
-	if (main_opts.attrib_server)
-		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
-			(const uint8_t *) adapter->name, strlen(adapter->name));
 
 	sdp_init_services_list(&adapter->bdaddr);
 	load_drivers(adapter);
@@ -2645,11 +2576,10 @@ void adapter_remove(struct btd_adapter *adapter)
 	g_slist_free(adapter->devices);
 
 	unload_drivers(adapter);
+	g_slist_free(adapter->pin_callbacks);
 
 	/* Return adapter to down state if it was not up on init */
 	adapter_ops->restore_powered(adapter->dev_id);
-
-	btd_adapter_unref(adapter);
 }
 
 uint16_t adapter_get_dev_id(struct btd_adapter *adapter)
@@ -2668,6 +2598,12 @@ const gchar *adapter_get_path(struct btd_adapter *adapter)
 void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 {
 	bacpy(bdaddr, &adapter->bdaddr);
+}
+
+void adapter_set_allow_name_changes(struct btd_adapter *adapter,
+						gboolean allow_name_changes)
+{
+	adapter->allow_name_changes = allow_name_changes;
 }
 
 static inline void suspend_discovery(struct btd_adapter *adapter)
@@ -3454,6 +3390,16 @@ int btd_adapter_restore_powered(struct btd_adapter *adapter)
 	return adapter_ops->set_powered(adapter->dev_id, TRUE);
 }
 
+static gboolean switch_off_timeout(gpointer user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	adapter_ops->set_powered(adapter->dev_id, FALSE);
+	adapter->off_timer = 0;
+
+	return FALSE;
+}
+
 int btd_adapter_switch_online(struct btd_adapter *adapter)
 {
 	if (!adapter_ops)
@@ -3461,6 +3407,9 @@ int btd_adapter_switch_online(struct btd_adapter *adapter)
 
 	if (adapter->up)
 		return 0;
+
+	if (adapter->off_timer)
+		off_timer_remove(adapter);
 
 	return adapter_ops->set_powered(adapter->dev_id, TRUE);
 }
@@ -3473,7 +3422,54 @@ int btd_adapter_switch_offline(struct btd_adapter *adapter)
 	if (!adapter->up)
 		return 0;
 
-	return adapter_ops->set_powered(adapter->dev_id, FALSE);
+	if (adapter->off_timer)
+		return 0;
+
+	adapter->global_mode = MODE_OFF;
+
+	if (adapter->connections == NULL)
+		return adapter_ops->set_powered(adapter->dev_id, FALSE);
+
+	g_slist_foreach(adapter->connections,
+				(GFunc) device_request_disconnect, NULL);
+
+	adapter->off_timer = g_timeout_add_seconds(OFF_TIMER,
+						switch_off_timeout, adapter);
+
+	return 0;
+}
+
+void btd_adapter_register_pin_cb(struct btd_adapter *adapter,
+							btd_adapter_pin_cb_t cb)
+{
+	adapter->pin_callbacks = g_slist_prepend(adapter->pin_callbacks, cb);
+}
+
+void btd_adapter_unregister_pin_cb(struct btd_adapter *adapter,
+							btd_adapter_pin_cb_t cb)
+{
+	adapter->pin_callbacks = g_slist_remove(adapter->pin_callbacks, cb);
+}
+
+ssize_t btd_adapter_get_pin(struct btd_adapter *adapter, struct btd_device *dev,
+								char *pin_buf)
+{
+	GSList *l;
+	btd_adapter_pin_cb_t cb;
+	bdaddr_t sba, dba;
+	ssize_t ret;
+
+	for (l = adapter->pin_callbacks; l != NULL; l = g_slist_next(l)) {
+		cb = l->data;
+		ret = cb(adapter, dev, pin_buf);
+		if (ret > 0)
+			return ret;
+	}
+
+	adapter_get_address(adapter, &sba);
+	device_get_address(dev, &dba);
+
+	return read_pin_code(&sba, &dba, pin_buf);
 }
 
 int btd_register_adapter_ops(struct btd_adapter_ops *ops, gboolean priority)

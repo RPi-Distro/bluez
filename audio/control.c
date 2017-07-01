@@ -419,6 +419,15 @@ static void handle_panel_passthrough(struct control *control,
 						operands[0] & 0x7F, status);
 }
 
+/* handle vendordep pdu inside an avctp packet */
+static int handle_vendordep_pdu(struct control *control,
+					struct avrcp_header *avrcp,
+					int operand_count)
+{
+	avrcp->code = CTYPE_NOT_IMPLEMENTED;
+	return AVRCP_HEADER_LENGTH;
+}
+
 static void avctp_disconnected(struct audio_device *dev)
 {
 	struct control *control = dev->control;
@@ -566,7 +575,7 @@ static gboolean control_cb(GIOChannel *chan, GIOCondition cond,
 	} else if (avctp->pid != htons(AV_REMOTE_SVCLASS_ID)) {
 		avctp->ipid = 1;
 		avctp->cr = AVCTP_RESPONSE;
-		avrcp->code = CTYPE_REJECTED;
+		packet_size = sizeof(*avctp);
 	} else if (avctp->cr == AVCTP_COMMAND &&
 			avrcp->code == CTYPE_CONTROL &&
 			avrcp->subunit_type == SUBUNIT_PANEL &&
@@ -590,23 +599,13 @@ static gboolean control_cb(GIOChannel *chan, GIOCondition cond,
 			operands[1] = SUBUNIT_PANEL << 3;
 		DBG("reply to %s", avrcp->opcode == OP_UNITINFO ?
 				"OP_UNITINFO" : "OP_SUBUNITINFO");
-	} else if (avrcp->opcode == OP_VENDORDEP) {
-		/* Reply with REJECT msg with error code 0x0
-		 * (Invalid Command) as defined in AVRCP spec (6.15.1) */
-		struct avrcp_spec_avc_pdu *pdu = (void *) operands;
-
+	} else if (avctp->cr == AVCTP_COMMAND &&
+			avrcp->opcode == OP_VENDORDEP) {
+		int r_size;
+		operand_count -= 3;
 		avctp->cr = AVCTP_RESPONSE;
-		avrcp->code = CTYPE_REJECTED;
-
-		pdu->packet_type = 0;
-		pdu->rsvd = 0;
-		pdu->params[0] = 0; /* invalid command */
-		pdu->params_len = htons(1);
-
-		packet_size =  sizeof(struct avctp_header)
-					+ sizeof(struct avrcp_header)
-					+ sizeof(struct avrcp_spec_avc_pdu)
-					+ 1;
+		r_size = handle_vendordep_pdu(control, avrcp, operand_count);
+		packet_size = AVCTP_HEADER_LENGTH + r_size;
 	} else {
 		avctp->cr = AVCTP_RESPONSE;
 		avrcp->code = CTYPE_REJECTED;
@@ -1046,12 +1045,7 @@ static DBusMessage *volume_up(DBusConnection *conn, DBusMessage *msg,
 {
 	struct audio_device *device = data;
 	struct control *control = device->control;
-	DBusMessage *reply;
 	int err;
-
-	reply = dbus_message_new_method_return(msg);
-	if (!reply)
-		return NULL;
 
 	if (control->state != AVCTP_STATE_CONNECTED)
 		return btd_error_not_connected(msg);
@@ -1071,12 +1065,7 @@ static DBusMessage *volume_down(DBusConnection *conn, DBusMessage *msg,
 {
 	struct audio_device *device = data;
 	struct control *control = device->control;
-	DBusMessage *reply;
 	int err;
-
-	reply = dbus_message_new_method_return(msg);
-	if (!reply)
-		return NULL;
 
 	if (control->state != AVCTP_STATE_CONNECTED)
 		return btd_error_not_connected(msg);

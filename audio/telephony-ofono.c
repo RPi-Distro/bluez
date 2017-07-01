@@ -35,6 +35,9 @@
 #include <dbus/dbus.h>
 #include <gdbus.h>
 
+#include <bluetooth/sdp.h>
+
+#include "glib-helper.h"
 #include "log.h"
 #include "telephony.h"
 
@@ -638,8 +641,10 @@ static gboolean iter_get_basic_args(DBusMessageIter *iter,
 	return type == DBUS_TYPE_INVALID ? TRUE : FALSE;
 }
 
-static void call_free(struct voice_call *vc)
+static void call_free(void *data)
 {
+	struct voice_call *vc = data;
+
 	DBG("%s", vc->obj_path);
 
 	if (vc->status == CALL_STATUS_ACTIVE)
@@ -926,13 +931,6 @@ static void handle_network_property(const char *property, DBusMessageIter *varia
 
 static int parse_network_properties(DBusMessageIter *properties)
 {
-	uint32_t features = AG_FEATURE_EC_ANDOR_NR |
-				AG_FEATURE_INBAND_RINGTONE |
-				AG_FEATURE_REJECT_A_CALL |
-				AG_FEATURE_ENHANCED_CALL_STATUS |
-				AG_FEATURE_ENHANCED_CALL_CONTROL |
-				AG_FEATURE_EXTENDED_ERROR_RESULT_CODES |
-				AG_FEATURE_THREE_WAY_CALLING;
 	int i;
 
 	/* Reset indicators */
@@ -958,9 +956,6 @@ static int parse_network_properties(DBusMessageIter *properties)
 
 		dbus_message_iter_next(properties);
 	}
-
-	telephony_ready_ind(features, ofono_indicators, BTRH_NOT_SUPPORTED,
-								chld_str);
 
 	return 0;
 }
@@ -1034,8 +1029,7 @@ static void modem_removed(const char *path)
 
 	DBG("%s", path);
 
-	g_slist_foreach(calls, (GFunc) call_free, NULL);
-	g_slist_free(calls);
+	g_slist_free_full(calls, call_free);
 	calls = NULL;
 
 	g_free(net.operator_name);
@@ -1553,6 +1547,13 @@ static void handle_service_disconnect(DBusConnection *conn, void *user_data)
 
 int telephony_init(void)
 {
+	uint32_t features = AG_FEATURE_EC_ANDOR_NR |
+				AG_FEATURE_INBAND_RINGTONE |
+				AG_FEATURE_REJECT_A_CALL |
+				AG_FEATURE_ENHANCED_CALL_STATUS |
+				AG_FEATURE_ENHANCED_CALL_CONTROL |
+				AG_FEATURE_EXTENDED_ERROR_RESULT_CODES |
+				AG_FEATURE_THREE_WAY_CALLING;
 	const char *battery_cap = "battery";
 	int ret;
 	guint watch;
@@ -1593,12 +1594,25 @@ int telephony_init(void)
 
 	DBG("telephony_init() successfully");
 
+	telephony_ready_ind(features, ofono_indicators, BTRH_NOT_SUPPORTED,
+								chld_str);
+
 	return ret;
 }
 
 static void remove_watch(gpointer data)
 {
 	g_dbus_remove_watch(connection, GPOINTER_TO_UINT(data));
+}
+
+static void pending_free(void *data)
+{
+	DBusPendingCall *call = data;
+
+	if (!dbus_pending_call_get_completed(call))
+		dbus_pending_call_cancel(call);
+
+	dbus_pending_call_unref(call);
 }
 
 void telephony_exit(void)
@@ -1611,13 +1625,10 @@ void telephony_exit(void)
 	if (modem_obj_path)
 		modem_removed(modem_obj_path);
 
-	g_slist_foreach(watches, (GFunc) remove_watch, NULL);
-	g_slist_free(watches);
+	g_slist_free_full(watches, remove_watch);
 	watches = NULL;
 
-	g_slist_foreach(pending, (GFunc) dbus_pending_call_cancel, NULL);
-	g_slist_foreach(pending, (GFunc) dbus_pending_call_unref, NULL);
-	g_slist_free(pending);
+	g_slist_free_full(pending, pending_free);
 	pending = NULL;
 
 	dbus_connection_unref(connection);
