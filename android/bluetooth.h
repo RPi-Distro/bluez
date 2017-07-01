@@ -29,7 +29,7 @@ bool bt_bluetooth_stop(bt_bluetooth_stopped cb);
 
 void bt_bluetooth_cleanup(void);
 
-void bt_bluetooth_register(struct ipc *ipc, uint8_t mode);
+bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode);
 void bt_bluetooth_unregister(void);
 
 int bt_adapter_add_record(sdp_record_t *rec, uint8_t svc_hint);
@@ -37,8 +37,21 @@ void bt_adapter_remove_record(uint32_t handle);
 
 typedef void (*bt_le_device_found)(const bdaddr_t *addr, uint8_t addr_type,
 					int rssi, uint16_t eir_len,
-					const void *eir);
+					const void *eir, bool discoverable);
 bool bt_le_discovery_start(bt_le_device_found cb);
 
 typedef void (*bt_le_discovery_stopped)(void);
 bool bt_le_discovery_stop(bt_le_discovery_stopped cb);
+
+typedef void (*bt_le_set_advertising_done)(uint8_t status, void *user_data);
+bool bt_le_set_advertising(bool advertising, bt_le_set_advertising_done cb,
+							void *user_data);
+
+uint8_t bt_get_device_android_type(const bdaddr_t *addr);
+const char *bt_get_adapter_name(void);
+bool bt_device_is_bonded(const bdaddr_t *bdaddr);
+
+typedef void (*bt_read_device_rssi_done)(uint8_t status, const bdaddr_t *addr,
+						int8_t rssi, void *user_data);
+bool bt_read_device_rssi(const bdaddr_t *addr, bt_read_device_rssi_done cb,
+							void *user_data);

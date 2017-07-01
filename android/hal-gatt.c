@@ -17,6 +17,7 @@
 
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "hal-log.h"
 #include "hal.h"
@@ -74,10 +75,20 @@ static void handle_register_client(void *buf, uint16_t len)
 static void handle_scan_result(void *buf, uint16_t len)
 {
 	struct hal_ev_gatt_client_scan_result *ev = buf;
+	uint8_t ad[62];
+
+	if (len != sizeof(*ev) + ev->len ) {
+		error("gatt: invalid scan result event, aborting");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Java assumes that passed data has 62 bytes */
+	memset(ad, 0, sizeof(ad));
+	memcpy(ad, ev->adv_data, ev->len > sizeof(ad) ? sizeof(ad) : ev->len);
 
 	if (cbs->client->scan_result_cb)
 		cbs->client->scan_result_cb((bt_bdaddr_t *) ev->bda, ev->rssi,
-								ev->adv_data);
+									ad);
 }
 
 static void handle_connect(void *buf, uint16_t len)
@@ -185,6 +196,11 @@ static void handle_notify(void *buf, uint16_t len)
 	struct hal_ev_gatt_client_notify *ev = buf;
 	btgatt_notify_params_t params;
 
+	if (len != sizeof(*ev) + ev->len ) {
+		error("gatt: invalid notify event, aborting");
+		exit(EXIT_FAILURE);
+	}
+
 	memset(&params, 0, sizeof(params));
 	memcpy(params.value, ev->value, ev->len);
 	memcpy(&params.bda, ev->bda, sizeof(params.bda));
@@ -203,6 +219,11 @@ static void handle_read_characteristic(void *buf, uint16_t len)
 {
 	struct hal_ev_gatt_client_read_characteristic *ev = buf;
 	btgatt_read_params_t params;
+
+	if (len != sizeof(*ev) + ev->data.len ) {
+		error("gatt: invalid read characteristic event, aborting");
+		exit(EXIT_FAILURE);
+	}
 
 	memset(&params, 0, sizeof(params));
 
@@ -243,6 +264,11 @@ static void handle_read_descriptor(void *buf, uint16_t len)
 {
 	struct hal_ev_gatt_client_read_descriptor *ev = buf;
 	btgatt_read_params_t params;
+
+	if (len != sizeof(*ev) + ev->data.len ) {
+		error("gatt: invalid read descriptor event, aborting");
+		exit(EXIT_FAILURE);
+	}
 
 	memset(&params, 0, sizeof(params));
 
@@ -413,6 +439,11 @@ static void handle_request_write(void *buf, uint16_t len)
 {
 	struct hal_ev_gatt_server_request_write *ev = buf;
 
+	if (len != sizeof(*ev) + ev->length ) {
+		error("gatt: invalid request write event, aborting");
+		exit(EXIT_FAILURE);
+	}
+
 	if (cbs->server->request_write_cb)
 		cbs->server->request_write_cb(ev->conn_id, ev->trans_id,
 						(bt_bdaddr_t *) ev->bdaddr,
@@ -439,72 +470,101 @@ static void handle_response_confirmation(void *buf, uint16_t len)
 		cbs->server->response_confirmation_cb(ev->status, ev->handle);
 }
 
-/* handlers will be called from notification thread context,
+/*
+ * handlers will be called from notification thread context,
  * index in table equals to 'opcode - HAL_MINIMUM_EVENT'
  */
 static const struct hal_ipc_handler ev_handlers[] = {
-	/* Client Event Handlers */
-	{handle_register_client, false,
-			sizeof(struct hal_ev_gatt_client_register_client)},
-	{handle_scan_result, true,
-				sizeof(struct hal_ev_gatt_client_scan_result)},
-	{handle_connect, false, sizeof(struct hal_ev_gatt_client_connect)},
-	{handle_disconnect, false,
-			sizeof(struct hal_ev_gatt_client_disconnect)},
-	{handle_search_complete, false,
-			sizeof(struct hal_ev_gatt_client_search_complete)},
-	{handle_search_result, false,
-			sizeof(struct hal_ev_gatt_client_search_result)},
-	{handle_get_characteristic, false,
-			sizeof(struct hal_ev_gatt_client_get_characteristic)},
-	{handle_get_descriptor, false,
-			sizeof(struct hal_ev_gatt_client_get_descriptor)},
-	{handle_get_included_service, false,
-			sizeof(struct hal_ev_gatt_client_get_inc_service)},
-	{handle_register_for_notification, false,
-			sizeof(struct hal_ev_gatt_client_reg_for_notif)},
-	{handle_notify, true, sizeof(struct hal_ev_gatt_client_notify)},
-	{handle_read_characteristic, true,
-			sizeof(struct hal_ev_gatt_client_read_characteristic)},
-	{handle_write_characteristic, false,
-			sizeof(struct hal_ev_gatt_client_write_characteristic)},
-	{handle_read_descriptor, true,
-			sizeof(struct hal_ev_gatt_client_read_descriptor)},
-	{handle_write_descriptor, false,
-			sizeof(struct hal_ev_gatt_client_write_descriptor)},
-	{handle_execute_write, false,
-				sizeof(struct hal_ev_gatt_client_exec_write)},
-	{handle_read_remote_rssi, false,
-			sizeof(struct hal_ev_gatt_client_read_remote_rssi)},
-	{handle_listen, false, sizeof(struct hal_ev_gatt_client_listen)},
-
-	/* Server Event Handlers */
-	{handle_register_server, false,
-				sizeof(struct hal_ev_gatt_server_register)},
-	{handle_connection, false,
-				sizeof(struct hal_ev_gatt_server_connection)},
-	{handle_service_added, false,
-			sizeof(struct hal_ev_gatt_server_service_added)},
-	{handle_included_service_added, false,
-			sizeof(struct hal_ev_gatt_server_service_added)},
-	{handle_characteristic_added, false,
-			sizeof(struct hal_ev_gatt_server_characteristic_added)},
-	{handle_descriptor_added, false,
-			sizeof(struct hal_ev_gatt_server_descriptor_added)},
-	{handle_service_started, false,
-			sizeof(struct hal_ev_gatt_server_service_started)},
-	{handle_service_stopped, false,
-			sizeof(struct hal_ev_gatt_server_service_stopped)},
-	{handle_service_deleted, false,
-			sizeof(struct hal_ev_gatt_server_service_deleted)},
-	{handle_request_read, false,
-			sizeof(struct hal_ev_gatt_server_request_read)},
-	{handle_request_write, true,
-			sizeof(struct hal_ev_gatt_server_request_write)},
-	{handle_request_exec_write, false,
-			sizeof(struct hal_ev_gatt_server_request_exec_write)},
-	{handle_response_confirmation, false,
-			sizeof(struct hal_ev_gatt_server_rsp_confirmation)},
+	/* HAL_EV_GATT_CLIENT_REGISTER_CLIENT */
+	{ handle_register_client, false,
+		sizeof(struct hal_ev_gatt_client_register_client) },
+	/* HAL_EV_GATT_CLIENT_SCAN_RESULT */
+	{ handle_scan_result, true,
+		sizeof(struct hal_ev_gatt_client_scan_result) },
+	/* HAL_EV_GATT_CLIENT_CONNECT */
+	{ handle_connect, false, sizeof(struct hal_ev_gatt_client_connect) },
+	/* HAL_EV_GATT_CLIENT_DISCONNECT */
+	{ handle_disconnect, false,
+		sizeof(struct hal_ev_gatt_client_disconnect) },
+	/* HAL_EV_GATT_CLIENT_SEARCH_COMPLETE */
+	{ handle_search_complete, false,
+		sizeof(struct hal_ev_gatt_client_search_complete) },
+	/* HAL_EV_GATT_CLIENT_SEARCH_RESULT */
+	{ handle_search_result, false,
+		sizeof(struct hal_ev_gatt_client_search_result) },
+	/* HAL_EV_GATT_CLIENT_GET_CHARACTERISTIC */
+	{ handle_get_characteristic, false,
+		sizeof(struct hal_ev_gatt_client_get_characteristic) },
+	/* HAL_EV_GATT_CLIENT_GET_DESCRIPTOR */
+	{ handle_get_descriptor, false,
+		sizeof(struct hal_ev_gatt_client_get_descriptor) },
+	/* HAL_EV_GATT_CLIENT_GET_INC_SERVICE */
+	{ handle_get_included_service, false,
+		sizeof(struct hal_ev_gatt_client_get_inc_service) },
+	/* HAL_EV_GATT_CLIENT_REGISTER_FOR_NOTIF */
+	{ handle_register_for_notification, false,
+		sizeof(struct hal_ev_gatt_client_reg_for_notif) },
+	/* HAL_EV_GATT_CLIENT_NOTIFY */
+	{ handle_notify, true, sizeof(struct hal_ev_gatt_client_notify) },
+	/* HAL_EV_GATT_CLIENT_READ_CHARACTERISTIC */
+	{ handle_read_characteristic, true,
+		sizeof(struct hal_ev_gatt_client_read_characteristic) },
+	/* HAL_EV_GATT_CLIENT_WRITE_CHARACTERISTIC */
+	{ handle_write_characteristic, false,
+		sizeof(struct hal_ev_gatt_client_write_characteristic) },
+	/* HAL_EV_GATT_CLIENT_READ_DESCRIPTOR */
+	{ handle_read_descriptor, true,
+		sizeof(struct hal_ev_gatt_client_read_descriptor) },
+	/* HAL_EV_GATT_CLIENT_WRITE_DESCRIPTOR */
+	{ handle_write_descriptor, false,
+		sizeof(struct hal_ev_gatt_client_write_descriptor) },
+	/* HAL_EV_GATT_CLIENT_EXEC_WRITE */
+	{ handle_execute_write, false,
+		sizeof(struct hal_ev_gatt_client_exec_write) },
+	/* HAL_EV_GATT_CLIENT_READ_REMOTE_RSSI */
+	{ handle_read_remote_rssi, false,
+		sizeof(struct hal_ev_gatt_client_read_remote_rssi) },
+	/* HAL_EV_GATT_CLIENT_LISTEN */
+	{ handle_listen, false, sizeof(struct hal_ev_gatt_client_listen) },
+	/* HAL_EV_GATT_SERVER_REGISTER */
+	{ handle_register_server, false,
+		sizeof(struct hal_ev_gatt_server_register) },
+	/* HAL_EV_GATT_SERVER_CONNECTION */
+	{ handle_connection, false,
+		sizeof(struct hal_ev_gatt_server_connection) },
+	/* HAL_EV_GATT_SERVER_SERVICE_ADDED */
+	{ handle_service_added, false,
+		sizeof(struct hal_ev_gatt_server_service_added) },
+	/* HAL_EV_GATT_SERVER_INC_SRVC_ADDED */
+	{ handle_included_service_added, false,
+		sizeof(struct hal_ev_gatt_server_inc_srvc_added) },
+	/* HAL_EV_GATT_SERVER_CHAR_ADDED */
+	{ handle_characteristic_added, false,
+		sizeof(struct hal_ev_gatt_server_characteristic_added) },
+	/* HAL_EV_GATT_SERVER_DESCRIPTOR_ADDED */
+	{ handle_descriptor_added, false,
+		sizeof(struct hal_ev_gatt_server_descriptor_added) },
+	/* HAL_EV_GATT_SERVER_SERVICE_STARTED */
+	{ handle_service_started, false,
+		sizeof(struct hal_ev_gatt_server_service_started) },
+	/* HAL_EV_GATT_SERVER_SERVICE_STOPPED */
+	{ handle_service_stopped, false,
+		sizeof(struct hal_ev_gatt_server_service_stopped) },
+	/* HAL_EV_GATT_SERVER_SERVICE_DELETED */
+	{ handle_service_deleted, false,
+		sizeof(struct hal_ev_gatt_server_service_deleted) },
+	/* HAL_EV_GATT_SERVER_REQUEST_READ */
+	{ handle_request_read, false,
+		sizeof(struct hal_ev_gatt_server_request_read) },
+	/* HAL_EV_GATT_SERVER_REQUEST_WRITE */
+	{ handle_request_write, true,
+		sizeof(struct hal_ev_gatt_server_request_write) },
+	/* HAL_EV_GATT_SERVER_REQUEST_EXEC_WRITE */
+	{ handle_request_exec_write, false,
+		sizeof(struct hal_ev_gatt_server_request_exec_write) },
+	/* HAL_EV_GATT_SERVER_RSP_CONFIRMATION */
+	{ handle_response_confirmation, false,
+		sizeof(struct hal_ev_gatt_server_rsp_confirmation) },
 };
 
 /* Client API */
@@ -523,6 +583,9 @@ static bt_status_t unregister_client(int client_if)
 {
 	struct hal_cmd_gatt_client_unregister cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.client_if = client_if;
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT, HAL_OP_GATT_CLIENT_UNREGISTER,
@@ -532,6 +595,9 @@ static bt_status_t unregister_client(int client_if)
 static bt_status_t scan(int client_if, bool start)
 {
 	struct hal_cmd_gatt_client_scan cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.client_if = client_if;
 	cmd.start = start;
@@ -544,6 +610,9 @@ static bt_status_t connect(int client_if, const bt_bdaddr_t *bd_addr,
 								bool is_direct)
 {
 	struct hal_cmd_gatt_client_connect cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.client_if = client_if;
 	cmd.is_direct = is_direct;
@@ -559,6 +628,9 @@ static bt_status_t disconnect(int client_if, const bt_bdaddr_t *bd_addr,
 {
 	struct hal_cmd_gatt_client_disconnect cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.client_if = client_if;
 	cmd.conn_id = conn_id;
 
@@ -572,6 +644,9 @@ static bt_status_t listen(int client_if, bool start)
 {
 	struct hal_cmd_gatt_client_listen cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.client_if = client_if;
 	cmd.start = start;
 
@@ -582,6 +657,9 @@ static bt_status_t listen(int client_if, bool start)
 static bt_status_t refresh(int client_if, const bt_bdaddr_t *bd_addr)
 {
 	struct hal_cmd_gatt_client_refresh cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.client_if = client_if;
 
@@ -597,6 +675,9 @@ static bt_status_t search_service(int conn_id, bt_uuid_t *filter_uuid)
 	struct hal_cmd_gatt_client_search_service *cmd = (void *) buf;
 	size_t len = sizeof(*cmd);
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	memset(cmd, 0, sizeof(*cmd));
 
 	cmd->conn_id = conn_id;
@@ -604,7 +685,7 @@ static bt_status_t search_service(int conn_id, bt_uuid_t *filter_uuid)
 	if (filter_uuid) {
 		memcpy(cmd->filter_uuid, filter_uuid, sizeof(*filter_uuid));
 		len += sizeof(*filter_uuid);
-		cmd->number = 1;
+		cmd->filtered = 1;
 	}
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
@@ -619,16 +700,18 @@ static bt_status_t get_included_service(int conn_id, btgatt_srvc_id_t *srvc_id,
 	struct hal_cmd_gatt_client_get_included_service *cmd = (void *) buf;
 	size_t len = sizeof(*cmd);
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 
-	srvc_id_to_hal(&cmd->srvc_id[0], srvc_id);
-	len += sizeof(cmd->srvc_id[0]);
-	cmd->number = 1;
+	srvc_id_to_hal(&cmd->srvc_id, srvc_id);
+	cmd->continuation = 0;
 
 	if (start_incl_srvc_id) {
-		srvc_id_to_hal(&cmd->srvc_id[1], start_incl_srvc_id);
-		len += sizeof(cmd->srvc_id[1]);
-		cmd->number++;
+		srvc_id_to_hal(&cmd->incl_srvc_id[0], start_incl_srvc_id);
+		len += sizeof(cmd->incl_srvc_id[0]);
+		cmd->continuation = 1;
 	}
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
@@ -643,15 +726,18 @@ static bt_status_t get_characteristic(int conn_id, btgatt_srvc_id_t *srvc_id,
 	struct hal_cmd_gatt_client_get_characteristic *cmd = (void *) buf;
 	size_t len = sizeof(*cmd);
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 
 	srvc_id_to_hal(&cmd->srvc_id, srvc_id);
-	cmd->number = 0;
+	cmd->continuation = 0;
 
 	if (start_char_id) {
-		gatt_id_to_hal(&cmd->gatt_id[0], start_char_id);
-		len += sizeof(cmd->gatt_id[0]);
-		cmd->number = 1;
+		gatt_id_to_hal(&cmd->char_id[0], start_char_id);
+		len += sizeof(cmd->char_id[0]);
+		cmd->continuation = 1;
 	}
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
@@ -667,18 +753,19 @@ static bt_status_t get_descriptor(int conn_id, btgatt_srvc_id_t *srvc_id,
 	struct hal_cmd_gatt_client_get_descriptor *cmd = (void *) buf;
 	size_t len = sizeof(*cmd);
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 
 	srvc_id_to_hal(&cmd->srvc_id, srvc_id);
-
-	gatt_id_to_hal(&cmd->gatt_id[0], char_id);
-	len += sizeof(cmd->gatt_id[0]);
-	cmd->number = 1;
+	gatt_id_to_hal(&cmd->char_id, char_id);
+	cmd->continuation = 0;
 
 	if (start_descr_id) {
-		gatt_id_to_hal(&cmd->gatt_id[1], start_descr_id);
-		len += sizeof(cmd->gatt_id[1]);
-		cmd->number++;
+		gatt_id_to_hal(&cmd->descr_id[0], start_descr_id);
+		len += sizeof(cmd->descr_id[0]);
+		cmd->continuation = 1;
 	}
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
@@ -692,11 +779,14 @@ static bt_status_t read_characteristic(int conn_id, btgatt_srvc_id_t *srvc_id,
 {
 	struct hal_cmd_gatt_client_read_characteristic cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.conn_id = conn_id;
 	cmd.auth_req = auth_req;
 
 	srvc_id_to_hal(&cmd.srvc_id, srvc_id);
-	gatt_id_to_hal(&cmd.gatt_id, char_id);
+	gatt_id_to_hal(&cmd.char_id, char_id);
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
 					HAL_OP_GATT_CLIENT_READ_CHARACTERISTIC,
@@ -712,13 +802,16 @@ static bt_status_t write_characteristic(int conn_id, btgatt_srvc_id_t *srvc_id,
 	struct hal_cmd_gatt_client_write_characteristic *cmd = (void *) buf;
 	size_t cmd_len = sizeof(*cmd) + len;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 	cmd->write_type = write_type;
 	cmd->len = len;
 	cmd->auth_req = auth_req;
 
 	srvc_id_to_hal(&cmd->srvc_id, srvc_id);
-	gatt_id_to_hal(&cmd->gatt_id, char_id);
+	gatt_id_to_hal(&cmd->char_id, char_id);
 
 	memcpy(cmd->value, p_value, len);
 
@@ -733,6 +826,9 @@ static bt_status_t read_descriptor(int conn_id, btgatt_srvc_id_t *srvc_id,
 						int auth_req)
 {
 	struct hal_cmd_gatt_client_read_descriptor cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.conn_id = conn_id;
 	cmd.auth_req = auth_req;
@@ -756,6 +852,9 @@ static bt_status_t write_descriptor(int conn_id, btgatt_srvc_id_t *srvc_id,
 	struct hal_cmd_gatt_client_write_descriptor *cmd = (void *) buf;
 	size_t cmd_len = sizeof(*cmd) + len;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 	cmd->write_type = write_type;
 	cmd->len = len;
@@ -776,6 +875,9 @@ static bt_status_t execute_write(int conn_id, int execute)
 {
 	struct hal_cmd_gatt_client_execute_write cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.conn_id = conn_id;
 	cmd.execute = execute;
 
@@ -790,6 +892,9 @@ static bt_status_t register_for_notification(int client_if,
 						btgatt_gatt_id_t *char_id)
 {
 	struct hal_cmd_gatt_client_register_for_notification cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.client_if = client_if;
 
@@ -810,6 +915,9 @@ static bt_status_t deregister_for_notification(int client_if,
 {
 	struct hal_cmd_gatt_client_deregister_for_notification cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.client_if = client_if;
 
 	memcpy(cmd.bdaddr, bd_addr, sizeof(*bd_addr));
@@ -826,6 +934,9 @@ static bt_status_t read_remote_rssi(int client_if, const bt_bdaddr_t *bd_addr)
 {
 	struct hal_cmd_gatt_client_read_remote_rssi cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.client_if = client_if;
 
 	memcpy(cmd.bdaddr, bd_addr, sizeof(*bd_addr));
@@ -841,6 +952,9 @@ static int get_device_type(const bt_bdaddr_t *bd_addr)
 	uint8_t dev_type;
 	size_t resp_len = sizeof(dev_type);
 	bt_status_t status;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	memcpy(cmd.bdaddr, bd_addr, sizeof(*bd_addr));
 
@@ -864,6 +978,9 @@ static bt_status_t set_adv_data(int server_if, bool set_scan_rsp,
 	struct hal_cmd_gatt_client_set_adv_data *cmd = (void *) buf;
 	size_t cmd_len = sizeof(*cmd) + manufacturer_len;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->server_if = server_if;
 	cmd->set_scan_rsp = set_scan_rsp;
 	cmd->include_name = include_name;
@@ -882,6 +999,9 @@ static bt_status_t set_adv_data(int server_if, bool set_scan_rsp,
 static bt_status_t test_command(int command, btgatt_test_params_t *params)
 {
 	struct hal_cmd_gatt_client_test_command cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.command = command;
 
@@ -904,6 +1024,9 @@ static bt_status_t register_server(bt_uuid_t *uuid)
 {
 	struct hal_cmd_gatt_server_register cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	memcpy(cmd.uuid, uuid, sizeof(*uuid));
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT, HAL_OP_GATT_SERVER_REGISTER,
@@ -913,6 +1036,9 @@ static bt_status_t register_server(bt_uuid_t *uuid)
 static bt_status_t unregister_server(int server_if)
 {
 	struct hal_cmd_gatt_server_unregister cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.server_if = server_if;
 
@@ -924,6 +1050,9 @@ static bt_status_t server_connect(int server_if, const bt_bdaddr_t *bd_addr,
 								bool is_direct)
 {
 	struct hal_cmd_gatt_server_connect cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.server_if = server_if;
 	cmd.is_direct = is_direct;
@@ -939,6 +1068,9 @@ static bt_status_t server_disconnect(int server_if, const bt_bdaddr_t *bd_addr,
 {
 	struct hal_cmd_gatt_server_disconnect cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.server_if = server_if;
 	cmd.conn_id = conn_id;
 
@@ -952,6 +1084,9 @@ static bt_status_t add_service(int server_if, btgatt_srvc_id_t *srvc_id,
 								int num_handles)
 {
 	struct hal_cmd_gatt_server_add_service cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.server_if = server_if;
 	cmd.num_handles = num_handles;
@@ -967,6 +1102,9 @@ static bt_status_t add_included_service(int server_if, int service_handle,
 {
 	struct hal_cmd_gatt_server_add_inc_service cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
 	cmd.included_handle = included_handle;
@@ -981,6 +1119,9 @@ static bt_status_t add_characteristic(int server_if, int service_handle,
 						int permissions)
 {
 	struct hal_cmd_gatt_server_add_characteristic cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
@@ -999,6 +1140,9 @@ static bt_status_t add_descriptor(int server_if, int service_handle,
 {
 	struct hal_cmd_gatt_server_add_descriptor cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
 	cmd.permissions = permissions;
@@ -1015,6 +1159,9 @@ static bt_status_t start_service(int server_if, int service_handle,
 {
 	struct hal_cmd_gatt_server_start_service cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
 	cmd.transport = transport;
@@ -1028,6 +1175,9 @@ static bt_status_t stop_service(int server_if, int service_handle)
 {
 	struct hal_cmd_gatt_server_stop_service cmd;
 
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
 
@@ -1038,6 +1188,9 @@ static bt_status_t stop_service(int server_if, int service_handle)
 static bt_status_t delete_service(int server_if, int service_handle)
 {
 	struct hal_cmd_gatt_server_delete_service cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd.server_if = server_if;
 	cmd.service_handle = service_handle;
@@ -1054,6 +1207,9 @@ static bt_status_t send_indication(int server_if, int attribute_handle,
 	char buf[IPC_MTU];
 	struct hal_cmd_gatt_server_send_indication *cmd = (void *) buf;
 	size_t cmd_len = sizeof(*cmd) + len;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
 
 	cmd->server_if = server_if;
 	cmd->attribute_handle = attribute_handle;
@@ -1075,12 +1231,20 @@ static bt_status_t send_response(int conn_id, int trans_id, int status,
 	struct hal_cmd_gatt_server_send_response *cmd = (void *) buf;
 	size_t cmd_len = sizeof(*cmd) + sizeof(*response);
 
+	memset(buf, 0 , IPC_MTU);
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
 	cmd->conn_id = conn_id;
 	cmd->trans_id = trans_id;
 	cmd->status = status;
-	cmd->len = sizeof(*response);
+	cmd->handle = response->attr_value.handle;
+	cmd->offset = response->attr_value.offset;
+	cmd->auth_req = response->attr_value.auth_req;
+	cmd->len = response->attr_value.len;
 
-	memcpy(cmd->data, response, sizeof(*response));
+	memcpy(cmd->data, response->attr_value.value, cmd->len);
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
 					HAL_OP_GATT_SERVER_SEND_RESPONSE,
@@ -1103,6 +1267,7 @@ static bt_status_t init(const btgatt_callbacks_t *callbacks)
 				sizeof(ev_handlers)/sizeof(ev_handlers[0]));
 
 	cmd.service_id = HAL_SERVICE_ID_GATT;
+	cmd.mode = HAL_MODE_DEFAULT;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, 0, NULL, NULL);

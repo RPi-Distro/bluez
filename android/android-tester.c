@@ -153,7 +153,8 @@ static gint scheduled_cbacks_num = 0;
 
 static gboolean check_callbacks_called(gpointer user_data)
 {
-	/* Wait for all callbacks scheduled in current test context to execute
+	/*
+	 * Wait for all callbacks scheduled in current test context to execute
 	 * in main loop. This will avoid late callback calls after test case has
 	 * already failed or timed out.
 	 */
@@ -829,7 +830,7 @@ static void remote_setprop_disc_state_changed_cb(bt_discovery_state_t state)
 {
 	struct test_data *data = tester_get_data();
 
-	if (state == BT_DISCOVERY_STARTED && data->cb_count == 4) {
+	if (state == BT_DISCOVERY_STARTED && data->cb_count == 3) {
 		data->cb_count--;
 		return;
 	}
@@ -1002,13 +1003,15 @@ static void remote_setprop_device_found_cb(int num_properties,
 
 	bdaddr2android((const bdaddr_t *)bdaddr, &remote_addr.address);
 
-	if (data->cb_count == 3)
+	if (data->cb_count == 2)
 		data->cb_count--;
 
 	data->if_bluetooth->cancel_discovery();
 	status = data->if_bluetooth->set_remote_device_property(&remote_addr,
 									&prop);
 	check_expected_status(status);
+
+	status = data->if_bluetooth->get_remote_device_property(&remote_addr, prop.type);
 }
 
 static void remote_setprop_fail_device_found_cb(int num_properties,
@@ -1140,29 +1143,6 @@ static void remote_test_device_properties_cb(bt_status_t status,
 
 	for (i = 0; i < num_properties; i++)
 		check_expected_property(properties[i]);
-}
-
-static void remote_setprop_device_properties_cb(bt_status_t status,
-				bt_bdaddr_t *bd_addr, int num_properties,
-				bt_property_t *properties)
-{
-	int i;
-	struct test_data *data = tester_get_data();
-	const struct generic_data *test = data->test_data;
-	uint8_t *bdaddr = (uint8_t *)hciemu_get_client_bdaddr(data->hciemu);
-	bt_bdaddr_t remote_addr;
-	const bt_property_t prop = test->expected_properties[1].prop;
-
-	for (i = 0; i < num_properties; i++)
-		check_expected_property(properties[i]);
-
-	if (g_slist_length(data->expected_properties_list) == 1) {
-		bdaddr2android((const bdaddr_t *)bdaddr, &remote_addr.address);
-		data->cb_count--;
-		check_cb_count();
-		data->if_bluetooth->get_remote_device_property(&remote_addr,
-								prop.type);
-	}
 }
 
 static gboolean remote_device_properties(gpointer user_data)
@@ -1453,37 +1433,37 @@ static struct priority_property enable_done_props[] = {
 	.prop.type = BT_PROPERTY_UUIDS,
 	.prop.len = sizeof(enable_done_uuids_val),
 	.prop.val = &enable_done_uuids_val,
-	.prio = 3,
+	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_CLASS_OF_DEVICE,
 	.prop.len = sizeof(uint32_t),
 	.prop.val = NULL,
-	.prio = 4,
+	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_TYPE_OF_DEVICE,
 	.prop.len = sizeof(enable_done_tod_val),
 	.prop.val = &enable_done_tod_val,
-	.prio = 5,
+	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_ADAPTER_SCAN_MODE,
 	.prop.len = sizeof(enable_done_scanmode_val),
 	.prop.val = &enable_done_scanmode_val,
-	.prio = 6,
+	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_ADAPTER_BONDED_DEVICES,
 	.prop.len = 0,
 	.prop.val = NULL,
-	.prio = 7,
+	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_ADAPTER_DISCOVERY_TIMEOUT,
 	.prop.len = sizeof(enable_done_disctimeout_val),
 	.prop.val = &enable_done_disctimeout_val,
-	.prio = 8,
+	.prio = 2,
 	},
 };
 
@@ -1885,37 +1865,31 @@ static struct priority_property remote_getprops_props[] = {
 	.prop.type = BT_PROPERTY_BDNAME,
 	.prop.val = &remote_get_properties_bdname_val,
 	.prop.len = sizeof(remote_get_properties_bdname_val) - 1,
-	.prio = 1,
 	},
 	{
 	.prop.type = BT_PROPERTY_UUIDS,
 	.prop.val = NULL,
 	.prop.len = 0,
-	.prio = 2,
 	},
 	{
 	.prop.type = BT_PROPERTY_CLASS_OF_DEVICE,
 	.prop.val = &remote_get_properties_cod_val,
 	.prop.len = sizeof(remote_get_properties_cod_val),
-	.prio = 3,
 	},
 	{
 	.prop.type = BT_PROPERTY_TYPE_OF_DEVICE,
 	.prop.val = &remote_get_properties_tod_val,
 	.prop.len = sizeof(remote_get_properties_tod_val),
-	.prio = 4,
 	},
 	{
 	.prop.type = BT_PROPERTY_REMOTE_RSSI,
 	.prop.val = &remote_get_properties_rssi_val,
 	.prop.len = sizeof(remote_get_properties_rssi_val),
-	.prio = 5,
 	},
 	{
 	.prop.type = BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP,
 	.prop.val = NULL,
 	.prop.len = 4,
-	.prio = 6,
 	},
 };
 
@@ -2214,11 +2188,6 @@ static struct priority_property remote_setprop_fname_props[] = {
 	.prop.val = &remote_setprop_fname_val,
 	.prop.len = sizeof(remote_setprop_fname_val) - 1,
 	},
-	{
-	.prop.type = BT_PROPERTY_REMOTE_FRIENDLY_NAME,
-	.prop.val = &remote_setprop_fname_val,
-	.prop.len = sizeof(remote_setprop_fname_val) - 1,
-	},
 };
 
 static const struct generic_data bt_dev_setprop_fname_success_test = {
@@ -2226,9 +2195,9 @@ static const struct generic_data bt_dev_setprop_fname_success_test = {
 					remote_setprop_disc_state_changed_cb,
 	.expected_hal_cb.device_found_cb = remote_setprop_device_found_cb,
 	.expected_hal_cb.remote_device_properties_cb =
-					remote_setprop_device_properties_cb,
-	.expected_cb_count = 4,
-	.expected_properties_num = 2,
+					remote_test_device_properties_cb,
+	.expected_cb_count = 3,
+	.expected_properties_num = 1,
 	.expected_properties = remote_setprop_fname_props,
 	.expected_adapter_status = BT_STATUS_SUCCESS,
 };
@@ -4097,8 +4066,10 @@ static void hid_ctrl_cid_hook_cb(const void *data, uint16_t len,
 	case HID_GET_FEATURE_REPORT:
 		hid_prepare_reply_report(data, len);
 		break;
-	/* HID device doesnot reply for this commads, so reaching pdu's
-	 * to hid device means assuming test passed */
+	/*
+	 * HID device doesnot reply for this commads, so reaching pdu's
+	 * to hid device means assuming test passed
+	 */
 	case HID_SET_INPUT_REPORT:
 	case HID_SET_OUTPUT_REPORT:
 	case HID_SET_FEATURE_REPORT:

@@ -49,7 +49,8 @@
 
 #include "avctp.h"
 
-/* AV/C Panel 1.23, page 76:
+/*
+ * AV/C Panel 1.23, page 76:
  * command with the pressed value is valid for two seconds
  */
 #define AVC_PRESS_TIMEOUT	2
@@ -115,16 +116,16 @@ struct avctp_control_req {
 	uint8_t code;
 	uint8_t subunit;
 	uint8_t op;
-	uint8_t *operands;
-	uint16_t operand_count;
+	struct iovec *iov;
+	int iov_cnt;
 	avctp_rsp_cb func;
 	void *user_data;
 };
 
 struct avctp_browsing_req {
 	struct avctp_pending_req *p;
-	uint8_t *operands;
-	uint16_t operand_count;
+	struct iovec *iov;
+	int iov_cnt;
 	avctp_browsing_rsp_cb func;
 	void *user_data;
 };
@@ -416,10 +417,12 @@ static ssize_t handle_unit_info(struct avctp *session,
 
 	*code = AVC_CTYPE_STABLE;
 
-	/* The first operand should be 0x07 for the UNITINFO response.
+	/*
+	 * The first operand should be 0x07 for the UNITINFO response.
 	 * Neither AVRCP (section 22.1, page 117) nor AVC Digital
 	 * Interface Command Set (section 9.2.1, page 45) specs
-	 * explain this value but both use it */
+	 * explain this value but both use it
+	 */
 	if (operand_count >= 1)
 		operands[0] = 0x07;
 	if (operand_count >= 2)
@@ -442,10 +445,12 @@ static ssize_t handle_subunit_info(struct avctp *session,
 
 	*code = AVC_CTYPE_STABLE;
 
-	/* The first operand should be 0x07 for the UNITINFO response.
+	/*
+	 * The first operand should be 0x07 for the UNITINFO response.
 	 * Neither AVRCP (section 22.1, page 117) nor AVC Digital
 	 * Interface Command Set (section 9.2.1, page 45) specs
-	 * explain this value but both use it */
+	 * explain this value but both use it
+	 */
 	if (operand_count >= 2)
 		operands[1] = AVC_SUBUNIT_PANEL << 3;
 
@@ -508,41 +513,50 @@ static void avctp_channel_destroy(struct avctp_channel *chan)
 static int avctp_send(struct avctp_channel *control, uint8_t transaction,
 				uint8_t cr, uint8_t code,
 				uint8_t subunit, uint8_t opcode,
-				uint8_t *operands, size_t operand_count)
+				const struct iovec *iov, int iov_cnt)
 {
-	struct avctp_header *avctp;
-	struct avc_header *avc;
+	struct avctp_header avctp;
+	struct avc_header avc;
 	struct msghdr msg;
-	struct iovec iov[2];
 	int sk, err = 0;
+	struct iovec pdu[iov_cnt + 2];
+	int i;
+	size_t len = sizeof(avctp) + sizeof(avc);
 
-	iov[0].iov_base = control->buffer;
-	iov[0].iov_len  = sizeof(*avctp) + sizeof(*avc);
-	iov[1].iov_base = operands;
-	iov[1].iov_len  = operand_count;
+	DBG("");
 
-	if (control->omtu < (iov[0].iov_len + iov[1].iov_len))
+	pdu[0].iov_base = &avctp;
+	pdu[0].iov_len  = sizeof(avctp);
+	pdu[1].iov_base = &avc;
+	pdu[1].iov_len  = sizeof(avc);
+
+	for (i = 0; i < iov_cnt; i++) {
+		pdu[i + 2].iov_base = iov[i].iov_base;
+		pdu[i + 2].iov_len  = iov[i].iov_len;
+		len += iov[i].iov_len;
+	}
+
+	if (control->omtu < len)
 		return -EOVERFLOW;
 
 	sk = g_io_channel_unix_get_fd(control->io);
 
-	memset(control->buffer, 0, iov[0].iov_len);
+	memset(&avctp, 0, sizeof(avctp));
 
-	avctp = (void *) control->buffer;
-	avc = (void *) avctp + sizeof(*avctp);
+	avctp.transaction = transaction;
+	avctp.packet_type = AVCTP_PACKET_SINGLE;
+	avctp.cr = cr;
+	avctp.pid = htons(AV_REMOTE_SVCLASS_ID);
 
-	avctp->transaction = transaction;
-	avctp->packet_type = AVCTP_PACKET_SINGLE;
-	avctp->cr = cr;
-	avctp->pid = htons(AV_REMOTE_SVCLASS_ID);
+	memset(&avc, 0, sizeof(avc));
 
-	avc->code = code;
-	avc->subunit_type = subunit;
-	avc->opcode = opcode;
+	avc.code = code;
+	avc.subunit_type = subunit;
+	avc.opcode = opcode;
 
 	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = iov;
-	msg.msg_iovlen = 2;
+	msg.msg_iov = pdu;
+	msg.msg_iovlen = iov_cnt + 2;
 
 	if (sendmsg(sk, &msg, 0) < 0)
 		err = -errno;
@@ -552,35 +566,39 @@ static int avctp_send(struct avctp_channel *control, uint8_t transaction,
 
 static int avctp_browsing_send(struct avctp_channel *browsing,
 				uint8_t transaction, uint8_t cr,
-				uint8_t *operands, size_t operand_count)
+				const struct iovec *iov, int iov_cnt)
 {
-	struct avctp_header *avctp;
+	struct avctp_header avctp;
 	struct msghdr msg;
-	struct iovec iov[2];
+	struct iovec pdu[iov_cnt + 1];
 	int sk, err = 0;
+	int i;
+	size_t len = sizeof(avctp);
 
-	iov[0].iov_base = browsing->buffer;
-	iov[0].iov_len  = sizeof(*avctp);
-	iov[1].iov_base = operands;
-	iov[1].iov_len  = operand_count;
+	for (i = 0; i < iov_cnt; i++) {
+		pdu[i + 1].iov_base = iov[i].iov_base;
+		pdu[i + 1].iov_len  = iov[i].iov_len;
+		len += iov[i].iov_len;
+	}
 
-	if (browsing->omtu < (iov[0].iov_len + iov[1].iov_len))
+	pdu[0].iov_base = &avctp;
+	pdu[0].iov_len  = sizeof(avctp);
+
+	if (browsing->omtu < len)
 		return -EOVERFLOW;
 
 	sk = g_io_channel_unix_get_fd(browsing->io);
 
-	memset(browsing->buffer, 0, iov[0].iov_len);
+	memset(&avctp, 0, sizeof(avctp));
 
-	avctp = (void *) browsing->buffer;
-
-	avctp->transaction = transaction;
-	avctp->packet_type = AVCTP_PACKET_SINGLE;
-	avctp->cr = cr;
-	avctp->pid = htons(AV_REMOTE_SVCLASS_ID);
+	avctp.transaction = transaction;
+	avctp.packet_type = AVCTP_PACKET_SINGLE;
+	avctp.cr = cr;
+	avctp.pid = htons(AV_REMOTE_SVCLASS_ID);
 
 	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = iov;
-	msg.msg_iovlen = 2;
+	msg.msg_iov = pdu;
+	msg.msg_iovlen = iov_cnt + 1;
 
 	if (sendmsg(sk, &msg, 0) < 0)
 		err = -errno;
@@ -593,6 +611,7 @@ static void control_req_destroy(void *data)
 	struct avctp_control_req *req = data;
 	struct avctp_pending_req *p = req->p;
 	struct avctp *session = p->chan->session;
+	int i;
 
 	if (p->err == 0 || req->func == NULL)
 		goto done;
@@ -601,7 +620,10 @@ static void control_req_destroy(void *data)
 							req->user_data);
 
 done:
-	g_free(req->operands);
+	for (i = 0; i < req->iov_cnt; i++)
+		g_free(req->iov[i].iov_base);
+
+	g_free(req->iov);
 	g_free(req);
 }
 
@@ -610,6 +632,7 @@ static void browsing_req_destroy(void *data)
 	struct avctp_browsing_req *req = data;
 	struct avctp_pending_req *p = req->p;
 	struct avctp *session = p->chan->session;
+	int i;
 
 	if (p->err == 0 || req->func == NULL)
 		goto done;
@@ -617,7 +640,10 @@ static void browsing_req_destroy(void *data)
 	req->func(session, NULL, 0, req->user_data);
 
 done:
-	g_free(req->operands);
+	for (i = 0; i < req->iov_cnt; i++)
+		g_free(req->iov[i].iov_base);
+
+	g_free(req->iov);
 	g_free(req);
 }
 
@@ -646,8 +672,7 @@ static int process_control(void *data)
 	struct avctp_pending_req *p = req->p;
 
 	return avctp_send(p->chan, p->transaction, AVCTP_COMMAND, req->code,
-					req->subunit, req->op,
-					req->operands, req->operand_count);
+				req->subunit, req->op, req->iov, req->iov_cnt);
 }
 
 static int process_browsing(void *data)
@@ -656,7 +681,7 @@ static int process_browsing(void *data)
 	struct avctp_pending_req *p = req->p;
 
 	return avctp_browsing_send(p->chan, p->transaction, AVCTP_COMMAND,
-					req->operands, req->operand_count);
+						req->iov, req->iov_cnt);
 }
 
 static gboolean process_queue(void *user_data)
@@ -794,10 +819,17 @@ static gboolean session_browsing_cb(GIOChannel *chan, GIOCondition cond,
 	if (ret <= 0)
 		goto failed;
 
+	if (ret < AVCTP_HEADER_LENGTH) {
+		error("Too small AVCTP packet");
+		goto failed;
+	}
+
 	avctp = (struct avctp_header *) buf;
 
-	if (avctp->packet_type != AVCTP_PACKET_SINGLE)
+	if (avctp->packet_type != AVCTP_PACKET_SINGLE) {
+		error("Invalid packet type");
 		goto failed;
+	}
 
 	operands = buf + AVCTP_HEADER_LENGTH;
 	ret -= AVCTP_HEADER_LENGTH;
@@ -819,9 +851,15 @@ static gboolean session_browsing_cb(GIOChannel *chan, GIOCondition cond,
 		goto send;
 	}
 
-	packet_size += handler->cb(session, avctp->transaction,
-						operands, operand_count,
-						handler->user_data);
+	ret = handler->cb(session, avctp->transaction, operands, operand_count,
+							handler->user_data);
+	if (ret < 0) {
+		if (ret == -EAGAIN)
+			return TRUE;
+		goto failed;
+	}
+
+	packet_size += ret;
 
 send:
 	if (packet_size != 0) {
@@ -1091,25 +1129,33 @@ done:
 	return p;
 }
 
-static int avctp_send_req(struct avctp *session, uint8_t code,
-				uint8_t subunit, uint8_t opcode,
-				uint8_t *operands, size_t operand_count,
-				avctp_rsp_cb func, void *user_data)
+static int avctp_send_req(struct avctp *session, uint8_t code, uint8_t subunit,
+			uint8_t opcode, const struct iovec *iov, int iov_cnt,
+			avctp_rsp_cb func, void *user_data)
 {
 	struct avctp_channel *control = session->control;
 	struct avctp_pending_req *p;
 	struct avctp_control_req *req;
+	struct iovec *pdu;
+	int i;
 
 	if (control == NULL)
 		return -ENOTCONN;
+
+	pdu = g_new0(struct iovec, iov_cnt);
+
+	for (i = 0; i < iov_cnt; i++) {
+		pdu[i].iov_len = iov[i].iov_len;
+		pdu[i].iov_base = g_memdup(iov[i].iov_base, iov[i].iov_len);
+	}
 
 	req = g_new0(struct avctp_control_req, 1);
 	req->code = code;
 	req->subunit = subunit;
 	req->op = opcode;
 	req->func = func;
-	req->operands = g_memdup(operands, operand_count);
-	req->operand_count = operand_count;
+	req->iov = pdu;
+	req->iov_cnt = iov_cnt;
 	req->user_data = user_data;
 
 	p = pending_create(control, process_control, req, control_req_destroy);
@@ -1125,20 +1171,29 @@ static int avctp_send_req(struct avctp *session, uint8_t code,
 }
 
 int avctp_send_browsing_req(struct avctp *session,
-				uint8_t *operands, size_t operand_count,
+				const struct iovec *iov, int iov_cnt,
 				avctp_browsing_rsp_cb func, void *user_data)
 {
 	struct avctp_channel *browsing = session->browsing;
 	struct avctp_pending_req *p;
 	struct avctp_browsing_req *req;
+	struct iovec *pdu;
+	int i;
 
 	if (browsing == NULL)
 		return -ENOTCONN;
 
+	pdu = g_new0(struct iovec, iov_cnt);
+
+	for (i = 0; i < iov_cnt; i++) {
+		pdu[i].iov_len = iov[i].iov_len;
+		pdu[i].iov_base = g_memdup(iov[i].iov_base, iov[i].iov_len);
+	}
+
 	req = g_new0(struct avctp_browsing_req, 1);
 	req->func = func;
-	req->operands = g_memdup(operands, operand_count);
-	req->operand_count = operand_count;
+	req->iov = pdu;
+	req->iov_cnt = iov_cnt;
 	req->user_data = user_data;
 
 	p = pending_create(browsing, process_browsing, req,
@@ -1158,6 +1213,18 @@ int avctp_send_browsing_req(struct avctp *session,
 	return 0;
 }
 
+int avctp_send_browsing(struct avctp *session, uint8_t transaction,
+					const struct iovec *iov, int iov_cnt)
+{
+	struct avctp_channel *browsing = session->browsing;
+
+	if (browsing == NULL)
+		return -ENOTCONN;
+
+	return avctp_browsing_send(browsing, transaction, AVCTP_RESPONSE,
+								iov, iov_cnt);
+}
+
 static const char *op2str(uint8_t op)
 {
 	int i;
@@ -1173,53 +1240,61 @@ static const char *op2str(uint8_t op)
 static int avctp_passthrough_press(struct avctp *session, uint8_t op,
 					uint8_t *params, size_t params_len)
 {
-	uint8_t operands[7];
-	size_t len;
+	struct iovec iov[2];
+	int iov_cnt;
+	uint8_t operands[2];
 
-	DBG("op 0x%02x %s params_len %zd", op, op2str(op), params_len);
+	DBG("%s", op2str(op));
+
+	iov[0].iov_base = operands;
+	iov[0].iov_len = sizeof(operands);
 
 	/* Button pressed */
 	operands[0] = op & 0x7f;
 
-	if (op == AVC_VENDOR_UNIQUE && params &&
-				params_len == 5) {
-		memcpy(&operands[2], params, params_len);
-		len = params_len + 2;
+	if (params_len > 0) {
+		iov[1].iov_base = params;
+		iov[1].iov_len = params_len;
+		iov_cnt = 2;
 		operands[1] = params_len;
 	} else {
-		len = 2;
+		iov_cnt = 1;
 		operands[1] = 0;
 	}
 
 	return avctp_send_req(session, AVC_CTYPE_CONTROL,
 				AVC_SUBUNIT_PANEL, AVC_OP_PASSTHROUGH,
-				operands, len,
-				avctp_passthrough_rsp, NULL);
+				iov, iov_cnt, avctp_passthrough_rsp, NULL);
 }
 
 static int avctp_passthrough_release(struct avctp *session, uint8_t op,
 					uint8_t *params, size_t params_len)
 {
-	uint8_t operands[7];
-	size_t len;
+	struct iovec iov[2];
+	int iov_cnt;
+	uint8_t operands[2];
 
 	DBG("%s", op2str(op));
 
+	iov[0].iov_base = operands;
+	iov[0].iov_len = sizeof(operands);
+
 	/* Button released */
 	operands[0] = op | 0x80;
-	operands[1] = 0;
 
-	if (op == AVC_VENDOR_UNIQUE && params &&
-				params_len > sizeof(operands) - 2) {
-		memcpy(&operands[2], params, params_len);
-		len = params_len;
-	} else
-		len = 2;
+	if (params_len > 0) {
+		iov[1].iov_base = params;
+		iov[1].iov_len = params_len;
+		iov_cnt = 2;
+		operands[1] = params_len;
+	} else {
+		iov_cnt = 1;
+		operands[1] = 0;
+	}
 
 	return avctp_send_req(session, AVC_CTYPE_CONTROL,
 				AVC_SUBUNIT_PANEL, AVC_OP_PASSTHROUGH,
-				operands, len,
-				NULL, NULL);
+				iov, iov_cnt, NULL, NULL);
 }
 
 static gboolean repeat_timeout(gpointer user_data)
@@ -1305,9 +1380,9 @@ int avctp_send_passthrough(struct avctp *session, uint8_t op, uint8_t *params,
 	return avctp_passthrough_press(session, op, params, params_len);
 }
 
-int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
+int avctp_send_vendor(struct avctp *session, uint8_t transaction,
 				uint8_t code, uint8_t subunit,
-				uint8_t *operands, size_t operand_count)
+				const struct iovec *iov, int iov_cnt)
 {
 	struct avctp_channel *control = session->control;
 
@@ -1315,17 +1390,15 @@ int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
 		return -ENOTCONN;
 
 	return avctp_send(control, transaction, AVCTP_RESPONSE, code, subunit,
-					AVC_OP_VENDORDEP, operands, operand_count);
+						AVC_OP_VENDORDEP, iov, iov_cnt);
 }
 
-int avctp_send_vendordep_req(struct avctp *session, uint8_t code,
-					uint8_t subunit, uint8_t *operands,
-					size_t operand_count,
+int avctp_send_vendor_req(struct avctp *session, uint8_t code, uint8_t subunit,
+					const struct iovec *iov, int iov_cnt,
 					avctp_rsp_cb func, void *user_data)
 {
-	return avctp_send_req(session, code, subunit, AVC_OP_VENDORDEP,
-						operands, operand_count,
-						func, user_data);
+	return avctp_send_req(session, code, subunit, AVC_OP_VENDORDEP, iov,
+						iov_cnt, func, user_data);
 }
 
 unsigned int avctp_register_passthrough_handler(struct avctp *session,

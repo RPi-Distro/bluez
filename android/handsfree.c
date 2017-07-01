@@ -45,6 +45,7 @@
 #include "bluetooth.h"
 #include "src/log.h"
 #include "utils.h"
+#include "sco-msg.h"
 
 #define HSP_AG_CHANNEL 12
 #define HFP_AG_CHANNEL 13
@@ -156,7 +157,9 @@ static struct {
 static uint32_t hfp_ag_features = 0;
 
 static bdaddr_t adapter_addr;
+
 static struct ipc *hal_ipc = NULL;
+static struct ipc *sco_ipc = NULL;
 
 static uint32_t hfp_record_id = 0;
 static GIOChannel *hfp_server = NULL;
@@ -767,7 +770,8 @@ static void at_cmd_nrec(struct hfp_gw_result *result, enum hfp_gw_cmd_type type,
 
 	switch (type) {
 	case HFP_GW_CMD_TYPE_SET:
-		/* Android HAL defines start and stop parameter for NREC
+		/*
+		 * Android HAL defines start and stop parameter for NREC
 		 * callback, but spec allows HF to only disable AG's NREC
 		 * feature for SLC duration. Follow spec here.
 		 */
@@ -820,6 +824,8 @@ static gboolean sco_watch_cb(GIOChannel *chan, GIOCondition cond,
 	g_io_channel_shutdown(device.sco, TRUE, NULL);
 	g_io_channel_unref(device.sco);
 	device.sco = NULL;
+
+	DBG("");
 
 	device.sco_watch = 0;
 
@@ -895,8 +901,9 @@ static bool connect_sco(void)
 	if (device.sco)
 		return false;
 
-	if ((device.features & HFP_HF_FEAT_CODEC) &&
-				device.negotiated_codec != CODEC_ID_CVSD)
+	if (!(device.features & HFP_HF_FEAT_CODEC))
+		voice_settings = 0;
+	else if (device.negotiated_codec != CODEC_ID_CVSD)
 		voice_settings = BT_VOICE_TRANSPARENT;
 	else
 		voice_settings = BT_VOICE_CVSD_16BIT;
@@ -940,7 +947,8 @@ static void at_cmd_bcc(struct hfp_gw_result *result, enum hfp_gw_cmd_type type,
 			select_codec(0);
 			return;
 		}
-		/* we try connect to negotiated codec. If it fails, and it isn't
+		/*
+		 * we try connect to negotiated codec. If it fails, and it isn't
 		 * CVSD codec, try connect CVSD
 		 */
 		if (!connect_sco() && device.negotiated_codec != CODEC_ID_CVSD)
@@ -1110,7 +1118,8 @@ static void at_cmd_cind(struct hfp_gw_result *result, enum hfp_gw_cmd_type type,
 	switch (type) {
 	case HFP_GW_CMD_TYPE_TEST:
 
-		/* If device supports Codec Negotiation, AT+BAC should be
+		/*
+		 * If device supports Codec Negotiation, AT+BAC should be
 		 * received first
 		 */
 		if ((device.features & HFP_HF_FEAT_CODEC) &&
@@ -1249,7 +1258,8 @@ static void at_cmd_bac(struct hfp_gw_result *result, enum hfp_gw_cmd_type type,
 		init_codecs();
 		device.negotiated_codec = 0;
 
-		/* At least CVSD mandatory codec must exist
+		/*
+		 * At least CVSD mandatory codec must exist
 		 * HFP V1.6 4.34.1
 		 */
 		if (!hfp_gw_result_get_number(result, &val) ||
@@ -1396,7 +1406,7 @@ static void sdp_hsp_search_cb(sdp_list_t *recs, int err, gpointer data)
 		goto fail;
 	}
 
-	if (sdp_get_service_classes(recs->data, &classes) < 0) {
+	if (sdp_get_service_classes(recs->data, &classes) < 0 || !classes) {
 		error("handsfree: unable to get service classes from record");
 		goto fail;
 	}
@@ -1486,7 +1496,7 @@ static void sdp_hfp_search_cb(sdp_list_t *recs, int err, gpointer data)
 		return;
 	}
 
-	if (sdp_get_service_classes(recs->data, &classes) < 0) {
+	if (sdp_get_service_classes(recs->data, &classes) < 0 || !classes) {
 		error("handsfree: unable to get service classes from record");
 		goto fail;
 	}
@@ -2017,7 +2027,8 @@ static void phone_state_incoming(int num_active, int num_held, uint8_t type,
 	if (device.setup_state == HAL_HANDSFREE_CALL_STATE_INCOMING) {
 		if (device.num_active != num_active ||
 						device.num_held != num_held) {
-			/* calls changed while waiting call ie. due to
+			/*
+			 * calls changed while waiting call ie. due to
 			 * termination of active call
 			 */
 			update_indicator(IND_CALLHELD,
@@ -2109,7 +2120,8 @@ static void phone_state_idle(int num_active, int num_held)
 		} else if ((num_active > 0 || num_held > 0) &&
 						device.num_active == 0 &&
 						device.num_held == 0) {
-			/* If number of active or held calls change but there
+			/*
+			 * If number of active or held calls change but there
 			 * was no call setup change this means that there were
 			 * calls present when headset was connected.
 			 */
@@ -2186,40 +2198,45 @@ failed:
 
 static const struct ipc_handler cmd_handlers[] = {
 	/* HAL_OP_HANDSFREE_CONNECT */
-	{ handle_connect, false, sizeof(struct hal_cmd_handsfree_connect)},
+	{ handle_connect, false,
+		sizeof(struct hal_cmd_handsfree_connect) },
 	/* HAL_OP_HANDSFREE_DISCONNECT */
-	{handle_disconnect, false, sizeof(struct hal_cmd_handsfree_disconnect)},
-	/*HAL_OP_HANDSFREE_CONNECT_AUDIO*/
-	{handle_connect_audio, false,
-			sizeof(struct hal_cmd_handsfree_connect_audio)},
-	/*HAL_OP_HANDSFREE_DISCONNECT_AUDIO*/
-	{handle_disconnect_audio, false,
-			sizeof(struct hal_cmd_handsfree_disconnect_audio)},
+	{ handle_disconnect, false,
+		sizeof(struct hal_cmd_handsfree_disconnect) },
+	/* HAL_OP_HANDSFREE_CONNECT_AUDIO */
+	{ handle_connect_audio, false,
+		sizeof(struct hal_cmd_handsfree_connect_audio) },
+	/* HAL_OP_HANDSFREE_DISCONNECT_AUDIO */
+	{ handle_disconnect_audio, false,
+		sizeof(struct hal_cmd_handsfree_disconnect_audio) },
 	/* define HAL_OP_HANDSFREE_START_VR */
-	{handle_start_vr, false, 0 },
+	{ handle_start_vr, false, 0 },
 	/* define HAL_OP_HANDSFREE_STOP_VR */
-	{handle_stop_vr, false, 0 },
+	{ handle_stop_vr, false, 0 },
 	/* HAL_OP_HANDSFREE_VOLUME_CONTROL */
-	{handle_volume_control, false,
-			sizeof(struct hal_cmd_handsfree_volume_control)},
+	{ handle_volume_control, false,
+		sizeof(struct hal_cmd_handsfree_volume_control) },
 	/* HAL_OP_HANDSFREE_DEVICE_STATUS_NOTIF */
-	{handle_device_status_notif, false,
-			sizeof(struct hal_cmd_handsfree_device_status_notif)},
+	{ handle_device_status_notif, false,
+		sizeof(struct hal_cmd_handsfree_device_status_notif) },
 	/* HAL_OP_HANDSFREE_COPS_RESPONSE */
-	{handle_cops, true, sizeof(struct hal_cmd_handsfree_cops_response)},
+	{ handle_cops, true,
+		sizeof(struct hal_cmd_handsfree_cops_response) },
 	/* HAL_OP_HANDSFREE_CIND_RESPONSE */
-	{ handle_cind, false, sizeof(struct hal_cmd_handsfree_cind_response)},
+	{ handle_cind, false,
+		sizeof(struct hal_cmd_handsfree_cind_response) },
 	/* HAL_OP_HANDSFREE_FORMATTED_AT_RESPONSE */
-	{handle_formatted_at_resp, true,
-			sizeof(struct hal_cmd_handsfree_formatted_at_response)},
+	{ handle_formatted_at_resp, true,
+		sizeof(struct hal_cmd_handsfree_formatted_at_response) },
 	/* HAL_OP_HANDSFREE_AT_RESPONSE */
-	{handle_at_resp, false, sizeof(struct hal_cmd_handsfree_at_response)},
+	{ handle_at_resp, false,
+		sizeof(struct hal_cmd_handsfree_at_response) },
 	/* HAL_OP_HANDSFREE_CLCC_RESPONSE */
-	{handle_clcc_resp, true,
-			sizeof(struct hal_cmd_handsfree_clcc_response)},
+	{ handle_clcc_resp, true,
+		sizeof(struct hal_cmd_handsfree_clcc_response) },
 	/* HAL_OP_HANDSFREE_PHONE_STATE_CHANGE */
-	{handle_phone_state_change, true,
-			sizeof(struct hal_cmd_handsfree_phone_state_change)},
+	{ handle_phone_state_change, true,
+		sizeof(struct hal_cmd_handsfree_phone_state_change) },
 };
 
 static sdp_record_t *headset_ag_record(void)
@@ -2548,6 +2565,66 @@ static void disable_sco_server(void)
 	}
 }
 
+static void bt_sco_connect(const void *buf, uint16_t len)
+{
+	int fd;
+	GError *err;
+	struct sco_rsp_connect rsp;
+
+	DBG("");
+
+	if (!device.sco)
+		goto failed;
+
+	err = NULL;
+	if (!bt_io_get(device.sco, &err, BT_IO_OPT_MTU, &rsp.mtu,
+							BT_IO_OPT_INVALID)) {
+		error("Unable to get MTU: %s\n", err->message);
+		g_clear_error(&err);
+		goto failed;
+	}
+
+	fd = g_io_channel_unix_get_fd(device.sco);
+
+	DBG("fd %d mtu %u", fd, rsp.mtu);
+
+	ipc_send_rsp_full(sco_ipc, SCO_SERVICE_ID, SCO_OP_CONNECT,
+							sizeof(rsp), &rsp, fd);
+
+	return;
+
+failed:
+	ipc_send_rsp(sco_ipc, SCO_SERVICE_ID, SCO_OP_STATUS, SCO_STATUS_FAILED);
+}
+
+static const struct ipc_handler sco_handlers[] = {
+	/* SCO_OP_CONNECT */
+	{ bt_sco_connect, false, 0 }
+};
+
+static void bt_sco_unregister(void)
+{
+	DBG("");
+
+	ipc_cleanup(sco_ipc);
+	sco_ipc = NULL;
+}
+
+static bool bt_sco_register(ipc_disconnect_cb disconnect)
+{
+	DBG("");
+
+	sco_ipc = ipc_init(BLUEZ_SCO_SK_PATH, sizeof(BLUEZ_SCO_SK_PATH),
+				SCO_SERVICE_ID, false, disconnect, NULL);
+	if (!sco_ipc)
+		return false;
+
+	ipc_register(sco_ipc, SCO_SERVICE_ID, sco_handlers,
+						G_N_ELEMENTS(sco_handlers));
+
+	return true;
+}
+
 bool bt_handsfree_register(struct ipc *ipc, const bdaddr_t *addr, uint8_t mode)
 {
 	DBG("mode 0x%x", mode);
@@ -2582,6 +2659,9 @@ done:
 	hal_ipc = ipc;
 	ipc_register(hal_ipc, HAL_SERVICE_ID_HANDSFREE, cmd_handlers,
 						G_N_ELEMENTS(cmd_handlers));
+
+	bt_sco_register(NULL);
+
 	return true;
 }
 
@@ -2589,6 +2669,7 @@ void bt_handsfree_unregister(void)
 {
 	DBG("");
 
+	bt_sco_unregister();
 	ipc_unregister(hal_ipc, HAL_SERVICE_ID_HANDSFREE);
 	hal_ipc = NULL;
 

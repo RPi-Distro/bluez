@@ -76,6 +76,7 @@
 
 #define HOG_REPORT_MAP_MAX_SIZE        512
 #define HID_INFO_SIZE			4
+#define ATT_NOTIFICATION_HEADER_SIZE	3
 
 struct hog_device {
 	uint16_t		id;
@@ -102,46 +103,55 @@ struct report {
 	struct hog_device	*hogdev;
 };
 
-struct disc_desc_cb_data {
-	uint16_t end;
-	gpointer data;
-};
-
 static gboolean suspend_supported = FALSE;
 static GSList *devices = NULL;
 
-static void report_value_cb(const uint8_t *pdu, uint16_t len,
-							gpointer user_data)
+static void report_value_cb(const guint8 *pdu, guint16 len, gpointer user_data)
 {
 	struct report *report = user_data;
 	struct hog_device *hogdev = report->hogdev;
 	struct uhid_event ev;
-	uint16_t report_size = len - 3;
 	uint8_t *buf;
+	ssize_t status;
 
-	if (len < 3) { /* 1-byte opcode + 2-byte handle */
+	if (len < ATT_NOTIFICATION_HEADER_SIZE) {
 		error("Malformed ATT notification");
 		return;
 	}
 
+	pdu += ATT_NOTIFICATION_HEADER_SIZE;
+	len -= ATT_NOTIFICATION_HEADER_SIZE;
+
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_INPUT;
-	ev.u.input.size = MIN(report_size, UHID_DATA_MAX);
-
 	buf = ev.u.input.data;
+
 	if (hogdev->has_report_id) {
-		*buf = report->id;
-		buf++;
-		ev.u.input.size++;
+		buf[0] = report->id;
+		len = MIN(len, sizeof(ev.u.input.data) - 1);
+		memcpy(buf + 1, pdu, len);
+		ev.u.input.size = ++len;
+	} else {
+		len = MIN(len, sizeof(ev.u.input.data));
+		memcpy(buf, pdu, len);
+		ev.u.input.size = len;
 	}
 
-	memcpy(buf, &pdu[3], MIN(report_size, UHID_DATA_MAX));
+	status = write(hogdev->uhid_fd, &ev, sizeof(ev));
+	if (status < 0) {
+		error("uHID dev write error: %s (%d)", strerror(errno), errno);
+		return;
+	}
 
-	if (write(hogdev->uhid_fd, &ev, sizeof(ev)) < 0)
-		error("uHID write failed: %s", strerror(errno));
-	else
-		DBG("Report from HoG device 0x%04X written to uHID fd %d",
-						hogdev->id, hogdev->uhid_fd);
+	/* uHID kernel driver does not handle partial writes */
+	if ((size_t) status < sizeof(ev)) {
+		error("uHID dev write error: partial write (%zd of %zu bytes)",
+							status, sizeof(ev));
+		return;
+	}
+
+	DBG("HoG report (%u bytes) -> uHID fd %d", ev.u.input.size,
+							hogdev->uhid_fd);
 }
 
 static void report_ccc_written_cb(guint8 status, const guint8 *pdu,
@@ -199,90 +209,52 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data);
 
 
-static void discover_descriptor_cb(guint8 status, const guint8 *pdu,
-					guint16 len, gpointer user_data)
+static void discover_descriptor_cb(uint8_t status, GSList *descs,
+								void *user_data)
 {
-	struct disc_desc_cb_data *ddcb_data = user_data;
 	struct report *report;
 	struct hog_device *hogdev;
-	struct att_data_list *list = NULL;
 	GAttrib *attrib = NULL;
-	uint8_t format;
-	uint16_t handle = 0xffff;
-	uint16_t end = ddcb_data->end;
-	int i;
-
-	if (status == ATT_ECODE_ATTR_NOT_FOUND) {
-		DBG("Discover all characteristic descriptors finished");
-		goto done;
-	}
 
 	if (status != 0) {
-		error("Discover all characteristic descriptors failed: %s",
+		error("Discover all descriptors failed: %s",
 							att_ecode2str(status));
-		goto done;
+		return;
 	}
 
-	list = dec_find_info_resp(pdu, len, &format);
-	if (list == NULL)
-		return;
+	for ( ; descs; descs = descs->next) {
+		struct gatt_desc *desc = descs->data;
 
-	if (format != ATT_FIND_INFO_RESP_FMT_16BIT)
-		goto done;
-
-	for (i = 0; i < list->num; i++) {
-		uint16_t uuid16;
-		uint8_t *value;
-
-		value = list->data[i];
-		handle = get_le16(value);
-		uuid16 = get_le16(&value[2]);
-
-		switch (uuid16) {
+		switch (desc->uuid16) {
 		case GATT_CLIENT_CHARAC_CFG_UUID:
-			report = ddcb_data->data;
+			report = user_data;
 			attrib = report->hogdev->attrib;
-			write_ccc(handle, report);
+			write_ccc(desc->handle, report);
 			break;
 		case GATT_REPORT_REFERENCE:
-			report = ddcb_data->data;
+			report = user_data;
 			attrib = report->hogdev->attrib;
-			gatt_read_char(attrib, handle,
+			gatt_read_char(attrib, desc->handle,
 						report_reference_cb, report);
 			break;
 		case GATT_EXTERNAL_REPORT_REFERENCE:
-			hogdev = ddcb_data->data;
+			hogdev = user_data;
 			attrib = hogdev->attrib;
-			gatt_read_char(attrib, handle,
+			gatt_read_char(attrib, desc->handle,
 					external_report_reference_cb, hogdev);
 			break;
 		}
 	}
-
-done:
-	att_data_list_free(list);
-
-	if (handle != 0xffff && handle < end)
-		gatt_discover_char_desc(attrib, handle + 1, end,
-					discover_descriptor_cb, ddcb_data);
-	else
-		g_free(ddcb_data);
 }
 
 static void discover_descriptor(GAttrib *attrib, uint16_t start, uint16_t end,
 							gpointer user_data)
 {
-	struct disc_desc_cb_data *ddcb_data;
-
 	if (start > end)
 		return;
 
-	ddcb_data = g_new0(struct disc_desc_cb_data, 1);
-	ddcb_data->end = end;
-	ddcb_data->data = user_data;
-
-	gatt_discover_char_desc(attrib, start, end, discover_descriptor_cb,
-								ddcb_data);
+	gatt_discover_desc(attrib, start, end, NULL,
+					discover_descriptor_cb, user_data);
 }
 
 static void external_service_char_cb(uint8_t status, GSList *chars,
@@ -345,6 +317,68 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 					external_service_char_cb, hogdev);
 }
 
+static bool get_descriptor_item_info(uint8_t *buf, ssize_t blen, ssize_t *len,
+								bool *is_long)
+{
+	if (!blen)
+		return false;
+
+	*is_long = (buf[0] == 0xfe);
+
+	if (*is_long) {
+		if (blen < 3)
+			return false;
+
+		/*
+		 * long item:
+		 * byte 0 -> 0xFE
+		 * byte 1 -> data size
+		 * byte 2 -> tag
+		 * + data
+		 */
+
+		*len = buf[1] + 3;
+	} else {
+		uint8_t b_size;
+
+		/*
+		 * short item:
+		 * byte 0[1..0] -> data size (=0, 1, 2, 4)
+		 * byte 0[3..2] -> type
+		 * byte 0[7..4] -> tag
+		 * + data
+		 */
+
+		b_size = buf[0] & 0x03;
+		*len = (b_size ? 1 << (b_size - 1) : 0) + 1;
+	}
+
+	/* item length should be no more than input buffer length */
+	return *len <= blen;
+}
+
+static char *item2string(char *str, uint8_t *buf, uint8_t len)
+{
+	char *p = str;
+	int i;
+
+	/*
+	 * Since long item tags are not defined except for vendor ones, we
+	 * just ensure that short items are printed properly (up to 5 bytes).
+	 */
+	for (i = 0; i < 6 && i < len; i++)
+		p += sprintf(p, " %02x", buf[i]);
+
+	/*
+	 * If there are some data left, just add continuation mark to indicate
+	 * this.
+	 */
+	if (i < len)
+		sprintf(p, " ...");
+
+	return str;
+}
+
 static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 							gpointer user_data)
 {
@@ -354,6 +388,7 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	struct uhid_event ev;
 	uint16_t vendor_src, vendor, product, version;
 	ssize_t vlen;
+	char itemstr[20]; /* 5x3 (data) + 4 (continuation) + 1 (null) */
 	int i;
 
 	if (status != 0) {
@@ -368,19 +403,25 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 	DBG("Report MAP:");
-	for (i = 0; i < vlen; i++) {
-		switch (value[i]) {
-		case 0x85:
-		case 0x86:
-		case 0x87:
-			hogdev->has_report_id = TRUE;
-		}
+	for (i = 0; i < vlen;) {
+		ssize_t ilen = 0;
+		bool long_item = false;
 
-		if (i % 2 == 0) {
-			if (i + 1 == vlen)
-				DBG("\t %02x", value[i]);
-			else
-				DBG("\t %02x %02x", value[i], value[i + 1]);
+		if (get_descriptor_item_info(&value[i], vlen - i, &ilen,
+								&long_item)) {
+			/* Report ID is short item with prefix 100001xx */
+			if (!long_item && (value[i] & 0xfc) == 0x84)
+				hogdev->has_report_id = TRUE;
+
+			DBG("\t%s", item2string(itemstr, &value[i], ilen));
+
+			i += ilen;
+		} else {
+			error("Report Map parsing failed at %d", i);
+
+			/* Just print remaining items at once and break */
+			DBG("\t%s", item2string(itemstr, &value[i], vlen - i));
+			break;
 		}
 	}
 

@@ -886,8 +886,7 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 	return TRUE;
 }
 
-static gboolean get_peers(int sock, struct sockaddr *src, struct sockaddr *dst,
-				socklen_t len, GError **err)
+static gboolean get_src(int sock, void *src, socklen_t len, GError **err)
 {
 	socklen_t olen;
 
@@ -897,6 +896,13 @@ static gboolean get_peers(int sock, struct sockaddr *src, struct sockaddr *dst,
 		ERROR_FAILED(err, "getsockname", errno);
 		return FALSE;
 	}
+
+	return TRUE;
+}
+
+static gboolean get_dst(int sock, void *dst, socklen_t len, GError **err)
+{
+	socklen_t olen;
 
 	memset(dst, 0, len);
 	olen = len;
@@ -965,11 +971,10 @@ static gboolean l2cap_get(int sock, GError **err, BtIOOption opt1,
 	uint8_t dev_class[3];
 	uint16_t handle;
 	socklen_t len;
-	gboolean flushable = FALSE;
+	gboolean flushable = FALSE, have_dst = FALSE;
 	uint32_t priority;
 
-	if (!get_peers(sock, (struct sockaddr *) &src,
-				(struct sockaddr *) &dst, sizeof(src), err))
+	if (!get_src(sock, &src, sizeof(src), err))
 		return FALSE;
 
 	memset(&l2o, 0, sizeof(l2o));
@@ -1005,12 +1010,27 @@ parse_opts:
 			bacpy(va_arg(args, bdaddr_t *), &src.l2_bdaddr);
 			break;
 		case BT_IO_OPT_DEST:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
 			ba2str(&dst.l2_bdaddr, va_arg(args, char *));
 			break;
 		case BT_IO_OPT_DEST_BDADDR:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
 			bacpy(va_arg(args, bdaddr_t *), &dst.l2_bdaddr);
 			break;
 		case BT_IO_OPT_DEST_TYPE:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
 			*(va_arg(args, uint8_t *)) = dst.l2_bdaddr_type;
 			break;
 		case BT_IO_OPT_DEFER_TIMEOUT:
@@ -1032,12 +1052,32 @@ parse_opts:
 				return FALSE;
 			break;
 		case BT_IO_OPT_PSM:
-			*(va_arg(args, uint16_t *)) = src.l2_psm ?
-					btohs(src.l2_psm) : btohs(dst.l2_psm);
+			if (src.l2_psm) {
+				*(va_arg(args, uint16_t *)) = btohs(src.l2_psm);
+				break;
+			}
+
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
+
+			*(va_arg(args, uint16_t *)) = btohs(dst.l2_psm);
 			break;
 		case BT_IO_OPT_CID:
-			*(va_arg(args, uint16_t *)) = src.l2_cid ?
-					btohs(src.l2_cid) : btohs(dst.l2_cid);
+			if (src.l2_cid) {
+				*(va_arg(args, uint16_t *)) = btohs(src.l2_cid);
+				break;
+			}
+
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
+
+			*(va_arg(args, uint16_t *)) = btohs(dst.l2_cid);
 			break;
 		case BT_IO_OPT_OMTU:
 			if (src.l2_bdaddr_type == BDADDR_BREDR) {
@@ -1134,13 +1174,13 @@ static gboolean rfcomm_get(int sock, GError **err, BtIOOption opt1,
 {
 	BtIOOption opt = opt1;
 	struct sockaddr_rc src, dst;
+	gboolean have_dst = FALSE;
 	int flags;
 	socklen_t len;
 	uint8_t dev_class[3];
 	uint16_t handle;
 
-	if (!get_peers(sock, (struct sockaddr *) &src,
-				(struct sockaddr *) &dst, sizeof(src), err))
+	if (!get_src(sock, &src, sizeof(src), err))
 		return FALSE;
 
 	while (opt != BT_IO_OPT_INVALID) {
@@ -1152,9 +1192,19 @@ static gboolean rfcomm_get(int sock, GError **err, BtIOOption opt1,
 			bacpy(va_arg(args, bdaddr_t *), &src.rc_bdaddr);
 			break;
 		case BT_IO_OPT_DEST:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
 			ba2str(&dst.rc_bdaddr, va_arg(args, char *));
 			break;
 		case BT_IO_OPT_DEST_BDADDR:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
 			bacpy(va_arg(args, bdaddr_t *), &dst.rc_bdaddr);
 			break;
 		case BT_IO_OPT_DEFER_TIMEOUT:
@@ -1172,13 +1222,29 @@ static gboolean rfcomm_get(int sock, GError **err, BtIOOption opt1,
 				return FALSE;
 			break;
 		case BT_IO_OPT_CHANNEL:
-			*(va_arg(args, uint8_t *)) = src.rc_channel ?
-					src.rc_channel : dst.rc_channel;
+			if (src.rc_channel) {
+				*(va_arg(args, uint8_t *)) = src.rc_channel;
+				break;
+			}
+
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
+
+			*(va_arg(args, uint8_t *)) = dst.rc_channel;
 			break;
 		case BT_IO_OPT_SOURCE_CHANNEL:
 			*(va_arg(args, uint8_t *)) = src.rc_channel;
 			break;
 		case BT_IO_OPT_DEST_CHANNEL:
+			if (!have_dst)
+				have_dst = get_dst(sock, &dst, sizeof(dst),
+									err);
+			if (!have_dst)
+				return FALSE;
+
 			*(va_arg(args, uint8_t *)) = dst.rc_channel;
 			break;
 		case BT_IO_OPT_MASTER:
@@ -1252,8 +1318,10 @@ static gboolean sco_get(int sock, GError **err, BtIOOption opt1, va_list args)
 		return FALSE;
 	}
 
-	if (!get_peers(sock, (struct sockaddr *) &src,
-				(struct sockaddr *) &dst, sizeof(src), err))
+	if (!get_src(sock, &src, sizeof(src), err))
+		return FALSE;
+
+	if (!get_dst(sock, &dst, sizeof(dst), err))
 		return FALSE;
 
 	while (opt != BT_IO_OPT_INVALID) {

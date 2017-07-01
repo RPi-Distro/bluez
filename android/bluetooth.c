@@ -96,7 +96,12 @@ struct device {
 	bool le;
 	bool bredr;
 
-	int bond_state;
+	bool pairing;
+
+	bool bredr_paired;
+	bool bredr_bonded;
+	bool le_paired;
+	bool le_bonded;
 
 	char *name;
 	char *friendly_name;
@@ -104,13 +109,13 @@ struct device {
 	uint32_t class;
 	int32_t rssi;
 
-	uint32_t timestamp;
+	time_t bredr_seen;
+	time_t le_seen;
 
 	GSList *uuids;
 
 	bool found; /* if device is found in current discovery session */
 	unsigned int confirm_id; /* mgtm command id if command pending */
-
 };
 
 struct browse_req {
@@ -129,6 +134,7 @@ static struct {
 	char *name;
 
 	uint32_t current_settings;
+	uint32_t supported_settings;
 
 	uint8_t cur_discovery_type;
 	uint8_t exp_discovery_type;
@@ -140,6 +146,7 @@ static struct {
 	.dev_class = 0,
 	.name = NULL,
 	.current_settings = 0,
+	.supported_settings = 0,
 	.cur_discovery_type = SCAN_TYPE_NONE,
 	.exp_discovery_type = SCAN_TYPE_NONE,
 	.discoverable_timeout = DEFAULT_DISCOVERABLE_TIMEOUT,
@@ -262,7 +269,12 @@ static void store_device_info(struct device *dev, const char *path)
 	else
 		g_key_file_remove_key(key_file, addr, "Class", NULL);
 
-	g_key_file_set_integer(key_file, addr, "Timestamp", dev->timestamp);
+	if (dev->bredr_seen > dev->le_seen)
+		g_key_file_set_integer(key_file, addr, "Timestamp",
+							dev->bredr_seen);
+	else
+		g_key_file_set_integer(key_file, addr, "Timestamp",
+								dev->le_seen);
 
 	if (dev->uuids) {
 		GSList *l;
@@ -373,7 +385,6 @@ static void cache_device(struct device *new_dev)
 
 cache:
 	cached_devices = g_slist_prepend(cached_devices, new_dev);
-	new_dev->timestamp = time(NULL);
 	store_device_info(new_dev, CACHE_FILE);
 }
 
@@ -391,16 +402,17 @@ static struct device *create_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type)
 
 	if (bdaddr_type == BDADDR_BREDR) {
 		dev->bredr = true;
+		dev->bredr_seen = time(NULL);
 	} else {
 		dev->le = true;
 		dev->bdaddr_type = bdaddr_type;
+		dev->le_seen = time(NULL);
 	}
 
-	dev->bond_state = HAL_BOND_STATE_NONE;
-	dev->timestamp = time(NULL);
-
-	/* use address for name, will be change if one is present
-	 * eg. in EIR or set by set_property. */
+	/*
+	 * Use address for name, will be change if one is present
+	 * eg. in EIR or set by set_property.
+	 */
 	dev->name = g_strdup(addr);
 
 	return dev;
@@ -639,40 +651,104 @@ static void send_bond_state_change(const bdaddr_t *addr, uint8_t status,
 				HAL_EV_BOND_STATE_CHANGED, sizeof(ev), &ev);
 }
 
-static void set_device_bond_state(const bdaddr_t *addr, uint8_t status,
-								int state)
+static void update_bredr_state(struct device *dev, bool pairing, bool paired,
+								bool bonded)
 {
-	struct device *dev;
-
-	dev = find_device(addr);
-	if (!dev)
+	if (pairing == dev->pairing && paired == dev->bredr_paired &&
+						bonded == dev->bredr_bonded)
 		return;
 
-	if (dev->bond_state == state)
-		return;
+	/* avoid unpairing device on incoming pairing request */
+	if (pairing && dev->bredr_paired)
+		goto done;
 
-	switch (state) {
-	case HAL_BOND_STATE_NONE:
-		if (dev->bond_state == HAL_BOND_STATE_BONDED) {
-			bonded_devices = g_slist_remove(bonded_devices, dev);
-			remove_device_info(dev, DEVICES_FILE);
-			cache_device(dev);
-		}
-		break;
-	case HAL_BOND_STATE_BONDED:
+	/* avoid unpairing device if pairing failed */
+	if (!pairing && !paired && dev->pairing && dev->bredr_paired)
+		goto done;
+
+	if (paired && !dev->le_paired) {
 		cached_devices = g_slist_remove(cached_devices, dev);
 		bonded_devices = g_slist_prepend(bonded_devices, dev);
 		remove_device_info(dev, CACHE_FILE);
 		store_device_info(dev, DEVICES_FILE);
-		break;
-	case HAL_BOND_STATE_BONDING:
-	default:
-		break;
+	} else if (!paired && !dev->le_paired) {
+		bonded_devices = g_slist_remove(bonded_devices, dev);
+		remove_device_info(dev, DEVICES_FILE);
+		cache_device(dev);
 	}
 
-	dev->bond_state = state;
+	dev->bredr_paired = paired;
+	dev->bredr_bonded = bonded;
 
-	send_bond_state_change(&dev->bdaddr, status, state);
+done:
+	dev->pairing = pairing;
+}
+
+static void update_le_state(struct device *dev, bool pairing, bool paired,
+								bool bonded)
+{
+	if (pairing == dev->pairing && paired == dev->le_paired &&
+						bonded == dev->le_bonded)
+		return;
+
+	/* avoid unpairing device on incoming pairing request */
+	if (pairing && dev->le_paired)
+		goto done;
+
+	/* avoid unpairing device if pairing failed */
+	if (!pairing && !paired && dev->pairing && dev->le_paired)
+		goto done;
+
+	if (paired && !dev->bredr_paired) {
+		cached_devices = g_slist_remove(cached_devices, dev);
+		bonded_devices = g_slist_prepend(bonded_devices, dev);
+		remove_device_info(dev, CACHE_FILE);
+		store_device_info(dev, DEVICES_FILE);
+	} else if (!paired && !dev->bredr_paired) {
+		bonded_devices = g_slist_remove(bonded_devices, dev);
+		remove_device_info(dev, DEVICES_FILE);
+		cache_device(dev);
+	}
+
+	dev->le_paired = paired;
+	dev->le_bonded = bonded;
+
+done:
+	dev->pairing = pairing;
+}
+
+static uint8_t device_bond_state(struct device *dev)
+{
+	if (dev->pairing)
+		return HAL_BOND_STATE_BONDING;
+
+	/*
+	 * We are checking for paired here instead of bonded as HAL API is
+	 * using BOND state also if there was no bonding pairing.
+	 */
+	if (dev->bredr_paired || dev->le_paired)
+		return HAL_BOND_STATE_BONDED;
+
+	return HAL_BOND_STATE_NONE;
+}
+
+static void update_device_state(struct device *dev, uint8_t addr_type,
+				uint8_t status, bool pairing, bool paired,
+				bool bonded)
+{
+	uint8_t old_bond, new_bond;
+
+	old_bond = device_bond_state(dev);
+
+	if (addr_type == BDADDR_BREDR)
+		update_bredr_state(dev, pairing, paired, bonded);
+	else
+		update_le_state(dev, pairing, paired, bonded);
+
+	new_bond = device_bond_state(dev);
+
+	if (old_bond != new_bond)
+		send_bond_state_change(&dev->bdaddr, status, new_bond);
 }
 
 static  void send_device_property(const bdaddr_t *bdaddr, uint8_t type,
@@ -712,7 +788,7 @@ static void set_device_uuids(struct device *dev, GSList *uuids)
 	g_slist_free_full(dev->uuids, g_free);
 	dev->uuids = uuids;
 
-	if (dev->bond_state == HAL_BOND_STATE_BONDED)
+	if (dev->le_paired || dev->bredr_paired)
 		store_device_info(dev, DEVICES_FILE);
 	else
 		store_device_info(dev, CACHE_FILE);
@@ -786,8 +862,10 @@ static void browse_cb(sdp_list_t *recs, int err, gpointer user_data)
 	struct device *dev;
 	uuid_t uuid;
 
-	/* If we have a valid response and req->search_uuid == 2, then L2CAP
-	 * UUID & PNP searching was successful -- we are done */
+	/*
+	 * If we have a valid response and req->search_uuid == 2, then L2CAP
+	 * UUID & PNP searching was successful -- we are done
+	 */
 	if (err < 0 || req->search_uuid == 2) {
 		if (err == -ECONNRESET && req->reconnect_attempt < 1) {
 			req->search_uuid--;
@@ -854,6 +932,7 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 {
 	const struct mgmt_ev_new_link_key *ev = param;
 	const struct mgmt_addr_info *addr = &ev->key.addr;
+	struct device *dev;
 	char dst[18];
 
 	if (length < sizeof(*ev)) {
@@ -872,8 +951,12 @@ static void new_link_key_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
-	set_device_bond_state(&addr->bdaddr, HAL_STATUS_SUCCESS,
-							HAL_BOND_STATE_BONDED);
+	dev = find_device(&ev->key.addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, ev->key.addr.type, HAL_STATUS_SUCCESS, false,
+							true, !!ev->store_hint);
 
 	if (ev->store_hint) {
 		const struct mgmt_link_key_info *key = &ev->key;
@@ -910,12 +993,14 @@ static void pin_code_request_callback(uint16_t index, uint16_t length,
 
 	dev = get_device(&ev->addr.bdaddr, BDADDR_BREDR);
 
-	/* Workaround for Android Bluetooth.apk issue: send remote
-	 * device property */
+	/*
+	 * Workaround for Android Bluetooth.apk issue: send remote
+	 * device property
+	 */
 	get_device_name(dev);
 
-	set_device_bond_state(&ev->addr.bdaddr, HAL_STATUS_SUCCESS,
-						HAL_BOND_STATE_BONDING);
+	update_device_state(dev, ev->addr.type, HAL_STATUS_SUCCESS, true,
+								false, false);
 
 	DBG("%s type %u secure %u", dst, ev->addr.type, ev->secure);
 
@@ -928,17 +1013,15 @@ static void pin_code_request_callback(uint16_t index, uint16_t length,
 						sizeof(hal_ev), &hal_ev);
 }
 
-static void send_ssp_request(const bdaddr_t *addr, uint8_t variant,
+static void send_ssp_request(struct device *dev, uint8_t variant,
 							uint32_t passkey)
 {
 	struct hal_ev_ssp_request ev;
 
-	/* It is ok to have empty name and CoD of remote devices here since
-	* those information has been already provided on device_connected event
-	* or during device scaning. Android will use that instead.
-	*/
-	memset(&ev, 0, sizeof(ev));
-	bdaddr2android(addr, ev.bdaddr);
+	bdaddr2android(&dev->bdaddr, ev.bdaddr);
+	memcpy(ev.name, dev->name, strlen(dev->name));
+	ev.class_of_dev = dev->class;
+
 	ev.pairing_variant = variant;
 	ev.passkey = passkey;
 
@@ -950,6 +1033,7 @@ static void user_confirm_request_callback(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_user_confirm_request *ev = param;
+	struct device *dev;
 	char dst[18];
 
 	if (length < sizeof(*ev)) {
@@ -960,20 +1044,24 @@ static void user_confirm_request_callback(uint16_t index, uint16_t length,
 	ba2str(&ev->addr.bdaddr, dst);
 	DBG("%s confirm_hint %u", dst, ev->confirm_hint);
 
-	set_device_bond_state(&ev->addr.bdaddr, HAL_STATUS_SUCCESS,
-						HAL_BOND_STATE_BONDING);
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, ev->addr.type, HAL_STATUS_SUCCESS, true,
+								false, false);
 
 	if (ev->confirm_hint)
-		send_ssp_request(&ev->addr.bdaddr, HAL_SSP_VARIANT_CONSENT, 0);
+		send_ssp_request(dev, HAL_SSP_VARIANT_CONSENT, 0);
 	else
-		send_ssp_request(&ev->addr.bdaddr, HAL_SSP_VARIANT_CONFIRM,
-								ev->value);
+		send_ssp_request(dev, HAL_SSP_VARIANT_CONFIRM, ev->value);
 }
 
 static void user_passkey_request_callback(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_user_passkey_request *ev = param;
+	struct device *dev;
 	char dst[18];
 
 	if (length < sizeof(*ev)) {
@@ -984,10 +1072,14 @@ static void user_passkey_request_callback(uint16_t index, uint16_t length,
 	ba2str(&ev->addr.bdaddr, dst);
 	DBG("%s", dst);
 
-	set_device_bond_state(&ev->addr.bdaddr, HAL_STATUS_SUCCESS,
-						HAL_BOND_STATE_BONDING);
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
 
-	send_ssp_request(&ev->addr.bdaddr, HAL_SSP_VARIANT_ENTRY, 0);
+	update_device_state(dev, ev->addr.type, HAL_STATUS_SUCCESS, true,
+								false, false);
+
+	send_ssp_request(dev, HAL_SSP_VARIANT_ENTRY, 0);
 }
 
 static void user_passkey_notify_callback(uint16_t index, uint16_t length,
@@ -995,6 +1087,7 @@ static void user_passkey_notify_callback(uint16_t index, uint16_t length,
 							void *user_data)
 {
 	const struct mgmt_ev_passkey_notify *ev = param;
+	struct device *dev;
 	char dst[18];
 
 	if (length < sizeof(*ev)) {
@@ -1009,10 +1102,14 @@ static void user_passkey_notify_callback(uint16_t index, uint16_t length,
 	if (ev->entered)
 		return;
 
-	set_device_bond_state(&ev->addr.bdaddr, HAL_STATUS_SUCCESS,
-						HAL_BOND_STATE_BONDING);
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
 
-	send_ssp_request(&ev->addr.bdaddr, HAL_SSP_VARIANT_NOTIF, ev->passkey);
+	update_device_state(dev, ev->addr.type, HAL_STATUS_SUCCESS, true,
+								false, false);
+
+	send_ssp_request(dev, HAL_SSP_VARIANT_NOTIF, ev->passkey);
 }
 
 static void clear_device_found(gpointer data, gpointer user_data)
@@ -1022,14 +1119,12 @@ static void clear_device_found(gpointer data, gpointer user_data)
 	dev->found = false;
 }
 
-static uint8_t get_adapter_discovering_type(void)
+static uint8_t get_supported_discovery_type(void)
 {
-	uint8_t type;
+	uint8_t type = SCAN_TYPE_NONE;
 
 	if (adapter.current_settings & MGMT_SETTING_BREDR)
-		type = SCAN_TYPE_BREDR;
-	else
-		type = 0;
+		type |= SCAN_TYPE_BREDR;
 
 	if (adapter.current_settings & MGMT_SETTING_LE)
 		type |= SCAN_TYPE_LE;
@@ -1041,9 +1136,12 @@ static bool start_discovery(uint8_t type)
 {
 	struct mgmt_cp_start_discovery cp;
 
-	cp.type = get_adapter_discovering_type() & type;
+	cp.type = get_supported_discovery_type() & type;
 
 	DBG("type=0x%x", cp.type);
+
+	if (cp.type == SCAN_TYPE_NONE)
+		return false;
 
 	if (mgmt_send(mgmt_if, MGMT_OP_START_DISCOVERY, adapter.index,
 				sizeof(cp), &cp, NULL, NULL, NULL) > 0)
@@ -1054,61 +1152,72 @@ static bool start_discovery(uint8_t type)
 	return false;
 }
 
+/*
+ * Send discovery state change event only if it is related to dual type
+ * discovery session (triggered by start/cancel discovery commands)
+ */
+static void check_discovery_state(uint8_t new_type, uint8_t old_type)
+{
+	struct hal_ev_discovery_state_changed ev;
+
+	DBG("%u %u", new_type, old_type);
+
+	if (new_type == get_supported_discovery_type()) {
+		g_slist_foreach(bonded_devices, clear_device_found, NULL);
+		g_slist_foreach(cached_devices, clear_device_found, NULL);
+		ev.state = HAL_DISCOVERY_STATE_STARTED;
+		goto done;
+	}
+
+	if (old_type != get_supported_discovery_type())
+		return;
+
+	ev.state = HAL_DISCOVERY_STATE_STOPPED;
+
+done:
+	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
+			HAL_EV_DISCOVERY_STATE_CHANGED, sizeof(ev), &ev);
+}
+
 static void mgmt_discovering_event(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_discovering *ev = param;
-	struct hal_ev_discovery_state_changed cp;
-	bool is_discovering = adapter.cur_discovery_type;
+	uint8_t type;
 
 	if (length < sizeof(*ev)) {
 		error("Too small discovering event");
 		return;
 	}
 
-	DBG("hci%u type %u discovering %u", index, ev->type,
-							ev->discovering);
+	DBG("type %u discovering %u", ev->type, ev->discovering);
 
-	if (is_discovering == !!ev->discovering)
+	if (!!adapter.cur_discovery_type == !!ev->discovering)
 		return;
 
-	adapter.cur_discovery_type = ev->discovering ?
-						ev->type : SCAN_TYPE_NONE;
+	type = ev->discovering ? ev->type : SCAN_TYPE_NONE;
 
-	DBG("new discovering state %u", ev->discovering);
+	check_discovery_state(type, adapter.cur_discovery_type);
 
-	if (adapter.cur_discovery_type != SCAN_TYPE_NONE) {
-		cp.state = HAL_DISCOVERY_STATE_STARTED;
-	} else {
-		g_slist_foreach(bonded_devices, clear_device_found, NULL);
-		g_slist_foreach(cached_devices, clear_device_found, NULL);
-		cp.state = HAL_DISCOVERY_STATE_STOPPED;
-	}
+	adapter.cur_discovery_type = type;
 
-	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
-			HAL_EV_DISCOVERY_STATE_CHANGED, sizeof(cp), &cp);
+	if (ev->discovering)
+		return;
 
-	if (gatt_discovery_stopped_cb &&
-			(adapter.cur_discovery_type == SCAN_TYPE_NONE)) {
-		/* One shot notification about discovery stopped send to gatt*/
+	/* One shot notification about discovery stopped */
+	if (gatt_discovery_stopped_cb) {
 		gatt_discovery_stopped_cb();
 		gatt_discovery_stopped_cb = NULL;
 	}
 
-	/* If discovery is ON or there is no expected next discovery session
-	 * then just return
-	 */
-	if ((adapter.cur_discovery_type != SCAN_TYPE_NONE) ||
-		(adapter.exp_discovery_type == SCAN_TYPE_NONE))
-		return;
+	type = adapter.exp_discovery_type;
+	adapter.exp_discovery_type = SCAN_TYPE_NONE;
 
-	start_discovery(adapter.exp_discovery_type);
+	if (type == SCAN_TYPE_NONE && gatt_device_found_cb)
+		type = SCAN_TYPE_LE;
 
-	/* Maintain expected discovery type if there is gatt client
-	 * registered
-	 */
-	adapter.exp_discovery_type = gatt_device_found_cb ?
-						SCAN_TYPE_LE : SCAN_TYPE_NONE;
+	if (type != SCAN_TYPE_NONE)
+		start_discovery(type);
 }
 
 static void confirm_device_name_cb(uint8_t status, uint16_t length,
@@ -1160,7 +1269,9 @@ static int fill_hal_prop(void *buf, uint8_t type, uint16_t len,
 
 	prop->type = type;
 	prop->len = len;
-	memcpy(prop->val, val, len);
+
+	if (len)
+		memcpy(prop->val, val, len);
 
 	return sizeof(*prop) + len;
 }
@@ -1174,6 +1285,28 @@ static uint8_t get_device_android_type(struct device *dev)
 		return HAL_TYPE_LE;
 
 	return HAL_TYPE_BREDR;
+}
+
+uint8_t bt_get_device_android_type(const bdaddr_t *addr)
+{
+	struct device *dev;
+
+	dev = get_device(addr, BDADDR_BREDR);
+
+	return get_device_android_type(dev);
+}
+
+const char *bt_get_adapter_name(void)
+{
+	return adapter.name;
+}
+
+bool bt_device_is_bonded(const bdaddr_t *bdaddr)
+{
+	if (g_slist_find_custom(bonded_devices, bdaddr, device_match))
+		return true;
+
+	return false;
 }
 
 static bool rssi_above_threshold(int old, int new)
@@ -1236,6 +1369,15 @@ static void update_new_device(struct device *dev, int8_t rssi,
 		size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_NAME,
 						strlen(dev->name), dev->name);
 		ev->num_props++;
+
+		/* when updating name also send stored friendly name */
+		if (dev->friendly_name) {
+			size += fill_hal_prop(buf + size,
+						HAL_PROP_DEVICE_FRIENDLY_NAME,
+						strlen(dev->friendly_name),
+						dev->friendly_name);
+			ev->num_props++;
+		}
 	}
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_EV_DEVICE_FOUND,
@@ -1247,7 +1389,7 @@ static void update_device(struct device *dev, int8_t rssi,
 {
 	uint8_t buf[IPC_MTU];
 	struct hal_ev_remote_device_props *ev = (void *) buf;
-	uint8_t android_type;
+	uint8_t old_type, new_type;
 	int size;
 
 	memset(buf, 0, sizeof(buf));
@@ -1257,25 +1399,21 @@ static void update_device(struct device *dev, int8_t rssi,
 	ev->status = HAL_STATUS_SUCCESS;
 	bdaddr2android(&dev->bdaddr, ev->bdaddr);
 
-	if (dev->bdaddr_type != bdaddr_type) {
-		bool type_changed = false;
+	old_type = get_device_android_type(dev);
 
+	if (bdaddr_type == BDADDR_BREDR) {
+		dev->bredr = true;
+	} else {
+		dev->le = true;
 		dev->bdaddr_type = bdaddr_type;
-		if (bdaddr_type == BDADDR_BREDR) {
-			type_changed = !dev->bredr;
-			dev->bredr = true;
-		} else {
-			type_changed = !dev->le;
-			dev->le = true;
-		}
+	}
 
-		if (type_changed) {
-			android_type = get_device_android_type(dev);
-			size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_TYPE,
-							sizeof(android_type),
-							&android_type);
-			ev->num_props++;
-		}
+	new_type = get_device_android_type(dev);
+
+	if (old_type != new_type) {
+		size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_TYPE,
+						sizeof(new_type), &new_type);
+		ev->num_props++;
 	}
 
 	if (eir->class && dev->class != eir->class) {
@@ -1298,11 +1436,35 @@ static void update_device(struct device *dev, int8_t rssi,
 		size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_NAME,
 						strlen(dev->name), dev->name);
 		ev->num_props++;
+
+		/* when updating name also send stored friendly name */
+		if (dev->friendly_name) {
+			size += fill_hal_prop(buf + size,
+						HAL_PROP_DEVICE_FRIENDLY_NAME,
+						strlen(dev->friendly_name),
+						dev->friendly_name);
+			ev->num_props++;
+		}
 	}
 
 	if (ev->num_props)
 		ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
 					HAL_EV_REMOTE_DEVICE_PROPS, size, buf);
+}
+
+static bool is_new_device(const struct device *dev, unsigned int flags)
+{
+	if (dev->found)
+		return false;
+
+	if (dev->bredr_paired || dev->le_paired)
+		return false;
+
+	if (dev->bdaddr_type != BDADDR_BREDR &&
+				!(flags & (EIR_LIM_DISC | EIR_GEN_DISC)))
+		return false;
+
+	return true;
 }
 
 static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
@@ -1316,36 +1478,35 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 
 	eir_parse(&eir, data, data_len);
 
-	dev = find_device(bdaddr);
+	dev = get_device(bdaddr, bdaddr_type);
 
-	if (bdaddr_type != BDADDR_BREDR) {
-		/* Notify Gatt if its registered for LE events */
-		if (gatt_device_found_cb)
-			gatt_device_found_cb(bdaddr, bdaddr_type, rssi,
-							sizeof(eir), &eir);
+	if (bdaddr_type == BDADDR_BREDR)
+		dev->bredr_seen = time(NULL);
+	else
+		dev->le_seen = time(NULL);
 
-		if (!dev && adapter.cur_discovery_type != SCAN_TYPE_NONE &&
-				!(eir.flags & (EIR_LIM_DISC | EIR_GEN_DISC))) {
-			eir_data_free(&eir);
-			return;
-		}
-	}
-
-	/* Device found event needs to be send also for known device if this is
+	/*
+	 * Device found event needs to be send also for known device if this is
 	 * new discovery session. Otherwise framework will ignore it.
 	 */
-	if (!dev || !dev->found) {
-		if (!dev)
-			dev = create_device(bdaddr, bdaddr_type);
-
+	if (is_new_device(dev, eir.flags))
 		update_new_device(dev, rssi, &eir);
-	} else {
+	else
 		update_device(dev, rssi, &eir, bdaddr_type);
-	}
 
 	eir_data_free(&eir);
 
-	if (dev->bond_state != HAL_BOND_STATE_BONDED)
+	/* Notify Gatt if its registered for LE events */
+	if (bdaddr_type != BDADDR_BREDR && gatt_device_found_cb) {
+		bool discoverable;
+
+		discoverable = eir.flags & (EIR_LIM_DISC | EIR_GEN_DISC);
+
+		gatt_device_found_cb(bdaddr, bdaddr_type, rssi, data_len, data,
+								discoverable);
+	}
+
+	if (!dev->bredr_paired && !dev->le_paired)
 		cache_device(dev);
 
 	if (confirm) {
@@ -1354,8 +1515,10 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 
 		ba2str(bdaddr, addr);
 
-		/* Don't need to confirm name if we have it already in cache
-		 * Just check if device name is different than bdaddr */
+		/*
+		 * Don't need to confirm name if we have it already in cache
+		 * Just check if device name is different than bdaddr
+		 */
 		if (g_strcmp0(dev->name, addr)) {
 			get_device_name(dev);
 			resolve_name = false;
@@ -1485,15 +1648,20 @@ static void mgmt_connect_failed_event(uint16_t index, uint16_t length,
 	DBG("");
 
 	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
 
-	/* In case security mode 3 pairing we will get connect failed event
-	* in case e.g wrong PIN code entered. Let's check if device is
-	* bonding, if so update bond state */
+	/*
+	 * In case security mode 3 pairing we will get connect failed event
+	 * in case e.g wrong PIN code entered. Let's check if device is
+	 * bonding, if so update bond state
+	 */
 
-	if (dev && dev->bond_state == HAL_BOND_STATE_BONDING)
-		set_device_bond_state(&ev->addr.bdaddr,
-						status_mgmt2hal(ev->status),
-						HAL_BOND_STATE_NONE);
+	if (!dev->pairing)
+		return;
+
+	update_device_state(dev, ev->addr.type, status_mgmt2hal(ev->status),
+							false, false, false);
 }
 
 static void mgmt_auth_failed_event(uint16_t index, uint16_t length,
@@ -1510,17 +1678,21 @@ static void mgmt_auth_failed_event(uint16_t index, uint16_t length,
 	DBG("");
 
 	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
 
-	if (dev && dev->bond_state == HAL_BOND_STATE_BONDING)
-		set_device_bond_state(&ev->addr.bdaddr,
-						status_mgmt2hal(ev->status),
-						HAL_BOND_STATE_NONE);
+	if (!dev->pairing)
+		return;
+
+	update_device_state(dev, ev->addr.type, status_mgmt2hal(ev->status),
+							false, false, false);
 }
 
 static void mgmt_device_unpaired_event(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_device_unpaired *ev = param;
+	struct device *dev;
 
 	if (length < sizeof(*ev)) {
 		error("Too small device unpaired event (%u bytes)", length);
@@ -1531,8 +1703,12 @@ static void mgmt_device_unpaired_event(uint16_t index, uint16_t length,
 
 	/* TODO should device be disconnected ? */
 
-	set_device_bond_state(&ev->addr.bdaddr, HAL_STATUS_SUCCESS,
-							HAL_BOND_STATE_NONE);
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, ev->addr.type, HAL_STATUS_SUCCESS, false,
+								false, false);
 }
 
 static void store_ltk(const bdaddr_t *dst, uint8_t bdaddr_type, bool master,
@@ -1585,7 +1761,7 @@ static void new_long_term_key_event(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_ev_new_long_term_key *ev = param;
-	const struct mgmt_addr_info *addr = &ev->key.addr;
+	struct device *dev;
 	char dst[18];
 
 	if (length < sizeof(*ev)) {
@@ -1593,13 +1769,17 @@ static void new_long_term_key_event(uint16_t index, uint16_t length,
 		return;
 	}
 
-	ba2str(&addr->bdaddr, dst);
+	ba2str(&ev->key.addr.bdaddr, dst);
 
 	DBG("new LTK for %s type %u enc_size %u store_hint %u",
 			dst, ev->key.type, ev->key.enc_size, ev->store_hint);
 
-	set_device_bond_state(&addr->bdaddr, HAL_STATUS_SUCCESS,
-							HAL_BOND_STATE_BONDED);
+	dev = find_device(&ev->key.addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, ev->key.addr.type, HAL_STATUS_SUCCESS, false,
+							true, !!ev->store_hint);
 
 	if (ev->store_hint) {
 		const struct mgmt_ltk_info *key = &ev->key;
@@ -1740,7 +1920,8 @@ static void load_ltks(GSList *ltks)
 
 	cp = g_malloc0(cp_size);
 
-	/* Even if the list of stored keys is empty, it is important to load
+	/*
+	 * Even if the list of stored keys is empty, it is important to load
 	 * an empty list into the kernel. That way it is ensured that no old
 	 * keys from a previous daemon are present.
 	 */
@@ -2006,9 +2187,11 @@ static uint8_t set_adapter_discoverable_timeout(const void *buf, uint16_t len)
 		return HAL_STATUS_FAILED;
 	}
 
-	/* Android handles discoverable timeout in Settings app.
+	/*
+	 * Android handles discoverable timeout in Settings app.
 	 * There is no need to use kernel feature for that.
-	 * Just need to store this value here */
+	 * Just need to store this value here
+	 */
 
 	memcpy(&adapter.discoverable_timeout, timeout, sizeof(uint32_t));
 
@@ -2040,8 +2223,6 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 	char **uuids;
 	char *str;
 
-	DBG("%s", peer);
-
 	/* BREDR if not present */
 	type = g_key_file_get_integer(key_file, peer, "AddressType", NULL);
 
@@ -2055,19 +2236,22 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 	str = g_key_file_get_string(key_file, peer, "LinkKey", NULL);
 	if (str) {
 		g_free(str);
-		dev->bond_state = HAL_BOND_STATE_BONDED;
+		dev->bredr_paired = true;
+		dev->bredr_bonded = true;
 	}
 
 	str = g_key_file_get_string(key_file, peer, "LongTermKey", NULL);
 	if (str) {
 		g_free(str);
-		dev->bond_state = HAL_BOND_STATE_BONDED;
+		dev->le_paired = true;
+		dev->le_bonded = true;
 	}
 
 	str = g_key_file_get_string(key_file, peer, "SlaveLongTermKey", NULL);
 	if (str) {
 		g_free(str);
-		dev->bond_state = HAL_BOND_STATE_BONDED;
+		dev->le_paired = true;
+		dev->le_bonded = true;
 	}
 
 	str = g_key_file_get_string(key_file, peer, "Name", NULL);
@@ -2084,8 +2268,13 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 
 	dev->class = g_key_file_get_integer(key_file, peer, "Class", NULL);
 
-	dev->timestamp = g_key_file_get_integer(key_file, peer, "Timestamp",
-									NULL);
+	if (dev->bredr)
+		dev->bredr_seen = g_key_file_get_integer(key_file, peer,
+								"Timestamp",
+								NULL);
+	else
+		dev->le_seen = g_key_file_get_integer(key_file, peer,
+							"Timestamp", NULL);
 
 	uuids = g_key_file_get_string_list(key_file, peer, "Services", NULL,
 									NULL);
@@ -2168,7 +2357,8 @@ static struct mgmt_ltk_info *get_ltk_info(GKeyFile *key_file, const char *peer,
 
 	info->type = g_key_file_get_integer(key_file, peer, keytype_s, NULL);
 
-	info->enc_size = g_key_file_get_integer(key_file, peer, encsize_s, NULL);
+	info->enc_size = g_key_file_get_integer(key_file, peer, encsize_s,
+									NULL);
 
 	info->rand = g_key_file_get_uint64(key_file, peer, rand_s, NULL);
 	info->rand = cpu_to_le64(info->rand);
@@ -2184,12 +2374,27 @@ failed:
 	return info;
 }
 
+static time_t device_timestamp(const struct device *dev)
+{
+	if (dev->bredr && dev->le) {
+		if (dev->le_seen > dev->bredr_seen)
+			return dev->le_seen;
+
+		return dev->bredr_seen;
+	}
+
+	if (dev->bredr)
+		return dev->bredr_seen;
+
+	return dev->le_seen;
+}
+
 static int device_timestamp_cmp(gconstpointer  a, gconstpointer  b)
 {
 	const struct device *deva = a;
 	const struct device *devb = b;
 
-	return deva->timestamp < devb->timestamp;
+	return device_timestamp(deva) < device_timestamp(devb);
 }
 
 static void load_devices_cache(void)
@@ -2298,7 +2503,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 {
 	const struct mgmt_rp_read_info *rp = param;
 	bt_bluetooth_ready cb = user_data;
-	uint32_t missing_settings, supported_settings;
+	uint32_t missing_settings;
 	int err;
 
 	DBG("");
@@ -2343,7 +2548,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	adapter.dev_class = rp->dev_class[0] | (rp->dev_class[1] << 8) |
 						(rp->dev_class[2] << 16);
 
-	supported_settings = btohs(rp->supported_settings);
+	adapter.supported_settings = btohs(rp->supported_settings);
 	adapter.current_settings = btohs(rp->current_settings);
 
 	/* TODO: Register all event notification handlers */
@@ -2354,7 +2559,8 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	set_io_capability();
 	set_device_id();
 
-	missing_settings = adapter.current_settings ^ supported_settings;
+	missing_settings = adapter.current_settings ^
+						adapter.supported_settings;
 
 	if (missing_settings & MGMT_SETTING_SSP)
 		set_mode(MGMT_OP_SET_SSP, 0x01);
@@ -2364,9 +2570,6 @@ static void read_info_complete(uint8_t status, uint16_t length,
 
 	if (missing_settings & MGMT_SETTING_PAIRABLE)
 		set_mode(MGMT_OP_SET_PAIRABLE, 0x01);
-
-	if (missing_settings & MGMT_SETTING_LE)
-		set_mode(MGMT_OP_SET_LE, 0x01);
 
 	load_devices_info(cb);
 	load_devices_cache();
@@ -2759,15 +2962,74 @@ static void handle_get_adapter_prop_cmd(const void *buf, uint16_t len)
 
 static void get_adapter_properties(void)
 {
-	get_adapter_address();
-	get_adapter_name();
-	get_adapter_uuids();
-	get_adapter_class();
-	get_adapter_type();
-	get_adapter_service_rec();
-	get_adapter_scan_mode();
-	get_adapter_bonded_devices();
-	get_adapter_discoverable_timeout();
+	uint8_t buf[IPC_MTU];
+	struct hal_ev_adapter_props_changed *ev = (void *) buf;
+	uint8_t bonded[g_slist_length(bonded_devices) * sizeof(bdaddr_t)];
+	uint128_t uuids[g_slist_length(adapter.uuids)];
+	uint8_t android_bdaddr[6];
+	uint8_t type, mode;
+	int size, i;
+	GSList *l;
+
+	size = sizeof(*ev);
+
+	ev->status = HAL_STATUS_SUCCESS;
+	ev->num_props = 0;
+
+	bdaddr2android(&adapter.bdaddr, &android_bdaddr);
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_ADDR,
+					sizeof(android_bdaddr), android_bdaddr);
+	ev->num_props++;
+
+	if (adapter.name) {
+		size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_NAME,
+					strlen(adapter.name), adapter.name);
+		ev->num_props++;
+	}
+
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_CLASS,
+				sizeof(adapter.dev_class), &adapter.dev_class);
+	ev->num_props++;
+
+	type = settings2type();
+	if (type) {
+		size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_TYPE,
+							sizeof(type), &type);
+		ev->num_props++;
+	}
+
+	mode = settings2scan_mode();
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_SCAN_MODE,
+							sizeof(mode), &mode);
+	ev->num_props++;
+
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_DISC_TIMEOUT,
+					sizeof(adapter.discoverable_timeout),
+					&adapter.discoverable_timeout);
+	ev->num_props++;
+
+	for (i = 0, l = bonded_devices; l; l = g_slist_next(l), i++) {
+		struct device *dev = l->data;
+
+		bdaddr2android(&dev->bdaddr, bonded + (i * sizeof(bdaddr_t)));
+	}
+
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_BONDED_DEVICES,
+						sizeof(bonded), bonded);
+	ev->num_props++;
+
+	for (i = 0, l = adapter.uuids; l; l = g_slist_next(l), i++) {
+		uuid_t *uuid = l->data;
+
+		memcpy(&uuids[i], &uuid->value.uuid128, sizeof(uint128_t));
+	}
+
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_UUIDS, sizeof(uuids),
+									uuids);
+	ev->num_props++;
+
+	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
+				HAL_EV_ADAPTER_PROPS_CHANGED, size, buf);
 }
 
 static void cancel_pending_confirm_name(gpointer data, gpointer user_data)
@@ -2782,9 +3044,12 @@ static bool stop_discovery(uint8_t type)
 {
 	struct mgmt_cp_stop_discovery cp;
 
-	cp.type = get_adapter_discovering_type() & type;
+	cp.type = get_supported_discovery_type() & type;
 
 	DBG("type=0x%x", cp.type);
+
+	if (cp.type == SCAN_TYPE_NONE)
+		return false;
 
 	/* Lets drop all confirm name request as we don't need it anymore */
 	g_slist_foreach(cached_devices, cancel_pending_confirm_name, NULL);
@@ -2797,20 +3062,66 @@ static bool stop_discovery(uint8_t type)
 	return false;
 }
 
+struct adv_user_data {
+	bt_le_set_advertising_done cb;
+	void *user_data;
+};
+
+static void set_advertising_cb(uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	struct adv_user_data *data = user_data;
+
+	DBG("");
+
+	if (status)
+		error("Failed to set adverising %s (0x%02x))",
+						mgmt_errstr(status), status);
+
+	data->cb(status, data->user_data);
+}
+
+bool bt_le_set_advertising(bool advertising, bt_le_set_advertising_done cb,
+							 void *user_data)
+{
+	struct adv_user_data *data;
+	uint8_t adv = advertising ? 0x01 : 0x00;
+
+	data = new0(struct adv_user_data, 1);
+	if (!data)
+		return false;
+
+	data->cb = cb;
+	data->user_data = user_data;
+
+	if (mgmt_send(mgmt_if, MGMT_OP_SET_ADVERTISING, adapter.index,
+			sizeof(adv), &adv, set_advertising_cb, data, free) > 0)
+		return true;
+
+	error("Failed to set advertising");
+	free(data);
+	return false;
+}
+
 bool bt_le_discovery_stop(bt_le_discovery_stopped cb)
 {
-	if (!adapter.cur_discovery_type) {
+	if (adapter.cur_discovery_type != SCAN_TYPE_LE) {
 		if (cb)
 			cb();
+
+		gatt_device_found_cb = NULL;
+
 		return true;
 	}
 
-	gatt_discovery_stopped_cb = cb;
-	/* Remove device found callback */
-	gatt_device_found_cb = NULL;
-	adapter.exp_discovery_type &= ~SCAN_TYPE_LE;
+	if (!stop_discovery(SCAN_TYPE_LE))
+		return false;
 
-	return stop_discovery(adapter.cur_discovery_type);
+	gatt_device_found_cb = NULL;
+	gatt_discovery_stopped_cb = cb;
+	adapter.exp_discovery_type = SCAN_TYPE_NONE;
+
+	return true;
 }
 
 bool bt_le_discovery_start(bt_le_device_found cb)
@@ -2818,15 +3129,74 @@ bool bt_le_discovery_start(bt_le_device_found cb)
 	if (!(adapter.current_settings & MGMT_SETTING_POWERED))
 		return false;
 
-	gatt_device_found_cb = cb;
-
-	adapter.exp_discovery_type |= SCAN_TYPE_LE;
-
 	/* If core is discovering, don't bother */
-	if (adapter.cur_discovery_type)
+	if (adapter.cur_discovery_type != SCAN_TYPE_NONE) {
+		gatt_device_found_cb = cb;
 		return true;
+	}
 
-	return start_discovery(adapter.exp_discovery_type);
+	if (start_discovery(SCAN_TYPE_LE)) {
+		gatt_device_found_cb = cb;
+		return true;
+	}
+
+	return false;
+}
+
+struct read_rssi_user_data {
+	bt_read_device_rssi_done cb;
+	void *user_data;
+};
+
+static void read_device_rssi_cb(uint8_t status, uint16_t length,
+			const void *param, void *user_data)
+{
+	const struct mgmt_rp_get_conn_info *rp = param;
+	struct read_rssi_user_data *data = user_data;
+
+	DBG("");
+
+	if (status)
+		error("Failed to get conn info: %s (0x%02x))",
+						mgmt_errstr(status), status);
+
+	if (length < sizeof(*rp)) {
+		error("Wrong size of get conn info response");
+		return;
+	}
+
+	data->cb(status, &rp->addr.bdaddr, rp->rssi, data->user_data);
+}
+
+bool bt_read_device_rssi(const bdaddr_t *addr, bt_read_device_rssi_done cb,
+							void *user_data)
+{
+	struct device *dev;
+	struct read_rssi_user_data *data;
+	struct mgmt_cp_get_conn_info cp;
+
+	dev = find_device(addr);
+	if (!dev)
+		return false;
+
+	memcpy(&cp.addr.bdaddr, addr, sizeof(cp.addr.bdaddr));
+	cp.addr.type = dev->bredr ? BDADDR_BREDR : dev->bdaddr_type;
+
+	data = new0(struct read_rssi_user_data, 1);
+	if (!data)
+		return false;
+
+	data->cb = cb;
+	data->user_data = user_data;
+
+	if (!mgmt_send(mgmt_if, MGMT_OP_GET_CONN_INFO, adapter.index,
+			sizeof(cp), &cp, read_device_rssi_cb, data, free)) {
+		free(data);
+		error("Failed to get conn info");
+		return false;
+	}
+
+	return true;
 }
 
 static uint8_t set_adapter_scan_mode(const void *buf, uint16_t len)
@@ -2932,16 +3302,43 @@ static void pair_device_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_rp_pair_device *rp = param;
+	struct device *dev;
 
 	DBG("status %u", status);
 
-	/* On success bond state change will be send when new link key or LTK
-	 * event is received */
+	/*
+	 * On success bond state change will be send when new link key or LTK
+	 * event is received
+	 */
 	if (status == MGMT_STATUS_SUCCESS)
 		return;
 
-	set_device_bond_state(&rp->addr.bdaddr, status_mgmt2hal(status),
-							HAL_BOND_STATE_NONE);
+	dev = find_device(&rp->addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, rp->addr.type, status_mgmt2hal(status), false,
+								false, false);
+}
+
+static uint8_t select_device_bearer(struct device *dev)
+{
+	if (dev->bredr && dev->le) {
+		if (dev->le_seen > dev->bredr_seen)
+			return dev->bdaddr_type;
+
+		return BDADDR_BREDR;
+	}
+
+	return dev->bredr ? BDADDR_BREDR : dev->bdaddr_type;
+}
+
+static bool device_is_paired(struct device *dev, uint8_t addr_type)
+{
+	if (addr_type == BDADDR_BREDR)
+		return dev->bredr_paired;
+
+	return dev->le_paired;
 }
 
 static void handle_create_bond_cmd(const void *buf, uint16_t len)
@@ -2954,18 +3351,14 @@ static void handle_create_bond_cmd(const void *buf, uint16_t len)
 	cp.io_cap = DEFAULT_IO_CAPABILITY;
 	android2bdaddr(cmd->bdaddr, &cp.addr.bdaddr);
 
-	dev = find_device(&cp.addr.bdaddr);
+	/* type is used only as fallback when device is not in cache */
+	dev = get_device(&cp.addr.bdaddr, BDADDR_BREDR);
 
-	if (dev) {
-		if (dev->bond_state != HAL_BOND_STATE_NONE) {
-			status = HAL_STATUS_FAILED;
-			goto fail;
-		}
+	cp.addr.type = select_device_bearer(dev);
 
-		cp.addr.type = dev->bredr ? BDADDR_BREDR : dev->bdaddr_type;
-	} else {
-		/* Fallback to BREDR if device is unknown eg. OOB */
-		cp.addr.type = BDADDR_BREDR;
+	if (device_is_paired(dev, cp.addr.type)) {
+		status = HAL_STATUS_FAILED;
+		goto fail;
 	}
 
 	if (mgmt_send(mgmt_if, MGMT_OP_PAIR_DEVICE, adapter.index, sizeof(cp),
@@ -2976,8 +3369,8 @@ static void handle_create_bond_cmd(const void *buf, uint16_t len)
 
 	status = HAL_STATUS_SUCCESS;
 
-	set_device_bond_state(&cp.addr.bdaddr, HAL_STATUS_SUCCESS,
-						HAL_BOND_STATE_BONDING);
+	update_device_state(dev, cp.addr.type, HAL_STATUS_SUCCESS, true, false,
+									false);
 
 fail:
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_OP_CREATE_BOND,
@@ -2999,8 +3392,7 @@ static void handle_cancel_bond_cmd(const void *buf, uint16_t len)
 		goto failed;
 	}
 
-	cp.type = dev->bredr ? BDADDR_BREDR : dev->bdaddr_type;
-
+	cp.type = select_device_bearer(dev);
 
 	if (mgmt_reply(mgmt_if, MGMT_OP_CANCEL_PAIR_DEVICE,
 					adapter.index, sizeof(cp), &cp,
@@ -3020,14 +3412,19 @@ static void unpair_device_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
 	const struct mgmt_rp_unpair_device *rp = param;
+	struct device *dev;
 
 	DBG("status %u", status);
 
 	if (status != MGMT_STATUS_SUCCESS && status != MGMT_STATUS_NOT_PAIRED)
 		return;
 
-	set_device_bond_state(&rp->addr.bdaddr, HAL_STATUS_SUCCESS,
-							HAL_BOND_STATE_NONE);
+	dev = find_device(&rp->addr.bdaddr);
+	if (!dev)
+		return;
+
+	update_device_state(dev, rp->addr.type, HAL_STATUS_SUCCESS, false,
+								false, false);
 }
 
 static void handle_remove_bond_cmd(const void *buf, uint16_t len)
@@ -3046,13 +3443,26 @@ static void handle_remove_bond_cmd(const void *buf, uint16_t len)
 		goto failed;
 	}
 
-	cp.addr.type = dev->bredr ? BDADDR_BREDR : dev->bdaddr_type;
+	if (dev->le_paired) {
+		cp.addr.type = dev->bdaddr_type;
 
-	if (mgmt_send(mgmt_if, MGMT_OP_UNPAIR_DEVICE, adapter.index,
-				sizeof(cp), &cp, unpair_device_complete,
-				NULL, NULL) ==  0) {
-		status = HAL_STATUS_FAILED;
-		goto failed;
+		if (mgmt_send(mgmt_if, MGMT_OP_UNPAIR_DEVICE, adapter.index,
+					sizeof(cp), &cp, unpair_device_complete,
+					NULL, NULL) == 0) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+	}
+
+	if (dev->bredr_paired) {
+		cp.addr.type = BDADDR_BREDR;
+
+		if (mgmt_send(mgmt_if, MGMT_OP_UNPAIR_DEVICE, adapter.index,
+					sizeof(cp), &cp, unpair_device_complete,
+					NULL, NULL) == 0) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
 	}
 
 	status = HAL_STATUS_SUCCESS;
@@ -3284,23 +3694,75 @@ static uint8_t get_device_version_info(struct device *dev)
 
 static uint8_t get_device_timestamp(struct device *dev)
 {
+	uint32_t timestamp;
+
+	timestamp = device_timestamp(dev);
+
 	send_device_property(&dev->bdaddr, HAL_PROP_DEVICE_TIMESTAMP,
-				sizeof(dev->timestamp), &dev->timestamp);
+						sizeof(timestamp), &timestamp);
 
 	return HAL_STATUS_SUCCESS;
 }
 
 static void get_remote_device_props(struct device *dev)
 {
-	get_device_name(dev);
-	get_device_uuids(dev);
-	get_device_class(dev);
-	get_device_type(dev);
-	get_device_service_rec(dev);
-	get_device_friendly_name(dev);
-	get_device_rssi(dev);
-	get_device_version_info(dev);
-	get_device_timestamp(dev);
+	uint8_t buf[IPC_MTU];
+	struct hal_ev_remote_device_props *ev = (void *) buf;
+	uint128_t uuids[g_slist_length(dev->uuids)];
+	uint8_t android_type;
+	uint32_t timestamp;
+	int size, i;
+	GSList *l;
+
+	memset(buf, 0, sizeof(buf));
+
+	size = sizeof(*ev);
+
+	ev->status = HAL_STATUS_SUCCESS;
+	bdaddr2android(&dev->bdaddr, ev->bdaddr);
+
+	android_type = get_device_android_type(dev);
+	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_TYPE,
+					sizeof(android_type), &android_type);
+	ev->num_props++;
+
+	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_CLASS,
+					sizeof(dev->class), &dev->class);
+	ev->num_props++;
+
+	if (dev->rssi) {
+		size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_RSSI,
+						sizeof(dev->rssi), &dev->rssi);
+		ev->num_props++;
+	}
+
+	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_NAME,
+						strlen(dev->name), dev->name);
+	ev->num_props++;
+
+	if (dev->friendly_name) {
+		size += fill_hal_prop(buf + size,
+					HAL_PROP_DEVICE_FRIENDLY_NAME,
+					strlen(dev->friendly_name),
+					dev->friendly_name);
+		ev->num_props++;
+	}
+
+	for (i = 0, l = dev->uuids; l; l = g_slist_next(l), i++)
+		memcpy(&uuids[i], l->data, sizeof(uint128_t));
+
+	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_UUIDS, sizeof(uuids),
+									uuids);
+	ev->num_props++;
+
+	timestamp = get_device_timestamp(dev);
+
+	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_TIMESTAMP,
+						sizeof(timestamp), &timestamp);
+	ev->num_props++;
+
+	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
+					HAL_EV_REMOTE_DEVICE_PROPS, size, buf);
 }
 
 static void send_bonded_devices_props(void)
@@ -3318,8 +3780,10 @@ static void handle_enable_cmd(const void *buf, uint16_t len)
 {
 	uint8_t status;
 
-	/* Framework expects all properties to be emitted while
-	 * enabling adapter */
+	/*
+	 * Framework expects all properties to be emitted while enabling
+	 * adapter
+	 */
 	get_adapter_properties();
 
 	/* Sent also properties of bonded devices */
@@ -3459,13 +3923,10 @@ static uint8_t set_device_friendly_name(struct device *dev, const uint8_t *val,
 	g_free(dev->friendly_name);
 	dev->friendly_name = g_strndup((const char *) val, len);
 
-	if (dev->bond_state == HAL_BOND_STATE_BONDED)
+	if (dev->bredr_paired || dev->le_paired)
 		store_device_info(dev, DEVICES_FILE);
 	else
 		store_device_info(dev, CACHE_FILE);
-
-	send_device_property(&dev->bdaddr, HAL_PROP_DEVICE_FRIENDLY_NAME,
-				strlen(dev->friendly_name), dev->friendly_name);
 
 	return HAL_STATUS_SUCCESS;
 }
@@ -3536,39 +3997,38 @@ static void handle_start_discovery_cmd(const void *buf, uint16_t len)
 {
 	uint8_t status;
 
-	/* Check if there is discovery with BREDR type */
-	if (adapter.cur_discovery_type & SCAN_TYPE_BREDR) {
-		status = HAL_STATUS_SUCCESS;
-		goto reply;
-	}
-
 	if (!(adapter.current_settings & MGMT_SETTING_POWERED)) {
 		status = HAL_STATUS_NOT_READY;
-		goto reply;
+		goto failed;
 	}
 
-	adapter.exp_discovery_type |= SCAN_TYPE_DUAL;
-
-	/* If there is no discovery ongoing, try to start discovery */
-	if (!adapter.cur_discovery_type) {
-		if (!start_discovery(adapter.exp_discovery_type))
+	switch (adapter.cur_discovery_type) {
+	case SCAN_TYPE_DUAL:
+	case SCAN_TYPE_BREDR:
+		break;
+	case SCAN_TYPE_NONE:
+		if (!start_discovery(SCAN_TYPE_DUAL)) {
 			status = HAL_STATUS_FAILED;
-		else
-			status = HAL_STATUS_SUCCESS;
+			goto failed;
+		}
 
-		goto reply;
-	}
+		break;
+	case SCAN_TYPE_LE:
+		if (get_supported_discovery_type() == SCAN_TYPE_LE)
+			break;
 
-	/* Stop discovery here. Once it is stop we will restart it
-	 * with exp_discovery_settings */
-	if (!stop_discovery(adapter.cur_discovery_type)) {
-		status = HAL_STATUS_FAILED;
-		goto reply;
+		if (!stop_discovery(SCAN_TYPE_LE)) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+
+		adapter.exp_discovery_type = SCAN_TYPE_DUAL;
+		break;
 	}
 
 	status = HAL_STATUS_SUCCESS;
 
-reply:
+failed:
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_OP_START_DISCOVERY,
 									status);
 }
@@ -3577,27 +4037,44 @@ static void handle_cancel_discovery_cmd(const void *buf, uint16_t len)
 {
 	uint8_t status;
 
-	if (!adapter.cur_discovery_type) {
-		status = HAL_STATUS_SUCCESS;
-		goto reply;
-	}
-
 	if (!(adapter.current_settings & MGMT_SETTING_POWERED)) {
 		status = HAL_STATUS_NOT_READY;
-		goto reply;
+		goto failed;
 	}
 
-	/* Take into account that gatt might want to keep discover */
-	adapter.exp_discovery_type = gatt_device_found_cb ? SCAN_TYPE_LE : 0;
+	switch (adapter.cur_discovery_type) {
+	case SCAN_TYPE_NONE:
+		break;
+	case SCAN_TYPE_LE:
+		if (get_supported_discovery_type() != SCAN_TYPE_LE)
+			break;
 
-	if (!stop_discovery(adapter.cur_discovery_type)) {
-		status = HAL_STATUS_FAILED;
-		goto reply;
+		if (gatt_device_found_cb) {
+			status = HAL_STATUS_BUSY;
+			goto failed;
+		}
+
+		if (!stop_discovery(SCAN_TYPE_LE)) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+
+		break;
+	case SCAN_TYPE_DUAL:
+	case SCAN_TYPE_BREDR:
+		if (!stop_discovery(SCAN_TYPE_DUAL)) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+
+		adapter.exp_discovery_type = gatt_device_found_cb ?
+						SCAN_TYPE_LE : SCAN_TYPE_NONE;
+		break;
 	}
 
 	status = HAL_STATUS_SUCCESS;
 
-reply:
+failed:
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_OP_CANCEL_DISCOVERY,
 									status);
 }
@@ -3724,14 +4201,69 @@ static const struct ipc_handler cmd_handlers[] = {
 	{ handle_le_test_mode_cmd, true, sizeof(struct hal_cmd_le_test_mode) },
 };
 
-void bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
+bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
 {
-	DBG("");
+	uint32_t missing_settings;
+
+	DBG("mode 0x%x", mode);
+
+	missing_settings = adapter.current_settings ^
+					adapter.supported_settings;
+
+	switch (mode) {
+	case HAL_MODE_DEFAULT:
+		if (missing_settings & MGMT_SETTING_BREDR)
+			set_mode(MGMT_OP_SET_BREDR, 0x01);
+
+		if (missing_settings & MGMT_SETTING_LE)
+			set_mode(MGMT_OP_SET_LE, 0x01);
+		break;
+	case HAL_MODE_LE:
+		/* Fail if controller does not support LE */
+		if (!(adapter.supported_settings & MGMT_SETTING_LE)) {
+			error("LE Mode not supported by controller");
+			return false;
+		}
+
+		/* If LE it is not yet enabled then enable it */
+		if (!(adapter.current_settings & MGMT_SETTING_LE))
+			set_mode(MGMT_OP_SET_LE, 0x01);
+
+		/* Disable BR/EDR if it is enabled */
+		if (adapter.current_settings & MGMT_SETTING_BREDR)
+			set_mode(MGMT_OP_SET_BREDR, 0x00);
+		break;
+	case HAL_MODE_BREDR:
+		/* Fail if controller does not support BR/EDR */
+		if (!(adapter.supported_settings & MGMT_SETTING_BREDR)) {
+			error("BR/EDR Mode not supported");
+			return false;
+		}
+
+		/* Enable BR/EDR if it is not enabled */
+		if (missing_settings & MGMT_SETTING_BREDR)
+			set_mode(MGMT_OP_SET_BREDR, 0x01);
+
+		/*
+		 * According to Core Spec 4.0 host should not disable LE in
+		 * controller if it was enabled (Vol 2. Part E. 7.3.79).
+		 * Core Spec 4.1 removed this limitation and chips seem to be
+		 * handling this just fine anyway.
+		 */
+		if (adapter.current_settings & MGMT_SETTING_LE)
+			set_mode(MGMT_OP_SET_LE, 0x00);
+		break;
+	default:
+		error("Unknown mode 0x%x", mode);
+		return false;
+	}
 
 	hal_ipc = ipc;
 
 	ipc_register(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, cmd_handlers,
 						G_N_ELEMENTS(cmd_handlers));
+
+	return true;
 }
 
 void bt_bluetooth_unregister(void)

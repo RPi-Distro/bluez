@@ -97,6 +97,9 @@ static uint8_t mgmt_revision = 0;
 
 static GSList *adapter_drivers = NULL;
 
+static GSList *disconnect_list = NULL;
+static GSList *conn_fail_list = NULL;
+
 struct link_key_info {
 	bdaddr_t bdaddr;
 	unsigned char key[16];
@@ -735,6 +738,16 @@ struct btd_device *btd_adapter_find_device(struct btd_adapter *adapter,
 		return NULL;
 
 	device = list->data;
+
+	/*
+	 * If we're looking up based on public address and the address
+	 * was not previously used over this bearer we may need to
+	 * update LE or BR/EDR support information.
+	 */
+	if (bdaddr_type == BDADDR_BREDR)
+		device_set_bredr_support(device);
+	else
+		device_set_le_support(device, bdaddr_type);
 
 	return device;
 }
@@ -4295,9 +4308,7 @@ static void update_found_devices(struct btd_adapter *adapter,
 	struct btd_device *dev;
 	struct eir_data eir_data;
 	bool name_known, discoverable;
-	struct device_addr_type addr_type;
 	char addr[18];
-	GSList *list;
 
 	memset(&eir_data, 0, sizeof(eir_data));
 	eir_parse(&eir_data, data, data_len);
@@ -4309,30 +4320,20 @@ static void update_found_devices(struct btd_adapter *adapter,
 
 	ba2str(bdaddr, addr);
 
-	bacpy(&addr_type.bdaddr, bdaddr);
-	addr_type.bdaddr_type = bdaddr_type;
-
-	list = g_slist_find_custom(adapter->devices, &addr_type,
-							device_addr_type_cmp);
-	if (!list) {
+	dev = btd_adapter_find_device(adapter, bdaddr, bdaddr_type);
+	if (!dev) {
 		/*
-		 * If no client has requested discovery, then do not
-		 * create new device objects.
+		 * If no client has requested discovery or the device is
+		 * not marked as discoverable, then do not create new
+		 * device objects.
 		 */
-		if (!adapter->discovery_list) {
+		if (!adapter->discovery_list || !discoverable) {
 			eir_data_free(&eir_data);
 			return;
 		}
 
-		if (discoverable)
-			dev = adapter_create_device(adapter, bdaddr,
-								bdaddr_type);
-		else
-			dev = btd_adapter_find_device(adapter, bdaddr,
-								bdaddr_type);
-
-	} else
-		dev = list->data;
+		dev = adapter_create_device(adapter, bdaddr, bdaddr_type);
+	}
 
 	if (!dev) {
 		error("Unable to create object for found device %s", addr);
@@ -4342,8 +4343,15 @@ static void update_found_devices(struct btd_adapter *adapter,
 
 	device_update_last_seen(dev, bdaddr_type);
 
-	if (bdaddr_type != BDADDR_BREDR && !(eir_data.flags & EIR_BREDR_UNSUP))
-		device_set_bredr_support(dev, true);
+	/*
+	 * FIXME: We need to check for non-zero flags first because
+	 * older kernels send separate adv_ind and scan_rsp. Newer
+	 * kernels send them merged, so once we know which mgmt version
+	 * supports this we can make the non-zero check conditional.
+	 */
+	if (bdaddr_type != BDADDR_BREDR && eir_data.flags &&
+					!(eir_data.flags & EIR_BREDR_UNSUP))
+		device_set_bredr_support(dev);
 
 	if (eir_data.name != NULL && eir_data.name_complete)
 		device_store_cached_name(dev, eir_data.name);
@@ -5389,6 +5397,16 @@ int adapter_bonding_attempt(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 	return 0;
 }
 
+static void disconnect_notify(struct btd_device *dev, uint8_t reason)
+{
+	GSList *l;
+
+	for (l = disconnect_list; l; l = g_slist_next(l)) {
+		btd_disconnect_cb disconnect_cb = l->data;
+		disconnect_cb(dev, reason);
+	}
+}
+
 static void dev_disconnected(struct btd_adapter *adapter,
 					const struct mgmt_addr_info *addr,
 					uint8_t reason)
@@ -5401,11 +5419,23 @@ static void dev_disconnected(struct btd_adapter *adapter,
 	DBG("Device %s disconnected, reason %u", dst, reason);
 
 	device = btd_adapter_find_device(adapter, &addr->bdaddr, addr->type);
-	if (device)
+	if (device) {
 		adapter_remove_connection(adapter, device, addr->type);
+		disconnect_notify(device, reason);
+	}
 
 	bonding_attempt_complete(adapter, &addr->bdaddr, addr->type,
 						MGMT_STATUS_DISCONNECTED);
+}
+
+void btd_add_disconnect_cb(btd_disconnect_cb func)
+{
+	disconnect_list = g_slist_append(disconnect_list, func);
+}
+
+void btd_remove_disconnect_cb(btd_disconnect_cb func)
+{
+	disconnect_list = g_slist_remove(disconnect_list, func);
 }
 
 static void disconnect_complete(uint8_t status, uint16_t length,
@@ -6237,6 +6267,26 @@ static void device_unblocked_callback(uint16_t index, uint16_t length,
 		device_unblock(device, FALSE, TRUE);
 }
 
+static void conn_fail_notify(struct btd_device *dev, uint8_t status)
+{
+	GSList *l;
+
+	for (l = conn_fail_list; l; l = g_slist_next(l)) {
+		btd_conn_fail_cb conn_fail_cb = l->data;
+		conn_fail_cb(dev, status);
+	}
+}
+
+void btd_add_conn_fail_cb(btd_conn_fail_cb func)
+{
+	conn_fail_list = g_slist_append(conn_fail_list, func);
+}
+
+void btd_remove_conn_fail_cb(btd_conn_fail_cb func)
+{
+	conn_fail_list = g_slist_remove(conn_fail_list, func);
+}
+
 static void connect_failed_callback(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -6257,6 +6307,8 @@ static void connect_failed_callback(uint16_t index, uint16_t length,
 	device = btd_adapter_find_device(adapter, &ev->addr.bdaddr,
 								ev->addr.type);
 	if (device) {
+		conn_fail_notify(device, ev->status);
+
 		/* If the device is in a bonding process cancel any auth request
 		 * sent to the agent before proceeding, but keep the bonding
 		 * request structure. */
@@ -6284,6 +6336,42 @@ static void connect_failed_callback(uint16_t index, uint16_t length,
 		btd_adapter_remove_device(adapter, device);
 }
 
+static void remove_keys(struct btd_adapter *adapter,
+					struct btd_device *device, uint8_t type)
+{
+	char adapter_addr[18];
+	char device_addr[18];
+	char filename[PATH_MAX + 1];
+	GKeyFile *key_file;
+	gsize length = 0;
+	char *str;
+
+	ba2str(btd_adapter_get_address(adapter), adapter_addr);
+	ba2str(device_get_address(device), device_addr);
+
+	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
+								device_addr);
+	filename[PATH_MAX] = '\0';
+
+	key_file = g_key_file_new();
+	g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+	if (type == BDADDR_BREDR) {
+		g_key_file_remove_group(key_file, "LinkKey", NULL);
+	} else {
+		g_key_file_remove_group(key_file, "LongTermKey", NULL);
+		g_key_file_remove_group(key_file, "LocalSignatureKey", NULL);
+		g_key_file_remove_group(key_file, "RemoteSignatureKey", NULL);
+		g_key_file_remove_group(key_file, "IdentityResolvingKey", NULL);
+	}
+
+	str = g_key_file_to_data(key_file, &length, NULL);
+	g_file_set_contents(filename, str, length, NULL);
+	g_free(str);
+
+	g_key_file_free(key_file);
+}
+
 static void unpaired_callback(uint16_t index, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -6308,12 +6396,8 @@ static void unpaired_callback(uint16_t index, uint16_t length,
 		return;
 	}
 
-	btd_device_set_temporary(device, TRUE);
-
-	if (btd_device_is_connected(device))
-		device_request_disconnect(device, NULL);
-	else
-		btd_adapter_remove_device(adapter, device);
+	remove_keys(adapter, device, ev->addr.type);
+	device_set_unpaired(device, ev->addr.type);
 }
 
 static void read_info_complete(uint8_t status, uint16_t length,

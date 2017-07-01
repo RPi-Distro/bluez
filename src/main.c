@@ -66,6 +66,7 @@
 #define SHUTDOWN_GRACE_SECONDS 10
 
 struct main_opts main_opts;
+static GKeyFile *main_conf;
 
 static const char * const supported_options[] = {
 	"Name",
@@ -78,6 +79,11 @@ static const char * const supported_options[] = {
 	"NameResolving",
 	"DebugKeys",
 };
+
+GKeyFile *btd_get_main_conf(void)
+{
+	return main_conf;
+}
 
 static GKeyFile *load_config(const char *file)
 {
@@ -133,6 +139,7 @@ done:
 
 static void check_config(GKeyFile *config)
 {
+	const char *valid_groups[] = { "General", "Policy", NULL };
 	char **keys;
 	int i;
 
@@ -142,7 +149,17 @@ static void check_config(GKeyFile *config)
 	keys = g_key_file_get_groups(config, NULL);
 
 	for (i = 0; keys != NULL && keys[i] != NULL; i++) {
-		if (!g_str_equal(keys[i], "General"))
+		const char **group;
+		bool match = false;
+
+		for (group = valid_groups; *group; group++) {
+			if (g_str_equal(keys[i], *group)) {
+				match = true;
+				break;
+			}
+		}
+
+		if (!match)
 			warn("Unknown group %s in main.conf", keys[i]);
 	}
 
@@ -488,7 +505,6 @@ int main(int argc, char *argv[])
 	uint16_t sdp_mtu = 0;
 	uint32_t sdp_flags = 0;
 	int gdbus_flags = 0;
-	GKeyFile *config;
 	guint signal, watchdog;
 	const char *watchdog_usec;
 
@@ -523,9 +539,9 @@ int main(int argc, char *argv[])
 
 	sd_notify(0, "STATUS=Starting up");
 
-	config = load_config(CONFIGDIR "/main.conf");
+	main_conf = load_config(CONFIGDIR "/main.conf");
 
-	parse_config(config);
+	parse_config(main_conf);
 
 	if (connect_dbus() < 0) {
 		error("Unable to get on D-Bus");
@@ -609,8 +625,8 @@ int main(int argc, char *argv[])
 
 	g_main_loop_unref(event_loop);
 
-	if (config)
-		g_key_file_free(config);
+	if (main_conf)
+		g_key_file_free(main_conf);
 
 	disconnect_dbus();
 

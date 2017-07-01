@@ -24,11 +24,6 @@ General
   Priority: high
   Complexity: C4
 
-- Add support for Authentication for client sessions in obexd
-
-  Priority: high
-  Complexity: C2
-
 - Update PBAP client/server implementation to 1.2 and create necessary APIs for
   new features it introduces.
 
@@ -41,12 +36,6 @@ General
 
   Priority: Medium
   Complexity: C2
-
-- Rename glib-helper file to a more convenient name. The idea is try to keep
-  only sdp helpers functions. bt_* prefix shall be also changed.
-
-  Priority: Low
-  Complexity: C1
 
 - Function in src/adapter.c to convert old storage files to new ini-file format
   should be removed 6-8 months after first BlueZ 5 release.
@@ -114,12 +103,6 @@ Low Energy
   Priority: Medium
   Complexity: C2
 
-- Add new property in the DeviceFound signal to report the device type:
-  BR/EDR, single mode or dual-mode.
-
-  Priority: Medium
-  Complexity: C1
-
 - Privacy: When privacy is enabled in the adapter, LE scanning/connection
   should use a private address. StartDiscovery method shall be changed and
   new adapter property shall be added.
@@ -165,22 +148,11 @@ ATT/GATT
   Priority: Medium
   Complexity: C1
 
-- ATT/GATT parsing to hcidump. Partially implemented, missing to fix
-  multiple advertises in the same event and RSSI.
-
-  Priority: Medium
-  Complexity: C2
-
 - Implement ATT PDU validation. Malformed PDUs can cause division by zero
   when decoding PDUs. A proper error PDU should be returned for this case.
   See decoding function in att.c file.
 
   Priority: Medium
-  Complexity: C1
-
-- Fix hard-coded PSM for GATT services over basic rate.
-
-  Priority: Low
   Complexity: C1
 
 - Refactor read_by_group() and read_by_type() in src/attrib-server.c
@@ -199,17 +171,6 @@ ATT/GATT
 - gatttool should have the ability to wait for req responses before
   quitting (some servers require a small sleep even with cmd's). Maybe a
   --delay-exit or --timeout command line switch.
-
-  Priority: Low
-  Complexity: C1
-
-- Refactoring of gatt.c functions. Currently, the callbacks of the services
-  and characteristics discovery functions return the ATT PDU and the caller
-  needs to call again the same function to fetch the remaining data when
-  necessary. Investigate if all results can be returned in the callback
-  result to avoid repeated code. Before change the code, please analyze
-  if this change will not break the GATT/ATT qualification tests. Maybe
-  an interactive fetch/query is necessary to pass the tests.
 
   Priority: Low
   Complexity: C1
@@ -233,11 +194,6 @@ ATT/GATT
   Priority: Low
   Complecity: C1
 
-- Add sdp discovery support to gatttool with BR (--sdp, default is 0x1f)
-
-  Priority: Low
-  Complexity: C1
-
 - Implement Server characteristic Configuration support in the attribute
   server to manage characteristic value broadcasting. There is a single
   instance of the Server Characteristic Configuration for all clients.
@@ -251,15 +207,6 @@ ATT/GATT
 
   Priority: Low
   Complexity: C2
-
-- Define attribute server API. External applications needs to register,
-  change attributes and to be notified about changes. Example: Proximity,
-  Time and Alert Profiles. "Local Service hierarchy" in the attribute-api
-  needs to be proposed and a RFC shall be sent to the ML.
-
-  Priority: Low
-  Complexity: C2
-  Owner: Anderson Lizardo <anderson.lizardo@openbossa.org>
 
 Management Interface
 ====================

@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.17)
+AC_INIT(bluez, 5.19)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -257,6 +257,13 @@ if (test "${enable_android}" = "yes"); then
 					AC_MSG_ERROR(SBC library >= 1.2 is required))
 	AC_SUBST(SBC_CFLAGS)
 	AC_SUBST(SBC_LIBS)
+fi
+
+if (test "${enable_android}" = "yes"); then
+	PKG_CHECK_MODULES(SPEEXDSP, speexdsp >= 1.2, dummy=yes,
+					AC_MSG_ERROR(SPEEXDSP library >= 1.2 is required))
+	AC_SUBST(SPEEXDSP_CFLAGS)
+	AC_SUBST(SPEEXDSP_LIBS)
 fi
 
 AC_DEFINE_UNQUOTED(ANDROID_STORAGEDIR, "${storagedir}/android",
