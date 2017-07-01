@@ -1,3 +1,28 @@
+ver 5.43:
+	Fix issue with HID over GATT support.
+	Fix issue with ATT Find By Type response handling.
+	Fix issue with handling insufficient authentication.
+	Fix issue with bonding while pairing is in progress.
+	Fix issue with BR/EDR pairing for dual-mode devices.
+	Fix issue with handling profile policy resets.
+	Fix issue with connecting state of services.
+	Fix issue with handling PAN GN Master role.
+	Add support for enabling LE Privacy feature.
+
+ver 5.42:
+	Fix issue with PBAP call logs from different folders.
+	Fix issue with OBEX over L2CAP and PowerPC architecture.
+	Fix issue with BR/EDR over LE selection during discovery.
+	Fix issue with selection of bearer after bonding.
+	Fix issue with handling socket recv() return values.
+	Fix issue with setting connecting service state.
+	Fix issue with setting correct ATT default MTU value.
+	Fix issue with not setting AVRCP player identifier.
+	Fix issue with handling AVRCP browsable player.
+	Fix issue with addressing AVRCP player changes.
+	Add support for new management tracing capability.
+	Mark GATT D-Bus APIs as stable interfaces.
+
 ver 5.41:
 	Fix issue with service state changes handling.
 	Fix issue with AVRCP and no available player.

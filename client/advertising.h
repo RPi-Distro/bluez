@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2012  Texas Instruments Corporation
+ *  Copyright (C) 2016  Intel Corporation. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -21,6 +21,10 @@
  *
  */
 
-void link_loss_register(struct btd_adapter *adapter);
-void link_loss_unregister(struct btd_adapter *adapter);
-const char *link_loss_get_alert_level(struct btd_device *device);
+void ad_register(DBusConnection *conn, GDBusProxy *manager, const char *type);
+void ad_unregister(DBusConnection *conn, GDBusProxy *manager);
+
+void ad_advertise_uuids(const char *arg);
+void ad_advertise_service(const char *arg);
+void ad_advertise_manufacturer(const char *arg);
+void ad_advertise_tx_power(gboolean value);

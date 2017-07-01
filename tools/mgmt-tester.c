@@ -63,6 +63,7 @@ struct test_data {
 	struct hciemu *hciemu;
 	enum hciemu_type hciemu_type;
 	int unmet_conditions;
+	int unmet_setup_conditions;
 };
 
 static void mgmt_debug(const char *str, void *user_data)
@@ -287,6 +288,27 @@ static void test_add_condition(struct test_data *data)
 	tester_print("Test condition added, total %d", data->unmet_conditions);
 }
 
+static void test_add_setup_condition(struct test_data *data)
+{
+	data->unmet_setup_conditions++;
+
+	tester_print("Test setup condition added, total %d",
+		     data->unmet_setup_conditions);
+}
+
+static void test_setup_condition_complete(struct test_data *data)
+{
+	data->unmet_setup_conditions--;
+
+	tester_print("Test setup condition complete, %d left",
+		     data->unmet_setup_conditions);
+
+	if (data->unmet_setup_conditions > 0)
+		return;
+
+	tester_setup_complete();
+}
+
 static void test_condition_complete(struct test_data *data)
 {
 	data->unmet_conditions--;
@@ -384,6 +406,12 @@ static void controller_setup(const void *test_data)
 	tester_test_passed();
 }
 
+struct setup_mgmt_cmd {
+	uint8_t send_opcode;
+	const void *send_param;
+	uint16_t send_len;
+};
+
 struct generic_data {
 	const uint16_t *setup_settings;
 	bool setup_nobredr;
@@ -394,6 +422,7 @@ struct generic_data {
 	uint16_t setup_send_opcode;
 	const void *setup_send_param;
 	uint16_t setup_send_len;
+	const struct setup_mgmt_cmd *setup_mgmt_cmd_arr;
 	bool send_index_none;
 	uint16_t send_opcode;
 	const void *send_param;
@@ -1679,6 +1708,112 @@ static const struct generic_data set_adv_on_rejected_test_1 = {
 	.expect_status = MGMT_STATUS_REJECTED,
 };
 
+static const uint8_t set_adv_set_appearance_param[2] = { 0x54, 0x65 };
+
+static const uint8_t set_adv_scan_rsp_data_appear_1[] = {
+	0x04, /* Scan rsp data len */
+	0x03, /* Local name data len */
+	0x19, /* Complete name */
+	0x54, 0x65,
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data set_adv_on_appearance_test_1 = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_APPEARANCE,
+	.setup_send_param = set_adv_set_appearance_param,
+	.setup_send_len = sizeof(set_adv_set_appearance_param),
+	.send_opcode = MGMT_OP_SET_ADVERTISING,
+	.send_param = set_adv_on_param,
+	.expect_param = set_adv_settings_param_2,
+	.expect_len = sizeof(set_adv_settings_param_2),
+	.send_len = sizeof(set_adv_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_adv_scan_rsp_data_appear_1,
+	.expect_hci_len = sizeof(set_adv_scan_rsp_data_appear_1),
+};
+
+static const char set_adv_set_local_name_param[260] = { 'T', 'e', 's', 't', ' ',
+							'n', 'a', 'm', 'e' };
+
+static const uint8_t set_adv_scan_rsp_data_name_1[] = {
+	0x0c, /* Scan rsp data len */
+	0x0b, /* Local name data len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "Test name" */
+	0x00, /* null */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data set_adv_on_local_name_test_1 = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = set_adv_set_local_name_param,
+	.setup_send_len = sizeof(set_adv_set_local_name_param),
+	.send_opcode = MGMT_OP_SET_ADVERTISING,
+	.send_param = set_adv_on_param,
+	.expect_param = set_adv_settings_param_2,
+	.expect_len = sizeof(set_adv_settings_param_2),
+	.send_len = sizeof(set_adv_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_adv_scan_rsp_data_name_1,
+	.expect_hci_len = sizeof(set_adv_scan_rsp_data_name_1),
+};
+
+static const struct setup_mgmt_cmd set_advertising_mgmt_cmd_arr[] = {
+	{
+		.send_opcode = MGMT_OP_SET_APPEARANCE,
+		.send_param = set_adv_set_appearance_param,
+		.send_len = sizeof(set_adv_set_appearance_param),
+	},
+	{
+		.send_opcode = MGMT_OP_SET_LOCAL_NAME,
+		.send_param = set_adv_set_local_name_param,
+		.send_len = sizeof(set_adv_set_local_name_param),
+	},
+	{ /* last element should always have opcode 0x00 */
+		.send_opcode = 0x00,
+		.send_param = NULL,
+		.send_len = 0,
+	}
+};
+
+static const uint8_t set_adv_scan_rsp_data_name_and_appearance[] = {
+	0x10, /* scan rsp data len */
+	0x03, /* appearance data len */
+	0x19, /* eir_appearance */
+	0x54, 0x65, /* appearance value */
+	0x0b, /* local name data len */
+	0x09, /* complete name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "test name" */
+	0x00, /* null */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+
+static const struct generic_data set_adv_on_local_name_appear_test_1 = {
+	.setup_settings = settings_powered_le,
+	.setup_mgmt_cmd_arr = set_advertising_mgmt_cmd_arr,
+	.send_opcode = MGMT_OP_SET_ADVERTISING,
+	.send_param = set_adv_on_param,
+	.expect_param = set_adv_settings_param_2,
+	.expect_len = sizeof(set_adv_settings_param_2),
+	.send_len = sizeof(set_adv_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_adv_scan_rsp_data_name_and_appearance,
+	.expect_hci_len = sizeof(set_adv_scan_rsp_data_name_and_appearance),
+};
+
 static const char set_bredr_off_param[] = { 0x00 };
 static const char set_bredr_on_param[] = { 0x01 };
 static const char set_bredr_invalid_param[] = { 0x02 };
@@ -1759,6 +1894,20 @@ static const char write_local_name_hci[248] = { 'T', 'e', 's', 't', ' ',
 static const char write_eir_local_name_hci_1[241] = { 0x00,
 		0x0a, 0x09, 'T', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e',
 		0x02, 0x0a, 0x00, };
+
+static const struct mgmt_cp_set_local_name set_local_name_cp = {
+	.name = {'T', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e'},
+	.short_name = {'T', 'e', 's', 't'},
+};
+
+static const struct mgmt_cp_set_local_name set_local_name_longer_cp = {
+	.name = {'T', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e', '1', '2', '3'},
+};
+
+static const struct mgmt_cp_set_local_name set_local_name_long_short_cp = {
+	.name = {'T', 'e', 's', 't', ' ', 'n', 'a', 'm', 'e', '1', '2', '3'},
+	.short_name = {'T', 'e', 's', 't'},
+};
 
 static const struct generic_data set_local_name_test_1 = {
 	.send_opcode = MGMT_OP_SET_LOCAL_NAME,
@@ -3998,7 +4147,7 @@ static const struct generic_data read_adv_features_invalid_index_test = {
 };
 
 static const uint8_t read_adv_features_rsp_1[] =  {
-	0x1f, 0x00, 0x00, 0x00,	/* supported flags */
+	0x7f, 0x00, 0x00, 0x00,	/* supported flags */
 	0x1f,			/* max_adv_data_len */
 	0x1f,			/* max_scan_rsp_len */
 	0x05,			/* max_instances */
@@ -4013,7 +4162,7 @@ static const struct generic_data read_adv_features_success_1 = {
 };
 
 static const uint8_t read_adv_features_rsp_2[] =  {
-	0x1f, 0x00, 0x00, 0x00,	/* supported flags */
+	0x7f, 0x00, 0x00, 0x00,	/* supported flags */
 	0x1f,			/* max_adv_data_len */
 	0x1f,			/* max_scan_rsp_len */
 	0x05,			/* max_instances */
@@ -4860,6 +5009,210 @@ static const struct generic_data read_local_oob_success_sc_test = {
 	.expect_status = MGMT_STATUS_SUCCESS,
 	.expect_ignore_param = true,
 	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_EXT_DATA,
+};
+
+static const char ext_ctrl_info1[] = {
+	0x00, 0x00, 0x00, 0x01, 0xaa, 0x00, /* btaddr */
+	0x08, /* version */
+	0x3f, 0x00, /* manufacturer */
+	0xff, 0xbf, 0x00, 0x00, /* supported settings */
+	0x80, 0x00, 0x00, 0x00, /* current settings */
+	0x09, 0x00, /* eir length */
+	0x04, /* dev class length */
+	0x0d, /* dev class info */
+	0x00, /* minor */
+	0x00, /* major */
+	0x00, /* service classes */
+	0x01, /* complete name data length */
+	0x09, /* complete name flag */
+	0x01, /* short name data length */
+	0x08, /* short name flag */
+};
+
+static const struct generic_data read_ext_ctrl_info1 = {
+	.send_opcode = MGMT_OP_READ_EXT_INFO,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = ext_ctrl_info1,
+	.expect_len = sizeof(ext_ctrl_info1),
+};
+
+static const char set_dev_class1[] = { 0x03, 0xe0 };
+
+static const struct setup_mgmt_cmd set_dev_class_cmd_arr1[] = {
+	{
+		.send_opcode = MGMT_OP_SET_DEV_CLASS,
+		.send_param = set_dev_class1,
+		.send_len = sizeof(set_dev_class1),
+	},
+	{
+		.send_opcode = MGMT_OP_ADD_UUID,
+		.send_param = add_spp_uuid_param,
+		.send_len = sizeof(add_spp_uuid_param),
+	},
+	{ /* last element should always have opcode 0x00 */
+		.send_opcode = 0x00,
+		.send_param = NULL,
+		.send_len = 0,
+	}
+};
+
+static const char ext_ctrl_info2[] = {
+	0x00, 0x00, 0x00, 0x01, 0xaa, 0x00, /* btaddr */
+	0x08, /* version */
+	0x3f, 0x00, /* manufacturer */
+	0xff, 0xbf, 0x00, 0x00, /* supported settings */
+	0x81, 0x02, 0x00, 0x00, /* current settings */
+	0x0D, 0x00, /* eir length */
+	0x04, /* dev class length */
+	0x0d, /* dev class info */
+	0xe0, /* minor */
+	0x03, /* major */
+	0x00, /* service classes */
+	0x03, /* appearance length */
+	0x19, /* EIR_APPEARANCE */
+	0x00, /* Appearance value */
+	0x00,
+	0x01, /* complete name data length */
+	0x09, /* complete name flag */
+	0x01, /* short name data length */
+	0x08, /* short name flag */
+};
+
+static const struct generic_data read_ext_ctrl_info2 = {
+	.setup_settings = settings_powered_le,
+	.setup_mgmt_cmd_arr = set_dev_class_cmd_arr1,
+	.send_opcode = MGMT_OP_READ_EXT_INFO,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = ext_ctrl_info2,
+	.expect_len = sizeof(ext_ctrl_info2),
+};
+
+static const char ext_ctrl_info3[] = {
+	0x00, 0x00, 0x00, 0x01, 0xaa, 0x00, /* btaddr */
+	0x08, /* version */
+	0x3f, 0x00, /* manufacturer */
+	0xff, 0xbf, 0x00, 0x00, /* supported settings */
+	0x80, 0x02, 0x00, 0x00, /* current settings */
+	0x16, 0x00, /* eir length */
+	0x04, /* dev class length */
+	0x0d, /* dev class info */
+	0x00, /* minor */
+	0x00, /* major */
+	0x00, /* service classes */
+	0x03, /* appearance length */
+	0x19, /* EIR_APPEARANCE */
+	0x00, /* Appearance value */
+	0x00,
+	0x0A, /* Local name length */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74,
+	0x20, 0x6E, 0x61, 0x6D, 0x65, /* "Test name" */
+	0x01, /* short name data length */
+	0x08, /* short name flag */
+};
+
+static const struct generic_data read_ext_ctrl_info3 = {
+	.setup_settings = settings_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = set_local_name_param,
+	.setup_send_len = sizeof(set_local_name_param),
+	.send_opcode = MGMT_OP_READ_EXT_INFO,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = ext_ctrl_info3,
+	.expect_len = sizeof(ext_ctrl_info3),
+};
+
+static const char ext_ctrl_info4[] = {
+	0x00, 0x00, 0x00, 0x01, 0xaa, 0x00, /* btaddr */
+	0x08, /* version */
+	0x3f, 0x00, /* manufacturer */
+	0xff, 0xbf, 0x00, 0x00, /* supported settings */
+	0x80, 0x02, 0x00, 0x00, /* current settings */
+	0x1a, 0x00, /* eir length */
+	0x04, /* dev class length */
+	0x0d, /* dev class info */
+	0x00, /* minor */
+	0x00, /* major */
+	0x00, /* service classes */
+	0x03, /* appearance length */
+	0x19, /* EIR_APPEARANCE */
+	0x00, /* Appearance value */
+	0x00,
+	0x0A, /* Complete Local name len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74,
+	0x20, 0x6E, 0x61, 0x6D, 0x65, /* "Test name" */
+	0x05, /* Short Local name len */
+	0x08, /* Short name */
+	0x54, 0x65, 0x73, 0x74, /* "Test" */
+};
+
+static const struct generic_data read_ext_ctrl_info4 = {
+	.setup_settings = settings_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_cp,
+	.setup_send_len = sizeof(set_local_name_cp),
+	.send_opcode = MGMT_OP_READ_EXT_INFO,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = ext_ctrl_info4,
+	.expect_len = sizeof(ext_ctrl_info4),
+};
+
+static const struct setup_mgmt_cmd set_dev_class_cmd_arr2[] = {
+	{
+		.send_opcode = MGMT_OP_SET_DEV_CLASS,
+		.send_param = set_dev_class1,
+		.send_len = sizeof(set_dev_class1),
+	},
+	{
+		.send_opcode = MGMT_OP_ADD_UUID,
+		.send_param = add_spp_uuid_param,
+		.send_len = sizeof(add_spp_uuid_param),
+	},
+	{
+		.send_opcode = MGMT_OP_SET_LOCAL_NAME,
+		.send_param = &set_local_name_cp,
+		.send_len = sizeof(set_local_name_cp),
+	},
+	{ /* last element should always have opcode 0x00 */
+		.send_opcode = 0x00,
+		.send_param = NULL,
+		.send_len = 0,
+	}
+};
+
+static const char ext_ctrl_info5[] = {
+	0x00, 0x00, 0x00, 0x01, 0xaa, 0x00, /* btaddr */
+	0x08, /* version */
+	0x3f, 0x00, /* manufacturer */
+	0xff, 0xbf, 0x00, 0x00, /* supported settings */
+	0x81, 0x02, 0x00, 0x00, /* current settings */
+	0x1a, 0x00, /* eir len */
+	0x04, /* dev class len */
+	0x0d, /* dev class info */
+	0xe0, /* minor */
+	0x03, /* major */
+	0x00, /* service classes */
+	0x03, /* appearance length */
+	0x19, /* EIR_APPEARANCE */
+	0x00, /* Appearance value */
+	0x00,
+	0x0A, /* Complete Local name len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74,
+	0x20, 0x6E, 0x61, 0x6D, 0x65, /* "Test name" */
+	0x05, /* Short Local name len */
+	0x08, /* Short name */
+	0x54, 0x65, 0x73, 0x74, /* "Test" */
+};
+
+static const struct generic_data read_ext_ctrl_info5 = {
+	.setup_settings = settings_powered_le,
+	.setup_mgmt_cmd_arr = set_dev_class_cmd_arr2,
+	.send_opcode = MGMT_OP_READ_EXT_INFO,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = ext_ctrl_info5,
+	.expect_len = sizeof(ext_ctrl_info5),
 };
 
 static void client_cmd_complete(uint16_t opcode, uint8_t status,
@@ -5844,6 +6197,35 @@ static void command_generic_callback(uint8_t status, uint16_t length,
 	test_condition_complete(data);
 }
 
+static void command_setup_hci_callback(uint16_t opcode, const void *param,
+					uint8_t length, void *user_data)
+{
+	struct test_data *data = user_data;
+	const struct generic_data *test = data->test_data;
+	const void *setup_expect_hci_param = test->setup_expect_hci_param;
+	uint8_t setup_expect_hci_len = test->setup_expect_hci_len;
+
+	tester_print("HCI Command 0x%04x length %u", opcode, length);
+
+	if (opcode != test->setup_expect_hci_command)
+		return;
+
+	if (length != setup_expect_hci_len) {
+		tester_warn("Invalid parameter size for HCI command");
+		tester_test_failed();
+		return;
+	}
+
+	if (memcmp(param, setup_expect_hci_param, length) != 0) {
+		tester_warn("Unexpected HCI command parameter value");
+		tester_test_failed();
+		return;
+	}
+
+	hciemu_clear_master_post_command_hooks(data->hciemu);
+	test_setup_condition_complete(data);
+}
+
 static void command_hci_callback(uint16_t opcode, const void *param,
 					uint8_t length, void *user_data)
 {
@@ -5874,6 +6256,484 @@ static void command_hci_callback(uint16_t opcode, const void *param,
 
 	test_condition_complete(data);
 }
+
+static void setup_mgmt_cmd_callback(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	if (status != MGMT_STATUS_SUCCESS) {
+		tester_setup_failed();
+		return;
+	}
+	test_setup_condition_complete(user_data);
+}
+
+static void setup_command_generic(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	const void *send_param = test->setup_send_param;
+	uint16_t send_len = test->setup_send_len;
+	size_t i = 0;
+
+	if (test->setup_expect_hci_command) {
+		tester_print("Registering setup expected HCI command callback");
+		tester_print("Setup expected HCI command 0x%04x",
+					 test->setup_expect_hci_command);
+		hciemu_add_master_post_command_hook(data->hciemu,
+					command_setup_hci_callback, data);
+		test_add_setup_condition(data);
+	}
+
+	if (test->setup_send_opcode) {
+		tester_print("Setup sending %s (0x%04x)",
+				mgmt_opstr(test->setup_send_opcode),
+				test->setup_send_opcode);
+		mgmt_send(data->mgmt, test->setup_send_opcode, data->mgmt_index,
+					send_len, send_param,
+					setup_mgmt_cmd_callback,
+					data, NULL);
+		test_add_setup_condition(data);
+		return;
+	}
+
+	tester_print("Sending setup opcode array");
+	for (; test->setup_mgmt_cmd_arr + i; ++i) {
+		const struct setup_mgmt_cmd *cmd = test->setup_mgmt_cmd_arr + i;
+
+		if (cmd->send_opcode == 0x00)
+			break;
+
+		tester_print("Setup sending %s (0x%04x)",
+				mgmt_opstr(cmd->send_opcode),
+				cmd->send_opcode);
+
+		mgmt_send(data->mgmt, cmd->send_opcode, data->mgmt_index,
+				cmd->send_len, cmd->send_param,
+				setup_mgmt_cmd_callback,
+				data, NULL);
+		test_add_setup_condition(data);
+	}
+}
+
+static const uint8_t add_advertising_param_empty[] = {
+	0x01,			/* adv instance */
+	0x00, 0x00, 0x00, 0x00,	/* flags: none */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x00,			/* scan rsp len */
+};
+
+static const struct generic_data add_advertising_empty_scrsp = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = set_local_name_param,
+	.setup_send_len = sizeof(set_local_name_param),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_empty,
+	.send_len = sizeof(add_advertising_param_empty),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+};
+
+static const uint8_t add_advertising_param_scrsp_data_only_ok[] = {
+	0x01,			/* adv instance */
+	0x00, 0x00, 0x00, 0x00,	/* flags: none */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x1f,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00,
+};
+
+static const struct generic_data add_advertising_scrsp_data_only_ok = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scrsp_data_only_ok,
+	.send_len = sizeof(add_advertising_param_scrsp_data_only_ok),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+};
+
+static const uint8_t add_advertising_param_scrsp_data_only_too_long[] = {
+	0x01,			/* adv instance */
+	0x00, 0x00, 0x00, 0x00,	/* flags: none */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x20,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_scrsp_data_only_too_long = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scrsp_data_only_too_long,
+	.send_len = sizeof(add_advertising_param_scrsp_data_only_too_long),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = NULL,
+	.expect_len = 0,
+};
+
+static const uint8_t set_appearance_param[2] = { 0x54, 0x65 };
+
+static const uint8_t add_advertising_param_scrsp_appear_data_ok[] = {
+	0x01,			/* adv instance */
+	0x20, 0x00, 0x00, 0x00,	/* flags: appearance */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x1b,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_scrsp_appear_data_ok = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_APPEARANCE,
+	.setup_send_param = set_appearance_param,
+	.setup_send_len = sizeof(set_appearance_param),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scrsp_appear_data_ok,
+	.send_len = sizeof(add_advertising_param_scrsp_appear_data_ok),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+};
+
+static const uint8_t add_advertising_param_scrsp_appear_data_too_long[] = {
+	0x01,			/* adv instance */
+	0x20, 0x00, 0x00, 0x00,	/* flags: appearance */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x1c,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_scrsp_appear_data_too_long = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_APPEARANCE,
+	.setup_send_param = set_appearance_param,
+	.setup_send_len = sizeof(set_appearance_param),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scrsp_appear_data_too_long,
+	.send_len = sizeof(add_advertising_param_scrsp_appear_data_too_long),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = NULL,
+	.expect_len = 0,
+};
+
+static const uint8_t add_advertising_param_scrsp_appear_null[] = {
+	0x01,			/* adv instance */
+	0x20, 0x00, 0x00, 0x00,	/* flags: appearance */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x01,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00,
+};
+
+static const struct generic_data add_advertising_scrsp_appear_null = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scrsp_appear_null,
+	.send_len = sizeof(add_advertising_param_scrsp_appear_null),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+};
+
+static const uint8_t add_advertising_empty_param[] = {
+	0x01,			/* adv instance */
+	0x40, 0x00, 0x00, 0x00,	/* flags: local name*/
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x01,			/* scan rsp len */
+	/* scan rsp data: */
+	0x00,
+};
+
+static const uint8_t scan_rsp_data_empty[] = {
+	0x01, /* scan rsp data len */
+	0x00, /* scan rsp data */
+	/* placeholder data */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_no_name_set = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_empty_param,
+	.send_len = sizeof(add_advertising_empty_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = scan_rsp_data_empty,
+	.expect_hci_len = sizeof(scan_rsp_data_empty),
+};
+
+static const uint8_t add_advertising_param_name[] = {
+	0x01,			/* adv instance */
+	0x40, 0x00, 0x00, 0x00,	/* flags: Add local name to scan_rsp */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x00,			/* scan rsp len */
+};
+
+static const uint8_t set_scan_rsp_data_name_fits_in_scrsp[] = {
+	0x0c, /* Scan rsp data len */
+	0x0b, /* Local name data len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "Test name" */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_name_fits_in_scrsp = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_cp,
+	.setup_send_len = sizeof(set_local_name_cp),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name,
+	.send_len = sizeof(add_advertising_param_name),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_data_name_fits_in_scrsp,
+	.expect_hci_len = sizeof(set_scan_rsp_data_name_fits_in_scrsp),
+};
+
+static const uint8_t set_scan_rsp_data_shortened_name_fits[] = {
+	0x0d, /* Scan rsp data len */
+	0x0c, /* Local name data len */
+	0x08, /* Short name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x31,
+	/* "Test name1" */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_shortened_name_in_scrsp = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_longer_cp,
+	.setup_send_len = sizeof(set_local_name_longer_cp),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name,
+	.send_len = sizeof(add_advertising_param_name),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_data_shortened_name_fits,
+	.expect_hci_len = sizeof(set_scan_rsp_data_shortened_name_fits),
+};
+
+static const uint8_t set_scan_rsp_data_short_name_fits[] = {
+	0x07, /* Scan rsp data len */
+	0x06, /* Local name data len */
+	0x08, /* Short name */
+	0x54, 0x65, 0x73, 0x74,
+	/* "Test*/
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_short_name_in_scrsp = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_long_short_cp,
+	.setup_send_len = sizeof(set_local_name_long_short_cp),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name,
+	.send_len = sizeof(add_advertising_param_name),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_data_short_name_fits,
+	.expect_hci_len = sizeof(set_scan_rsp_data_short_name_fits),
+};
+
+static const uint8_t add_advertising_param_name_data_ok[] = {
+	0x01,			/* adv instance */
+	0x40, 0x00, 0x00, 0x00,	/* flags: local name */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x12,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_scan_rsp_data_param_name_data_ok[] = {
+	0x1e, /* Scan rsp data len */
+	/* scan rsp data */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x0b, /* Local name data len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	/* "Test name" */
+	/* padding */
+	0x00,
+};
+
+static const struct generic_data add_advertising_name_data_ok = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_cp,
+	.setup_send_len = sizeof(set_local_name_cp),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name_data_ok,
+	.send_len = sizeof(add_advertising_param_name_data_ok),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_data_param_name_data_ok,
+	.expect_hci_len = sizeof(set_scan_rsp_data_param_name_data_ok),
+};
+
+static const uint8_t add_advertising_param_name_data_inv[] = {
+	0x01,			/* adv instance */
+	0x40, 0x00, 0x00, 0x00,	/* flags: local name */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x14,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static const struct generic_data add_advertising_name_data_inv = {
+	.setup_settings = settings_powered_le,
+	.setup_send_opcode = MGMT_OP_SET_LOCAL_NAME,
+	.setup_send_param = &set_local_name_cp,
+	.setup_send_len = sizeof(set_local_name_cp),
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name_data_inv,
+	.send_len = sizeof(add_advertising_param_name_data_inv),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = NULL,
+	.expect_len = 0,
+};
+
+static const uint8_t add_advertising_param_name_data_appear[] = {
+	0x01,			/* adv instance */
+	0x60, 0x00, 0x00, 0x00,	/* flags: local name + appearance */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x00,			/* adv data len */
+	0x0e,			/* scan rsp len */
+	/* adv data: */
+	/* scan rsp data: */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+};
+
+static const struct setup_mgmt_cmd add_advertising_mgmt_cmd_arr[] = {
+	{
+		.send_opcode = MGMT_OP_SET_APPEARANCE,
+		.send_param = set_appearance_param,
+		.send_len = sizeof(set_appearance_param),
+	},
+	{
+		.send_opcode = MGMT_OP_SET_LOCAL_NAME,
+		.send_param = &set_local_name_cp,
+		.send_len = sizeof(set_local_name_cp),
+	},
+	{ /* last element should always have opcode 0x00 */
+		.send_opcode = 0x00,
+		.send_param = NULL,
+		.send_len = 0,
+	}
+};
+
+static const uint8_t set_scan_rsp_data_name_data_appear[] = {
+	0x1e, /* Scan rsp data len */
+	0x03, /* appearance len */
+	0x19, /* EIR_APPEARANCE */
+	0x54, 0x65, /* appearance value */
+	/* scan rsp data */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+	0x0b, /* Local name data len */
+	0x09, /* Complete name */
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	/* "Test name" */
+	/* padding */
+	0x00,
+};
+
+static const struct generic_data add_advertising_name_data_appear = {
+	.setup_settings = settings_powered_le,
+	.setup_mgmt_cmd_arr = add_advertising_mgmt_cmd_arr,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_name_data_appear,
+	.send_len = sizeof(add_advertising_param_name_data_appear),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_data_name_data_appear,
+	.expect_hci_len = sizeof(set_scan_rsp_data_name_data_appear),
+};
+
+static const struct generic_data set_appearance_not_supported = {
+	.send_opcode = MGMT_OP_SET_APPEARANCE,
+	.send_param = set_appearance_param,
+	.send_len = sizeof(set_appearance_param),
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+	.expect_param = NULL,
+	.expect_len = 0,
+};
+
+static const struct generic_data set_appearance_success = {
+	.send_opcode = MGMT_OP_SET_APPEARANCE,
+	.send_param = set_appearance_param,
+	.send_len = sizeof(set_appearance_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = NULL,
+	.expect_len = 0,
+};
 
 static bool power_off(uint16_t index)
 {
@@ -6489,6 +7349,18 @@ int main(int argc, char *argv[])
 				&set_adv_on_rejected_test_1,
 				NULL, test_command_generic);
 
+	test_bredrle("Set Advertising on - Appearance 1",
+				&set_adv_on_appearance_test_1,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Set Advertising on - Local name 1",
+				&set_adv_on_local_name_test_1,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Set Advertising on - Name + Appear 1",
+				&set_adv_on_local_name_appear_test_1,
+				setup_command_generic, test_command_generic);
+
 	test_bredrle("Set BR/EDR off - Success 1",
 				&set_bredr_off_success_test_1,
 				NULL, test_command_generic);
@@ -7071,10 +7943,69 @@ int main(int argc, char *argv[])
 					setup_add_advertising,
 					test_command_generic);
 
+	test_bredrle("Add Advertising - Success (Empty ScRsp)",
+					 &add_advertising_empty_scrsp,
+					 setup_command_generic,
+					 test_command_generic);
+
+	test_bredrle("Add Advertising - Success (ScRsp only)",
+					&add_advertising_scrsp_data_only_ok,
+						NULL, test_command_generic);
+
+	test_bredrle("Add Advertising - Invalid Params (ScRsp too long)",
+				&add_advertising_scrsp_data_only_too_long,
+						NULL, test_command_generic);
+
+	test_bredrle("Add Advertising - Success (ScRsp appear)",
+					&add_advertising_scrsp_appear_data_ok,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Add Advertising - Invalid Params (ScRsp appear long)",
+				&add_advertising_scrsp_appear_data_too_long,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Appear is null)",
+					&add_advertising_scrsp_appear_null,
+						NULL, test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Name is null)",
+					 &add_advertising_no_name_set,
+					 NULL, test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Complete name)",
+					&add_advertising_name_fits_in_scrsp,
+					setup_command_generic,
+					test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Shortened name)",
+				&add_advertising_shortened_name_in_scrsp,
+					setup_command_generic,
+					test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Short name)",
+					&add_advertising_short_name_in_scrsp,
+					setup_command_generic,
+					test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Name + data)",
+					 &add_advertising_name_data_ok,
+					 setup_command_generic,
+					 test_command_generic);
+
+	test_bredrle("Add Advertising - Invalid Params (Name + data)",
+					 &add_advertising_name_data_inv,
+					 setup_command_generic,
+					 test_command_generic);
+
+	test_bredrle("Add Advertising - Success (Name+data+appear)",
+					 &add_advertising_name_data_appear,
+					 setup_command_generic,
+					 test_command_generic);
 
 	test_bredrle("Remove Advertising - Invalid Params 1",
 					&remove_advertising_fail_1,
 					NULL, test_command_generic);
+
 	test_bredrle("Remove Advertising - Success 1",
 						&remove_advertising_success_1,
 						setup_add_advertising,
@@ -7099,6 +8030,41 @@ int main(int argc, char *argv[])
 					&multi_advertising_add_second,
 					setup_add_advertising_duration,
 					test_command_generic, 3);
+
+	test_bredr("Set appearance - BR/EDR only",
+					&set_appearance_not_supported,
+					NULL,
+					test_command_generic);
+
+	test_bredrle("Set appearance - BR/EDR LE",
+					&set_appearance_success,
+					NULL,
+					test_command_generic);
+
+	test_le("Set appearance - LE only",
+					&set_appearance_success,
+					NULL,
+					test_command_generic);
+
+	test_bredrle("Read Ext Controller Info 1",
+				&read_ext_ctrl_info1,
+				NULL, test_command_generic);
+
+	test_bredrle("Read Ext Controller Info 2",
+				&read_ext_ctrl_info2,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Read Ext Controller Info 3",
+				&read_ext_ctrl_info3,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Read Ext Controller Info 4",
+				&read_ext_ctrl_info4,
+				setup_command_generic, test_command_generic);
+
+	test_bredrle("Read Ext Controller Info 5",
+				&read_ext_ctrl_info5,
+				setup_command_generic, test_command_generic);
 
 	test_bredrle("Read Local OOB Data - Not powered",
 				&read_local_oob_not_powered_test,
