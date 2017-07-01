@@ -27,13 +27,14 @@
 #endif
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 
 #include "mainloop.h"
 #include "packet.h"
 #include "control.h"
-#include "hcidump.h"
 #include "btsnoop.h"
 
 static void signal_callback(int signum, void *user_data)
@@ -52,34 +53,79 @@ static void usage(void)
 		"Usage:\n");
 	printf("\tbtmon [options]\n");
 	printf("options:\n"
-		"\t-b, --btsnoop <file>  Save dump in btsnoop format\n"
-		"\t-h, --help            Show help options\n");
+		"\t-r, --read <file>      Read traces in btsnoop format\n"
+		"\t-w, --write <file>     Save traces in btsnoop format\n"
+		"\t-s, --server <socket>  Start monitor server socket\n"
+		"\t-i, --index <num>      Show only specified controller\n"
+		"\t-t, --time             Show time instead of time offset\n"
+		"\t-T, --date             Show time and date information\n"
+		"\t-S, --sco              Dump SCO traffic\n"
+		"\t-h, --help             Show help options\n");
 }
 
 static const struct option main_options[] = {
-	{ "btsnoop",	required_argument, NULL, 'b'	},
-	{ "version",	no_argument,	   NULL, 'v'	},
-	{ "help",	no_argument,	   NULL, 'h'	},
+	{ "read",    required_argument, NULL, 'r' },
+	{ "write",   required_argument, NULL, 'w' },
+	{ "server",  required_argument, NULL, 's' },
+	{ "index",   required_argument, NULL, 'i' },
+	{ "time",    no_argument,       NULL, 't' },
+	{ "date",    no_argument,       NULL, 'T' },
+	{ "sco",     no_argument,	NULL, 'S' },
+	{ "version", no_argument,       NULL, 'v' },
+	{ "help",    no_argument,       NULL, 'h' },
 	{ }
 };
 
 int main(int argc, char *argv[])
 {
 	unsigned long filter_mask = 0;
+	const char *str, *reader_path = NULL;
 	sigset_t mask;
 
 	mainloop_init();
 
+	filter_mask |= PACKET_FILTER_SHOW_TIME_OFFSET;
+
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "bvh", main_options, NULL);
+		opt = getopt_long(argc, argv, "r:w:s:i:tTSvh",
+						main_options, NULL);
 		if (opt < 0)
 			break;
 
 		switch (opt) {
-		case 'b':
-			btsnoop_open(optarg);
+		case 'r':
+			reader_path = optarg;
+			break;
+		case 'w':
+			btsnoop_create(optarg);
+			break;
+		case 's':
+			control_server(optarg);
+			break;
+		case 'i':
+			if (strlen(optarg) > 3 && !strncmp(optarg, "hci", 3))
+				str = optarg + 3;
+			else
+				str = optarg;
+			if (!isdigit(*str)) {
+				usage();
+				return EXIT_FAILURE;
+			}
+			packet_select_index(atoi(str));
+			break;
+		case 't':
+			filter_mask &= ~PACKET_FILTER_SHOW_TIME_OFFSET;
+			filter_mask |= PACKET_FILTER_SHOW_TIME;
+			break;
+		case 'T':
+			filter_mask &= ~PACKET_FILTER_SHOW_TIME_OFFSET;
+			filter_mask |= PACKET_FILTER_SHOW_TIME;
+			filter_mask |= PACKET_FILTER_SHOW_DATE;
+			break;
+		case 'S':
+			filter_mask |= PACKET_FILTER_SHOW_SCO_DATA;
 			break;
 		case 'v':
 			printf("%s\n", VERSION);
@@ -98,18 +144,17 @@ int main(int argc, char *argv[])
 
 	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
 
-	filter_mask |= PACKET_FILTER_SHOW_INDEX;
-	filter_mask |= PACKET_FILTER_SHOW_TIME;
-	filter_mask |= PACKET_FILTER_SHOW_ACL_DATA;
+	printf("Bluetooth monitor ver %s\n", VERSION);
 
 	packet_set_filter(filter_mask);
 
-	printf("Bluetooth monitor ver %s\n", VERSION);
-
-	if (control_tracing() < 0) {
-		if (hcidump_tracing() < 0)
-			return EXIT_FAILURE;
+	if (reader_path) {
+		control_reader(reader_path);
+		return EXIT_SUCCESS;
 	}
+
+	if (control_tracing() < 0)
+		return EXIT_FAILURE;
 
 	return mainloop_run();
 }

@@ -48,9 +48,9 @@
 #include "sdpd.h"
 #include "log.h"
 #include "adapter.h"
-#include "manager.h"
 
 static sdp_record_t *server = NULL;
+static uint32_t fixed_dbts = 0;
 
 /*
  * List of version numbers supported by the SDP server.
@@ -89,9 +89,19 @@ uint32_t sdp_get_time(void)
  */
 static void update_db_timestamp(void)
 {
-	uint32_t dbts = sdp_get_time();
-	sdp_data_t *d = sdp_data_alloc(SDP_UINT32, &dbts);
-	sdp_attr_replace(server, SDP_ATTR_SVCDB_STATE, d);
+	if (fixed_dbts) {
+		sdp_data_t *d = sdp_data_alloc(SDP_UINT32, &fixed_dbts);
+		sdp_attr_replace(server, SDP_ATTR_SVCDB_STATE, d);
+	} else {
+		uint32_t dbts = sdp_get_time();
+		sdp_data_t *d = sdp_data_alloc(SDP_UINT32, &dbts);
+		sdp_attr_replace(server, SDP_ATTR_SVCDB_STATE, d);
+	}
+}
+
+void set_fixed_db_timestamp(uint32_t dbts)
+{
+	fixed_dbts = dbts;
 }
 
 void register_public_browse_group(void)
@@ -173,7 +183,8 @@ void register_server_service(void)
 	update_db_timestamp();
 }
 
-void register_device_id(void)
+void register_device_id(uint16_t source, uint16_t vendor,
+					uint16_t product, uint16_t version)
 {
 	const uint16_t spec = 0x0103;
 	const uint8_t primary = 1;
@@ -184,9 +195,8 @@ void register_device_id(void)
 	sdp_profile_desc_t profile;
 	sdp_record_t *record = sdp_record_alloc();
 
-	info("Adding device id record for %04x:%04x:%04x:%04x",
-				main_opts.did_source, main_opts.did_vendor,
-				main_opts.did_product, main_opts.did_version);
+	DBG("Adding device id record for %04x:%04x:%04x:%04x",
+					source, vendor, product, version);
 
 	record->handle = sdp_next_handle();
 
@@ -213,19 +223,19 @@ void register_device_id(void)
 	spec_data = sdp_data_alloc(SDP_UINT16, &spec);
 	sdp_attr_add(record, 0x0200, spec_data);
 
-	vendor_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_vendor);
+	vendor_data = sdp_data_alloc(SDP_UINT16, &vendor);
 	sdp_attr_add(record, 0x0201, vendor_data);
 
-	product_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_product);
+	product_data = sdp_data_alloc(SDP_UINT16, &product);
 	sdp_attr_add(record, 0x0202, product_data);
 
-	version_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_version);
+	version_data = sdp_data_alloc(SDP_UINT16, &version);
 	sdp_attr_add(record, 0x0203, version_data);
 
 	primary_data = sdp_data_alloc(SDP_BOOL, &primary);
 	sdp_attr_add(record, 0x0204, primary_data);
 
-	source_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_source);
+	source_data = sdp_data_alloc(SDP_UINT16, &source);
 	sdp_attr_add(record, 0x0205, source_data);
 
 	update_db_timestamp();
@@ -317,7 +327,7 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 		return NULL;
 	}
 
-	lookAheadAttrId = ntohs(bt_get_unaligned((uint16_t *) (p + sizeof(uint8_t))));
+	lookAheadAttrId = bt_get_be16(p + sizeof(uint8_t));
 
 	SDPDBG("Look ahead attr id : %d", lookAheadAttrId);
 
@@ -327,9 +337,8 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 			SDPDBG("Unexpected end of packet");
 			return NULL;
 		}
-		handle = ntohl(bt_get_unaligned((uint32_t *) (p +
-				sizeof(uint8_t) + sizeof(uint16_t) +
-				sizeof(uint8_t))));
+		handle = bt_get_be32(p + sizeof(uint8_t) + sizeof(uint16_t) +
+							sizeof(uint8_t));
 		SDPDBG("SvcRecHandle : 0x%x", handle);
 		rec = sdp_record_find(handle);
 	} else if (handleExpected != 0xffffffff)
@@ -363,7 +372,7 @@ static sdp_record_t *extract_pdu_server(bdaddr_t *device, uint8_t *p,
 							seqlen, localExtractedLength);
 		dtd = *(uint8_t *) p;
 
-		attrId = ntohs(bt_get_unaligned((uint16_t *) (p + attrSize)));
+		attrId = bt_get_be16(p + attrSize);
 		attrSize += sizeof(uint16_t);
 
 		SDPDBG("DTD of attrId : %d Attr id : 0x%x", dtd, attrId);
@@ -454,13 +463,13 @@ success:
 	update_db_timestamp();
 
 	/* Build a rsp buffer */
-	bt_put_unaligned(htonl(rec->handle), (uint32_t *) rsp->data);
+	bt_put_be32(rec->handle, rsp->data);
 	rsp->data_size = sizeof(uint32_t);
 
 	return 0;
 
 invalid:
-	bt_put_unaligned(htons(SDP_INVALID_SYNTAX), (uint16_t *) rsp->data);
+	bt_put_be16(SDP_INVALID_SYNTAX, rsp->data);
 	rsp->data_size = sizeof(uint16_t);
 
 	return -1;
@@ -475,7 +484,7 @@ int service_update_req(sdp_req_t *req, sdp_buf_t *rsp)
 	int status = 0, scanned = 0;
 	uint8_t *p = req->buf + sizeof(sdp_pdu_hdr_t);
 	int bufsize = req->len - sizeof(sdp_pdu_hdr_t);
-	uint32_t handle = ntohl(bt_get_unaligned((uint32_t *) p));
+	uint32_t handle = bt_get_be32(p);
 
 	SDPDBG("Svc Rec Handle: 0x%x", handle);
 
@@ -503,7 +512,7 @@ int service_update_req(sdp_req_t *req, sdp_buf_t *rsp)
 
 done:
 	p = rsp->data;
-	bt_put_unaligned(htons(status), (uint16_t *) p);
+	bt_put_be16(status, p);
 	rsp->data_size = sizeof(uint16_t);
 	return status;
 }
@@ -514,7 +523,7 @@ done:
 int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 {
 	uint8_t *p = req->buf + sizeof(sdp_pdu_hdr_t);
-	uint32_t handle = ntohl(bt_get_unaligned((uint32_t *) p));
+	uint32_t handle = bt_get_be32(p);
 	sdp_record_t *rec;
 	int status = 0;
 
@@ -533,7 +542,7 @@ int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 	}
 
 	p = rsp->data;
-	bt_put_unaligned(htons(status), (uint16_t *) p);
+	bt_put_be16(status, p);
 	rsp->data_size = sizeof(uint16_t);
 
 	return status;

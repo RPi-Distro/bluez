@@ -6,10 +6,9 @@ import sys
 import dbus
 import time
 from optparse import OptionParser, make_option
+import bluezutils
 
 bus = dbus.SystemBus()
-
-manager = dbus.Interface(bus.get_object("org.bluez", "/"), "org.bluez.Manager")
 
 option_list = [
 		make_option("-i", "--device", action="store",
@@ -19,20 +18,17 @@ parser = OptionParser(option_list=option_list)
 
 (options, args) = parser.parse_args()
 
-if options.dev_id:
-	adapter_path = manager.FindAdapter(options.dev_id)
-else:
-	adapter_path = manager.DefaultAdapter()
-
+adapter_path = bluezutils.find_adapter(options.dev_id).object_path
 adapter = dbus.Interface(bus.get_object("org.bluez", adapter_path),
-							"org.bluez.Adapter")
+					"org.freedesktop.DBus.Properties")
 
 if (len(args) < 1):
 	print("Usage: %s <command>" % (sys.argv[0]))
 	print("")
 	print("  address")
 	print("  list")
-	print("  name [name]")
+	print("  name")
+	print("  alias [alias]")
 	print("  powered [on/off]")
 	print("  pairable [on/off]")
 	print("  pairabletimeout [timeout]")
@@ -42,27 +38,37 @@ if (len(args) < 1):
 	sys.exit(1)
 
 if (args[0] == "address"):
-	properties = adapter.GetProperties()
-	print(properties["Address"])
+	addr = adapter.Get("org.bluez.Adapter1", "Address")
+	print(addr)
 	sys.exit(0)
 
 if (args[0] == "name"):
+	name = adapter.Get("org.bluez.Adapter1", "Name")
+	print(name)
+	sys.exit(0)
+
+if (args[0] == "alias"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["Name"])
+		alias = adapter.Get("org.bluez.Adapter1", "Alias")
+		print(alias)
 	else:
-		adapter.SetProperty("Name", args[1])
+		adapter.Set("org.bluez.Adapter1", "Alias", args[1])
 	sys.exit(0)
 
 if (args[0] == "list"):
 	if (len(args) < 2):
-		properties = manager.GetProperties()
-		for adapter_path in properties["Adapters"]:
-			adapter = dbus.Interface(bus.get_object("org.bluez", adapter_path),
-								"org.bluez.Adapter")
-			prop = adapter.GetProperties()
-			print(" [ %s ]" % (adapter_path))
-			for (key, value) in prop.items():
+		om = dbus.Interface(bus.get_object("org.bluez", "/"),
+					"org.freedesktop.DBus.ObjectManager")
+		objects = om.GetManagedObjects()
+		for path, interfaces in objects.iteritems():
+			if "org.bluez.Adapter1" not in interfaces:
+				continue
+
+			print(" [ %s ]" % (path))
+
+			props = interfaces["org.bluez.Adapter1"]
+
+			for (key, value) in props.items():
 				if (key == "Class"):
 					print("    %s = 0x%06x" % (key, value))
 				else:
@@ -72,8 +78,8 @@ if (args[0] == "list"):
 
 if (args[0] == "powered"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["Powered"])
+		powered = adapter.Get("org.bluez.Adapter1", "Powered")
+		print(powered)
 	else:
 		if (args[1] == "on"):
 			value = dbus.Boolean(1)
@@ -81,13 +87,13 @@ if (args[0] == "powered"):
 			value = dbus.Boolean(0)
 		else:
 			value = dbus.Boolean(args[1])
-		adapter.SetProperty("Powered", value)
+		adapter.Set("org.bluez.Adapter1", "Powered", value)
 	sys.exit(0)
 
 if (args[0] == "pairable"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["Pairable"])
+		pairable = adapter.Get("org.bluez.Adapter1", "Pairable")
+		print(pairable)
 	else:
 		if (args[1] == "on"):
 			value = dbus.Boolean(1)
@@ -95,22 +101,22 @@ if (args[0] == "pairable"):
 			value = dbus.Boolean(0)
 		else:
 			value = dbus.Boolean(args[1])
-		adapter.SetProperty("Pairable", value)
+		adapter.Set("org.bluez.Adapter1", "Pairable", value)
 	sys.exit(0)
 
 if (args[0] == "pairabletimeout"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["PairableTimeout"])
+		pt = adapter.Get("org.bluez.Adapter1", "PairableTimeout")
+		print(pt)
 	else:
 		timeout = dbus.UInt32(args[1])
-		adapter.SetProperty("PairableTimeout", timeout)
+		adapter.Set("org.bluez.Adapter1", "PairableTimeout", timeout)
 	sys.exit(0)
 
 if (args[0] == "discoverable"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["Discoverable"])
+		discoverable = adapter.Get("org.bluez.Adapter1", "Discoverable")
+		print(discoverable)
 	else:
 		if (args[1] == "on"):
 			value = dbus.Boolean(1)
@@ -118,21 +124,21 @@ if (args[0] == "discoverable"):
 			value = dbus.Boolean(0)
 		else:
 			value = dbus.Boolean(args[1])
-		adapter.SetProperty("Discoverable", value)
+		adapter.Set("org.bluez.Adapter1", "Discoverable", value)
 	sys.exit(0)
 
 if (args[0] == "discoverabletimeout"):
 	if (len(args) < 2):
-		properties = adapter.GetProperties()
-		print(properties["DiscoverableTimeout"])
+		dt = adapter.Get("org.bluez.Adapter1", "DiscoverableTimeout")
+		print(dt)
 	else:
-		timeout = dbus.UInt32(args[1])
-		adapter.SetProperty("DiscoverableTimeout", timeout)
+		to = dbus.UInt32(args[1])
+		adapter.Set("org.bluez.Adapter1", "DiscoverableTimeout", to)
 	sys.exit(0)
 
 if (args[0] == "discovering"):
-	properties = adapter.GetProperties()
-	print(properties["Discovering"])
+	discovering = adapter.Get("org.bluez.Adapter1", "Discovering")
+	print(discovering)
 	sys.exit(0)
 
 print("Unknown command")

@@ -1,14 +1,12 @@
 BlueZ D-Bus Network API description
 ***********************************
 
-Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
-
 
 Network hierarchy
 =================
 
 Service		org.bluez
-Interface	org.bluez.Network
+Interface	org.bluez.Network1
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
 
 Methods		string Connect(string uuid)
@@ -37,16 +35,6 @@ Methods		string Connect(string uuid)
 
 			Possible errors: org.bluez.Error.Failed
 
-		dict GetProperties()
-
-			Returns all properties for the interface. See the
-			properties section for available properties.
-
-Signals		PropertyChanged(string name, variant value)
-
-			This signal indicates a changed value of the given
-			property.
-
 Properties	boolean Connected [readonly]
 
 			Indicates if the device is connected.
@@ -64,7 +52,7 @@ Network server hierarchy
 ========================
 
 Service		org.bluez
-Interface	org.bluez.NetworkServer
+Interface	org.bluez.NetworkServer1
 Object path	/org/bluez/{hci0,hci1,...}
 
 Methods		void Register(string uuid, string bridge)

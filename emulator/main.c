@@ -27,8 +27,11 @@
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <getopt.h>
 
-#include "mainloop.h"
+#include "monitor/mainloop.h"
 #include "server.h"
 #include "vhci.h"
 
@@ -42,13 +45,67 @@ static void signal_callback(int signum, void *user_data)
 	}
 }
 
+static void usage(void)
+{
+	printf("btvirt - Bluetooth emulator\n"
+		"Usage:\n");
+	printf("\tbtvirt [options]\n");
+	printf("options:\n"
+		"\t-h, --help            Show help options\n");
+}
+
+static const struct option main_options[] = {
+	{ "local",   optional_argument,	NULL, 'l' },
+	{ "version", no_argument,	NULL, 'v' },
+	{ "help",    no_argument,	NULL, 'h' },
+	{ }
+};
+
 int main(int argc, char *argv[])
 {
 	struct vhci *vhci;
-	struct server *server;
+	struct server *server1;
+	struct server *server2;
+	struct server *server3;
+	struct server *server4;
+	struct server *server5;
+	int vhci_count = 0;
+	enum vhci_type vhci_type = VHCI_TYPE_BREDRLE;
 	sigset_t mask;
+	int i;
 
 	mainloop_init();
+
+	for (;;) {
+		int opt;
+
+		opt = getopt_long(argc, argv, "l::LBvh", main_options, NULL);
+		if (opt < 0)
+			break;
+
+		switch (opt) {
+		case 'l':
+			if (optarg)
+				vhci_count = atoi(optarg);
+			else
+				vhci_count = 1;
+			break;
+		case 'L':
+			vhci_type = VHCI_TYPE_LE;
+			break;
+		case 'B':
+			vhci_type = VHCI_TYPE_BREDR;
+			break;
+		case 'v':
+			printf("%s\n", VERSION);
+			return EXIT_SUCCESS;
+		case 'h':
+			usage();
+			return EXIT_SUCCESS;
+		default:
+			return EXIT_FAILURE;
+		}
+	}
 
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);
@@ -56,18 +113,34 @@ int main(int argc, char *argv[])
 
 	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
 
-	vhci = vhci_open(VHCI_TYPE_BREDR, 0x23);
-	if (!vhci) {
-		fprintf(stderr, "Failed to open Virtual HCI device\n");
-		return 1;
+	printf("Bluetooth emulator ver %s\n", VERSION);
+
+	for (i = 0; i < vhci_count; i++) {
+		vhci = vhci_open(vhci_type);
+		if (!vhci)
+			fprintf(stderr, "Failed to open Virtual HCI device\n");
 	}
 
-	server = server_open_unix("/tmp/bt-server-bredr", 0x42);
-	if (!server) {
-		fprintf(stderr, "Failed to open server channel\n");
-		vhci_close(vhci);
-		return 1;
-	}
+	server1 = server_open_unix(SERVER_TYPE_BREDRLE,
+						"/tmp/bt-server-bredrle");
+	if (!server1)
+		fprintf(stderr, "Failed to open BR/EDR/LE server channel\n");
+
+	server2 = server_open_unix(SERVER_TYPE_BREDR, "/tmp/bt-server-bredr");
+	if (!server2)
+		fprintf(stderr, "Failed to open BR/EDR server channel\n");
+
+	server3 = server_open_unix(SERVER_TYPE_AMP, "/tmp/bt-server-amp");
+	if (!server3)
+		fprintf(stderr, "Failed to open AMP server channel\n");
+
+	server4 = server_open_unix(SERVER_TYPE_LE, "/tmp/bt-server-le");
+	if (!server4)
+		fprintf(stderr, "Failed to open LE server channel\n");
+
+	server5 = server_open_unix(SERVER_TYPE_MONITOR, "/tmp/bt-server-mon");
+	if (!server5)
+		fprintf(stderr, "Failed to open monitor server channel\n");
 
 	return mainloop_run();
 }

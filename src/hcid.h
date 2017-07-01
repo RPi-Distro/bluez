@@ -24,23 +24,14 @@
  */
 
 struct main_opts {
-	char		host_name[40];
-	unsigned long	flags;
 	char		*name;
 	uint32_t	class;
-	uint16_t	pageto;
 	uint16_t	autoto;
-	uint32_t	discovto;
 	uint32_t	pairto;
-	uint16_t	link_mode;
-	uint16_t	link_policy;
-	gboolean	remember_powered;
+	uint32_t	discovto;
 	gboolean	reverse_sdp;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
-	gboolean	gatt_enabled;
-
-	uint8_t		mode;
 
 	uint16_t	did_source;
 	uint16_t	did_vendor;
@@ -48,18 +39,12 @@ struct main_opts {
 	uint16_t	did_version;
 };
 
-enum {
-	HCID_SET_PAGETO,
-};
-
 extern struct main_opts main_opts;
 
-void btd_start_exit_timer(void);
-void btd_stop_exit_timer(void);
-
-gboolean plugin_init(GKeyFile *config, const char *enable,
-							const char *disable);
+gboolean plugin_init(const char *enable, const char *disable);
 void plugin_cleanup(void);
 
 void rfkill_init(void);
 void rfkill_exit(void);
+
+void btd_exit(void);

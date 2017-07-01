@@ -25,7 +25,6 @@
 #include <config.h>
 #endif
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -46,13 +45,6 @@
 #include <bluetooth/hci_lib.h>
 #include <bluetooth/rfcomm.h>
 
-#include "kword.h"
-
-#ifdef NEED_PPOLL
-#include "ppoll.h"
-#endif
-
-static char *rfcomm_config_file = NULL;
 static int rfcomm_raw_tty = 0;
 static int auth = 0;
 static int encryption = 0;
@@ -159,64 +151,28 @@ static int create_dev(int ctl, int dev, uint32_t flags, bdaddr_t *bdaddr, int ar
 	bacpy(&req.src, bdaddr);
 
 	if (argc < 2) {
-		err = rfcomm_read_config(rfcomm_config_file);
-		if (err < 0) {
-			perror("Can't open RFCOMM config file");
-			return err;
-		}
-
-		bacpy(&req.dst, &rfcomm_opts[dev].bdaddr);
-		req.channel = rfcomm_opts[dev].channel;
-
-		if (bacmp(&req.dst, BDADDR_ANY) == 0) {
-			fprintf(stderr, "Can't find a config entry for rfcomm%d\n", dev);
-			return -EFAULT;
-		}
-	} else {
-		str2ba(argv[1], &req.dst);
-
-		if (argc > 2)
-			req.channel = atoi(argv[2]);
-		else
-			req.channel = 1;
+		fprintf(stderr, "Missing dev parameter");
+		return -EINVAL;
 	}
+
+	str2ba(argv[1], &req.dst);
+
+	if (argc > 2)
+		req.channel = atoi(argv[2]);
+	else
+		req.channel = 1;
 
 	err = ioctl(ctl, RFCOMMCREATEDEV, &req);
-	if (err == EOPNOTSUPP)
-		fprintf(stderr, "RFCOMM TTY support not available\n");
-	else if (err < 0)
-		perror("Can't create device");
+	if (err == -1) {
+		err = -errno;
+
+		if (err == -EOPNOTSUPP)
+			fprintf(stderr, "RFCOMM TTY support not available\n");
+		else
+			perror("Can't create device");
+	}
 
 	return err;
-}
-
-static int create_all(int ctl)
-{
-	struct rfcomm_dev_req req;
-	int i, err;
-
-	err = rfcomm_read_config(rfcomm_config_file);
-	if (err < 0) {
-		perror("Can't open RFCOMM config file");
-		return err;
-	}
-
-	for (i = 0; i < RFCOMM_MAX_DEV; i++) {
-		if (!rfcomm_opts[i].bind)
-			continue;
-
-		memset(&req, 0, sizeof(req));
-		req.dev_id = i;
-		req.flags = 0;
-		bacpy(&req.src, BDADDR_ANY);
-		bacpy(&req.dst, &rfcomm_opts[i].bdaddr);
-		req.channel = rfcomm_opts[i].channel;
-
-		if (bacmp(&req.dst, BDADDR_ANY) != 0)
-			ioctl(ctl, RFCOMMCREATEDEV, &req);
-	}
-
-	return 0;
 }
 
 static int release_dev(int ctl, int dev, uint32_t flags)
@@ -262,14 +218,14 @@ static int release_all(int ctl)
 	return 0;
 }
 
-static void run_cmdline(struct pollfd *p, sigset_t* sigs, char *devname,
+static void run_cmdline(struct pollfd *p, sigset_t *sigs, char *devname,
 			int argc, char **argv)
 {
 	int i;
 	pid_t pid;
 	char **cmdargv;
 
-	cmdargv = malloc((argc + 1) * sizeof(char*));
+	cmdargv = malloc((argc + 1) * sizeof(char *));
 	if (!cmdargv)
 		return;
 
@@ -331,28 +287,17 @@ static void cmd_connect(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **arg
 	laddr.rc_channel = 0;
 
 	if (argc < 2) {
-		if (rfcomm_read_config(rfcomm_config_file) < 0) {
-			perror("Can't open RFCOMM config file");
-			return;
-		}
-
-		raddr.rc_family = AF_BLUETOOTH;
-		bacpy(&raddr.rc_bdaddr, &rfcomm_opts[dev].bdaddr);
-		raddr.rc_channel = rfcomm_opts[dev].channel;
-
-		if (bacmp(&raddr.rc_bdaddr, BDADDR_ANY) == 0) {
-			fprintf(stderr, "Can't find a config entry for rfcomm%d\n", dev);
-			return;
-		}
-	} else {
-		raddr.rc_family = AF_BLUETOOTH;
-		str2ba(argv[1], &raddr.rc_bdaddr);
-
-		if (argc > 2)
-			raddr.rc_channel = atoi(argv[2]);
-		else
-			raddr.rc_channel = 1;
+		fprintf(stderr, "Missing dev parameter");
+		return;
 	}
+
+	raddr.rc_family = AF_BLUETOOTH;
+	str2ba(argv[1], &raddr.rc_bdaddr);
+
+	if (argc > 2)
+		raddr.rc_channel = atoi(argv[2]);
+	else
+		raddr.rc_channel = 1;
 
 	sk = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
 	if (sk < 0) {
@@ -654,10 +599,7 @@ static void cmd_watch(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
 
 static void cmd_create(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
 {
-	if (strcmp(argv[0], "all") == 0)
-		create_all(ctl);
-	else
-		create_dev(ctl, dev, 0, bdaddr, argc, argv);
+	create_dev(ctl, dev, 0, bdaddr, argc, argv);
 }
 
 static void cmd_release(int ctl, int dev, bdaddr_t *bdaddr, int argc, char **argv)
@@ -750,17 +692,13 @@ int main(int argc, char *argv[])
 
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt = getopt_long(argc, argv, "+i:f:rahAESML:", main_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "+i:rahAESML:", main_options, NULL)) != -1) {
 		switch(opt) {
 		case 'i':
 			if (strncmp(optarg, "hci", 3) == 0)
 				hci_devba(atoi(optarg + 3), &bdaddr);
 			else
 				str2ba(optarg, &bdaddr);
-			break;
-
-		case 'f':
-			rfcomm_config_file = strdup(optarg);
 			break;
 
 		case 'r':

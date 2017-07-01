@@ -25,7 +25,6 @@
 #include <config.h>
 #endif
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
@@ -40,7 +39,7 @@
 
 #include "textfile.h"
 
-int create_dirs(const char *filename, const mode_t mode)
+static int create_dirs(const char *filename, const mode_t mode)
 {
 	struct stat st;
 	char dir[PATH_MAX + 1], *prev, *next;
@@ -78,9 +77,7 @@ int create_file(const char *filename, const mode_t mode)
 {
 	int fd;
 
-	umask(S_IWGRP | S_IWOTH);
-	create_dirs(filename, S_IRUSR | S_IWUSR | S_IXUSR |
-					S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
+	create_dirs(filename, S_IRUSR | S_IWUSR | S_IXUSR);
 
 	fd = open(filename, O_RDWR | O_CREAT, mode);
 	if (fd < 0)
@@ -104,7 +101,7 @@ static inline char *find_key(char *map, size_t size, const char *key, size_t len
 	while (ptrlen > len + 1) {
 		int cmp = (icase) ? strncasecmp(ptr, key, len) : strncmp(ptr, key, len);
 		if (cmp == 0) {
-			if (ptr == map)
+			if (ptr == map && *(ptr + len) == ' ')
 				return ptr;
 
 			if ((*(ptr - 1) == '\r' || *(ptr - 1) == '\n') &&
@@ -338,7 +335,7 @@ static char *read_key(const char *pathname, const char *key, int icase)
 		goto unmap;
 	}
 
-	end = strnpbrk(off, size - (map - off), "\r\n");
+	end = strnpbrk(off, size - (off - map), "\r\n");
 	if (!end) {
 		err = -EILSEQ;
 		goto unmap;
@@ -371,29 +368,14 @@ int textfile_put(const char *pathname, const char *key, const char *value)
 	return write_key(pathname, key, value, 0);
 }
 
-int textfile_caseput(const char *pathname, const char *key, const char *value)
-{
-	return write_key(pathname, key, value, 1);
-}
-
 int textfile_del(const char *pathname, const char *key)
 {
 	return write_key(pathname, key, NULL, 0);
 }
 
-int textfile_casedel(const char *pathname, const char *key)
-{
-	return write_key(pathname, key, NULL, 1);
-}
-
 char *textfile_get(const char *pathname, const char *key)
 {
 	return read_key(pathname, key, 0);
-}
-
-char *textfile_caseget(const char *pathname, const char *key)
-{
-	return read_key(pathname, key, 1);
 }
 
 int textfile_foreach(const char *pathname, textfile_cb func, void *data)

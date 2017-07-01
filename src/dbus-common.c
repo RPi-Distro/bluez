@@ -32,7 +32,7 @@
 
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus.h>
+#include <gdbus/gdbus.h>
 
 #include "log.h"
 
@@ -118,64 +118,12 @@ void dict_append_array(DBusMessageIter *dict, const char *key, int type,
 	dbus_message_iter_close_container(dict, &entry);
 }
 
-dbus_bool_t emit_property_changed(DBusConnection *conn,
-					const char *path,
-					const char *interface,
-					const char *name,
-					int type, void *value)
-{
-	DBusMessage *signal;
-	DBusMessageIter iter;
-
-	signal = dbus_message_new_signal(path, interface, "PropertyChanged");
-
-	if (!signal) {
-		error("Unable to allocate new %s.PropertyChanged signal",
-				interface);
-		return FALSE;
-	}
-
-	dbus_message_iter_init_append(signal, &iter);
-
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &name);
-
-	append_variant(&iter, type, value);
-
-	return g_dbus_send_message(conn, signal);
-}
-
-dbus_bool_t emit_array_property_changed(DBusConnection *conn,
-					const char *path,
-					const char *interface,
-					const char *name,
-					int type, void *value, int num)
-{
-	DBusMessage *signal;
-	DBusMessageIter iter;
-
-	signal = dbus_message_new_signal(path, interface, "PropertyChanged");
-
-	if (!signal) {
-		error("Unable to allocate new %s.PropertyChanged signal",
-				interface);
-		return FALSE;
-	}
-
-	dbus_message_iter_init_append(signal, &iter);
-
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &name);
-
-	append_array_variant(&iter, type, value, num);
-
-	return g_dbus_send_message(conn, signal);
-}
-
 void set_dbus_connection(DBusConnection *conn)
 {
 	connection = conn;
 }
 
-DBusConnection *get_dbus_connection(void)
+DBusConnection *btd_get_dbus_connection(void)
 {
 	return connection;
 }
@@ -247,6 +195,8 @@ const char *class_to_icon(uint32_t class)
 const char *gap_appearance_to_icon(uint16_t appearance)
 {
 	switch ((appearance & 0xffc0) >> 6) {
+	case 0x00:
+		return "unknown";
 	case 0x01:
 		return "phone";
 	case 0x02:

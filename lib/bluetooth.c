@@ -82,7 +82,6 @@ int ba2str(const bdaddr_t *ba, char *str)
 
 int str2ba(const char *str, bdaddr_t *ba)
 {
-	bdaddr_t b;
 	int i;
 
 	if (bachk(str) < 0) {
@@ -90,10 +89,8 @@ int str2ba(const char *str, bdaddr_t *ba)
 		return -1;
 	}
 
-	for (i = 0; i < 6; i++, str += 3)
-		b.b[i] = strtol(str, NULL, 16);
-
-	baswap(ba, &b);
+	for (i = 5; i >= 0; i--, str += 3)
+		ba->b[i] = strtol(str, NULL, 16);
 
 	return 0;
 }
@@ -261,7 +258,7 @@ int bt_error(uint16_t code)
 	}
 }
 
-char *bt_compidtostr(int compid)
+const char *bt_compidtostr(int compid)
 {
 	switch (compid) {
 	case 0:
@@ -293,13 +290,13 @@ char *bt_compidtostr(int compid)
 	case 13:
 		return "Texas Instruments Inc.";
 	case 14:
-		return "Parthus Technologies Inc.";
+		return "Ceva, Inc. (formerly Parthus Technologies, Inc.)";
 	case 15:
 		return "Broadcom Corporation";
 	case 16:
 		return "Mitel Semiconductor";
 	case 17:
-		return "Widcomm, Inc.";
+		return "Widcomm, Inc";
 	case 18:
 		return "Zeevo, Inc.";
 	case 19:
@@ -311,11 +308,11 @@ char *bt_compidtostr(int compid)
 	case 22:
 		return "KC Technology Inc.";
 	case 23:
-		return "Newlogic";
+		return "NewLogic";
 	case 24:
 		return "Transilica, Inc.";
 	case 25:
-		return "Rohde & Schwartz GmbH & Co. KG";
+		return "Rohde & Schwarz GmbH & Co. KG";
 	case 26:
 		return "TTPCom Limited";
 	case 27:
@@ -363,7 +360,7 @@ char *bt_compidtostr(int compid)
 	case 48:
 		return "ST Microelectronics";
 	case 49:
-		return "Synopsys";
+		return "Synopsis";
 	case 50:
 		return "Red-M (Communications) Ltd";
 	case 51:
@@ -389,19 +386,19 @@ char *bt_compidtostr(int compid)
 	case 61:
 		return "IPextreme, Inc.";
 	case 62:
-		return "Systems and Chips, Inc";
+		return "Systems and Chips, Inc.";
 	case 63:
-		return "Bluetooth SIG, Inc";
+		return "Bluetooth SIG, Inc.";
 	case 64:
 		return "Seiko Epson Corporation";
 	case 65:
-		return "Integrated Silicon Solution Taiwain, Inc.";
+		return "Integrated Silicon Solution Taiwan, Inc.";
 	case 66:
 		return "CONWISE Technology Corporation Ltd";
 	case 67:
 		return "PARROT SA";
 	case 68:
-		return "Socket Communications";
+		return "Socket Mobile";
 	case 69:
 		return "Atheros Communications, Inc.";
 	case 70:
@@ -423,9 +420,9 @@ char *bt_compidtostr(int compid)
 	case 78:
 		return "Avago Technologies";
 	case 79:
-		return "APT Ltd.";
+		return "APT Licensing Ltd.";
 	case 80:
-		return "SiRF Technology, Inc.";
+		return "SiRF Technology";
 	case 81:
 		return "Tzero Technologies, Inc.";
 	case 82:
@@ -515,13 +512,149 @@ char *bt_compidtostr(int compid)
 	case 124:
 		return "A & R Cambridge";
 	case 125:
-		return "Seers Technology Co. Ltd.";
+		return "Seers Technology Co. Ltd";
 	case 126:
 		return "Sports Tracking Technologies Ltd.";
 	case 127:
 		return "Autonet Mobile";
 	case 128:
 		return "DeLorme Publishing Company, Inc.";
+	case 129:
+		return "WuXi Vimicro";
+	case 130:
+		return "Sennheiser Communications A/S";
+	case 131:
+		return "TimeKeeping Systems, Inc.";
+	case 132:
+		return "Ludus Helsinki Ltd.";
+	case 133:
+		return "BlueRadios, Inc.";
+	case 134:
+		return "equinox AG";
+	case 135:
+		return "Garmin International, Inc.";
+	case 136:
+		return "Ecotest";
+	case 137:
+		return "GN ReSound A/S";
+	case 138:
+		return "Jawbone";
+	case 139:
+		return "Topcorn Positioning Systems, LLC";
+	case 140:
+		return "Qualcomm Labs, Inc.";
+	case 141:
+		return "Zscan Software";
+	case 142:
+		return "Quintic Corp.";
+	case 143:
+		return "Stollman E+V GmbH";
+	case 144:
+		return "Funai Electric Co., Ltd.";
+	case 145:
+		return "Advanced PANMOBIL Systems GmbH & Co. KG";
+	case 146:
+		return "ThinkOptics, Inc.";
+	case 147:
+		return "Universal Electronics, Inc.";
+	case 148:
+		return "Airoha Technology Corp.";
+	case 149:
+		return "NEC Lighting, Ltd.";
+	case 150:
+		return "ODM Technology, Inc.";
+	case 151:
+		return "Bluetrek Technologies Limited";
+	case 152:
+		return "zer01.tv GmbH";
+	case 153:
+		return "i.Tech Dynamic Global Distribution Ltd.";
+	case 154:
+		return "Alpwise";
+	case 155:
+		return "Jiangsu Toppower Automotive Electronics Co., Ltd.";
+	case 156:
+		return "Colorfy, Inc.";
+	case 157:
+		return "Geoforce Inc.";
+	case 158:
+		return "Bose Corporation";
+	case 159:
+		return "Suunto Oy";
+	case 160:
+		return "Kensington Computer Products Group";
+	case 161:
+		return "SR-Medizinelektronik";
+	case 162:
+		return "Vertu Corporation Limited";
+	case 163:
+		return "Meta Watch Ltd.";
+	case 164:
+		return "LINAK A/S";
+	case 165:
+		return "OTL Dynamics LLC";
+	case 166:
+		return "Panda Ocean Inc.";
+	case 167:
+		return "Visteon Corporation";
+	case 168:
+		return "ARP Devices Limited";
+	case 169:
+		return "Magneti Marelli S.p.A";
+	case 170:
+		return "CAEN RFID srl";
+	case 171:
+		return "Ingenieur-Systemgruppe Zahn GmbH";
+	case 172:
+		return "Green Throttle Games";
+	case 173:
+		return "Peter Systemtechnik GmbH";
+	case 174:
+		return "Omegawave Oy";
+	case 175:
+		return "Cinetix";
+	case 176:
+		return "Passif Semiconductor Corp";
+	case 177:
+		return "Saris Cycling Group, Inc";
+	case 178:
+		return "Bekey A/S";
+	case 179:
+		return "Clarinox Technologies Pty. Ltd.";
+	case 180:
+		return "BDE Technology Co., Ltd.";
+	case 181:
+		return "Swirl Networks";
+	case 182:
+		return "Meso international";
+	case 183:
+		return "TreLab Ltd";
+	case 184:
+		return "Qualcomm Innovation Center, Inc. (QuIC)";
+	case 185:
+		return "Johnson Controls, Inc.";
+	case 186:
+		return "Starkey Laboratories Inc.";
+	case 187:
+		return "S-Power Electronics Limited";
+	case 188:
+		return "Ace Sensor Inc";
+	case 189:
+		return "Aplix Corporation";
+	case 190:
+		return "AAMP of America";
+	case 191:
+		return "Stalmart Technology Limited";
+	case 192:
+		return "AMICCOM Electronics Corporation";
+	case 193:
+		return "Shenzhen Excelsecu Data Technology Co.,Ltd";
+	case 194:
+		return "Geneq Inc.";
+	case 195:
+		return "adidas AG";
+	case 196:
+		return "LG Electronics";
 	case 65535:
 		return "internal use";
 	default:

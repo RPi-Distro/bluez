@@ -27,18 +27,18 @@
 #endif
 
 #include <glib.h>
-#include <bluetooth/uuid.h>
 #include <errno.h>
 #include <adapter.h>
 
+#include "lib/uuid.h"
 #include "plugin.h"
 #include "hcid.h"
 #include "log.h"
-#include "gattrib.h"
-#include "gatt-service.h"
-#include "att.h"
-#include "gatt.h"
-#include "att-database.h"
+#include "attrib/gattrib.h"
+#include "attrib/gatt-service.h"
+#include "attrib/att.h"
+#include "attrib/gatt.h"
+#include "attrib/att-database.h"
 #include "attrib-server.h"
 
 /* FIXME: Not defined by SIG? UUID128? */
@@ -83,7 +83,7 @@ static void gatt_example_adapter_free(struct gatt_example_adapter *gadapter)
 	g_free(gadapter);
 }
 
-static gint adapter_cmp(gconstpointer a, gconstpointer b)
+static int adapter_cmp(gconstpointer a, gconstpointer b)
 {
 	const struct gatt_example_adapter *gatt_adapter = a;
 	const struct btd_adapter *adapter = b;
@@ -563,19 +563,11 @@ static struct btd_adapter_driver gatt_example_adapter_driver = {
 
 static int gatt_example_init(void)
 {
-	if (!main_opts.gatt_enabled) {
-		DBG("GATT is disabled");
-		return -ENOTSUP;
-	}
-
 	return btd_register_adapter_driver(&gatt_example_adapter_driver);
 }
 
 static void gatt_example_exit(void)
 {
-	if (!main_opts.gatt_enabled)
-		return;
-
 	btd_unregister_adapter_driver(&gatt_example_adapter_driver);
 }
 
