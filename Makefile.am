@@ -80,7 +80,7 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:13:18
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:14:18
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -185,7 +185,7 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			src/profile.h src/profile.c \
 			src/service.h src/service.c \
 			src/gatt-client.h src/gatt-client.c \
-			src/device.h src/device.c src/attio.h \
+			src/device.h src/device.c \
 			src/dbus-common.c src/dbus-common.h \
 			src/eir.h src/eir.c
 src_bluetoothd_LDADD = lib/libbluetooth-internal.la \
