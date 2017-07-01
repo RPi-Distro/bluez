@@ -452,8 +452,11 @@ void hcid_dbus_inquiry_start(bdaddr_t *local)
 	 * Cancel pending remote name request and clean the device list
 	 * when inquiry is supported in periodic inquiry idle state.
 	 */
-	if (adapter_get_state(adapter) & PERIODIC_INQUIRY)
+	if (adapter_get_state(adapter) & PERIODIC_INQUIRY) {
 		pending_remote_name_cancel(adapter);
+
+		clear_found_devices_list(adapter);
+	}
 
 	/* Disable name resolution for non D-Bus clients */
 	if (!adapter_has_discov_sessions(adapter)) {
@@ -844,11 +847,6 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 			error("write_link_key: %s (%d)", strerror(-err), -err);
 			return err;
 		}
-
-		/* If not the initiator consider the device permanent otherwise
-		 * wait to service discover to complete */
-		if (!bonding)
-			device_set_temporary(device, FALSE);
 	}
 
 	/* If this is not the first link key set a flag so a subsequent auth
@@ -1219,159 +1217,6 @@ int hcid_dbus_set_io_cap(bdaddr_t *local, bdaddr_t *remote,
 	device_set_auth(device, auth);
 
 	return 0;
-}
-
-int inquiry_cancel(int dd, int to)
-{
-	struct hci_request rq;
-	uint8_t status;
-
-	memset(&rq, 0, sizeof(rq));
-	rq.ogf    = OGF_LINK_CTL;
-	rq.ocf    = OCF_INQUIRY_CANCEL;
-	rq.rparam = &status;
-	rq.rlen   = sizeof(status);
-	rq.event = EVT_CMD_COMPLETE;
-
-	if (hci_send_req(dd, &rq, to) < 0)
-		return -1;
-
-	if (status) {
-		errno = bt_error(status);
-		return -1;
-	}
-
-	return 0;
-}
-
-static int remote_name_cancel(int dd, bdaddr_t *dba, int to)
-{
-	remote_name_req_cancel_cp cp;
-	struct hci_request rq;
-	uint8_t status;
-
-	memset(&rq, 0, sizeof(rq));
-	memset(&cp, 0, sizeof(cp));
-
-	bacpy(&cp.bdaddr, dba);
-
-	rq.ogf    = OGF_LINK_CTL;
-	rq.ocf    = OCF_REMOTE_NAME_REQ_CANCEL;
-	rq.cparam = &cp;
-	rq.clen   = REMOTE_NAME_REQ_CANCEL_CP_SIZE;
-	rq.rparam = &status;
-	rq.rlen = sizeof(status);
-	rq.event = EVT_CMD_COMPLETE;
-
-	if (hci_send_req(dd, &rq, to) < 0)
-		return -1;
-
-	if (status) {
-		errno = bt_error(status);
-		return -1;
-	}
-
-	return 0;
-}
-
-int cancel_discovery(struct btd_adapter *adapter)
-{
-	struct remote_dev_info *dev, match;
-	int dd, err = 0;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0)
-		return -ENODEV;
-
-	/*
-	 * If there is a pending read remote name request means
-	 * that the inquiry complete event was already received
-	 */
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, BDADDR_ANY);
-	match.name_status = NAME_REQUESTED;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (dev) {
-		if (remote_name_cancel(dd, &dev->bdaddr,
-							HCI_REQ_TIMEOUT) < 0) {
-			err = -errno;
-			error("Read remote name cancel failed: %s, (%d)",
-						strerror(errno), errno);
-		}
-	} else {
-		if (inquiry_cancel(dd, HCI_REQ_TIMEOUT) < 0) {
-			err = -errno;
-			error("Inquiry cancel failed:%s (%d)",
-						strerror(errno), errno);
-		}
-	}
-
-	hci_close_dev(dd);
-
-	return err;
-}
-
-int periodic_inquiry_exit(int dd, int to)
-{
-	struct hci_request rq;
-	uint8_t status;
-
-	memset(&rq, 0, sizeof(rq));
-	rq.ogf    = OGF_LINK_CTL;
-	rq.ocf    = OCF_EXIT_PERIODIC_INQUIRY;
-	rq.rparam = &status;
-	rq.rlen   = sizeof(status);
-	rq.event = EVT_CMD_COMPLETE;
-
-	if (hci_send_req(dd, &rq, to) < 0)
-		return -1;
-
-	if (status) {
-		errno = status;
-		return -1;
-	}
-
-	return 0;
-}
-
-int cancel_periodic_discovery(struct btd_adapter *adapter)
-{
-	struct remote_dev_info *dev, match;
-	int dd, err = 0;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0)
-		return -ENODEV;
-
-	/* find the pending remote name request */
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, BDADDR_ANY);
-	match.name_status = NAME_REQUESTED;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (dev) {
-		if (remote_name_cancel(dd, &dev->bdaddr,
-						HCI_REQ_TIMEOUT) < 0) {
-			err = -errno;
-			error("Read remote name cancel failed: %s, (%d)",
-						strerror(errno), errno);
-		}
-	}
-
-	/* ovewrite err if necessary: stop periodic inquiry has higher
-	 * priority */
-	if (periodic_inquiry_exit(dd, HCI_REQ_TIMEOUT) < 0) {
-		err = -errno;
-		error("Periodic Inquiry exit failed:%s (%d)",
-						strerror(errno), errno);
-	}
-
-	hci_close_dev(dd);
-
-	return err;
 }
 
 /* Most of the functions in this module require easy access to a connection so

@@ -204,6 +204,9 @@ static void browse_request_cancel(struct browse_req *req)
 	struct btd_adapter *adapter = device->adapter;
 	bdaddr_t src;
 
+	if (device_is_creating(device, NULL))
+		device_set_temporary(device, TRUE);
+
 	adapter_get_address(adapter, &src);
 
 	bt_cancel_discovery(&src, &device->bdaddr);
@@ -618,16 +621,8 @@ static gboolean do_disconnect(gpointer user_data)
 	disconnect_cp cp;
 	int dd;
 	uint16_t dev_id = adapter_get_dev_id(device->adapter);
-	DBusConnection *conn = get_dbus_connection();
 
 	device->disconn_timer = 0;
-
-	while (device->disconnects) {
-		DBusMessage *msg = device->disconnects->data;
-
-		g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
-		device->disconnects = g_slist_remove(device->disconnects, msg);
-	}
 
 	dd = hci_open_dev(dev_id);
 	if (dd < 0)
@@ -784,6 +779,13 @@ void device_remove_connection(struct btd_device *device, DBusConnection *conn,
 
 	device->handle = 0;
 
+	while (device->disconnects) {
+		DBusMessage *msg = device->disconnects->data;
+
+		g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
+		device->disconnects = g_slist_remove(device->disconnects, msg);
+	}
+
 	device_set_connected(device, conn, FALSE);
 }
 
@@ -936,15 +938,6 @@ static void device_remove_bonding(struct btd_device *device,
 	/* Delete the link key from the Bluetooth chip */
 	hci_delete_stored_link_key(dd, &device->bdaddr, 0, HCI_REQ_TIMEOUT);
 
-	/* Send the HCI disconnect command */
-	if (device->handle) {
-		int err = hci_disconnect(dd, htobs(device->handle),
-					HCI_OE_USER_ENDED_CONNECTION,
-					HCI_REQ_TIMEOUT);
-		if (err < 0)
-			error("Disconnect: %s (%d)", strerror(-err), -err);
-	}
-
 	hci_close_dev(dd);
 
 	paired = FALSE;
@@ -979,12 +972,8 @@ void device_remove(struct btd_device *device, DBusConnection *conn,
 	if (device->browse)
 		browse_request_cancel(device->browse);
 
-	while (device->disconnects) {
-		DBusMessage *msg = device->disconnects->data;
-
-		g_dbus_send_reply(conn, msg, DBUS_TYPE_INVALID);
-		device->disconnects = g_slist_remove(device->disconnects, msg);
-	}
+	if (device->handle)
+		do_disconnect(device);
 
 	if (remove_stored)
 		device_remove_stored(device, conn);
@@ -1622,6 +1611,7 @@ DBusMessage *new_authentication_return(DBusMessage *msg, uint8_t status)
 	case 0x0d: /* limited resources */
 	case 0x13: /* user ended the connection */
 	case 0x14: /* terminated due to low resources */
+	case 0x16: /* connection terminated */
 		return dbus_message_new_error(msg,
 					ERROR_INTERFACE ".AuthenticationCanceled",
 					"Authentication Canceled");
@@ -1736,12 +1726,14 @@ static gboolean bonding_io_cb(GIOChannel *io, GIOCondition cond,
 							gpointer user_data)
 {
 	struct btd_device *device = user_data;
+	DBusMessage *reply;
 
 	if (!device->bonding)
 		return FALSE;
 
-	error_connection_attempt_failed(device->bonding->conn,
-					device->bonding->msg, ENETDOWN);
+	reply = new_authentication_return(device->bonding->msg,
+					HCI_CONNECTION_TERMINATED);
+	g_dbus_send_message(device->bonding->conn, reply);
 
 	bonding_request_free(device->bonding);
 
@@ -1949,6 +1941,8 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 	if (device->renewed_key)
 		return;
 
+	device_set_temporary(device, FALSE);
+
 	/* If we were initiators start service discovery immediately.
 	 * However if the other end was the initator wait a few seconds
 	 * before SDP. This is due to potential IOP issues if the other
@@ -1963,24 +1957,51 @@ void device_bonding_complete(struct btd_device *device, uint8_t status)
 
 		device_browse(device, bonding->conn, bonding->msg,
 				NULL, FALSE);
-	} else if (!device->browse && !device->discov_timer &&
-			main_opts.reverse_sdp) {
-		/* If we are not initiators and there is no currently active
-		 * discovery or discovery timer, set the discovery timer */
-		debug("setting timer for reverse service discovery");
-		device->discov_timer = g_timeout_add_seconds(DISCOVERY_TIMER,
-						start_discovery,
-						device);
+
+		bonding_request_free(bonding);
+	} else {
+		if (!device->browse && !device->discov_timer &&
+				main_opts.reverse_sdp) {
+			/* If we are not initiators and there is no currently
+			 * active discovery or discovery timer, set discovery
+			 * timer */
+			debug("setting timer for reverse service discovery");
+			device->discov_timer = g_timeout_add_seconds(
+							DISCOVERY_TIMER,
+							start_discovery,
+							device);
+		}
 	}
 
 	device_set_paired(device, TRUE);
-
-	bonding_request_free(bonding);
 
 	return;
 
 failed:
 	device_cancel_bonding(device, status);
+}
+
+gboolean device_is_creating(struct btd_device *device, const char *sender)
+{
+	DBusMessage *msg;
+
+	if (device->bonding && device->bonding->msg)
+		msg = device->bonding->msg;
+	else if (device->browse && device->browse->msg)
+		msg = device->browse->msg;
+	else
+		return FALSE;
+
+	if (!dbus_message_is_method_call(msg, ADAPTER_INTERFACE,
+						"CreatePairedDevice") &&
+			!dbus_message_is_method_call(msg, ADAPTER_INTERFACE,
+							"CreateDevice"))
+		return FALSE;
+
+	if (sender == NULL)
+		return TRUE;
+
+	return g_str_equal(sender, dbus_message_get_sender(msg));
 }
 
 gboolean device_is_bonding(struct btd_device *device, const char *sender)

@@ -95,7 +95,7 @@ struct btd_device *adapter_create_device(DBusConnection *conn,
 
 int pending_remote_name_cancel(struct btd_adapter *adapter);
 
-void remove_pending_device(struct btd_adapter *adapter);
+void clear_found_devices_list(struct btd_adapter *adapter);
 
 struct btd_adapter *adapter_create(DBusConnection *conn, int id,
 				gboolean devup);
@@ -124,6 +124,9 @@ void adapter_add_connection(struct btd_adapter *adapter,
 void adapter_remove_connection(struct btd_adapter *adapter,
 				struct btd_device *device, uint16_t handle);
 gboolean adapter_has_discov_sessions(struct btd_adapter *adapter);
+
+struct btd_adapter *btd_adapter_ref(struct btd_adapter *adapter);
+void btd_adapter_unref(struct btd_adapter *adapter);
 
 struct btd_adapter_driver {
 	const char *name;
@@ -157,6 +160,8 @@ struct btd_adapter_ops {
 	int (*set_discoverable) (int index);
 	int (*set_limited_discoverable) (int index, const uint8_t *cls,
 						gboolean limited);
+	int (*start_discovery) (int index, gboolean periodic);
+	int (*stop_discovery) (int index);
 };
 
 int btd_register_adapter_ops(struct btd_adapter_ops *btd_adapter_ops);
