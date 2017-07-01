@@ -90,14 +90,12 @@ struct input_device {
 	GSList			*connections;
 };
 
-GSList *devices = NULL;
+static GSList *devices = NULL;
 
 static struct input_device *find_device_by_path(GSList *list, const char *path)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct input_device *idev = l->data;
+	for (; list; list = list->next) {
+		struct input_device *idev = list->data;
 
 		if (!strcmp(idev->path, path))
 			return idev;
@@ -108,10 +106,8 @@ static struct input_device *find_device_by_path(GSList *list, const char *path)
 
 static struct input_conn *find_connection(GSList *list, const char *pattern)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct input_conn *iconn = l->data;
+	for (; list; list = list->next) {
+		struct input_conn *iconn = list->data;
 
 		if (!strcasecmp(iconn->uuid, pattern))
 			return iconn;
@@ -247,17 +243,16 @@ static int decode_key(const char *str)
 	return key;
 }
 
-static void send_event(int fd, uint16_t type, uint16_t code, int32_t value)
+static int send_event(int fd, uint16_t type, uint16_t code, int32_t value)
 {
 	struct uinput_event event;
-	int err;
 
 	memset(&event, 0, sizeof(event));
 	event.type	= type;
 	event.code	= code;
 	event.value	= value;
 
-	err = write(fd, &event, sizeof(event));
+	return write(fd, &event, sizeof(event));
 }
 
 static void send_key(int fd, uint16_t key)

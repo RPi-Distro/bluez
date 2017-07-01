@@ -208,11 +208,10 @@ static int channel_write(GIOChannel *chan, char *buf, size_t size)
 
 	fd = g_io_channel_unix_get_fd(chan);
 
-	wbytes = written = 0;
+	wbytes = 0;
 	while (wbytes < size) {
 		written = write(fd, buf + wbytes, size - wbytes);
-
-		if (written)
+		if (written < 0)
 			return -errno;
 
 		wbytes += written;
@@ -312,8 +311,7 @@ static inline int unix_socket_connect(const char *address)
 static int tcp_socket_connect(const char *address)
 {
 	struct sockaddr_in addr;
-	int err, sk;
-	unsigned short int port;
+	int err, sk, port;
 
 	memset(&addr, 0, sizeof(addr));
 
@@ -1147,10 +1145,8 @@ static GDBusSignalTable manager_signals[] = {
 static struct serial_adapter *find_adapter(GSList *list,
 					struct btd_adapter *btd_adapter)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct serial_adapter *adapter = l->data;
+	for (; list; list = list->next) {
+		struct serial_adapter *adapter = list->data;
 
 		if (adapter->btd_adapter == btd_adapter)
 			return adapter;

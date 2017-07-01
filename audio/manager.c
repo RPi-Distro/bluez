@@ -124,10 +124,8 @@ static struct enabled_interfaces enabled = {
 static struct audio_adapter *find_adapter(GSList *list,
 					struct btd_adapter *btd_adapter)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct audio_adapter *adapter = l->data;
+	for (; list; list = list->next) {
+		struct audio_adapter *adapter = list->data;
 
 		if (adapter->btd_adapter == btd_adapter)
 			return adapter;
@@ -562,7 +560,6 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 	GError *err = NULL;
 	uint8_t ch;
 	const char *server_uuid, *remote_uuid;
-	uint16_t svclass;
 	struct audio_device *device;
 	int perr;
 
@@ -580,7 +577,6 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 
 	server_uuid = HFP_AG_UUID;
 	remote_uuid = HFP_HS_UUID;
-	svclass = HANDSFREE_AGW_SVCLASS_ID;
 
 	device = manager_get_device(&src, &dst, TRUE);
 	if (!device)
@@ -697,8 +693,11 @@ static int headset_server_init(struct audio_adapter *adapter)
 	return 0;
 
 failed:
-	error("%s", err->message);
-	g_error_free(err);
+	if (err) {
+		error("%s", err->message);
+		g_error_free(err);
+	}
+
 	if (adapter->hsp_ag_server) {
 		g_io_channel_shutdown(adapter->hsp_ag_server, TRUE, NULL);
 		g_io_channel_unref(adapter->hsp_ag_server);

@@ -2,10 +2,9 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2010 GSyC/LibreSoft, Universidad Rey Juan Carlos.
- *  Authors:
- *  Santiago Carot Nemesio <sancane at gmail.com>
- *  Jose Antonio Santos-Cadenas <santoscadenas at gmail.com>
+ *  Copyright (C) 2011  Nokia Corporation
+ *  Copyright (C) 2011  Marcel Holtmann <marcel@holtmann.org>
+ *
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -23,13 +22,20 @@
  *
  */
 
-int hdp_adapter_register(DBusConnection *conn, struct btd_adapter *btd_adapter);
-void hdp_adapter_unregister(struct btd_adapter *btd_adapter);
+struct uuid_info {
+	uuid_t uuid;
+	uint8_t svc_hint;
+};
 
-int hdp_device_register(DBusConnection *conn, struct btd_device *device);
-void hdp_device_unregister(struct btd_device *device);
+struct eir_data {
+	GSList *services;
+	int flags;
+	char *name;
+	gboolean name_complete;
+};
 
-int hdp_manager_start(DBusConnection *conn);
-void hdp_manager_stop(void);
-
-gboolean hdp_set_mcl_cb(struct hdp_device *device, GError **err);
+void eir_data_free(struct eir_data *eir);
+int eir_parse(struct eir_data *eir, uint8_t *eir_data);
+void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
+			uint16_t did_product, uint16_t did_version,
+			GSList *uuids, uint8_t *data);
