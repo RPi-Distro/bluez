@@ -34,11 +34,7 @@
 #include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 #include <bluetooth/hidp.h>
-#include <bluetooth/l2cap.h>
-#include <bluetooth/rfcomm.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
@@ -59,7 +55,6 @@
 #include "device.h"
 #include "error.h"
 #include "fakehid.h"
-#include "glib-helper.h"
 #include "btio.h"
 
 #define INPUT_DEVICE_INTERFACE "org.bluez.Input"
@@ -635,11 +630,17 @@ static int hidp_add_connection(const struct input_device *idev,
 
 	fake_hid = get_fake_hid(req->vendor, req->product);
 	if (fake_hid) {
+		err = 0;
 		fake = g_new0(struct fake_input, 1);
 		fake->connect = fake_hid_connect;
 		fake->disconnect = fake_hid_disconnect;
 		fake->priv = fake_hid;
-		err = fake_hid_connadd(fake, iconn->intr_io, fake_hid);
+		fake->idev = idev;
+		fake = fake_hid_connadd(fake, iconn->intr_io, fake_hid);
+		if (fake == NULL)
+			err = -ENOMEM;
+		else
+			fake->flags |= FI_FLAG_CONNECTED;
 		goto cleanup;
 	}
 
@@ -648,12 +649,15 @@ static int hidp_add_connection(const struct input_device *idev,
 
 	/* Encryption is mandatory for keyboards */
 	if (req->subclass & 0x40) {
-		err = bt_acl_encrypt(&idev->src, &idev->dst, encrypt_completed, req);
+		struct btd_adapter *adapter = device_get_adapter(idev->device);
+
+		err = btd_adapter_encrypt_link(adapter, (bdaddr_t *) &idev->dst,
+						encrypt_completed, req);
 		if (err == 0) {
 			/* Waiting async encryption */
 			return 0;
 		} else if (err != -EALREADY) {
-			error("bt_acl_encrypt(): %s(%d)", strerror(-err), -err);
+			error("encrypt_link: %s (%d)", strerror(-err), -err);
 			goto cleanup;
 		}
 	}

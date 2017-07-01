@@ -33,8 +33,6 @@
 #include <sys/ioctl.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 #include <bluetooth/sdp.h>
 
 #include <glib.h>
@@ -403,15 +401,13 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_error_init(&err);
 	if (len > 16 || len < 1) {
-		error("Invalid passkey length from handler");
+		error("Invalid PIN length (%zu) from agent", len);
 		dbus_set_error_const(&err, "org.bluez.Error.InvalidArgs",
 					"Invalid passkey length");
 		cb(agent, &err, NULL, req->user_data);
 		dbus_error_free(&err);
 		goto done;
 	}
-
-	set_pin_length(&sba, len);
 
 	cb(agent, NULL, pin, req->user_data);
 
@@ -706,6 +702,7 @@ static int request_fallback(struct agent_request *req,
 		return -EINVAL;
 
 	dbus_pending_call_cancel(req->call);
+	dbus_pending_call_unref(req->call);
 
 	msg = dbus_message_copy(req->msg);
 

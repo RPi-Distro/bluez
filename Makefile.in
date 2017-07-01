@@ -50,7 +50,10 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 @SBC_TRUE@am__append_1 = sbc/libsbc.la
 @SBC_TRUE@am__append_2 = sbc/sbcinfo sbc/sbcdec sbc/sbcenc
 @SBC_TRUE@@SNDFILE_TRUE@am__append_3 = sbc/sbctester
-@NETLINK_TRUE@am__append_4 = plugins/netlink.la
+@MCAP_TRUE@am__append_4 = health/mcap_lib.h health/mcap_internal.h \
+@MCAP_TRUE@		health/mcap.h health/mcap.c \
+@MCAP_TRUE@		health/mcap_sync.c
+
 @PNATPLUGIN_TRUE@am__append_5 = pnat
 @PNATPLUGIN_TRUE@am__append_6 = plugins/pnat.c
 @ECHOPLUGIN_TRUE@am__append_7 = echo
@@ -68,7 +71,9 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 @AUDIOPLUGIN_TRUE@			audio/avdtp.h audio/avdtp.c \
 @AUDIOPLUGIN_TRUE@			audio/ipc.h audio/ipc.c \
 @AUDIOPLUGIN_TRUE@			audio/unix.h audio/unix.c \
-@AUDIOPLUGIN_TRUE@			audio/telephony.h
+@AUDIOPLUGIN_TRUE@			audio/media.h audio/media.c \
+@AUDIOPLUGIN_TRUE@			audio/transport.h audio/transport.c \
+@AUDIOPLUGIN_TRUE@			audio/telephony.h audio/a2dp-codecs.h
 
 @AUDIOPLUGIN_TRUE@am__append_11 = audio/telephony.c
 @INPUTPLUGIN_TRUE@am__append_12 = input
@@ -100,8 +105,18 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 @ATTRIBPLUGIN_TRUE@		attrib/client.h attrib/client.c \
 @ATTRIBPLUGIN_TRUE@		attrib/example.h attrib/example.c
 
-@MAEMO6PLUGIN_TRUE@am__append_23 = maemo6
-@MAEMO6PLUGIN_TRUE@am__append_24 = plugins/maemo6.c
+@HEALTHPLUGIN_TRUE@am__append_23 = health
+@HEALTHPLUGIN_TRUE@am__append_24 = health/hdp_main.c health/hdp_types.h \
+@HEALTHPLUGIN_TRUE@			health/hdp_manager.h health/hdp_manager.c \
+@HEALTHPLUGIN_TRUE@			health/hdp.h health/hdp.c \
+@HEALTHPLUGIN_TRUE@			health/hdp_util.h health/hdp_util.c
+
+@HAL_TRUE@am__append_25 = hal
+@HAL_TRUE@am__append_26 = plugins/hal.c
+@HAL_FALSE@am__append_27 = formfactor
+@HAL_FALSE@am__append_28 = plugins/formfactor.c
+@MAEMO6PLUGIN_TRUE@am__append_29 = maemo6
+@MAEMO6PLUGIN_TRUE@am__append_30 = plugins/maemo6.c
 DIST_COMMON = README $(am__configure_deps) \
 	$(am__dist_udev_SCRIPTS_DIST) $(dist_man_MANS) \
 	$(include_HEADERS) $(srcdir)/Makefile.am $(srcdir)/Makefile.in \
@@ -110,60 +125,61 @@ DIST_COMMON = README $(am__configure_deps) \
 	$(top_srcdir)/doc/version.xml.in \
 	$(top_srcdir)/scripts/bluetooth.rules.in \
 	$(top_srcdir)/src/bluetoothd.8.in AUTHORS COPYING COPYING.LIB \
-	ChangeLog INSTALL NEWS compile config.guess config.sub depcomp \
-	install-sh ltmain.sh missing tools/lexer.c tools/parser.c \
-	tools/parser.h ylwrap
-@CONFIGFILES_TRUE@@TOOLS_TRUE@am__append_25 = tools/rfcomm.conf
-@TOOLS_TRUE@am__append_26 = tools/rfcomm tools/l2ping \
+	ChangeLog INSTALL NEWS TODO compile config.guess config.sub \
+	depcomp install-sh ltmain.sh missing tools/lexer.c \
+	tools/parser.c tools/parser.h ylwrap
+@CONFIGFILES_TRUE@@TOOLS_TRUE@am__append_31 = tools/rfcomm.conf
+@TOOLS_TRUE@am__append_32 = tools/rfcomm tools/l2ping \
 @TOOLS_TRUE@				tools/hcitool tools/sdptool tools/ciptool
 
-@TOOLS_TRUE@am__append_27 = tools/hciattach tools/hciconfig
-@TOOLS_TRUE@am__append_28 = tools/avinfo tools/ppporc \
+@TOOLS_TRUE@am__append_33 = tools/hciattach tools/hciconfig
+@TOOLS_TRUE@am__append_34 = tools/avinfo tools/ppporc \
 @TOOLS_TRUE@				tools/hcieventmask tools/hcisecfilter
 
-@TOOLS_TRUE@am__append_29 = tools/rfcomm.1 tools/l2ping.8 \
+@TOOLS_TRUE@am__append_35 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_TRUE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_TRUE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TOOLS_FALSE@am__append_30 = tools/rfcomm.1 tools/l2ping.8 \
+@TOOLS_FALSE@am__append_36 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_FALSE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_FALSE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TRACER_TRUE@am__append_31 = tracer/hcitrace
-@BCCMD_TRUE@am__append_32 = tools/bccmd
-@BCCMD_TRUE@@USB_TRUE@am__append_33 = tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__append_34 = @USB_LIBS@
-@BCCMD_TRUE@am__append_35 = tools/bccmd.8
-@BCCMD_FALSE@am__append_36 = tools/bccmd.8
-@HID2HCI_TRUE@am__append_37 = tools/hid2hci
-@HID2HCI_TRUE@am__append_38 = tools/hid2hci.8
-@HID2HCI_FALSE@am__append_39 = tools/hid2hci.8
-@DFUTOOL_TRUE@am__append_40 = tools/dfutool
-@DFUTOOL_TRUE@am__append_41 = tools/dfutool.1
-@DFUTOOL_FALSE@am__append_42 = tools/dfutool.1
-@USB_TRUE@am__append_43 = tools/dfubabel tools/avctrl
+@TRACER_TRUE@am__append_37 = tracer/hcitrace
+@BCCMD_TRUE@am__append_38 = tools/bccmd
+@BCCMD_TRUE@@USB_TRUE@am__append_39 = tools/csr_usb.c
+@BCCMD_TRUE@@USB_TRUE@am__append_40 = @USB_LIBS@
+@BCCMD_TRUE@am__append_41 = tools/bccmd.8
+@BCCMD_FALSE@am__append_42 = tools/bccmd.8
+@HID2HCI_TRUE@am__append_43 = tools/hid2hci
+@HID2HCI_TRUE@am__append_44 = tools/hid2hci.8
+@HID2HCI_FALSE@am__append_45 = tools/hid2hci.8
+@DFUTOOL_TRUE@am__append_46 = tools/dfutool
+@DFUTOOL_TRUE@am__append_47 = tools/dfutool.1
+@DFUTOOL_FALSE@am__append_48 = tools/dfutool.1
+@USB_TRUE@am__append_49 = tools/dfubabel tools/avctrl
 @CUPS_TRUE@cups_PROGRAMS = cups/bluetooth$(EXEEXT)
-@TEST_TRUE@am__append_44 = test/hciemu
-@TEST_TRUE@am__append_45 = test/l2test test/rctest
-@TEST_TRUE@am__append_46 = test/gaptest test/sdptest test/scotest \
+@TEST_TRUE@am__append_50 = test/hciemu
+@TEST_TRUE@am__append_51 = test/l2test test/rctest
+@TEST_TRUE@am__append_52 = test/gaptest test/sdptest test/scotest \
 @TEST_TRUE@			test/attest test/hstest test/avtest test/ipctest \
 @TEST_TRUE@					test/lmptest test/bdaddr test/agent \
 @TEST_TRUE@					test/btiotest test/test-textfile
 
-@TEST_TRUE@am__append_47 = test/rctest.1 test/hciemu.1
-@TEST_TRUE@am__append_48 = test/bdaddr.8
-@TEST_FALSE@am__append_49 = test/rctest.1 test/hciemu.1 test/bdaddr.8
-@HIDD_TRUE@am__append_50 = compat/hidd
-@HIDD_TRUE@am__append_51 = compat/hidd.1
-@HIDD_FALSE@am__append_52 = compat/hidd.1
-@PAND_TRUE@am__append_53 = compat/pand
-@PAND_TRUE@am__append_54 = compat/pand.1
-@PAND_FALSE@am__append_55 = compat/pand.1
-@DUND_TRUE@am__append_56 = compat/dund
-@DUND_TRUE@am__append_57 = compat/dund.1
-@DUND_FALSE@am__append_58 = compat/dund.1
-@HID2HCI_TRUE@@UDEVRULES_TRUE@am__append_59 = scripts/bluetooth-hid2hci.rules
-@PCMCIA_TRUE@@UDEVRULES_TRUE@am__append_60 = scripts/bluetooth-serial.rules
+@TEST_TRUE@am__append_53 = test/rctest.1 test/hciemu.1
+@TEST_TRUE@am__append_54 = test/bdaddr.8
+@TEST_FALSE@am__append_55 = test/rctest.1 test/hciemu.1 test/bdaddr.8
+@HIDD_TRUE@am__append_56 = compat/hidd
+@HIDD_TRUE@am__append_57 = compat/hidd.1
+@HIDD_FALSE@am__append_58 = compat/hidd.1
+@PAND_TRUE@am__append_59 = compat/pand
+@PAND_TRUE@am__append_60 = compat/pand.1
+@PAND_FALSE@am__append_61 = compat/pand.1
+@DUND_TRUE@am__append_62 = compat/dund
+@DUND_TRUE@am__append_63 = compat/dund.1
+@DUND_FALSE@am__append_64 = compat/dund.1
+@HID2HCI_TRUE@@UDEVRULES_TRUE@am__append_65 = scripts/bluetooth-hid2hci.rules
+@PCMCIA_TRUE@@UDEVRULES_TRUE@am__append_66 = scripts/bluetooth-serial.rules
+@MCAP_TRUE@am__append_67 = -I$(builddir)/health
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
@@ -298,23 +314,17 @@ lib_libbluetooth_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(AM_CFLAGS) $(CFLAGS) $(lib_libbluetooth_la_LDFLAGS) \
 	$(LDFLAGS) -o $@
-plugins_netlink_la_DEPENDENCIES =
-plugins_netlink_la_SOURCES = plugins/netlink.c
-plugins_netlink_la_OBJECTS = plugins/plugins_netlink_la-netlink.lo
-plugins_netlink_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
-	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
-	$(plugins_netlink_la_CFLAGS) $(CFLAGS) \
-	$(plugins_netlink_la_LDFLAGS) $(LDFLAGS) -o $@
-@NETLINK_TRUE@am_plugins_netlink_la_rpath = -rpath $(plugindir)
 sbc_libsbc_la_LIBADD =
 am__sbc_libsbc_la_SOURCES_DIST = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h \
 	sbc/sbc_tables.h sbc/sbc_primitives.h sbc/sbc_primitives.c \
 	sbc/sbc_primitives_mmx.h sbc/sbc_primitives_mmx.c \
+	sbc/sbc_primitives_iwmmxt.h sbc/sbc_primitives_iwmmxt.c \
 	sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c \
 	sbc/sbc_primitives_armv6.h sbc/sbc_primitives_armv6.c
 @SBC_TRUE@am_sbc_libsbc_la_OBJECTS = sbc/sbc_libsbc_la-sbc.lo \
 @SBC_TRUE@	sbc/sbc_libsbc_la-sbc_primitives.lo \
 @SBC_TRUE@	sbc/sbc_libsbc_la-sbc_primitives_mmx.lo \
+@SBC_TRUE@	sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo \
 @SBC_TRUE@	sbc/sbc_libsbc_la-sbc_primitives_neon.lo \
 @SBC_TRUE@	sbc/sbc_libsbc_la-sbc_primitives_armv6.lo
 sbc_libsbc_la_OBJECTS = $(am_sbc_libsbc_la_OBJECTS)
@@ -354,11 +364,14 @@ sbc_libsbc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 PROGRAMS = $(bin_PROGRAMS) $(cups_PROGRAMS) $(noinst_PROGRAMS) \
 	$(sbin_PROGRAMS)
 am__attrib_gatttool_SOURCES_DIST = attrib/gatttool.c attrib/att.c \
-	attrib/gatt.c attrib/gattrib.c
+	attrib/gatt.c attrib/gattrib.c btio/btio.c src/glib-helper.h \
+	src/glib-helper.c
 @ATTRIBPLUGIN_TRUE@am_attrib_gatttool_OBJECTS =  \
 @ATTRIBPLUGIN_TRUE@	attrib/gatttool.$(OBJEXT) \
 @ATTRIBPLUGIN_TRUE@	attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
-@ATTRIBPLUGIN_TRUE@	attrib/gattrib.$(OBJEXT)
+@ATTRIBPLUGIN_TRUE@	attrib/gattrib.$(OBJEXT) \
+@ATTRIBPLUGIN_TRUE@	btio/btio.$(OBJEXT) \
+@ATTRIBPLUGIN_TRUE@	src/glib-helper.$(OBJEXT)
 attrib_gatttool_OBJECTS = $(am_attrib_gatttool_OBJECTS)
 @ATTRIBPLUGIN_TRUE@attrib_gatttool_DEPENDENCIES = lib/libbluetooth.la
 am__compat_dund_SOURCES_DIST = compat/dund.c compat/dund.h \
@@ -386,10 +399,10 @@ am__compat_pand_SOURCES_DIST = compat/pand.c compat/pand.h \
 compat_pand_OBJECTS = $(am_compat_pand_OBJECTS)
 @PAND_TRUE@compat_pand_DEPENDENCIES = lib/libbluetooth.la
 am__cups_bluetooth_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
-	gdbus/object.c gdbus/watch.c cups/main.c cups/cups.h \
-	cups/sdp.c cups/spp.c cups/hcrp.c
-am__objects_2 = gdbus/mainloop.$(OBJEXT) gdbus/object.$(OBJEXT) \
-	gdbus/watch.$(OBJEXT)
+	gdbus/watch.c gdbus/object.c gdbus/polkit.c cups/main.c \
+	cups/cups.h cups/sdp.c cups/spp.c cups/hcrp.c
+am__objects_2 = gdbus/mainloop.$(OBJEXT) gdbus/watch.$(OBJEXT) \
+	gdbus/object.$(OBJEXT) gdbus/polkit.$(OBJEXT)
 @CUPS_TRUE@am_cups_bluetooth_OBJECTS = $(am__objects_2) \
 @CUPS_TRUE@	cups/main.$(OBJEXT) cups/sdp.$(OBJEXT) \
 @CUPS_TRUE@	cups/spp.$(OBJEXT) cups/hcrp.$(OBJEXT)
@@ -410,16 +423,18 @@ sbc_sbctester_SOURCES = sbc/sbctester.c
 sbc_sbctester_OBJECTS = sbc/sbctester.$(OBJEXT)
 sbc_sbctester_DEPENDENCIES =
 am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
-	gdbus/object.c gdbus/watch.c plugins/pnat.c plugins/echo.c \
-	audio/main.c audio/manager.h audio/manager.c audio/gateway.h \
-	audio/gateway.c audio/headset.h audio/headset.c \
-	audio/control.h audio/control.c audio/device.h audio/device.c \
-	audio/source.h audio/source.c audio/sink.h audio/sink.c \
-	audio/a2dp.h audio/a2dp.c audio/avdtp.h audio/avdtp.c \
-	audio/ipc.h audio/ipc.c audio/unix.h audio/unix.c \
-	audio/telephony.h input/main.c input/manager.h input/manager.c \
-	input/server.h input/server.c input/device.h input/device.c \
-	input/fakehid.c input/fakehid.h serial/main.c serial/manager.h \
+	gdbus/watch.c gdbus/object.c gdbus/polkit.c plugins/pnat.c \
+	plugins/echo.c audio/main.c audio/manager.h audio/manager.c \
+	audio/gateway.h audio/gateway.c audio/headset.h \
+	audio/headset.c audio/control.h audio/control.c audio/device.h \
+	audio/device.c audio/source.h audio/source.c audio/sink.h \
+	audio/sink.c audio/a2dp.h audio/a2dp.c audio/avdtp.h \
+	audio/avdtp.c audio/ipc.h audio/ipc.c audio/unix.h \
+	audio/unix.c audio/media.h audio/media.c audio/transport.h \
+	audio/transport.c audio/telephony.h audio/a2dp-codecs.h \
+	input/main.c input/manager.h input/manager.c input/server.h \
+	input/server.c input/device.h input/device.c input/fakehid.c \
+	input/fakehid.h serial/main.c serial/manager.h \
 	serial/manager.c serial/proxy.h serial/proxy.c serial/port.h \
 	serial/port.c network/main.c network/manager.h \
 	network/manager.c network/common.h network/common.c \
@@ -427,20 +442,25 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 	network/connection.c plugins/service.c attrib/main.c \
 	attrib/manager.h attrib/manager.c attrib/client.h \
 	attrib/client.c attrib/example.h attrib/example.c \
-	plugins/hciops.c plugins/hal.c plugins/storage.c \
-	plugins/maemo6.c attrib/att.h attrib/att.c attrib/gatt.h \
-	attrib/gatt.c attrib/gattrib.h attrib/gattrib.c src/main.c \
-	src/log.h src/log.c src/security.c src/rfkill.c src/hcid.h \
-	src/sdpd.h src/sdpd-server.c src/sdpd-request.c \
-	src/sdpd-service.c src/sdpd-database.c src/attrib-server.h \
-	src/attrib-server.c src/sdp-xml.h src/sdp-xml.c src/btio.h \
-	src/btio.c src/textfile.h src/textfile.c src/glib-helper.h \
+	health/hdp_main.c health/hdp_types.h health/hdp_manager.h \
+	health/hdp_manager.c health/hdp.h health/hdp.c \
+	health/hdp_util.h health/hdp_util.c plugins/hciops.c \
+	plugins/mgmtops.c plugins/hal.c plugins/formfactor.c \
+	plugins/storage.c plugins/maemo6.c attrib/att.h attrib/att.c \
+	attrib/gatt.h attrib/gatt.c attrib/gattrib.h attrib/gattrib.c \
+	btio/btio.h btio/btio.c health/mcap_lib.h \
+	health/mcap_internal.h health/mcap.h health/mcap.c \
+	health/mcap_sync.c src/bluetooth.ver src/main.c src/log.h \
+	src/log.c src/rfkill.c src/hcid.h src/sdpd.h src/sdpd-server.c \
+	src/sdpd-request.c src/sdpd-service.c src/sdpd-database.c \
+	src/attrib-server.h src/attrib-server.c src/sdp-xml.h \
+	src/sdp-xml.c src/textfile.h src/textfile.c src/glib-helper.h \
 	src/glib-helper.c src/oui.h src/oui.c src/uinput.h src/ppoll.h \
 	src/plugin.h src/plugin.c src/storage.h src/storage.c \
 	src/agent.h src/agent.c src/error.h src/error.c src/manager.h \
 	src/manager.c src/adapter.h src/adapter.c src/device.h \
-	src/device.c src/dbus-common.c src/dbus-common.h \
-	src/dbus-hci.h src/dbus-hci.c
+	src/device.c src/dbus-common.c src/dbus-common.h src/event.h \
+	src/event.c
 @PNATPLUGIN_TRUE@am__objects_3 = plugins/pnat.$(OBJEXT)
 @ECHOPLUGIN_TRUE@am__objects_4 = plugins/echo.$(OBJEXT)
 @AUDIOPLUGIN_TRUE@am__objects_5 = audio/main.$(OBJEXT) \
@@ -451,7 +471,9 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 @AUDIOPLUGIN_TRUE@	audio/device.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/source.$(OBJEXT) audio/sink.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/a2dp.$(OBJEXT) audio/avdtp.$(OBJEXT) \
-@AUDIOPLUGIN_TRUE@	audio/ipc.$(OBJEXT) audio/unix.$(OBJEXT)
+@AUDIOPLUGIN_TRUE@	audio/ipc.$(OBJEXT) audio/unix.$(OBJEXT) \
+@AUDIOPLUGIN_TRUE@	audio/media.$(OBJEXT) \
+@AUDIOPLUGIN_TRUE@	audio/transport.$(OBJEXT)
 @INPUTPLUGIN_TRUE@am__objects_6 = input/main.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/manager.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/server.$(OBJEXT) \
@@ -471,30 +493,40 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 @ATTRIBPLUGIN_TRUE@	attrib/manager.$(OBJEXT) \
 @ATTRIBPLUGIN_TRUE@	attrib/client.$(OBJEXT) \
 @ATTRIBPLUGIN_TRUE@	attrib/example.$(OBJEXT)
-@MAEMO6PLUGIN_TRUE@am__objects_11 = plugins/maemo6.$(OBJEXT)
-am__objects_12 = $(am__objects_3) $(am__objects_4) $(am__objects_5) \
+@HEALTHPLUGIN_TRUE@am__objects_11 = health/hdp_main.$(OBJEXT) \
+@HEALTHPLUGIN_TRUE@	health/hdp_manager.$(OBJEXT) \
+@HEALTHPLUGIN_TRUE@	health/hdp.$(OBJEXT) \
+@HEALTHPLUGIN_TRUE@	health/hdp_util.$(OBJEXT)
+@HAL_TRUE@am__objects_12 = plugins/hal.$(OBJEXT)
+@HAL_FALSE@am__objects_13 = plugins/formfactor.$(OBJEXT)
+@MAEMO6PLUGIN_TRUE@am__objects_14 = plugins/maemo6.$(OBJEXT)
+am__objects_15 = $(am__objects_3) $(am__objects_4) $(am__objects_5) \
 	$(am__objects_6) $(am__objects_7) $(am__objects_8) \
-	$(am__objects_9) $(am__objects_10) plugins/hciops.$(OBJEXT) \
-	plugins/hal.$(OBJEXT) plugins/storage.$(OBJEXT) \
-	$(am__objects_11)
-@SBC_TRUE@am__objects_13 = attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
-@SBC_TRUE@	attrib/gattrib.$(OBJEXT)
-am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_12) \
-	$(am__objects_13) src/main.$(OBJEXT) src/log.$(OBJEXT) \
-	src/security.$(OBJEXT) src/rfkill.$(OBJEXT) \
+	$(am__objects_9) $(am__objects_10) $(am__objects_11) \
+	plugins/hciops.$(OBJEXT) plugins/mgmtops.$(OBJEXT) \
+	$(am__objects_12) $(am__objects_13) plugins/storage.$(OBJEXT) \
+	$(am__objects_14)
+am__objects_16 = attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
+	attrib/gattrib.$(OBJEXT)
+am__objects_17 = btio/btio.$(OBJEXT)
+@MCAP_TRUE@am__objects_18 = health/mcap.$(OBJEXT) \
+@MCAP_TRUE@	health/mcap_sync.$(OBJEXT)
+am__objects_19 = $(am__objects_18)
+am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_15) \
+	$(am__objects_16) $(am__objects_17) $(am__objects_19) \
+	src/main.$(OBJEXT) src/log.$(OBJEXT) src/rfkill.$(OBJEXT) \
 	src/sdpd-server.$(OBJEXT) src/sdpd-request.$(OBJEXT) \
 	src/sdpd-service.$(OBJEXT) src/sdpd-database.$(OBJEXT) \
 	src/attrib-server.$(OBJEXT) src/sdp-xml.$(OBJEXT) \
-	src/btio.$(OBJEXT) src/textfile.$(OBJEXT) \
-	src/glib-helper.$(OBJEXT) src/oui.$(OBJEXT) \
-	src/plugin.$(OBJEXT) src/storage.$(OBJEXT) src/agent.$(OBJEXT) \
-	src/error.$(OBJEXT) src/manager.$(OBJEXT) \
+	src/textfile.$(OBJEXT) src/glib-helper.$(OBJEXT) \
+	src/oui.$(OBJEXT) src/plugin.$(OBJEXT) src/storage.$(OBJEXT) \
+	src/agent.$(OBJEXT) src/error.$(OBJEXT) src/manager.$(OBJEXT) \
 	src/adapter.$(OBJEXT) src/device.$(OBJEXT) \
-	src/dbus-common.$(OBJEXT) src/dbus-hci.$(OBJEXT)
-@AUDIOPLUGIN_TRUE@am__objects_14 = audio/telephony.$(OBJEXT)
-am__objects_15 = $(am__objects_14)
-am__objects_16 = $(am__objects_15)
-nodist_src_bluetoothd_OBJECTS = $(am__objects_16)
+	src/dbus-common.$(OBJEXT) src/event.$(OBJEXT)
+@AUDIOPLUGIN_TRUE@am__objects_20 = audio/telephony.$(OBJEXT)
+am__objects_21 = $(am__objects_20)
+am__objects_22 = $(am__objects_21)
+nodist_src_bluetoothd_OBJECTS = $(am__objects_22)
 src_bluetoothd_OBJECTS = $(am_src_bluetoothd_OBJECTS) \
 	$(nodist_src_bluetoothd_OBJECTS)
 src_bluetoothd_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -515,9 +547,10 @@ am__test_bdaddr_SOURCES_DIST = test/bdaddr.c src/oui.h src/oui.c
 @TEST_TRUE@	src/oui.$(OBJEXT)
 test_bdaddr_OBJECTS = $(am_test_bdaddr_OBJECTS)
 @TEST_TRUE@test_bdaddr_DEPENDENCIES = lib/libbluetooth.la
-am__test_btiotest_SOURCES_DIST = test/btiotest.c src/btio.h src/btio.c
+am__test_btiotest_SOURCES_DIST = test/btiotest.c btio/btio.h \
+	btio/btio.c
 @TEST_TRUE@am_test_btiotest_OBJECTS = test/btiotest.$(OBJEXT) \
-@TEST_TRUE@	src/btio.$(OBJEXT)
+@TEST_TRUE@	btio/btio.$(OBJEXT)
 test_btiotest_OBJECTS = $(am_test_btiotest_OBJECTS)
 @TEST_TRUE@test_btiotest_DEPENDENCIES = lib/libbluetooth.la
 test_gaptest_SOURCES = test/gaptest.c
@@ -564,12 +597,12 @@ tools_avinfo_OBJECTS = tools/avinfo.$(OBJEXT)
 am__tools_bccmd_SOURCES_DIST = tools/bccmd.c tools/csr.h tools/csr.c \
 	tools/csr_hci.c tools/csr_h4.c tools/csr_3wire.c \
 	tools/csr_bcsp.c tools/ubcsp.h tools/ubcsp.c tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__objects_17 = tools/csr_usb.$(OBJEXT)
+@BCCMD_TRUE@@USB_TRUE@am__objects_23 = tools/csr_usb.$(OBJEXT)
 @BCCMD_TRUE@am_tools_bccmd_OBJECTS = tools/bccmd.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr.$(OBJEXT) tools/csr_hci.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_h4.$(OBJEXT) tools/csr_3wire.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_bcsp.$(OBJEXT) tools/ubcsp.$(OBJEXT) \
-@BCCMD_TRUE@	$(am__objects_17)
+@BCCMD_TRUE@	$(am__objects_23)
 tools_bccmd_OBJECTS = $(am_tools_bccmd_OBJECTS)
 am__DEPENDENCIES_1 =
 @BCCMD_TRUE@tools_bccmd_DEPENDENCIES = lib/libbluetooth.la \
@@ -687,30 +720,30 @@ SOURCES = $(audio_libtelephony_a_SOURCES) \
 	$(audio_libasound_module_ctl_bluetooth_la_SOURCES) \
 	$(audio_libasound_module_pcm_bluetooth_la_SOURCES) \
 	$(audio_libgstbluetooth_la_SOURCES) \
-	$(lib_libbluetooth_la_SOURCES) plugins/netlink.c \
-	$(sbc_libsbc_la_SOURCES) $(attrib_gatttool_SOURCES) \
-	$(compat_dund_SOURCES) $(compat_hidd_SOURCES) \
-	$(compat_pand_SOURCES) $(cups_bluetooth_SOURCES) \
-	$(sbc_sbcdec_SOURCES) $(sbc_sbcenc_SOURCES) sbc/sbcinfo.c \
-	sbc/sbctester.c $(src_bluetoothd_SOURCES) \
-	$(nodist_src_bluetoothd_SOURCES) test/agent.c test/attest.c \
-	test/avtest.c $(test_bdaddr_SOURCES) $(test_btiotest_SOURCES) \
-	test/gaptest.c test/hciemu.c test/hstest.c \
-	$(test_ipctest_SOURCES) test/l2test.c test/lmptest.c \
-	test/rctest.c test/scotest.c test/sdptest.c \
-	$(test_test_textfile_SOURCES) tools/avctrl.c tools/avinfo.c \
-	$(tools_bccmd_SOURCES) tools/ciptool.c tools/dfubabel.c \
-	$(tools_dfutool_SOURCES) $(tools_hciattach_SOURCES) \
-	$(tools_hciconfig_SOURCES) tools/hcieventmask.c \
-	tools/hcisecfilter.c $(tools_hcitool_SOURCES) tools/hid2hci.c \
-	tools/l2ping.c tools/ppporc.c $(tools_rfcomm_SOURCES) \
+	$(lib_libbluetooth_la_SOURCES) $(sbc_libsbc_la_SOURCES) \
+	$(attrib_gatttool_SOURCES) $(compat_dund_SOURCES) \
+	$(compat_hidd_SOURCES) $(compat_pand_SOURCES) \
+	$(cups_bluetooth_SOURCES) $(sbc_sbcdec_SOURCES) \
+	$(sbc_sbcenc_SOURCES) sbc/sbcinfo.c sbc/sbctester.c \
+	$(src_bluetoothd_SOURCES) $(nodist_src_bluetoothd_SOURCES) \
+	test/agent.c test/attest.c test/avtest.c \
+	$(test_bdaddr_SOURCES) $(test_btiotest_SOURCES) test/gaptest.c \
+	test/hciemu.c test/hstest.c $(test_ipctest_SOURCES) \
+	test/l2test.c test/lmptest.c test/rctest.c test/scotest.c \
+	test/sdptest.c $(test_test_textfile_SOURCES) tools/avctrl.c \
+	tools/avinfo.c $(tools_bccmd_SOURCES) tools/ciptool.c \
+	tools/dfubabel.c $(tools_dfutool_SOURCES) \
+	$(tools_hciattach_SOURCES) $(tools_hciconfig_SOURCES) \
+	tools/hcieventmask.c tools/hcisecfilter.c \
+	$(tools_hcitool_SOURCES) tools/hid2hci.c tools/l2ping.c \
+	tools/ppporc.c $(tools_rfcomm_SOURCES) \
 	$(EXTRA_tools_rfcomm_SOURCES) $(tools_sdptool_SOURCES) \
 	$(tracer_hcitrace_SOURCES)
 DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__audio_libasound_module_ctl_bluetooth_la_SOURCES_DIST) \
 	$(am__audio_libasound_module_pcm_bluetooth_la_SOURCES_DIST) \
 	$(am__audio_libgstbluetooth_la_SOURCES_DIST) \
-	$(lib_libbluetooth_la_SOURCES) plugins/netlink.c \
+	$(lib_libbluetooth_la_SOURCES) \
 	$(am__sbc_libsbc_la_SOURCES_DIST) \
 	$(am__attrib_gatttool_SOURCES_DIST) \
 	$(am__compat_dund_SOURCES_DIST) \
@@ -811,8 +844,6 @@ LTLIBOBJS = @LTLIBOBJS@
 MAINT = @MAINT@
 MAKEINFO = @MAKEINFO@
 MKDIR_P = @MKDIR_P@
-NETLINK_CFLAGS = @NETLINK_CFLAGS@
-NETLINK_LIBS = @NETLINK_LIBS@
 NM = @NM@
 NMEDIT = @NMEDIT@
 OBJDUMP = @OBJDUMP@
@@ -897,45 +928,46 @@ top_srcdir = @top_srcdir@
 AM_MAKEFLAGS = --no-print-directory
 lib_LTLIBRARIES = lib/libbluetooth.la
 noinst_LTLIBRARIES = $(am__append_1)
-dist_man_MANS = $(am__append_29) $(am__append_35) $(am__append_38) \
-	$(am__append_41) $(am__append_47) $(am__append_51) \
-	$(am__append_54) $(am__append_57)
+dist_man_MANS = $(am__append_35) $(am__append_41) $(am__append_44) \
+	$(am__append_47) $(am__append_53) $(am__append_57) \
+	$(am__append_60) $(am__append_63)
 dist_noinst_MANS = 
-CLEANFILES = $(local_headers) src/bluetooth.ver src/bluetooth.exp \
-	$(builtin_files) tools/lexer.c tools/parser.c tools/parser.h \
-	$(rules_DATA)
-EXTRA_DIST = src/genbuiltin src/bluetooth.conf src/main.conf \
-	network/network.conf input/input.conf serial/serial.conf \
-	audio/audio.conf audio/telephony-dummy.c \
-	audio/telephony-maemo5.c audio/telephony-ofono.c \
-	audio/telephony-maemo6.c audio/bluetooth.conf $(am__append_30) \
-	tools/rfcomm.conf $(am__append_36) $(am__append_39) \
-	$(am__append_42) tools/dfubabel.1 tools/avctrl.8 \
-	$(am__append_48) $(am__append_49) test/apitest test/hsplay \
-	test/hsmicro test/dbusdef.py test/monitor-bluetooth \
-	test/list-devices test/test-discovery test/test-manager \
-	test/test-adapter test/test-device test/test-service \
-	test/test-serial test/test-telephony test/test-network \
-	test/simple-agent test/simple-service test/test-audio \
-	test/test-input test/service-record.dtd test/service-did.xml \
-	test/service-spp.xml test/service-opp.xml test/service-ftp.xml \
-	$(am__append_52) $(am__append_55) $(am__append_58) \
-	scripts/bluetooth.rules scripts/bluetooth-hid2hci.rules \
-	scripts/bluetooth-serial.rules doc/manager-api.txt \
-	doc/adapter-api.txt doc/device-api.txt doc/service-api.txt \
-	doc/agent-api.txt doc/attribute-api.txt doc/serial-api.txt \
-	doc/network-api.txt doc/input-api.txt doc/audio-api.txt \
-	doc/control-api.txt doc/hfp-api.txt doc/assigned-numbers.txt
+CLEANFILES = $(local_headers) $(builtin_files) tools/lexer.c \
+	tools/parser.c tools/parser.h $(rules_DATA)
+EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
+	src/bluetooth.conf src/main.conf network/network.conf \
+	input/input.conf serial/serial.conf audio/audio.conf \
+	audio/telephony-dummy.c audio/telephony-maemo5.c \
+	audio/telephony-ofono.c audio/telephony-maemo6.c \
+	audio/bluetooth.conf $(am__append_36) tools/rfcomm.conf \
+	$(am__append_42) $(am__append_45) $(am__append_48) \
+	tools/dfubabel.1 tools/avctrl.8 $(am__append_54) \
+	$(am__append_55) test/apitest test/hsplay test/hsmicro \
+	test/dbusdef.py test/monitor-bluetooth test/list-devices \
+	test/test-discovery test/test-manager test/test-adapter \
+	test/test-device test/test-service test/test-serial \
+	test/test-telephony test/test-network test/simple-agent \
+	test/simple-service test/simple-endpoint test/test-audio \
+	test/test-input test/test-attrib test/service-record.dtd \
+	test/service-did.xml test/service-spp.xml test/service-opp.xml \
+	test/service-ftp.xml $(am__append_58) $(am__append_61) \
+	$(am__append_64) scripts/bluetooth.rules \
+	scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules \
+	doc/manager-api.txt doc/adapter-api.txt doc/device-api.txt \
+	doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
+	doc/serial-api.txt doc/network-api.txt doc/input-api.txt \
+	doc/audio-api.txt doc/control-api.txt doc/hfp-api.txt \
+	doc/assigned-numbers.txt
 include_HEADERS = $(lib_headers)
 @CONFIGFILES_TRUE@dbusdir = $(sysconfdir)/dbus-1/system.d
 @CONFIGFILES_TRUE@dbus_DATA = src/bluetooth.conf
 @CONFIGFILES_TRUE@confdir = $(sysconfdir)/bluetooth
-@CONFIGFILES_TRUE@conf_DATA = src/main.conf $(am__append_25)
+@CONFIGFILES_TRUE@conf_DATA = src/main.conf $(am__append_31)
 @CONFIGFILES_TRUE@statedir = $(localstatedir)/lib/bluetooth
 @CONFIGFILES_TRUE@state_DATA = 
 plugindir = $(libdir)/bluetooth/plugins
-plugin_LTLIBRARIES = $(am__append_4)
-lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h \
+plugin_LTLIBRARIES = 
+lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 			lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h \
 				lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 
@@ -943,11 +975,12 @@ local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 13:0:10
+lib_libbluetooth_la_LDFLAGS = -version-info 13:3:10
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 @SBC_TRUE@			sbc/sbc_primitives.h sbc/sbc_primitives.c \
 @SBC_TRUE@			sbc/sbc_primitives_mmx.h sbc/sbc_primitives_mmx.c \
+@SBC_TRUE@			sbc/sbc_primitives_iwmmxt.h sbc/sbc_primitives_iwmmxt.c \
 @SBC_TRUE@			sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c \
 @SBC_TRUE@			sbc/sbc_primitives_armv6.h sbc/sbc_primitives_armv6.c
 
@@ -958,43 +991,46 @@ lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_sbcdec_LDADD = sbc/libsbc.la
 @SBC_TRUE@sbc_sbcenc_SOURCES = sbc/sbcenc.c sbc/formats.h
 @SBC_TRUE@sbc_sbcenc_LDADD = sbc/libsbc.la
-@SBC_TRUE@attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
-@SBC_TRUE@		attrib/gattrib.h attrib/gattrib.c
-
 @SBC_TRUE@@SNDFILE_TRUE@sbc_sbctester_LDADD = @SNDFILE_LIBS@ -lm
 @SBC_TRUE@@SNDFILE_TRUE@sbc_sbctest_CFLAGS = @SNDFILE_CFLAGS@
-@NETLINK_TRUE@plugins_netlink_la_LIBADD = @NETLINK_LIBS@
-@NETLINK_TRUE@plugins_netlink_la_LDFLAGS = -module -avoid-version -no-undefined
-@NETLINK_TRUE@plugins_netlink_la_CFLAGS = -fvisibility=hidden @DBUS_CFLAGS@ \
-@NETLINK_TRUE@					@GLIB_CFLAGS@ @NETLINK_CFLAGS@
+attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
+		attrib/gattrib.h attrib/gattrib.c
 
-gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/object.c gdbus/watch.c
+gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
+					gdbus/object.c gdbus/polkit.c
+
+btio_sources = btio/btio.h btio/btio.c
 builtin_modules = $(am__append_5) $(am__append_7) $(am__append_9) \
 	$(am__append_12) $(am__append_14) $(am__append_16) \
-	$(am__append_18) $(am__append_21) hciops hal storage \
-	$(am__append_23)
+	$(am__append_18) $(am__append_21) $(am__append_23) hciops \
+	mgmtops $(am__append_25) $(am__append_27) storage \
+	$(am__append_29)
 builtin_sources = $(am__append_6) $(am__append_8) $(am__append_10) \
 	$(am__append_13) $(am__append_15) $(am__append_17) \
-	$(am__append_19) $(am__append_22) plugins/hciops.c \
-	plugins/hal.c plugins/storage.c $(am__append_24)
+	$(am__append_19) $(am__append_22) $(am__append_24) \
+	plugins/hciops.c plugins/mgmtops.c $(am__append_26) \
+	$(am__append_28) plugins/storage.c $(am__append_30)
 builtin_nodist = $(am__append_11)
+mcap_sources = $(am__append_4)
 @AUDIOPLUGIN_TRUE@noinst_LIBRARIES = audio/libtelephony.a
 @AUDIOPLUGIN_TRUE@audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
 @AUDIOPLUGIN_TRUE@				audio/telephony-maemo5.c audio/telephony-ofono.c \
 @AUDIOPLUGIN_TRUE@				audio/telephony-maemo6.c
 
 @ATTRIBPLUGIN_TRUE@attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
-@ATTRIBPLUGIN_TRUE@			  attrib/gattrib.c
+@ATTRIBPLUGIN_TRUE@			  attrib/gattrib.c btio/btio.c \
+@ATTRIBPLUGIN_TRUE@			  src/glib-helper.h src/glib-helper.c
 
 @ATTRIBPLUGIN_TRUE@attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
-			$(attrib_sources) \
+			$(attrib_sources) $(btio_sources) \
+			$(mcap_sources) src/bluetooth.ver \
 			src/main.c src/log.h src/log.c \
-			src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
+			src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
 			src/attrib-server.h src/attrib-server.c \
-			src/sdp-xml.h src/sdp-xml.c src/btio.h src/btio.c \
+			src/sdp-xml.h src/sdp-xml.c \
 			src/textfile.h src/textfile.c \
 			src/glib-helper.h src/glib-helper.c \
 			src/oui.h src/oui.c src/uinput.h src/ppoll.h \
@@ -1006,15 +1042,15 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/adapter.h src/adapter.c \
 			src/device.h src/device.c \
 			src/dbus-common.c src/dbus-common.h \
-			src/dbus-hci.h src/dbus-hci.c
+			src/event.h src/event.c
 
 src_bluetoothd_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @DBUS_LIBS@ \
-							@CAPNG_LIBS@ -ldl
+							@CAPNG_LIBS@ -ldl -lrt
 
 src_bluetoothd_LDFLAGS = -Wl,--export-dynamic \
-					-Wl,--version-script=src/bluetooth.ver
+				-Wl,--version-script=$(srcdir)/src/bluetooth.ver
 
-src_bluetoothd_DEPENDENCIES = src/bluetooth.ver lib/libbluetooth.la
+src_bluetoothd_DEPENDENCIES = lib/libbluetooth.la
 builtin_files = src/builtin.h $(builtin_nodist)
 nodist_src_bluetoothd_SOURCES = $(builtin_files)
 man_MANS = src/bluetoothd.8
@@ -1052,10 +1088,10 @@ man_MANS = src/bluetoothd.8
 
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_LDFLAGS = -module -avoid-version
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_LIBADD = sbc/libsbc.la lib/libbluetooth.la \
-@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@				@GSTREAMER_LIBS@ -lgstaudio-0.10 -lgstrtp-0.10
+@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@				@DBUS_LIBS@ @GSTREAMER_LIBS@ -lgstaudio-0.10 -lgstrtp-0.10
 
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_CFLAGS = -fvisibility=hidden -fno-strict-aliasing \
-@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@						$(AM_CFLAGS) @GSTREAMER_CFLAGS@
+@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@						$(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
 
 @TOOLS_TRUE@tools_rfcomm_SOURCES = tools/main.c tools/parser.y tools/lexer.l \
 @TOOLS_TRUE@					tools/kword.h tools/kword.c
@@ -1095,8 +1131,8 @@ man_MANS = src/bluetoothd.8
 @BCCMD_TRUE@tools_bccmd_SOURCES = tools/bccmd.c tools/csr.h \
 @BCCMD_TRUE@	tools/csr.c tools/csr_hci.c tools/csr_h4.c \
 @BCCMD_TRUE@	tools/csr_3wire.c tools/csr_bcsp.c tools/ubcsp.h \
-@BCCMD_TRUE@	tools/ubcsp.c $(am__append_33)
-@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_34)
+@BCCMD_TRUE@	tools/ubcsp.c $(am__append_39)
+@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_40)
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@
 @DFUTOOL_TRUE@tools_dfutool_SOURCES = tools/dfutool.c tools/dfu.h tools/dfu.c
 @DFUTOOL_TRUE@tools_dfutool_LDADD = @USB_LIBS@
@@ -1122,7 +1158,7 @@ man_MANS = src/bluetoothd.8
 @TEST_TRUE@test_bdaddr_SOURCES = test/bdaddr.c src/oui.h src/oui.c
 @TEST_TRUE@test_bdaddr_LDADD = lib/libbluetooth.la
 @TEST_TRUE@test_agent_LDADD = @DBUS_LIBS@
-@TEST_TRUE@test_btiotest_SOURCES = test/btiotest.c src/btio.h src/btio.c
+@TEST_TRUE@test_btiotest_SOURCES = test/btiotest.c btio/btio.h btio/btio.c
 @TEST_TRUE@test_btiotest_LDADD = @GLIB_LIBS@ lib/libbluetooth.la
 @TEST_TRUE@test_test_textfile_SOURCES = test/test-textfile.c src/textfile.h src/textfile.c
 @HIDD_TRUE@compat_hidd_SOURCES = compat/hidd.c compat/hidd.h src/uinput.h \
@@ -1141,8 +1177,8 @@ man_MANS = src/bluetoothd.8
 
 @DUND_TRUE@compat_dund_LDADD = lib/libbluetooth.la
 @UDEVRULES_TRUE@rulesdir = @UDEV_DATADIR@
-@UDEVRULES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_59) \
-@UDEVRULES_TRUE@	$(am__append_60)
+@UDEVRULES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_65) \
+@UDEVRULES_TRUE@	$(am__append_66)
 @UDEVRULES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
 @PCMCIA_TRUE@udevdir = $(libexecdir)/udev
 @PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
@@ -1151,9 +1187,8 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ \
 		-DBLUETOOTH_PLUGIN_BUILTIN -DPLUGINDIR=\""$(plugindir)"\"
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
-			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
-			-I$(srcdir)/attrib
-
+	-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
+	-I$(srcdir)/attrib -I$(srcdir)/btio $(am__append_67)
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = bluez.pc
 DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules --enable-attrib
@@ -1423,16 +1458,6 @@ lib/hci.lo: lib/$(am__dirstamp) lib/$(DEPDIR)/$(am__dirstamp)
 lib/sdp.lo: lib/$(am__dirstamp) lib/$(DEPDIR)/$(am__dirstamp)
 lib/libbluetooth.la: $(lib_libbluetooth_la_OBJECTS) $(lib_libbluetooth_la_DEPENDENCIES) lib/$(am__dirstamp)
 	$(AM_V_CCLD)$(lib_libbluetooth_la_LINK) -rpath $(libdir) $(lib_libbluetooth_la_OBJECTS) $(lib_libbluetooth_la_LIBADD) $(LIBS)
-plugins/$(am__dirstamp):
-	@$(MKDIR_P) plugins
-	@: > plugins/$(am__dirstamp)
-plugins/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) plugins/$(DEPDIR)
-	@: > plugins/$(DEPDIR)/$(am__dirstamp)
-plugins/plugins_netlink_la-netlink.lo: plugins/$(am__dirstamp) \
-	plugins/$(DEPDIR)/$(am__dirstamp)
-plugins/netlink.la: $(plugins_netlink_la_OBJECTS) $(plugins_netlink_la_DEPENDENCIES) plugins/$(am__dirstamp)
-	$(AM_V_CCLD)$(plugins_netlink_la_LINK) $(am_plugins_netlink_la_rpath) $(plugins_netlink_la_OBJECTS) $(plugins_netlink_la_LIBADD) $(LIBS)
 sbc/$(am__dirstamp):
 	@$(MKDIR_P) sbc
 	@: > sbc/$(am__dirstamp)
@@ -1444,6 +1469,8 @@ sbc/sbc_libsbc_la-sbc.lo: sbc/$(am__dirstamp) \
 sbc/sbc_libsbc_la-sbc_primitives.lo: sbc/$(am__dirstamp) \
 	sbc/$(DEPDIR)/$(am__dirstamp)
 sbc/sbc_libsbc_la-sbc_primitives_mmx.lo: sbc/$(am__dirstamp) \
+	sbc/$(DEPDIR)/$(am__dirstamp)
+sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo: sbc/$(am__dirstamp) \
 	sbc/$(DEPDIR)/$(am__dirstamp)
 sbc/sbc_libsbc_la-sbc_primitives_neon.lo: sbc/$(am__dirstamp) \
 	sbc/$(DEPDIR)/$(am__dirstamp)
@@ -1603,6 +1630,22 @@ attrib/gatt.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
 attrib/gattrib.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
+btio/$(am__dirstamp):
+	@$(MKDIR_P) btio
+	@: > btio/$(am__dirstamp)
+btio/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) btio/$(DEPDIR)
+	@: > btio/$(DEPDIR)/$(am__dirstamp)
+btio/btio.$(OBJEXT): btio/$(am__dirstamp) \
+	btio/$(DEPDIR)/$(am__dirstamp)
+src/$(am__dirstamp):
+	@$(MKDIR_P) src
+	@: > src/$(am__dirstamp)
+src/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) src/$(DEPDIR)
+	@: > src/$(DEPDIR)/$(am__dirstamp)
+src/glib-helper.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
 attrib/gatttool$(EXEEXT): $(attrib_gatttool_OBJECTS) $(attrib_gatttool_DEPENDENCIES) attrib/$(am__dirstamp)
 	@rm -f attrib/gatttool$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(attrib_gatttool_OBJECTS) $(attrib_gatttool_LDADD) $(LIBS)
@@ -1620,12 +1663,6 @@ compat/dun.$(OBJEXT): compat/$(am__dirstamp) \
 	compat/$(DEPDIR)/$(am__dirstamp)
 compat/msdun.$(OBJEXT): compat/$(am__dirstamp) \
 	compat/$(DEPDIR)/$(am__dirstamp)
-src/$(am__dirstamp):
-	@$(MKDIR_P) src
-	@: > src/$(am__dirstamp)
-src/$(DEPDIR)/$(am__dirstamp):
-	@$(MKDIR_P) src/$(DEPDIR)
-	@: > src/$(DEPDIR)/$(am__dirstamp)
 src/textfile.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 compat/dund$(EXEEXT): $(compat_dund_OBJECTS) $(compat_dund_DEPENDENCIES) compat/$(am__dirstamp)
@@ -1653,9 +1690,11 @@ gdbus/$(DEPDIR)/$(am__dirstamp):
 	@: > gdbus/$(DEPDIR)/$(am__dirstamp)
 gdbus/mainloop.$(OBJEXT): gdbus/$(am__dirstamp) \
 	gdbus/$(DEPDIR)/$(am__dirstamp)
+gdbus/watch.$(OBJEXT): gdbus/$(am__dirstamp) \
+	gdbus/$(DEPDIR)/$(am__dirstamp)
 gdbus/object.$(OBJEXT): gdbus/$(am__dirstamp) \
 	gdbus/$(DEPDIR)/$(am__dirstamp)
-gdbus/watch.$(OBJEXT): gdbus/$(am__dirstamp) \
+gdbus/polkit.$(OBJEXT): gdbus/$(am__dirstamp) \
 	gdbus/$(DEPDIR)/$(am__dirstamp)
 cups/$(am__dirstamp):
 	@$(MKDIR_P) cups
@@ -1694,6 +1733,12 @@ sbc/sbctester.$(OBJEXT): sbc/$(am__dirstamp) \
 sbc/sbctester$(EXEEXT): $(sbc_sbctester_OBJECTS) $(sbc_sbctester_DEPENDENCIES) sbc/$(am__dirstamp)
 	@rm -f sbc/sbctester$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(sbc_sbctester_OBJECTS) $(sbc_sbctester_LDADD) $(LIBS)
+plugins/$(am__dirstamp):
+	@$(MKDIR_P) plugins
+	@: > plugins/$(am__dirstamp)
+plugins/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) plugins/$(DEPDIR)
+	@: > plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/pnat.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/echo.$(OBJEXT): plugins/$(am__dirstamp) \
@@ -1721,6 +1766,10 @@ audio/avdtp.$(OBJEXT): audio/$(am__dirstamp) \
 audio/ipc.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 audio/unix.$(OBJEXT): audio/$(am__dirstamp) \
+	audio/$(DEPDIR)/$(am__dirstamp)
+audio/media.$(OBJEXT): audio/$(am__dirstamp) \
+	audio/$(DEPDIR)/$(am__dirstamp)
+audio/transport.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 input/$(am__dirstamp):
 	@$(MKDIR_P) input
@@ -1778,18 +1827,38 @@ attrib/client.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
 attrib/example.$(OBJEXT): attrib/$(am__dirstamp) \
 	attrib/$(DEPDIR)/$(am__dirstamp)
+health/$(am__dirstamp):
+	@$(MKDIR_P) health
+	@: > health/$(am__dirstamp)
+health/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) health/$(DEPDIR)
+	@: > health/$(DEPDIR)/$(am__dirstamp)
+health/hdp_main.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
+health/hdp_manager.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
+health/hdp.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
+health/hdp_util.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
 plugins/hciops.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
+plugins/mgmtops.$(OBJEXT): plugins/$(am__dirstamp) \
+	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/hal.$(OBJEXT): plugins/$(am__dirstamp) \
+	plugins/$(DEPDIR)/$(am__dirstamp)
+plugins/formfactor.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/storage.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 plugins/maemo6.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
+health/mcap.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
+health/mcap_sync.$(OBJEXT): health/$(am__dirstamp) \
+	health/$(DEPDIR)/$(am__dirstamp)
 src/main.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 src/log.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
-src/security.$(OBJEXT): src/$(am__dirstamp) \
-	src/$(DEPDIR)/$(am__dirstamp)
 src/rfkill.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/sdpd-server.$(OBJEXT): src/$(am__dirstamp) \
@@ -1803,9 +1872,6 @@ src/sdpd-database.$(OBJEXT): src/$(am__dirstamp) \
 src/attrib-server.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/sdp-xml.$(OBJEXT): src/$(am__dirstamp) \
-	src/$(DEPDIR)/$(am__dirstamp)
-src/btio.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
-src/glib-helper.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/oui.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 src/plugin.$(OBJEXT): src/$(am__dirstamp) \
@@ -1822,8 +1888,7 @@ src/device.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/dbus-common.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
-src/dbus-hci.$(OBJEXT): src/$(am__dirstamp) \
-	src/$(DEPDIR)/$(am__dirstamp)
+src/event.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 audio/telephony.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 src/bluetoothd$(EXEEXT): $(src_bluetoothd_OBJECTS) $(src_bluetoothd_DEPENDENCIES) src/$(am__dirstamp)
@@ -2124,6 +2189,7 @@ mostlyclean-compile:
 	-rm -f audio/ipc.$(OBJEXT)
 	-rm -f audio/main.$(OBJEXT)
 	-rm -f audio/manager.$(OBJEXT)
+	-rm -f audio/media.$(OBJEXT)
 	-rm -f audio/sink.$(OBJEXT)
 	-rm -f audio/source.$(OBJEXT)
 	-rm -f audio/telephony-dummy.$(OBJEXT)
@@ -2131,7 +2197,9 @@ mostlyclean-compile:
 	-rm -f audio/telephony-maemo6.$(OBJEXT)
 	-rm -f audio/telephony-ofono.$(OBJEXT)
 	-rm -f audio/telephony.$(OBJEXT)
+	-rm -f audio/transport.$(OBJEXT)
 	-rm -f audio/unix.$(OBJEXT)
+	-rm -f btio/btio.$(OBJEXT)
 	-rm -f compat/bnep.$(OBJEXT)
 	-rm -f compat/dun.$(OBJEXT)
 	-rm -f compat/dund.$(OBJEXT)
@@ -2146,7 +2214,14 @@ mostlyclean-compile:
 	-rm -f cups/spp.$(OBJEXT)
 	-rm -f gdbus/mainloop.$(OBJEXT)
 	-rm -f gdbus/object.$(OBJEXT)
+	-rm -f gdbus/polkit.$(OBJEXT)
 	-rm -f gdbus/watch.$(OBJEXT)
+	-rm -f health/hdp.$(OBJEXT)
+	-rm -f health/hdp_main.$(OBJEXT)
+	-rm -f health/hdp_manager.$(OBJEXT)
+	-rm -f health/hdp_util.$(OBJEXT)
+	-rm -f health/mcap.$(OBJEXT)
+	-rm -f health/mcap_sync.$(OBJEXT)
 	-rm -f input/device.$(OBJEXT)
 	-rm -f input/fakehid.$(OBJEXT)
 	-rm -f input/main.$(OBJEXT)
@@ -2164,11 +2239,11 @@ mostlyclean-compile:
 	-rm -f network/manager.$(OBJEXT)
 	-rm -f network/server.$(OBJEXT)
 	-rm -f plugins/echo.$(OBJEXT)
+	-rm -f plugins/formfactor.$(OBJEXT)
 	-rm -f plugins/hal.$(OBJEXT)
 	-rm -f plugins/hciops.$(OBJEXT)
 	-rm -f plugins/maemo6.$(OBJEXT)
-	-rm -f plugins/plugins_netlink_la-netlink.$(OBJEXT)
-	-rm -f plugins/plugins_netlink_la-netlink.lo
+	-rm -f plugins/mgmtops.$(OBJEXT)
 	-rm -f plugins/pnat.$(OBJEXT)
 	-rm -f plugins/service.$(OBJEXT)
 	-rm -f plugins/storage.$(OBJEXT)
@@ -2178,6 +2253,8 @@ mostlyclean-compile:
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives.lo
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives_armv6.$(OBJEXT)
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives_armv6.lo
+	-rm -f sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.$(OBJEXT)
+	-rm -f sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives_mmx.$(OBJEXT)
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives_mmx.lo
 	-rm -f sbc/sbc_libsbc_la-sbc_primitives_neon.$(OBJEXT)
@@ -2193,11 +2270,10 @@ mostlyclean-compile:
 	-rm -f src/adapter.$(OBJEXT)
 	-rm -f src/agent.$(OBJEXT)
 	-rm -f src/attrib-server.$(OBJEXT)
-	-rm -f src/btio.$(OBJEXT)
 	-rm -f src/dbus-common.$(OBJEXT)
-	-rm -f src/dbus-hci.$(OBJEXT)
 	-rm -f src/device.$(OBJEXT)
 	-rm -f src/error.$(OBJEXT)
+	-rm -f src/event.$(OBJEXT)
 	-rm -f src/glib-helper.$(OBJEXT)
 	-rm -f src/log.$(OBJEXT)
 	-rm -f src/main.$(OBJEXT)
@@ -2210,7 +2286,6 @@ mostlyclean-compile:
 	-rm -f src/sdpd-request.$(OBJEXT)
 	-rm -f src/sdpd-server.$(OBJEXT)
 	-rm -f src/sdpd-service.$(OBJEXT)
-	-rm -f src/security.$(OBJEXT)
 	-rm -f src/storage.$(OBJEXT)
 	-rm -f src/textfile.$(OBJEXT)
 	-rm -f test/agent.$(OBJEXT)
@@ -2295,6 +2370,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/ipc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/manager.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/media.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/sink.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/source.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-dummy.Po@am__quote@
@@ -2302,7 +2378,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-maemo6.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-ofono.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/transport.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/unix.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@btio/$(DEPDIR)/btio.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/bnep.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/dun.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@compat/$(DEPDIR)/dund.Po@am__quote@
@@ -2317,7 +2395,14 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@cups/$(DEPDIR)/spp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/mainloop.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/object.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/polkit.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@gdbus/$(DEPDIR)/watch.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/hdp.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/hdp_main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/hdp_manager.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/hdp_util.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/mcap.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@health/$(DEPDIR)/mcap_sync.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@input/$(DEPDIR)/device.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@input/$(DEPDIR)/fakehid.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@input/$(DEPDIR)/main.Po@am__quote@
@@ -2332,16 +2417,18 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/manager.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/server.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/echo.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/formfactor.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/hal.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/hciops.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/maemo6.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/plugins_netlink_la-netlink.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/mgmtops.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/pnat.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/service.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/storage.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_armv6.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_iwmmxt.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_mmx.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_neon.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@sbc/$(DEPDIR)/sbcdec.Po@am__quote@
@@ -2355,11 +2442,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/adapter.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/agent.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/attrib-server.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/btio.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/dbus-common.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/dbus-hci.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/device.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/error.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/event.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/glib-helper.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/log.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/main.Po@am__quote@
@@ -2372,7 +2458,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/sdpd-request.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/sdpd-server.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/sdpd-service.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/security.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/storage.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/textfile.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/agent.Po@am__quote@
@@ -2555,14 +2640,6 @@ audio/audio_libgstbluetooth_la-ipc.lo: audio/ipc.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(audio_libgstbluetooth_la_CFLAGS) $(CFLAGS) -c -o audio/audio_libgstbluetooth_la-ipc.lo `test -f 'audio/ipc.c' || echo '$(srcdir)/'`audio/ipc.c
 
-plugins/plugins_netlink_la-netlink.lo: plugins/netlink.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(plugins_netlink_la_CFLAGS) $(CFLAGS) -MT plugins/plugins_netlink_la-netlink.lo -MD -MP -MF plugins/$(DEPDIR)/plugins_netlink_la-netlink.Tpo -c -o plugins/plugins_netlink_la-netlink.lo `test -f 'plugins/netlink.c' || echo '$(srcdir)/'`plugins/netlink.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) plugins/$(DEPDIR)/plugins_netlink_la-netlink.Tpo plugins/$(DEPDIR)/plugins_netlink_la-netlink.Plo
-@am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='plugins/netlink.c' object='plugins/plugins_netlink_la-netlink.lo' libtool=yes @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(plugins_netlink_la_CFLAGS) $(CFLAGS) -c -o plugins/plugins_netlink_la-netlink.lo `test -f 'plugins/netlink.c' || echo '$(srcdir)/'`plugins/netlink.c
-
 sbc/sbc_libsbc_la-sbc.lo: sbc/sbc.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(sbc_libsbc_la_CFLAGS) $(CFLAGS) -MT sbc/sbc_libsbc_la-sbc.lo -MD -MP -MF sbc/$(DEPDIR)/sbc_libsbc_la-sbc.Tpo -c -o sbc/sbc_libsbc_la-sbc.lo `test -f 'sbc/sbc.c' || echo '$(srcdir)/'`sbc/sbc.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) sbc/$(DEPDIR)/sbc_libsbc_la-sbc.Tpo sbc/$(DEPDIR)/sbc_libsbc_la-sbc.Plo
@@ -2586,6 +2663,14 @@ sbc/sbc_libsbc_la-sbc_primitives_mmx.lo: sbc/sbc_primitives_mmx.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='sbc/sbc_primitives_mmx.c' object='sbc/sbc_libsbc_la-sbc_primitives_mmx.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(sbc_libsbc_la_CFLAGS) $(CFLAGS) -c -o sbc/sbc_libsbc_la-sbc_primitives_mmx.lo `test -f 'sbc/sbc_primitives_mmx.c' || echo '$(srcdir)/'`sbc/sbc_primitives_mmx.c
+
+sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo: sbc/sbc_primitives_iwmmxt.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(sbc_libsbc_la_CFLAGS) $(CFLAGS) -MT sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo -MD -MP -MF sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_iwmmxt.Tpo -c -o sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo `test -f 'sbc/sbc_primitives_iwmmxt.c' || echo '$(srcdir)/'`sbc/sbc_primitives_iwmmxt.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_iwmmxt.Tpo sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_iwmmxt.Plo
+@am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='sbc/sbc_primitives_iwmmxt.c' object='sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(sbc_libsbc_la_CFLAGS) $(CFLAGS) -c -o sbc/sbc_libsbc_la-sbc_primitives_iwmmxt.lo `test -f 'sbc/sbc_primitives_iwmmxt.c' || echo '$(srcdir)/'`sbc/sbc_primitives_iwmmxt.c
 
 sbc/sbc_libsbc_la-sbc_primitives_neon.lo: sbc/sbc_primitives_neon.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(sbc_libsbc_la_CFLAGS) $(CFLAGS) -MT sbc/sbc_libsbc_la-sbc_primitives_neon.lo -MD -MP -MF sbc/$(DEPDIR)/sbc_libsbc_la-sbc_primitives_neon.Tpo -c -o sbc/sbc_libsbc_la-sbc_primitives_neon.lo `test -f 'sbc/sbc_primitives_neon.c' || echo '$(srcdir)/'`sbc/sbc_primitives_neon.c
@@ -2619,7 +2704,6 @@ clean-libtool:
 	-rm -rf compat/.libs compat/_libs
 	-rm -rf cups/.libs cups/_libs
 	-rm -rf lib/.libs lib/_libs
-	-rm -rf plugins/.libs plugins/_libs
 	-rm -rf sbc/.libs sbc/_libs
 	-rm -rf src/.libs src/_libs
 	-rm -rf test/.libs test/_libs
@@ -3093,12 +3177,16 @@ distclean-generic:
 	-rm -f attrib/$(am__dirstamp)
 	-rm -f audio/$(DEPDIR)/$(am__dirstamp)
 	-rm -f audio/$(am__dirstamp)
+	-rm -f btio/$(DEPDIR)/$(am__dirstamp)
+	-rm -f btio/$(am__dirstamp)
 	-rm -f compat/$(DEPDIR)/$(am__dirstamp)
 	-rm -f compat/$(am__dirstamp)
 	-rm -f cups/$(DEPDIR)/$(am__dirstamp)
 	-rm -f cups/$(am__dirstamp)
 	-rm -f gdbus/$(DEPDIR)/$(am__dirstamp)
 	-rm -f gdbus/$(am__dirstamp)
+	-rm -f health/$(DEPDIR)/$(am__dirstamp)
+	-rm -f health/$(am__dirstamp)
 	-rm -f input/$(DEPDIR)/$(am__dirstamp)
 	-rm -f input/$(am__dirstamp)
 	-rm -f lib/$(DEPDIR)/$(am__dirstamp)
@@ -3138,7 +3226,7 @@ clean-am: clean-alsaLTLIBRARIES clean-binPROGRAMS clean-cupsPROGRAMS \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
+	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -3191,7 +3279,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
+	-rm -rf attrib/$(DEPDIR) audio/$(DEPDIR) btio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) health/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
@@ -3256,22 +3344,12 @@ uninstall-man: uninstall-man1 uninstall-man8
 	uninstall-rulesDATA uninstall-sbinPROGRAMS uninstall-stateDATA
 
 
+@TOOLS_TRUE@tools/kword.c: tools/parser.h
+
 src/plugin.$(OBJEXT): src/builtin.h
 
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
-
-src/bluetooth.exp: $(src_bluetoothd_OBJECTS)
-	$(AM_V_GEN)$(NM) $^ | $(AWK) '{ print $$3 }' | sort -u | \
-				$(EGREP) -e '^btd_' -e '^g_dbus_' > $@
-	$(AM_V_at)echo -e "info" >> $@
-	$(AM_V_at)echo -e "error" >> $@
-	$(AM_V_at)echo -e "debug" >> $@
-
-src/bluetooth.ver: src/bluetooth.exp
-	$(AM_V_at)echo "{ global:" > $@
-	$(AM_V_GEN)$(SED) -e "s/\(.*\)/\1;/" $< >> $@
-	$(AM_V_at)echo "local: *; };" >> $@
 
 audio/telephony.c: audio/@TELEPHONY_DRIVER@
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
@@ -3285,8 +3363,8 @@ lib/bluetooth/%.h: lib/%.h
 	$(AM_V_at)$(MKDIR_P) lib/bluetooth
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
 
-clean-local: lib/bluetooth
-	@$(RM) -r $<
+clean-local:
+	$(RM) -r lib/bluetooth
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

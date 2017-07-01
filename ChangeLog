@@ -1,4 +1,108 @@
-ver 0.70:
+ver 4.81:
+	Fix issue with telephony driver initialization.
+	Fix issue with adapter services list initialization.
+	Fix crash after simultaneous authentication requests.
+	Add support for primary service search on device creation.
+
+ver 4.80:
+	Fix legacy link key storing for some buggy adapters.
+	Fix invalid memory access when EIR field length is zero.
+	Fix adapter initialization to wait for kernel HCI commands.
+	Fix initialization of adapters which are already up.
+	Fix possible race condition when initializing adapters.
+	Fix possible crashes when attempting to connect AVDTP.
+	Fix not aborting sink stream configuration on disconnect.
+	Fix not indicating disconnected state when connecting to AVDTP.
+	Fix not dropping AVDTP session when canceling stream setup.
+	Fix AVDTP abort not being send when the state is idle.
+	Fix regression with Low Energy and interleave discovery.
+	Add a new configuration option to disable Low Energy support.
+	Add iwmmxt optimization for SBC for ARM PXA series CPUs.
+	Update support for GATT Primary Service Discovery.
+	Update MCAP and HDP support.
+
+ver 4.79:
+	Fix issue with adapter initialization race condition.
+	Update new Bluetooth Management interface support.
+
+ver 4.78:
+	Fix various issues with AVDTP timer handling.
+	Fix various issues with handling of mode changes.
+	Fix issue with audio disconnect watch in connecting state.
+	Fix issue with handling call waiting indicators in telephony.
+	Fix issue with handling UUID parameter and RegisterEndpoint.
+	Add initial support for Bluetooth Management interface.
+	Add support for Application property to HealthChannel.
+
+ver 4.77:
+	Fix issue with device name and accessing already freed memory.
+	Fix issue with handling CHLD=0 command for handsfree.
+	Fix issue with manager properties and no adapters.
+	Fix issue with properties and broken service records.
+	Fix issue with A2DP playback and sample rate changes.
+	Update MCAP and HDP support.
+
+ver 4.76:
+	Fix issue in telephony driver with hanging up held call.
+	Fix issue in telephony driver with notifications when on hold.
+	Fix issue with blocking on setconf confirmation callback.
+	Fix issue with not always signaling new streams as sinks.
+	Fix issue with errors in case of endpoint request timeout.
+	Fix issue with HFP/HSP microphone and speaker gain values.
+	Add source if the device attempt to configure local sink stream.
+	Add PSM option for GATT/ATT over BR/EDR on gatttool.
+	Add support for GATT/ATT Attribute Write Request.
+	Update MCAP and HDP support.
+
+ver 4.75:
+	Fix use of uninitialized variable on legacy pairing.
+	Fix mismatch of attribute protocol opcode.
+
+ver 4.74:
+	Fix regression for Legacy Pairing.
+	Fix wrong PSM value for attribute protocol.
+	Fix issue with RSSI field in advertising reports.
+	Add support for Add BR/EDR and LE interleaved discovery.
+	Add support for GATT write characteristic value option.
+	Add support for specifying download address for AR300x.
+
+ver 4.73:
+	Fix problem with EIR data when setting the name.
+	Fix reading local name from command complete event.
+	Fix registering local endpoints with disabled socket interface.
+	Add support for more HCI operations using ops infrastructure.
+	Add support for GATT characteristic hierarchy.
+	Add support for GATT indications.
+
+ver 4.72:
+	Fix memory leak while connecting BTIO channels.
+	Fix crash with GStreamer plugin if SBC is not supported.
+	Fix issue with GATT server stop sending notifications.
+	Fix issue with GATT and dealing with the minimum MTU size.
+	Fix issue with file descriptor leak in GATT client.
+	Add support for UUID 128-bit handling in attribute client.
+	Add support for encoders/decoders for MTU Exchange.
+	Add support for the MTU Exchange procedure to the server.
+	Add support for a per channel MTU to the ATT server.
+	Add support for Characteristic interface.
+	Add support for new Media API and framework.
+	Add initial support for HDP plugin.
+
+ver 4.71:
+	Fix compilation when SBC support in not enabled.
+	Fix crash with RequestSession and application disconnects.
+	Fix memory leak and possible crash when removing audio device.
+	Fix issue with closing stream of locked sep when reconfiguring.
+	Fix issue where discovery could interfere with bonding.
+	Fix issue with Connected status when PS3 BD remote connects.
+	Fix issue with lifetime of fake input devices.
+	Add support for compile time option of oui.txt path.
+	Add support for printing IEEE1284 device ID for CUPS.
+	Add plugin for setting adapter class via DMI.
+	Add more features for attribute protocol and profile.
+	Add initial support for MCAP.
+
+ver 4.70:
 	Fix incoming call indication handling when in WAITING state.
 	Fix various SDP related qualification test case issues.
 	Fix logic to write EIR when SDP records are changed.

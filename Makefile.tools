@@ -12,6 +12,8 @@ sbin_PROGRAMS += tools/hciattach tools/hciconfig
 noinst_PROGRAMS += tools/avinfo tools/ppporc \
 				tools/hcieventmask tools/hcisecfilter
 
+tools/kword.c: tools/parser.h
+
 tools_rfcomm_SOURCES = tools/main.c tools/parser.y tools/lexer.l \
 					tools/kword.h tools/kword.c
 EXTRA_tools_rfcomm_SOURCES = tools/parser.h tools/parser.c \
@@ -170,7 +172,7 @@ test_bdaddr_LDADD = lib/libbluetooth.la
 
 test_agent_LDADD = @DBUS_LIBS@
 
-test_btiotest_SOURCES = test/btiotest.c src/btio.h src/btio.c
+test_btiotest_SOURCES = test/btiotest.c btio/btio.h btio/btio.c
 test_btiotest_LDADD = @GLIB_LIBS@ lib/libbluetooth.la
 
 test_test_textfile_SOURCES = test/test-textfile.c src/textfile.h src/textfile.c
@@ -187,8 +189,8 @@ EXTRA_DIST += test/apitest test/hsplay test/hsmicro test/dbusdef.py \
 		test/test-manager test/test-adapter test/test-device \
 		test/test-service test/test-serial test/test-telephony \
 		test/test-network test/simple-agent test/simple-service \
-		test/test-audio test/test-input \
-		test/service-record.dtd test/service-did.xml \
+		test/simple-endpoint test/test-audio test/test-input \
+		test/test-attrib test/service-record.dtd test/service-did.xml \
 		test/service-spp.xml test/service-opp.xml test/service-ftp.xml
 
 

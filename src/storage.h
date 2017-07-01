@@ -21,6 +21,8 @@
  *
  */
 
+#include "textfile.h"
+
 int read_device_alias(const char *src, const char *dst, char *alias, size_t size);
 int write_device_alias(const char *src, const char *dst, const char *alias);
 int write_discoverable_timeout(bdaddr_t *bdaddr, int timeout);
@@ -80,11 +82,15 @@ int write_blocked(const bdaddr_t *local, const bdaddr_t *remote,
 							gboolean blocked);
 int write_device_services(const bdaddr_t *sba, const bdaddr_t *dba,
 							const char *services);
+int delete_device_service(const bdaddr_t *sba, const bdaddr_t *dba);
 char *read_device_services(const bdaddr_t *sba, const bdaddr_t *dba);
 int write_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
 					uint16_t handle, const char *chars);
 char *read_device_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
 							uint16_t handle);
+int write_device_attribute(const bdaddr_t *sba, const bdaddr_t *dba,
+                                        uint16_t handle, const char *chars);
+int read_device_attributes(const bdaddr_t *sba, textfile_cb func, void *data);
 
 #define PNP_UUID		"00001200-0000-1000-8000-00805f9b34fb"
 

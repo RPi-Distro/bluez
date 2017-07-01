@@ -61,6 +61,9 @@
 /* Define to 1 if your C compiler doesn't accept -c and -o together. */
 #undef NO_MINUS_C_MINUS_O
 
+/* Define the OUI file path */
+#undef OUIFILE
+
 /* Name of package */
 #undef PACKAGE
 

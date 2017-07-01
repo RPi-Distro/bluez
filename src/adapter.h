@@ -24,20 +24,32 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
 #include <dbus/dbus.h>
 #include <glib.h>
 
 #define ADAPTER_INTERFACE	"org.bluez.Adapter"
 
-/* Discover types */
-#define DISCOVER_TYPE_NONE	0x00
-#define STD_INQUIRY		0x01
-#define PERIODIC_INQUIRY	0x02
+/* Discover states */
+#define STATE_IDLE		0x00
+#define STATE_LE_SCAN		0x01
+#define STATE_STDINQ		0x02
+#define STATE_PINQ		0x04
+#define STATE_RESOLVNAME	0x08
+#define STATE_SUSPENDED		0x10
 
-/* Actions executed after inquiry complete */
-#define RESOLVE_NAME		0x10
+/* Supported host/controller discover type */
+#define DISC_LE			0x01
+#define DISC_STDINQ		0x02
+#define DISC_INTERLEAVE		0x04
+#define DISC_PINQ		0x08
+#define DISC_RESOLVNAME		0x10
 
 #define MAX_NAME_LENGTH		248
+
+/* Invalid SSP passkey value used to indicate negative replies */
+#define INVALID_PASSKEY		0xffffffff
 
 typedef enum {
 	NAME_ANY,
@@ -57,26 +69,32 @@ struct remote_dev_info {
 	char *alias;
 	dbus_bool_t legacy;
 	name_status_t name_status;
+	gboolean le;
+	char **uuids;
+	size_t uuid_count;
+	GSList *services;
+	uint8_t evt_type;
+	uint8_t bdaddr_type;
+	uint8_t flags;
 };
 
 struct hci_dev {
-	int ignore;
-
 	uint8_t  features[8];
+	uint8_t  extfeatures[8];
 	uint8_t  lmp_ver;
 	uint16_t lmp_subver;
 	uint16_t hci_rev;
 	uint16_t manufacturer;
 
 	uint8_t  ssp_mode;
-	uint8_t  name[MAX_NAME_LENGTH];
+	char     name[MAX_NAME_LENGTH + 1];
 };
 
 int adapter_start(struct btd_adapter *adapter);
 
 int adapter_stop(struct btd_adapter *adapter);
 
-int adapter_update(struct btd_adapter *adapter, uint8_t cls);
+int adapter_set_service_classes(struct btd_adapter *adapter, uint8_t value);
 
 int adapter_update_ssp_mode(struct btd_adapter *adapter, uint8_t mode);
 
@@ -91,13 +109,10 @@ void adapter_remove_device(DBusConnection *conn, struct btd_adapter *adapter,
 						struct btd_device *device,
 						gboolean remove_storage);
 struct btd_device *adapter_create_device(DBusConnection *conn,
-				struct btd_adapter *adapter, const char *address);
-
-int pending_remote_name_cancel(struct btd_adapter *adapter);
+					struct btd_adapter *adapter,
+					const char *address, gboolean le);
 
 int adapter_resolve_names(struct btd_adapter *adapter);
-
-void clear_found_devices_list(struct btd_adapter *adapter);
 
 struct btd_adapter *adapter_create(DBusConnection *conn, int id,
 				gboolean devup);
@@ -107,21 +122,23 @@ const gchar *adapter_get_path(struct btd_adapter *adapter);
 void adapter_get_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_set_state(struct btd_adapter *adapter, int state);
 int adapter_get_state(struct btd_adapter *adapter);
+int adapter_get_discover_type(struct btd_adapter *adapter);
 gboolean adapter_is_ready(struct btd_adapter *adapter);
 struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter,
 						struct remote_dev_info *match);
+void adapter_update_device_from_info(struct btd_adapter *adapter,
+						le_advertising_info *info);
 void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 				int8_t rssi, uint32_t class, const char *name,
 				const char *alias, gboolean legacy,
 				name_status_t name_status, uint8_t *eir_data);
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_emit_device_found(struct btd_adapter *adapter,
-				struct remote_dev_info *dev, uint8_t *eir_data);
-void adapter_update_oor_devices(struct btd_adapter *adapter);
+				struct remote_dev_info *dev,
+				uint8_t *eir_data, size_t eir_length);
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode);
-void adapter_setname_complete(bdaddr_t *local, uint8_t status);
-void adapter_update_tx_power(bdaddr_t *bdaddr, uint8_t status, void *ptr);
-void adapter_update_local_name(bdaddr_t *bdaddr, uint8_t status, void *ptr);
+void adapter_update_tx_power(struct btd_adapter *adapter, int8_t tx_power);
+void adapter_update_local_name(struct btd_adapter *adapter, const char *name);
 void adapter_service_insert(const bdaddr_t *bdaddr, void *rec);
 void adapter_service_remove(const bdaddr_t *bdaddr, void *rec);
 sdp_list_t *adapter_get_services(struct btd_adapter *adapter);
@@ -133,6 +150,8 @@ void adapter_add_connection(struct btd_adapter *adapter,
 void adapter_remove_connection(struct btd_adapter *adapter,
 				struct btd_device *device, uint16_t handle);
 gboolean adapter_has_discov_sessions(struct btd_adapter *adapter);
+void adapter_suspend_discovery(struct btd_adapter *adapter);
+void adapter_resume_discovery(struct btd_adapter *adapter);
 
 struct btd_adapter *btd_adapter_ref(struct btd_adapter *adapter);
 void btd_adapter_unref(struct btd_adapter *adapter);
@@ -166,6 +185,8 @@ int btd_adapter_restore_powered(struct btd_adapter *adapter);
 int btd_adapter_switch_online(struct btd_adapter *adapter);
 int btd_adapter_switch_offline(struct btd_adapter *adapter);
 
+typedef void (*bt_hci_result_t) (uint8_t status, gpointer user_data);
+
 struct btd_adapter_ops {
 	int (*setup) (void);
 	void (*cleanup) (void);
@@ -176,17 +197,44 @@ struct btd_adapter_ops {
 	int (*set_discoverable) (int index);
 	int (*set_limited_discoverable) (int index, uint32_t class,
 						gboolean limited);
-	int (*start_discovery) (int index, gboolean periodic);
-	int (*stop_discovery) (int index);
+	int (*start_inquiry) (int index, uint8_t length, gboolean periodic);
+	int (*stop_inquiry) (int index);
+	int (*start_scanning) (int index);
+	int (*stop_scanning) (int index);
+
 	int (*resolve_name) (int index, bdaddr_t *bdaddr);
 	int (*cancel_resolve_name) (int index, bdaddr_t *bdaddr);
 	int (*set_name) (int index, const char *name);
-	int (*read_name) (int index);
 	int (*set_class) (int index, uint32_t class);
 	int (*set_fast_connectable) (int index, gboolean enable);
+	int (*read_clock) (int index, int handle, int which, int timeout,
+					uint32_t *clock, uint16_t *accuracy);
+	int (*get_conn_handle) (int index, const bdaddr_t *bdaddr, int *handle);
+	int (*write_eir_data) (int index, uint8_t *data);
+	int (*read_bdaddr) (int index, bdaddr_t *bdaddr);
+	int (*block_device) (int index, bdaddr_t *bdaddr);
+	int (*unblock_device) (int index, bdaddr_t *bdaddr);
+	int (*get_conn_list) (int index, GSList **conns);
+	int (*read_local_version) (int index, struct hci_version *ver);
+	int (*read_local_features) (int index, uint8_t *features);
+	int (*read_local_ext_features) (int index);
+	int (*read_link_policy) (int index);
+	int (*disconnect) (int index, uint16_t handle);
+	int (*remove_bonding) (int index, bdaddr_t *bdaddr);
+	int (*request_authentication) (int index, uint16_t handle);
+	int (*pincode_reply) (int index, bdaddr_t *bdaddr, const char *pin);
+	int (*confirm_reply) (int index, bdaddr_t *bdaddr, gboolean success);
+	int (*passkey_reply) (int index, bdaddr_t *bdaddr, uint32_t passkey);
+	int (*get_auth_info) (int index, bdaddr_t *bdaddr, uint8_t *auth);
+	int (*read_scan_enable) (int index);
+	int (*write_le_host) (int index, uint8_t le, uint8_t simul);
+	int (*get_remote_version) (int index, uint16_t handle,
+						gboolean delayed);
+	int (*encrypt_link) (int index, bdaddr_t *bdaddr, bt_hci_result_t cb,
+							gpointer user_data);
 };
 
-int btd_register_adapter_ops(struct btd_adapter_ops *btd_adapter_ops);
+int btd_register_adapter_ops(struct btd_adapter_ops *ops, gboolean priority);
 void btd_adapter_cleanup_ops(struct btd_adapter_ops *btd_adapter_ops);
 int adapter_ops_setup(void);
 
@@ -202,3 +250,44 @@ void btd_adapter_unregister_powered_callback(struct btd_adapter *adapter,
  * type to default values. Valid for both connectable and discoverable modes. */
 int btd_adapter_set_fast_connectable(struct btd_adapter *adapter,
 							gboolean enable);
+
+int btd_adapter_read_clock(struct btd_adapter *adapter, int handle, int which,
+						int timeout, uint32_t *clock,
+						uint16_t *accuracy);
+int btd_adapter_get_conn_handle(struct btd_adapter *adapter,
+				const bdaddr_t *bdaddr, int *handle);
+
+int btd_adapter_block_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
+int btd_adapter_unblock_address(struct btd_adapter *adapter, bdaddr_t *bdaddr);
+
+int btd_adapter_disconnect_device(struct btd_adapter *adapter,
+							uint16_t handle);
+
+int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr);
+
+int btd_adapter_request_authentication(struct btd_adapter *adapter,
+							uint16_t handle);
+
+int btd_adapter_pincode_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+							const char *pin);
+int btd_adapter_confirm_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+							gboolean success);
+int btd_adapter_passkey_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+							uint32_t passkey);
+
+int btd_adapter_get_auth_info(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+								uint8_t *auth);
+
+int btd_adapter_read_scan_enable(struct btd_adapter *adapter);
+
+int btd_adapter_read_local_ext_features(struct btd_adapter *adapter);
+void btd_adapter_update_local_ext_features(struct btd_adapter *adapter,
+						const uint8_t *features);
+int btd_adapter_get_remote_name(struct btd_adapter *adapter,
+							bdaddr_t *bdaddr);
+int btd_adapter_get_remote_version(struct btd_adapter *adapter,
+							uint16_t handle,
+							gboolean delayed);
+
+int btd_adapter_encrypt_link(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+				bt_hci_result_t cb, gpointer user_data);

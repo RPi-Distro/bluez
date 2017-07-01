@@ -27,26 +27,35 @@
 
 #include <stdlib.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/rfcomm.h>
-#include <bluetooth/l2cap.h>
-#include <bluetooth/sco.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
 #include <glib.h>
 
+#include "btio.h"
+#include "gattrib.h"
+#include "att.h"
+#include "gatt.h"
+#include "sdpd.h"
 #include "glib-helper.h"
 
 /* Number of seconds to keep a sdp_session_t in the cache */
 #define CACHE_TIMEOUT 2
+
+struct gattrib_context {
+	bdaddr_t src;
+	bdaddr_t dst;
+	GAttrib *attrib;
+	bt_primary_t cb;
+	bt_destroy_t destroy;
+	gpointer user_data;
+	GSList *uuids;
+};
 
 struct cached_sdp_session {
 	bdaddr_t src;
@@ -57,12 +66,16 @@ struct cached_sdp_session {
 
 static GSList *cached_sdp_sessions = NULL;
 
-struct hci_cmd_data {
-	bt_hci_result_t		cb;
-	uint16_t		handle;
-	uint16_t		ocf;
-	gpointer		caller_data;
-};
+static void gattrib_context_free(struct gattrib_context *ctxt)
+{
+	if (ctxt->destroy)
+		ctxt->destroy(ctxt->user_data);
+
+	g_slist_foreach(ctxt->uuids, (GFunc) g_free, NULL);
+	g_slist_free(ctxt->uuids);
+	g_attrib_unref(ctxt->attrib);
+	g_free(ctxt);
+}
 
 static gboolean cached_session_expired(gpointer user_data)
 {
@@ -120,30 +133,12 @@ static void cache_sdp_session(bdaddr_t *src, bdaddr_t *dst,
 						cached);
 }
 
-int set_nonblocking(int fd)
-{
-	long arg;
-
-	arg = fcntl(fd, F_GETFL);
-	if (arg < 0)
-		return -errno;
-
-	/* Return if already nonblocking */
-	if (arg & O_NONBLOCK)
-		return 0;
-
-	arg |= O_NONBLOCK;
-	if (fcntl(fd, F_SETFL, arg) < 0)
-		return -errno;
-
-	return 0;
-}
-
 struct search_context {
 	bdaddr_t		src;
 	bdaddr_t		dst;
 	sdp_session_t		*session;
 	bt_callback_t		cb;
+	bt_primary_t		prim_cb;
 	bt_destroy_t		destroy;
 	gpointer		user_data;
 	uuid_t			uuid;
@@ -404,6 +399,125 @@ int bt_cancel_discovery(const bdaddr_t *src, const bdaddr_t *dst)
 	return 0;
 }
 
+static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	struct gattrib_context *ctxt = user_data;
+	struct att_data_list *list;
+	unsigned int i, err;
+	uint16_t end;
+
+	if (status == ATT_ECODE_ATTR_NOT_FOUND) {
+		err = 0;
+		goto done;
+	}
+
+	if (status != 0) {
+		err = -EIO;
+		goto done;
+	}
+
+	list = dec_read_by_grp_resp(pdu, plen);
+	if (list == NULL) {
+		err = -EPROTO;
+		goto done;
+	}
+
+	for (i = 0, end = 0; i < list->num; i++) {
+		const uint8_t *data = list->data[i];
+		char *prim;
+		uuid_t u128, u16;
+
+		end = att_get_u16(&data[2]);
+
+		if (list->len == 6) {
+			sdp_uuid16_create(&u16,
+					att_get_u16(&data[4]));
+			sdp_uuid16_to_uuid128(&u128, &u16);
+
+		} else if (list->len == 20)
+			sdp_uuid128_create(&u128, &data[4]);
+		else
+			/* Skipping invalid data */
+			continue;
+
+		prim = bt_uuid2string(&u128);
+		ctxt->uuids = g_slist_append(ctxt->uuids, prim);
+	}
+
+	att_data_list_free(list);
+	err = 0;
+
+	if (end != 0xffff) {
+		gatt_discover_primary(ctxt->attrib, end + 1, 0xffff, NULL,
+							primary_cb, ctxt);
+		return;
+	}
+
+done:
+	ctxt->cb(ctxt->uuids, err, ctxt->user_data);
+	gattrib_context_free(ctxt);
+}
+
+static void connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
+{
+	struct gattrib_context *ctxt = user_data;
+
+	if (gerr) {
+		ctxt->cb(NULL, -EIO, ctxt->user_data);
+		gattrib_context_free(ctxt);
+		return;
+	}
+
+	gatt_discover_primary(ctxt->attrib, 0x0001, 0xffff, NULL, primary_cb,
+									ctxt);
+}
+
+int bt_discover_primary(const bdaddr_t *src, const bdaddr_t *dst, int psm,
+					bt_primary_t cb, void *user_data,
+					bt_destroy_t destroy)
+{
+	struct gattrib_context *ctxt;
+	GIOChannel *io;
+	GError *gerr = NULL;
+
+	ctxt = g_try_new0(struct gattrib_context, 1);
+	if (ctxt == NULL)
+		return -ENOMEM;
+
+	bacpy(&ctxt->src, src);
+	bacpy(&ctxt->dst, dst);
+	ctxt->user_data = user_data;
+	ctxt->cb = cb;
+	ctxt->destroy = destroy;
+
+	if (psm < 0)
+		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, &gerr,
+				BT_IO_OPT_SOURCE_BDADDR, src,
+				BT_IO_OPT_DEST_BDADDR, dst,
+				BT_IO_OPT_CID, GATT_CID,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_INVALID);
+	else
+		io = bt_io_connect(BT_IO_L2CAP, connect_cb, ctxt, NULL, &gerr,
+				BT_IO_OPT_SOURCE_BDADDR, src,
+				BT_IO_OPT_DEST_BDADDR, dst,
+				BT_IO_OPT_PSM, psm,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_INVALID);
+
+	if (io == NULL) {
+		gattrib_context_free(ctxt);
+		return -EIO;
+	}
+
+	ctxt->attrib = g_attrib_new(io);
+
+	g_io_channel_unref(io);
+
+	return 0;
+}
+
 char *bt_uuid2string(uuid_t *uuid)
 {
 	gchar *str;
@@ -493,6 +607,24 @@ static inline gboolean is_uuid128(const char *string)
 			string[23] == '-');
 }
 
+static int string2uuid16(uuid_t *uuid, const char *string)
+{
+	int length = strlen(string);
+	char *endptr = NULL;
+	uint16_t u16;
+
+	if (length != 4 && length != 6)
+		return -EINVAL;
+
+	u16 = strtol(string, &endptr, 16);
+	if (endptr && *endptr == '\0') {
+		sdp_uuid16_create(uuid, u16);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
 char *bt_name2string(const char *pattern)
 {
 	uuid_t uuid;
@@ -556,9 +688,9 @@ int bt_string2uuid(uuid_t *uuid, const char *string)
 			sdp_uuid16_create(uuid, class);
 			return 0;
 		}
-	}
 
-	return -1;
+		return string2uuid16(uuid, string);
+	}
 }
 
 gchar *bt_list2string(GSList *list)
@@ -604,182 +736,23 @@ GSList *bt_string2list(const gchar *str)
 	return l;
 }
 
-static gboolean hci_event_watch(GIOChannel *io,
-			GIOCondition cond, gpointer user_data)
+char *bt_extract_eir_name(uint8_t *data, uint8_t *type)
 {
-	unsigned char buf[HCI_MAX_EVENT_SIZE], *body;
-	struct hci_cmd_data *cmd = user_data;
-	evt_cmd_status *evt_status;
-	evt_auth_complete *evt_auth;
-	evt_encrypt_change *evt_enc;
-	hci_event_hdr *hdr;
-	set_conn_encrypt_cp cp;
-	int dd;
-	uint16_t ocf;
-	uint8_t status = HCI_OE_POWER_OFF;
+	if (!data || !type)
+		return NULL;
 
-	if (cond & G_IO_NVAL) {
-		cmd->cb(status, cmd->caller_data);
-		return FALSE;
+	if (data[0] == 0)
+		return NULL;
+
+	*type = data[1];
+
+	switch (*type) {
+	case EIR_NAME_SHORT:
+	case EIR_NAME_COMPLETE:
+		if (!g_utf8_validate((char *) (data + 2), data[0] - 1, NULL))
+			return strdup("");
+		return strndup((char *) (data + 2), data[0] - 1);
 	}
 
-	if (cond & (G_IO_ERR | G_IO_HUP))
-		goto failed;
-
-	dd = g_io_channel_unix_get_fd(io);
-
-	if (read(dd, buf, sizeof(buf)) < 0)
-		goto failed;
-
-	hdr = (hci_event_hdr *) (buf + 1);
-	body = buf + (1 + HCI_EVENT_HDR_SIZE);
-
-	switch (hdr->evt) {
-	case EVT_CMD_STATUS:
-		evt_status = (evt_cmd_status *) body;
-		ocf = cmd_opcode_ocf(evt_status->opcode);
-		if (ocf != cmd->ocf)
-			return TRUE;
-		switch (ocf) {
-		case OCF_AUTH_REQUESTED:
-		case OCF_SET_CONN_ENCRYPT:
-			if (evt_status->status != 0) {
-				/* Baseband rejected command */
-				status = evt_status->status;
-				goto failed;
-			}
-			break;
-		default:
-			return TRUE;
-		}
-		/* Wait for the next event */
-		return TRUE;
-	case EVT_AUTH_COMPLETE:
-		evt_auth = (evt_auth_complete *) body;
-		if (evt_auth->handle != cmd->handle) {
-			/* Skipping */
-			return TRUE;
-		}
-
-		if (evt_auth->status != 0x00) {
-			status = evt_auth->status;
-			/* Abort encryption */
-			goto failed;
-		}
-
-		memset(&cp, 0, sizeof(cp));
-		cp.handle  = cmd->handle;
-		cp.encrypt = 1;
-
-		cmd->ocf = OCF_SET_CONN_ENCRYPT;
-
-		if (hci_send_cmd(dd, OGF_LINK_CTL, OCF_SET_CONN_ENCRYPT,
-					SET_CONN_ENCRYPT_CP_SIZE, &cp) < 0) {
-			status = HCI_COMMAND_DISALLOWED;
-			goto failed;
-		}
-		/* Wait for encrypt change event */
-		return TRUE;
-	case EVT_ENCRYPT_CHANGE:
-		evt_enc = (evt_encrypt_change *) body;
-		if (evt_enc->handle != cmd->handle)
-			return TRUE;
-
-		/* Procedure finished: reporting status */
-		status = evt_enc->status;
-		break;
-	default:
-		/* Skipping */
-		return TRUE;
-	}
-
-failed:
-	cmd->cb(status, cmd->caller_data);
-	g_io_channel_shutdown(io, TRUE, NULL);
-
-	return FALSE;
-}
-
-int bt_acl_encrypt(const bdaddr_t *src, const bdaddr_t *dst,
-			bt_hci_result_t cb, gpointer user_data)
-{
-	GIOChannel *io;
-	struct hci_cmd_data *cmd;
-	struct hci_conn_info_req *cr;
-	auth_requested_cp cp;
-	struct hci_filter nf;
-	int dd, dev_id, err;
-	char src_addr[18];
-	uint32_t link_mode;
-	uint16_t handle;
-
-	ba2str(src, src_addr);
-	dev_id = hci_devid(src_addr);
-	if (dev_id < 0)
-		return -errno;
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0)
-		return -errno;
-
-	cr = g_malloc0(sizeof(*cr) + sizeof(struct hci_conn_info));
-	cr->type = ACL_LINK;
-	bacpy(&cr->bdaddr, dst);
-
-	err = ioctl(dd, HCIGETCONNINFO, cr);
-	link_mode = cr->conn_info->link_mode;
-	handle = cr->conn_info->handle;
-	g_free(cr);
-
-	if (err < 0) {
-		err = errno;
-		goto failed;
-	}
-
-	if (link_mode & HCI_LM_ENCRYPT) {
-		/* Already encrypted */
-		err = EALREADY;
-		goto failed;
-	}
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = htobs(handle);
-
-	if (hci_send_cmd(dd, OGF_LINK_CTL, OCF_AUTH_REQUESTED,
-				AUTH_REQUESTED_CP_SIZE, &cp) < 0) {
-		err = errno;
-		goto failed;
-	}
-
-	cmd = g_new0(struct hci_cmd_data, 1);
-	cmd->handle = handle;
-	cmd->ocf = OCF_AUTH_REQUESTED;
-	cmd->cb	= cb;
-	cmd->caller_data = user_data;
-
-	hci_filter_clear(&nf);
-	hci_filter_set_ptype(HCI_EVENT_PKT, &nf);
-	hci_filter_set_event(EVT_CMD_STATUS, &nf);
-	hci_filter_set_event(EVT_AUTH_COMPLETE, &nf);
-	hci_filter_set_event(EVT_ENCRYPT_CHANGE, &nf);
-
-	if (setsockopt(dd, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0) {
-		err = errno;
-		g_free(cmd);
-		goto failed;
-	}
-
-	io = g_io_channel_unix_new(dd);
-	g_io_channel_set_close_on_unref(io, FALSE);
-	g_io_add_watch_full(io, G_PRIORITY_DEFAULT,
-			G_IO_HUP | G_IO_ERR | G_IO_NVAL | G_IO_IN,
-			hci_event_watch, cmd, g_free);
-	g_io_channel_unref(io);
-
-	return 0;
-
-failed:
-	close(dd);
-
-	return -err;
+	return NULL;
 }

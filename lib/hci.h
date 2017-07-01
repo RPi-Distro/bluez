@@ -268,6 +268,9 @@ enum {
 #define LMP_EPC		0x04
 #define LMP_EXT_FEAT	0x80
 
+/* Extended LMP features */
+#define LMP_HOST_LE	0x02
+
 /* Link policies */
 #define HCI_LP_RSWITCH	0x0001
 #define HCI_LP_HOLD	0x0002
@@ -1225,6 +1228,13 @@ typedef struct {
 } __attribute__ ((packed)) write_best_effort_flush_timeout_rp;
 #define WRITE_BEST_EFFORT_FLUSH_TIMEOUT_RP_SIZE 1
 
+#define OCF_WRITE_LE_HOST_SUPPORTED	0x006D
+typedef struct {
+	uint8_t		le;
+	uint8_t		simul;
+} __attribute__ ((packed)) write_le_host_supported_cp;
+#define WRITE_LE_HOST_SUPPORTED_CP_SIZE 2
+
 /* Informational Parameters */
 #define OGF_INFO_PARAM		0x04
 
@@ -2079,10 +2089,9 @@ typedef struct {
 	uint8_t		bdaddr_type;
 	bdaddr_t	bdaddr;
 	uint8_t		length;
-	uint8_t		data[31];
-	uint8_t		rssi;
+	uint8_t		data[0];
 } __attribute__ ((packed)) le_advertising_info;
-#define LE_ADVERTISING_INFO_SIZE 41
+#define LE_ADVERTISING_INFO_SIZE 9
 
 #define EVT_LE_CONN_UPDATE_COMPLETE	0x03
 typedef struct {
@@ -2244,8 +2253,12 @@ typedef struct {
 struct sockaddr_hci {
 	sa_family_t	hci_family;
 	unsigned short	hci_dev;
+	unsigned short  hci_channel;
 };
 #define HCI_DEV_NONE	0xffff
+
+#define HCI_CHANNEL_RAW		0
+#define HCI_CHANNEL_CONTROL	1
 
 struct hci_filter {
 	uint32_t type_mask;

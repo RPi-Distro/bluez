@@ -34,8 +34,9 @@ typedef enum {
 	AUTH_TYPE_AUTO,
 } auth_type_t;
 
-struct btd_device *device_create(DBusConnection *conn, struct btd_adapter *adapter,
-				const gchar *address);
+struct btd_device *device_create(DBusConnection *conn,
+					struct btd_adapter *adapter,
+					const gchar *address, gboolean le);
 void device_set_name(struct btd_device *device, const char *name);
 void device_get_name(struct btd_device *device, char *name, size_t len);
 void device_remove(struct btd_device *device, gboolean remove_stored);
@@ -45,9 +46,10 @@ int device_browse(struct btd_device *device, DBusConnection *conn,
 void device_probe_drivers(struct btd_device *device, GSList *profiles);
 const sdp_record_t *btd_device_get_record(struct btd_device *device,
 						const char *uuid);
+void device_add_service(struct btd_device *device, const char *path);
 void btd_device_add_uuid(struct btd_device *device, const char *uuid);
 struct btd_adapter *device_get_adapter(struct btd_device *device);
-void device_get_address(struct btd_device *adapter, bdaddr_t *bdaddr);
+void device_get_address(struct btd_device *device, bdaddr_t *bdaddr);
 const gchar *device_get_path(struct btd_device *device);
 struct agent *device_get_agent(struct btd_device *device);
 gboolean device_is_busy(struct btd_device *device);

@@ -32,30 +32,39 @@
 #include <unistd.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/l2cap.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
 #include "att.h"
+#include "btio.h"
 #include "gattrib.h"
+#include "glib-helper.h"
 #include "gatt.h"
 
-#define GATT_PSM 27
+/* Minimum MTU for L2CAP connections over BR/EDR */
+#define ATT_MIN_MTU_L2CAP 48
 
 static gchar *opt_src = NULL;
 static gchar *opt_dst = NULL;
+static gchar *opt_value = NULL;
+static gchar *opt_sec_level = "low";
+static uuid_t *opt_uuid = NULL;
 static int opt_start = 0x0001;
 static int opt_end = 0xffff;
-static int opt_handle = 0x0001;
+static int opt_handle = -1;
+static int opt_mtu = 0;
+static int opt_psm = 0x1f;
 static gboolean opt_primary = FALSE;
 static gboolean opt_characteristics = FALSE;
 static gboolean opt_char_read = FALSE;
 static gboolean opt_listen = FALSE;
-static guint listen_watch = 0;
 static gboolean opt_char_desc = FALSE;
+static gboolean opt_le = FALSE;
+static gboolean opt_char_write = FALSE;
 static GMainLoop *event_loop;
+static gboolean got_error = FALSE;
 
 struct characteristic_data {
 	GAttrib *attrib;
@@ -63,18 +72,35 @@ struct characteristic_data {
 	uint16_t end;
 };
 
-static int l2cap_connect(void)
+static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 {
-	struct sockaddr_l2 addr;
+	if (err) {
+		g_printerr("%s\n", err->message);
+		got_error = TRUE;
+		g_main_loop_quit(event_loop);
+	}
+}
+
+static GIOChannel *do_connect(gboolean le)
+{
+	GIOChannel *chan;
 	bdaddr_t sba, dba;
-	int err, sk;
+	GError *err = NULL;
+	BtIOSecLevel sec_level;
+
+	/* This check is required because currently setsockopt() returns no
+	 * errors for MTU values smaller than the allowed minimum. */
+	if (opt_mtu != 0 && opt_mtu < ATT_MIN_MTU_L2CAP) {
+		g_printerr("MTU cannot be smaller than %d\n",
+							ATT_MIN_MTU_L2CAP);
+		return NULL;
+	}
 
 	/* Remote device */
 	if (opt_dst == NULL) {
 		g_printerr("Remote Bluetooth address required\n");
-		return -EINVAL;
+		return NULL;
 	}
-
 	str2ba(opt_dst, &dba);
 
 	/* Local adapter */
@@ -86,60 +112,40 @@ static int l2cap_connect(void)
 	} else
 		bacpy(&sba, BDADDR_ANY);
 
-	sk = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
-	if (sk < 0) {
-		err = errno;
-		g_printerr("L2CAP socket create failed: %s(%d)\n",
-							strerror(err), err);
-		return -err;
-	}
+	if (strcmp(opt_sec_level, "medium") == 0)
+		sec_level = BT_IO_SEC_MEDIUM;
+	else if (strcmp(opt_sec_level, "high") == 0)
+		sec_level = BT_IO_SEC_HIGH;
+	else
+		sec_level = BT_IO_SEC_LOW;
 
-	memset(&addr, 0, sizeof(addr));
-	addr.l2_family = AF_BLUETOOTH;
-	bacpy(&addr.l2_bdaddr, &sba);
+	if (le)
+		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
+				BT_IO_OPT_SOURCE_BDADDR, &sba,
+				BT_IO_OPT_DEST_BDADDR, &dba,
+				BT_IO_OPT_CID, GATT_CID,
+				BT_IO_OPT_OMTU, opt_mtu,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
+				BT_IO_OPT_INVALID);
+	else
+		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
+				BT_IO_OPT_SOURCE_BDADDR, &sba,
+				BT_IO_OPT_DEST_BDADDR, &dba,
+				BT_IO_OPT_PSM, opt_psm,
+				BT_IO_OPT_OMTU, opt_mtu,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
+				BT_IO_OPT_INVALID);
 
-	if (bind(sk, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		err = errno;
-		g_printerr("L2CAP socket bind failed: %s(%d)\n",
-							strerror(err), err);
-		close(sk);
-		return -err;
-	}
-
-	memset(&addr, 0, sizeof(addr));
-	addr.l2_family = AF_BLUETOOTH;
-	bacpy(&addr.l2_bdaddr, &dba);
-	addr.l2_psm = htobs(GATT_PSM);
-
-	err = connect(sk, (struct sockaddr *) &addr, sizeof(addr));
-	if (err < 0) {
-		err = errno;
-		g_printerr("L2CAP socket connect failed: %s(%d)\n",
-							strerror(err), err);
-		close(sk);
-		return -err;
-	}
-
-	return sk;
-}
-
-static GIOChannel *do_connect(void)
-{
-	GIOChannel *chan;
-	int sk;
-
-	sk = l2cap_connect();
-	if (sk < 0)
+	if (err) {
+		g_printerr("%s\n", err->message);
+		g_error_free(err);
 		return NULL;
-
-	chan = g_io_channel_unix_new(sk);
-	g_io_channel_set_flags(chan, G_IO_FLAG_NONBLOCK, NULL);
-	g_io_channel_set_close_on_unref(chan, TRUE);
+	}
 
 	return chan;
 }
 
-static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
+static void primary_all_cb(guint8 status, const guint8 *pdu, guint16 plen,
 							gpointer user_data)
 {
 	GAttrib *attrib = user_data;
@@ -161,40 +167,43 @@ static void primary_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		goto done;
 
 	for (i = 0, end = 0; i < list->num; i++) {
+		char uuidstr[MAX_LEN_UUID_STR];
 		uint8_t *value = list->data[i];
 		uint8_t length;
 		uint16_t start;
-		int j;
+		uuid_t uuid;
 
 		/* Each element contains: attribute handle, end group handle
 		 * and attribute value */
 		length = list->len - 2 * sizeof(uint16_t);
-		start = att_get_u16((uint16_t *) value);
-		end = att_get_u16((uint16_t *) &value[2]);
+		start = att_get_u16(value);
+		end = att_get_u16(&value[2]);
 
 		g_print("attr handle = 0x%04x, end grp handle = 0x%04x, ",
 								start, end);
-		g_print("attr value (UUID) = ");
 		if (length == 2)
-			g_print("0x%04x\n", att_get_u16((uint16_t *)
-							&value[4]));
-		else {
-			/* FIXME: pretty print 128-bit UUIDs */
-			for (j = 4; j < length; j++)
-				g_print("%02x ", value[j]);
-			g_print("\n");
-		}
+			sdp_uuid16_create(&uuid, att_get_u16(&value[4]));
+		else
+			sdp_uuid128_create(&uuid, value + 4);
+
+		sdp_uuid2strn(&uuid, uuidstr, MAX_LEN_UUID_STR);
+		g_print("attr value (UUID) = %s\n", uuidstr);
 	}
 
 	att_data_list_free(list);
+
+	/* Don't go beyond the maximum handle value */
+	if (end == 0xffff)
+		goto done;
 
 	/*
 	 * Discover all primary services sub-procedure shall send another
 	 * Read by Group Type Request until Error Response is received and
 	 * the Error Code is set to Attribute Not Found.
 	 */
-	gatt_discover_primary(attrib, end + 1, opt_end, primary_cb, attrib);
 
+	gatt_discover_primary(attrib, end + 1, opt_end, NULL, primary_all_cb,
+								attrib);
 	return;
 
 done:
@@ -202,32 +211,78 @@ done:
 		g_main_loop_quit(event_loop);
 }
 
+static void primary_by_uuid_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	GSList *ranges, *l;
+
+	if (status != 0) {
+		g_printerr("Discover primary services by UUID failed: %s\n",
+							att_ecode2str(status));
+		goto done;
+	}
+
+	ranges = dec_find_by_type_resp(pdu, plen);
+	if (ranges == NULL) {
+		g_printerr("Protocol error!\n");
+		goto done;
+	}
+
+	for (l = ranges; l; l = l->next) {
+		struct att_range *range = l->data;
+		g_print("Starting handle: %04x Ending handle: %04x\n",
+						range->start, range->end);
+	}
+
+	g_slist_foreach(ranges, (GFunc) g_free, NULL);
+	g_slist_free(ranges);
+
+done:
+	g_main_loop_quit(event_loop);
+}
+
 static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
-	uint16_t handle, i;
+	GAttrib *attrib = user_data;
+	uint8_t opdu[ATT_MAX_MTU];
+	uint16_t handle, i, olen = 0;
 
-	handle = att_get_u16((uint16_t *) &pdu[1]);
+	handle = att_get_u16(&pdu[1]);
 
 	switch (pdu[0]) {
 	case ATT_OP_HANDLE_NOTIFY:
-		g_print("attr handle = 0x%04x value: ", handle);
-		for (i = 3; i < len; i++)
-			g_print("%02x ", pdu[i]);
-
-		g_print("\n");
+		g_print("Notification handle = 0x%04x value: ", handle);
 		break;
 	case ATT_OP_HANDLE_IND:
+		g_print("Indication   handle = 0x%04x value: ", handle);
 		break;
+	default:
+		g_print("Invalid opcode\n");
+		return;
 	}
+
+	for (i = 3; i < len; i++)
+		g_print("%02x ", pdu[i]);
+
+	g_print("\n");
+
+	if (pdu[0] == ATT_OP_HANDLE_NOTIFY)
+		return;
+
+	olen = enc_confirmation(opdu, sizeof(opdu));
+
+	if (olen > 0)
+		g_attrib_send(attrib, opdu[0], opdu, olen, NULL, NULL, NULL);
 }
 
 static gboolean listen_start(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
-	uint8_t events = ATT_OP_HANDLE_NOTIFY;
 
-	listen_watch = g_attrib_register(attrib, events, events_handler,
-								NULL, NULL);
+	g_attrib_register(attrib, ATT_OP_HANDLE_NOTIFY, events_handler,
+							attrib, NULL);
+	g_attrib_register(attrib, ATT_OP_HANDLE_IND, events_handler,
+							attrib, NULL);
 
 	return FALSE;
 }
@@ -236,7 +291,12 @@ static gboolean primary(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
 
-	gatt_discover_primary(attrib, opt_start, opt_end, primary_cb, attrib);
+	if (opt_uuid)
+		gatt_discover_primary(attrib, opt_start, opt_end, opt_uuid,
+						primary_by_uuid_cb, attrib);
+	else
+		gatt_discover_primary(attrib, opt_start, opt_end, NULL,
+						primary_all_cb, attrib);
 
 	return FALSE;
 }
@@ -264,25 +324,22 @@ static void char_discovered_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	for (i = 0; i < list->num; i++) {
 		uint8_t *value = list->data[i];
+		char uuidstr[MAX_LEN_UUID_STR];
+		uuid_t uuid;
 
-		last = att_get_u16((uint16_t *) value);
+		last = att_get_u16(value);
 
 		g_print("handle = 0x%04x, char properties = 0x%02x, "
 			"char value handle = 0x%04x, ", last, value[2],
-			att_get_u16((uint16_t *) &value[3]));
+			att_get_u16(&value[3]));
 
-		g_print("uuid = ");
-		if (list->len == 7) {
-			g_print("0x%04x\n", att_get_u16((uint16_t *)
-							&value[5]));
-		} else {
-			int j;
+		if (list->len == 7)
+			sdp_uuid16_create(&uuid, att_get_u16(&value[5]));
+		else
+			sdp_uuid128_create(&uuid, value + 5);
 
-			/* FIXME: pretty print 128-bit UUIDs */
-			for (j = 5; j < list->len; j++)
-				g_print("%02x ", value[j]);
-			g_print("\n");
-		}
+		sdp_uuid2strn(&uuid, uuidstr, MAX_LEN_UUID_STR);
+		g_print("uuid = %s\n", uuidstr);
 	}
 
 	att_data_list_free(list);
@@ -318,7 +375,7 @@ static gboolean characteristics(gpointer user_data)
 static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 							gpointer user_data)
 {
-	uint8_t value[ATT_MTU];
+	uint8_t value[ATT_MAX_MTU];
 	int i, vlen;
 
 	if (status != 0) {
@@ -340,12 +397,137 @@ done:
 		g_main_loop_quit(event_loop);
 }
 
+static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
+					guint16 plen, gpointer user_data)
+{
+	struct characteristic_data *char_data = user_data;
+	struct att_data_list *list;
+	int i;
+
+	if (status == ATT_ECODE_ATTR_NOT_FOUND &&
+					char_data->start != opt_start)
+		goto done;
+
+	if (status != 0) {
+		g_printerr("Read characteristics by UUID failed: %s\n",
+							att_ecode2str(status));
+		goto done;
+	}
+
+	list = dec_read_by_type_resp(pdu, plen);
+	if (list == NULL)
+		goto done;
+
+	for (i = 0; i < list->num; i++) {
+		uint8_t *value = list->data[i];
+		int j;
+
+		char_data->start = att_get_u16(value) + 1;
+
+		g_print("handle: 0x%04x \t value: ", att_get_u16(value));
+		value += 2;
+		for (j = 0; j < list->len - 2; j++, value++)
+			g_print("%02x ", *value);
+		g_print("\n");
+	}
+
+	att_data_list_free(list);
+
+	gatt_read_char_by_uuid(char_data->attrib, char_data->start,
+					char_data->end, opt_uuid,
+					char_read_by_uuid_cb,
+					char_data);
+
+	return;
+done:
+	g_free(char_data);
+	g_main_loop_quit(event_loop);
+}
+
 static gboolean characteristics_read(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
 
+	if (opt_uuid != NULL) {
+		struct characteristic_data *char_data;
+
+		char_data = g_new(struct characteristic_data, 1);
+		char_data->attrib = attrib;
+		char_data->start = opt_start;
+		char_data->end = opt_end;
+
+		gatt_read_char_by_uuid(attrib, opt_start, opt_end, opt_uuid,
+						char_read_by_uuid_cb, char_data);
+
+		return FALSE;
+	}
+
+	if (opt_handle <= 0) {
+		g_printerr("A valid handle is required\n");
+		g_main_loop_quit(event_loop);
+		return FALSE;
+	}
+
 	gatt_read_char(attrib, opt_handle, char_read_cb, attrib);
 
+	return FALSE;
+}
+
+static size_t attr_data_from_string(const char *str, uint8_t **data)
+{
+	char tmp[3];
+	size_t size, i;
+
+	size = strlen(str) / 2;
+	*data = g_try_malloc0(size);
+	if (*data == NULL)
+		return 0;
+
+	tmp[2] = '\0';
+	for (i = 0; i < size; i++) {
+		memcpy(tmp, str + (i * 2), 2);
+		(*data)[i] = (uint8_t) strtol(tmp, NULL, 16);
+	}
+
+	return size;
+}
+
+static void mainloop_quit(gpointer user_data)
+{
+	uint8_t *value = user_data;
+
+	g_free(value);
+	g_main_loop_quit(event_loop);
+}
+
+static gboolean characteristics_write(gpointer user_data)
+{
+	GAttrib *attrib = user_data;
+	uint8_t *value;
+	size_t len;
+
+	if (opt_handle <= 0) {
+		g_printerr("A valid handle is required\n");
+		goto error;
+	}
+
+	if (opt_value == NULL || opt_value[0] == '\0') {
+		g_printerr("A value is required\n");
+		goto error;
+	}
+
+	len = attr_data_from_string(opt_value, &value);
+	if (len == 0) {
+		g_printerr("Invalid value\n");
+		goto error;
+	}
+
+	gatt_write_cmd(attrib, opt_handle, value, len, mainloop_quit, value);
+
+	return FALSE;
+
+error:
+	g_main_loop_quit(event_loop);
 	return FALSE;
 }
 
@@ -373,11 +555,10 @@ static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		uuid_t uuid;
 
 		value = list->data[i];
-		handle = att_get_u16((uint16_t *) value);
+		handle = att_get_u16(value);
 
 		if (format == 0x01)
-			sdp_uuid16_create(&uuid, att_get_u16((uint16_t *)
-								&value[2]));
+			sdp_uuid16_create(&uuid, att_get_u16(&value[2]));
 		else
 			sdp_uuid128_create(&uuid, &value[2]);
 
@@ -401,17 +582,38 @@ static gboolean characteristics_desc(gpointer user_data)
 	return FALSE;
 }
 
+static gboolean parse_uuid(const char *key, const char *value,
+				gpointer user_data, GError **error)
+{
+	if (!value)
+		return FALSE;
+
+	opt_uuid = g_try_malloc(sizeof(uuid_t));
+	if (opt_uuid == NULL)
+		return FALSE;
+
+	if (bt_string2uuid(opt_uuid, value) < 0)
+		return FALSE;
+
+	return TRUE;
+}
+
 static GOptionEntry primary_char_options[] = {
 	{ "start", 's' , 0, G_OPTION_ARG_INT, &opt_start,
 		"Starting handle(optional)", "0x0001" },
 	{ "end", 'e' , 0, G_OPTION_ARG_INT, &opt_end,
 		"Ending handle(optional)", "0xffff" },
+	{ "uuid", 'u', G_OPTION_FLAG_OPTIONAL_ARG, G_OPTION_ARG_CALLBACK,
+		parse_uuid, "UUID16 or UUID128(optional)", "0x1801"},
 	{ NULL },
 };
 
-static GOptionEntry char_read_options[] = {
+static GOptionEntry char_rw_options[] = {
 	{ "handle", 'a' , 0, G_OPTION_ARG_INT, &opt_handle,
-		"Read characteristic by handle(optional)", "0x0001" },
+		"Read/Write characteristic by handle(required)", "0x0001" },
+	{ "value", 'n' , 0, G_OPTION_ARG_STRING, &opt_value,
+		"Write characteristic value (required for write operation)",
+		"0x0001" },
 	{NULL},
 };
 
@@ -422,10 +624,14 @@ static GOptionEntry gatt_options[] = {
 		"Characteristics Discovery", NULL },
 	{ "char-read", 0, 0, G_OPTION_ARG_NONE, &opt_char_read,
 		"Characteristics Value/Descriptor Read", NULL },
+	{ "char-write", 0, 0, G_OPTION_ARG_NONE, &opt_char_write,
+		"Characteristics Value Write", NULL },
 	{ "char-desc", 0, 0, G_OPTION_ARG_NONE, &opt_char_desc,
 		"Characteristics Descriptor Discovery", NULL },
 	{ "listen", 0, 0, G_OPTION_ARG_NONE, &opt_listen,
-		"Listen for notifications", NULL },
+		"Listen for notifications and indications", NULL },
+	{ "le", 0, 0, G_OPTION_ARG_NONE, &opt_le,
+		"Use Bluetooth Low Energy transport", NULL },
 	{ NULL },
 };
 
@@ -434,18 +640,23 @@ static GOptionEntry options[] = {
 		"Specify local adapter interface", "hciX" },
 	{ "device", 'b', 0, G_OPTION_ARG_STRING, &opt_dst,
 		"Specify remote Bluetooth address", "MAC" },
+	{ "mtu", 'm', 0, G_OPTION_ARG_INT, &opt_mtu,
+		"Specify the MTU size", "MTU" },
+	{ "psm", 'p', 0, G_OPTION_ARG_INT, &opt_psm,
+		"Specify the PSM for GATT/ATT over BR/EDR", "PSM" },
+	{ "sec-level", 'l', 0, G_OPTION_ARG_STRING, &opt_sec_level,
+		"Set security level. Default: low", "[low | medium | high]"},
 	{ NULL },
 };
 
 int main(int argc, char *argv[])
 {
 	GOptionContext *context;
-	GOptionGroup *gatt_group, *params_group, *char_read_group;
+	GOptionGroup *gatt_group, *params_group, *char_rw_group;
 	GError *gerr = NULL;
 	GAttrib *attrib;
 	GIOChannel *chan;
 	GSourceFunc callback;
-	int ret = 0;
 
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);
@@ -464,13 +675,14 @@ int main(int argc, char *argv[])
 	g_option_context_add_group(context, params_group);
 	g_option_group_add_entries(params_group, primary_char_options);
 
-	/* Characteristics value/descriptor read arguments */
-	char_read_group = g_option_group_new("char-read",
-		"Characteristics Value/Descriptor Read arguments",
-		"Show all Characteristics Value/Descriptor Read arguments",
+	/* Characteristics value/descriptor read/write arguments */
+	char_rw_group = g_option_group_new("char-read-write",
+		"Characteristics Value/Descriptor Read/Write arguments",
+		"Show all Characteristics Value/Descriptor Read/Write "
+		"arguments",
 		NULL, NULL);
-	g_option_context_add_group(context, char_read_group);
-	g_option_group_add_entries(char_read_group, char_read_options);
+	g_option_context_add_group(context, char_rw_group);
+	g_option_group_add_entries(char_rw_group, char_rw_options);
 
 	if (g_option_context_parse(context, &argc, &argv, &gerr) == FALSE) {
 		g_printerr("%s\n", gerr->message);
@@ -483,19 +695,21 @@ int main(int argc, char *argv[])
 		callback = characteristics;
 	else if (opt_char_read)
 		callback = characteristics_read;
+	else if (opt_char_write)
+		callback = characteristics_write;
 	else if (opt_char_desc)
 		callback = characteristics_desc;
 	else {
 		gchar *help = g_option_context_get_help(context, TRUE, NULL);
 		g_print("%s\n", help);
 		g_free(help);
-		ret = 1;
+		got_error = TRUE;
 		goto done;
 	}
 
-	chan = do_connect();
+	chan = do_connect(opt_le);
 	if (chan == NULL) {
-		ret = 1;
+		got_error = TRUE;
 		goto done;
 	}
 
@@ -510,8 +724,7 @@ int main(int argc, char *argv[])
 
 	g_main_loop_run(event_loop);
 
-	if (listen_watch)
-		g_attrib_unregister(attrib, listen_watch);
+	g_attrib_unregister_all(attrib);
 
 	g_main_loop_unref(event_loop);
 
@@ -522,6 +735,10 @@ done:
 	g_option_context_free(context);
 	g_free(opt_src);
 	g_free(opt_dst);
+	g_free(opt_uuid);
 
-	return ret;
+	if (got_error)
+		exit(EXIT_FAILURE);
+	else
+		exit(EXIT_SUCCESS);
 }

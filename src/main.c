@@ -39,12 +39,12 @@
 #include <sys/types.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 
 #include <glib.h>
 
 #include <dbus/dbus.h>
+
+#include <gdbus.h>
 
 #include "log.h"
 
@@ -52,7 +52,7 @@
 #include "sdpd.h"
 #include "attrib-server.h"
 #include "adapter.h"
-#include "dbus-hci.h"
+#include "event.h"
 #include "dbus-common.h"
 #include "agent.h"
 #include "manager.h"
@@ -61,7 +61,11 @@
 #include <cap-ng.h>
 #endif
 
+#define BLUEZ_NAME "org.bluez"
+
 #define LAST_ADAPTER_EXIT_TIMEOUT 30
+
+#define DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
 
 struct main_opts main_opts;
 
@@ -216,68 +220,17 @@ static void parse_config(GKeyFile *config)
 	else
 		main_opts.attrib_server = boolean;
 
+	boolean = g_key_file_get_boolean(config, "General",
+						"EnableLE", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.le = boolean;
+
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
 	main_opts.link_policy = HCI_LP_RSWITCH | HCI_LP_SNIFF |
 						HCI_LP_HOLD | HCI_LP_PARK;
-}
-
-/*
- * Device name expansion
- *   %d - device id
- */
-char *expand_name(char *dst, int size, char *str, int dev_id)
-{
-	register int sp, np, olen;
-	char *opt, buf[10];
-
-	if (!str || !dst)
-		return NULL;
-
-	sp = np = 0;
-	while (np < size - 1 && str[sp]) {
-		switch (str[sp]) {
-		case '%':
-			opt = NULL;
-
-			switch (str[sp+1]) {
-			case 'd':
-				sprintf(buf, "%d", dev_id);
-				opt = buf;
-				break;
-
-			case 'h':
-				opt = main_opts.host_name;
-				break;
-
-			case '%':
-				dst[np++] = str[sp++];
-				/* fall through */
-			default:
-				sp++;
-				continue;
-			}
-
-			if (opt) {
-				/* substitute */
-				olen = strlen(opt);
-				if (np + olen < size - 1)
-					memcpy(dst + np, opt, olen);
-				np += olen;
-			}
-			sp += 2;
-			continue;
-
-		case '\\':
-			sp++;
-			/* fall through */
-		default:
-			dst[np++] = str[sp++];
-			break;
-		}
-	}
-	dst[np] = '\0';
-	return dst;
 }
 
 static void init_defaults(void)
@@ -287,7 +240,7 @@ static void init_defaults(void)
 	main_opts.scan	= SCAN_PAGE;
 	main_opts.mode	= MODE_CONNECTABLE;
 	main_opts.name	= g_strdup("BlueZ");
-	main_opts.discovto	= HCID_DEFAULT_DISCOVERABLE_TIMEOUT;
+	main_opts.discovto	= DEFAULT_DISCOVERABLE_TIMEOUT;
 	main_opts.remember_powered = TRUE;
 	main_opts.reverse_sdp = TRUE;
 	main_opts.name_resolv = TRUE;
@@ -309,6 +262,8 @@ static void sig_debug(int sig)
 }
 
 static gchar *option_debug = NULL;
+static gchar *option_plugin = NULL;
+static gchar *option_noplugin = NULL;
 static gboolean option_detach = TRUE;
 static gboolean option_version = FALSE;
 static gboolean option_udev = FALSE;
@@ -343,6 +298,44 @@ void btd_stop_exit_timer(void)
 	last_adapter_timeout = 0;
 }
 
+static void disconnect_dbus(void)
+{
+	DBusConnection *conn = get_dbus_connection();
+
+	if (!conn || !dbus_connection_get_is_connected(conn))
+		return;
+
+	manager_cleanup(conn, "/");
+
+	set_dbus_connection(NULL);
+
+	dbus_connection_unref(conn);
+}
+
+static int connect_dbus(void)
+{
+	DBusConnection *conn;
+	DBusError err;
+
+	dbus_error_init(&err);
+
+	conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, BLUEZ_NAME, &err);
+	if (!conn) {
+		if (dbus_error_is_set(&err)) {
+			dbus_error_free(&err);
+			return -EIO;
+		}
+		return -EALREADY;
+	}
+
+	if (!manager_init(conn, "/"))
+		return -EIO;
+
+	set_dbus_connection(conn);
+
+	return 0;
+}
+
 static gboolean parse_debug(const char *key, const char *value,
 				gpointer user_data, GError **error)
 {
@@ -358,6 +351,10 @@ static GOptionEntry options[] = {
 	{ "debug", 'd', G_OPTION_FLAG_OPTIONAL_ARG,
 				G_OPTION_ARG_CALLBACK, parse_debug,
 				"Specify debug options to enable", "DEBUG" },
+	{ "plugin", 'p', 0, G_OPTION_ARG_STRING, &option_plugin,
+				"Specify plugins to load", "NAME,..," },
+	{ "noplugin", 'P', 0, G_OPTION_ARG_STRING, &option_noplugin,
+				"Specify plugins not to load", "NAME,..." },
 	{ "nodetach", 'n', G_OPTION_FLAG_REVERSE,
 				G_OPTION_ARG_NONE, &option_detach,
 				"Don't run as daemon in background" },
@@ -410,7 +407,7 @@ int main(int argc, char *argv[])
 		int err;
 
 		option_detach = TRUE;
-		err = hcid_dbus_init();
+		err = connect_dbus();
 		if (err < 0) {
 			if (err == -EALREADY)
 				exit(0);
@@ -448,7 +445,7 @@ int main(int argc, char *argv[])
 	agent_init();
 
 	if (option_udev == FALSE) {
-		if (hcid_dbus_init() < 0) {
+		if (connect_dbus() < 0) {
 			error("Unable to get on D-Bus");
 			exit(1);
 		}
@@ -470,7 +467,7 @@ int main(int argc, char *argv[])
 	 * the plugins might wanna expose some paths on the bus. However the
 	 * best order of how to init various subsystems of the Bluetooth
 	 * daemon needs to be re-worked. */
-	plugin_init(config);
+	plugin_init(config, option_plugin, option_noplugin);
 
 	event_loop = g_main_loop_new(NULL, FALSE);
 
@@ -485,9 +482,7 @@ int main(int argc, char *argv[])
 
 	g_main_loop_run(event_loop);
 
-	hcid_dbus_unregister();
-
-	hcid_dbus_exit();
+	disconnect_dbus();
 
 	rfkill_exit();
 

@@ -64,7 +64,7 @@
 #define ATT_OP_READ_BY_GROUP_RESP	0x11
 #define ATT_OP_WRITE_REQ		0x12
 #define ATT_OP_WRITE_RESP		0x13
-#define ATT_OP_WRITE_CMD		0x14
+#define ATT_OP_WRITE_CMD		0x52
 #define ATT_OP_PREP_WRITE_REQ		0x16
 #define ATT_OP_PREP_WRITE_RESP		0x17
 #define ATT_OP_EXEC_WRITE_REQ		0x18
@@ -72,7 +72,7 @@
 #define ATT_OP_HANDLE_NOTIFY		0x1B
 #define ATT_OP_HANDLE_IND		0x1D
 #define ATT_OP_HANDLE_CNF		0x1E
-#define ATT_OP_SIGNED_WRITE_CMD		0x94
+#define ATT_OP_SIGNED_WRITE_CMD		0xD2
 
 /* Error codes for Error response PDU */
 #define ATT_ECODE_INVALID_HANDLE		0x01
@@ -106,7 +106,8 @@
 #define ATT_CHAR_PROPER_EXT_PROPER		0x80
 
 
-#define ATT_MTU					256
+#define ATT_MAX_MTU				256
+#define ATT_DEFAULT_MTU				23
 
 struct attribute {
 	uint16_t handle;
@@ -121,22 +122,27 @@ struct att_data_list {
 	uint8_t **data;
 };
 
+struct att_range {
+	uint16_t start;
+	uint16_t end;
+};
+
 /* These functions do byte conversion */
-static inline uint8_t att_get_u8(void *ptr)
+static inline uint8_t att_get_u8(const void *ptr)
 {
-	uint8_t *u8_ptr = ptr;
+	const uint8_t *u8_ptr = ptr;
 	return bt_get_unaligned(u8_ptr);
 }
 
-static inline uint16_t att_get_u16(void *ptr)
+static inline uint16_t att_get_u16(const void *ptr)
 {
-	uint16_t *u16_ptr = ptr;
+	const uint16_t *u16_ptr = ptr;
 	return btohs(bt_get_unaligned(u16_ptr));
 }
 
-static inline uint32_t att_get_u32(void *ptr)
+static inline uint32_t att_get_u32(const void *ptr)
 {
-	uint32_t *u32_ptr = ptr;
+	const uint32_t *u32_ptr = ptr;
 	return btohl(bt_get_unaligned(u32_ptr));
 }
 
@@ -164,7 +170,11 @@ uint16_t dec_read_by_grp_req(const uint8_t *pdu, int len, uint16_t *start,
 						uint16_t *end, uuid_t *uuid);
 uint16_t enc_read_by_grp_resp(struct att_data_list *list, uint8_t *pdu, int len);
 uint16_t enc_find_by_type_req(uint16_t start, uint16_t end, uuid_t *uuid,
-							uint8_t *pdu, int len);
+			const uint8_t *value, int vlen, uint8_t *pdu, int len);
+uint16_t dec_find_by_type_req(const uint8_t *pdu, int len, uint16_t *start,
+		uint16_t *end, uuid_t *uuid, uint8_t *value, int *vlen);
+uint16_t enc_find_by_type_resp(GSList *ranges, uint8_t *pdu, int len);
+GSList *dec_find_by_type_resp(const uint8_t *pdu, int len);
 struct att_data_list *dec_read_by_grp_resp(const uint8_t *pdu, int len);
 uint16_t enc_read_by_type_req(uint16_t start, uint16_t end, uuid_t *uuid,
 							uint8_t *pdu, int len);
@@ -172,9 +182,17 @@ uint16_t dec_read_by_type_req(const uint8_t *pdu, int len, uint16_t *start,
 						uint16_t *end, uuid_t *uuid);
 uint16_t enc_read_by_type_resp(struct att_data_list *list, uint8_t *pdu,
 								int len);
+uint16_t enc_write_cmd(uint16_t handle, const uint8_t *value, int vlen,
+							uint8_t *pdu, int len);
+uint16_t dec_write_cmd(const uint8_t *pdu, int len, uint16_t *handle,
+						uint8_t *value, int *vlen);
 struct att_data_list *dec_read_by_type_resp(const uint8_t *pdu, int len);
+uint16_t enc_write_req(uint16_t handle, const uint8_t *value, int vlen,
+							uint8_t *pdu, int len);
+uint16_t dec_write_req(const uint8_t *pdu, int len, uint16_t *handle,
+						uint8_t *value, int *vlen);
 uint16_t enc_read_req(uint16_t handle, uint8_t *pdu, int len);
-uint16_t dec_read_req(const uint8_t *pdu, uint16_t *handle);
+uint16_t dec_read_req(const uint8_t *pdu, int len, uint16_t *handle);
 uint16_t enc_read_resp(uint8_t *value, int vlen, uint8_t *pdu, int len);
 uint16_t dec_read_resp(const uint8_t *pdu, int len, uint8_t *value, int *vlen);
 uint16_t enc_error_resp(uint8_t opcode, uint16_t handle, uint8_t status,
@@ -187,3 +205,11 @@ uint16_t enc_find_info_resp(uint8_t format, struct att_data_list *list,
 struct att_data_list *dec_find_info_resp(const uint8_t *pdu, int len,
 							uint8_t *format);
 uint16_t enc_notification(struct attribute *a, uint8_t *pdu, int len);
+uint16_t enc_indication(struct attribute *a, uint8_t *pdu, int len);
+struct attribute *dec_indication(const uint8_t *pdu, int len);
+uint16_t enc_confirmation(uint8_t *pdu, int len);
+
+uint16_t enc_mtu_req(uint16_t mtu, uint8_t *pdu, int len);
+uint16_t dec_mtu_req(const uint8_t *pdu, int len, uint16_t *mtu);
+uint16_t enc_mtu_resp(uint16_t mtu, uint8_t *pdu, int len);
+uint16_t dec_mtu_resp(const uint8_t *pdu, int len, uint16_t *mtu);

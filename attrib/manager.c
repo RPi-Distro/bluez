@@ -43,43 +43,30 @@ static DBusConnection *connection;
 
 static int client_probe(struct btd_device *device, GSList *uuids)
 {
-	struct btd_adapter *adapter = device_get_adapter(device);
-	const char *path = device_get_path(device);
 	const sdp_record_t *rec;
-	sdp_list_t *list;
-	bdaddr_t sba, dba;
-	int psm;
-
-	/*
-	 * Entry point for BR/EDR GATT probe. LE scanning and primary service
-	 * search will be handled temporaly inside the gatt plugin. For the
-	 * final solution all LE operations should be moved to the "core",
-	 * otherwise it will not be possible serialize/schedule BR/EDR device
-	 * discovery and LE scanning.
-	 */
+	int psm = -1;
 
 	rec = btd_device_get_record(device, GATT_UUID);
-	if (!rec)
-		return -1;
+	if (rec) {
+		sdp_list_t *list;
+		if (sdp_get_access_protos(rec, &list) < 0)
+			return -1;
 
-	if (sdp_get_access_protos(rec, &list) < 0)
-		return -1;
+		psm = sdp_get_proto_port(list, L2CAP_UUID);
 
-	psm = sdp_get_proto_port(list, L2CAP_UUID);
-	if (psm < 0)
-		return -1;
+		sdp_list_foreach(list, (sdp_list_func_t) sdp_list_free, NULL);
+		sdp_list_free(list, NULL);
 
-	adapter_get_address(adapter, &sba);
-	device_get_address(device, &dba);
+		if (psm < 0)
+			return -1;
+	}
 
-	return attrib_client_register(&sba, &dba, path, psm);
+	return attrib_client_register(device, psm);
 }
 
 static void client_remove(struct btd_device *device)
 {
-	const char *path = device_get_path(device);
-
-	attrib_client_unregister(path);
+	attrib_client_unregister(device);
 }
 
 static struct btd_device_driver client_driver = {
@@ -109,6 +96,7 @@ void attrib_manager_exit(void)
 {
 	btd_unregister_device_driver(&client_driver);
 
+	server_example_exit();
 	attrib_client_exit();
 
 	dbus_connection_unref(connection);

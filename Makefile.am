@@ -42,7 +42,7 @@ plugindir = $(libdir)/bluetooth/plugins
 plugin_LTLIBRARIES =
 
 
-lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h \
+lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 			lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h \
 				lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 13:0:10
+lib_libbluetooth_la_LDFLAGS = -version-info 13:3:10
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -65,6 +65,7 @@ noinst_LTLIBRARIES += sbc/libsbc.la
 sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 			sbc/sbc_primitives.h sbc/sbc_primitives.c \
 			sbc/sbc_primitives_mmx.h sbc/sbc_primitives_mmx.c \
+			sbc/sbc_primitives_iwmmxt.h sbc/sbc_primitives_iwmmxt.c \
 			sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c \
 			sbc/sbc_primitives_armv6.h sbc/sbc_primitives_armv6.c
 
@@ -79,9 +80,6 @@ sbc_sbcdec_LDADD = sbc/libsbc.la
 sbc_sbcenc_SOURCES = sbc/sbcenc.c sbc/formats.h
 sbc_sbcenc_LDADD = sbc/libsbc.la
 
-attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
-		attrib/gattrib.h attrib/gattrib.c
-
 if SNDFILE
 noinst_PROGRAMS += sbc/sbctester
 
@@ -90,21 +88,24 @@ sbc_sbctest_CFLAGS = @SNDFILE_CFLAGS@
 endif
 endif
 
+attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
+		attrib/gattrib.h attrib/gattrib.c
 
-if NETLINK
-plugin_LTLIBRARIES += plugins/netlink.la
+gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
+					gdbus/object.c gdbus/polkit.c
 
-plugins_netlink_la_LIBADD = @NETLINK_LIBS@
-plugins_netlink_la_LDFLAGS = -module -avoid-version -no-undefined
-plugins_netlink_la_CFLAGS = -fvisibility=hidden @DBUS_CFLAGS@ \
-					@GLIB_CFLAGS@ @NETLINK_CFLAGS@
-endif
-
-gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/object.c gdbus/watch.c
+btio_sources = btio/btio.h btio/btio.c
 
 builtin_modules =
 builtin_sources =
 builtin_nodist =
+mcap_sources =
+
+if MCAP
+mcap_sources += health/mcap_lib.h health/mcap_internal.h \
+		health/mcap.h health/mcap.c \
+		health/mcap_sync.c
+endif
 
 if PNATPLUGIN
 builtin_modules += pnat
@@ -130,7 +131,9 @@ builtin_sources += audio/main.c \
 			audio/avdtp.h audio/avdtp.c \
 			audio/ipc.h audio/ipc.c \
 			audio/unix.h audio/unix.c \
-			audio/telephony.h
+			audio/media.h audio/media.c \
+			audio/transport.h audio/transport.c \
+			audio/telephony.h audio/a2dp-codecs.h
 builtin_nodist += audio/telephony.c
 
 noinst_LIBRARIES = audio/libtelephony.a
@@ -175,7 +178,8 @@ if ATTRIBPLUGIN
 bin_PROGRAMS += attrib/gatttool
 
 attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
-			  attrib/gattrib.c
+			  attrib/gattrib.c btio/btio.c \
+			  src/glib-helper.h src/glib-helper.c
 attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@
 
 builtin_modules += attrib
@@ -185,11 +189,26 @@ builtin_sources += attrib/main.c \
 		attrib/example.h attrib/example.c
 endif
 
-builtin_modules += hciops
-builtin_sources += plugins/hciops.c
+if HEALTHPLUGIN
+builtin_modules += health
+builtin_sources += health/hdp_main.c health/hdp_types.h \
+			health/hdp_manager.h health/hdp_manager.c \
+			health/hdp.h health/hdp.c \
+			health/hdp_util.h health/hdp_util.c
+endif
 
+builtin_modules += hciops mgmtops
+builtin_sources += plugins/hciops.c plugins/mgmtops.c
+
+if HAL
 builtin_modules += hal
 builtin_sources += plugins/hal.c
+else
+builtin_modules += formfactor
+builtin_sources += plugins/formfactor.c
+endif
+
+EXTRA_DIST += plugins/hal.c plugins/formfactor.c
 
 builtin_modules += storage
 builtin_sources += plugins/storage.c
@@ -202,13 +221,14 @@ endif
 sbin_PROGRAMS += src/bluetoothd
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
-			$(attrib_sources) \
+			$(attrib_sources) $(btio_sources) \
+			$(mcap_sources) src/bluetooth.ver \
 			src/main.c src/log.h src/log.c \
-			src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
+			src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
 			src/attrib-server.h src/attrib-server.c \
-			src/sdp-xml.h src/sdp-xml.c src/btio.h src/btio.c \
+			src/sdp-xml.h src/sdp-xml.c \
 			src/textfile.h src/textfile.c \
 			src/glib-helper.h src/glib-helper.c \
 			src/oui.h src/oui.c src/uinput.h src/ppoll.h \
@@ -220,18 +240,19 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/adapter.h src/adapter.c \
 			src/device.h src/device.c \
 			src/dbus-common.c src/dbus-common.h \
-			src/dbus-hci.h src/dbus-hci.c
+			src/event.h src/event.c
 src_bluetoothd_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @DBUS_LIBS@ \
-							@CAPNG_LIBS@ -ldl
+							@CAPNG_LIBS@ -ldl -lrt
 src_bluetoothd_LDFLAGS = -Wl,--export-dynamic \
-					-Wl,--version-script=src/bluetooth.ver
-src_bluetoothd_DEPENDENCIES = src/bluetooth.ver lib/libbluetooth.la
+				-Wl,--version-script=$(srcdir)/src/bluetooth.ver
+
+src_bluetoothd_DEPENDENCIES = lib/libbluetooth.la
 
 builtin_files = src/builtin.h $(builtin_nodist)
 
 nodist_src_bluetoothd_SOURCES = $(builtin_files)
 
-CLEANFILES += src/bluetooth.ver src/bluetooth.exp $(builtin_files)
+CLEANFILES += $(builtin_files)
 
 man_MANS = src/bluetoothd.8
 
@@ -290,9 +311,9 @@ audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
 				audio/rtp.h audio/ipc.h audio/ipc.c
 audio_libgstbluetooth_la_LDFLAGS = -module -avoid-version
 audio_libgstbluetooth_la_LIBADD = sbc/libsbc.la lib/libbluetooth.la \
-				@GSTREAMER_LIBS@ -lgstaudio-0.10 -lgstrtp-0.10
+				@DBUS_LIBS@ @GSTREAMER_LIBS@ -lgstaudio-0.10 -lgstrtp-0.10
 audio_libgstbluetooth_la_CFLAGS = -fvisibility=hidden -fno-strict-aliasing \
-						$(AM_CFLAGS) @GSTREAMER_CFLAGS@
+						$(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
 endif
 endif
 
@@ -342,8 +363,11 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@ \
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
-			-I$(srcdir)/attrib
+			-I$(srcdir)/attrib -I$(srcdir)/btio
 
+if MCAP
+INCLUDES += -I$(builddir)/health
+endif
 
 pkgconfigdir = $(libdir)/pkgconfig
 
@@ -362,18 +386,6 @@ src/plugin.$(OBJEXT): src/builtin.h
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
-src/bluetooth.exp: $(src_bluetoothd_OBJECTS)
-	$(AM_V_GEN)$(NM) $^ | $(AWK) '{ print $$3 }' | sort -u | \
-				$(EGREP) -e '^btd_' -e '^g_dbus_' > $@
-	$(AM_V_at)echo -e "info" >> $@
-	$(AM_V_at)echo -e "error" >> $@
-	$(AM_V_at)echo -e "debug" >> $@
-
-src/bluetooth.ver: src/bluetooth.exp
-	$(AM_V_at)echo "{ global:" > $@
-	$(AM_V_GEN)$(SED) -e "s/\(.*\)/\1;/" $< >> $@
-	$(AM_V_at)echo "local: *; };" >> $@
-
 audio/telephony.c: audio/@TELEPHONY_DRIVER@
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
 
@@ -386,5 +398,5 @@ lib/bluetooth/%.h: lib/%.h
 	$(AM_V_at)$(MKDIR_P) lib/bluetooth
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
 
-clean-local: lib/bluetooth
-	@$(RM) -r $<
+clean-local:
+	$(RM) -r lib/bluetooth
