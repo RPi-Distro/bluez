@@ -149,6 +149,10 @@ Bluetooth Core HAL (ID 1)
 
 Android HAL name: "bluetooth" (BT_HARDWARE_MODULE_ID)
 
+	Service modes: 0x00 = Enable BR/EDR/LE if supported (default)
+	               0x01 = Enable BR/EDR only
+	               0x02 = Enable LE only
+
 Commands and responses:
 
 	Opcode 0x00 - Error response
@@ -1125,28 +1129,37 @@ Commands and responses:
 
 	Opcode 0x01 - Register Application command/response
 
-		Command parameters: Application name (string)
-		                    Provider name (string)
-		                    Service name (string)
-		                    Service description (string)
-		                    Number of MDEP (1 octet)
-		                    MDEP Role # (1 octet)
-		                    Data type # (1 octet)
-		                    Channel type # (1 octet)
-		                    MDEP description # (string)
-		                    ...
+		Command parameters: Number of MDEP (1 octet)
+		                    Application name offset (2 octets)
+		                    Provider name offset (2 octets)
+		                    Service name offset (2 octets)
+		                    Service description offset (2 octets)
+		                    Data length (2 octets)
+		                    Data (data length)
 		Response parameters: Application ID (2 octets)
+
+		Strings are null terminated.
+		In case of an error, the error response will be returned.
+
+	Opcode 0x02 - Register Application MDEP data command/response
+
+		Command parameters: MDEP Role (1 octet)
+		                    Data type (1 octet)
+		                    Channel type (1 octet)
+		                    MDEP description length (2 octets)
+		                    MDEP description (MDEP desciption length)
+		Response parameters: <none>
 
 		In case of an error, the error response will be returned.
 
-	Opcode 0x02 - Unregister Application command/response
+	Opcode 0x03 - Unregister Application command/response
 
 		Command parameters: Application ID (2 octets)
 		Response parameters: <none>
 
 		In case of an error, the error response will be returned.
 
-	Opcode 0x03 - Connect Channel command/response
+	Opcode 0x04 - Connect Channel command/response
 
 		Command parameters: Application ID (2 octets)
 		                    Remote address (6 octets)
@@ -1155,7 +1168,7 @@ Commands and responses:
 
 		In case of an error, the error response will be returned.
 
-	Opcode 0x04 - Destroy Channel command/response
+	Opcode 0x05 - Destroy Channel command/response
 
 		Command parameters: Channel ID (2 octets)
 		Response parameters: <none>
@@ -1425,6 +1438,22 @@ Bluetooth GATT HAL (ID 9)
 
 Android HAL name: "gatt" (BT_PROFILE_GATT_ID)
 
+Structures:
+
+	GATT Service ID: UUID (16 octets)
+	                 Instance ID (1 octet)
+	                 Is Primary (1 octet)
+
+	GATT Included Service ID: UUID (16 octets)
+	                          Instance ID (1 octet)
+	                          Is Primary (1 octet)
+
+	GATT Characteristic ID: UUID (16 octets)
+	                        Instance ID (1 octet)
+
+	GATT Descriptor ID: UUID (16 octets)
+	                    Instance ID (1 octet)
+
 Commands and responses:
 
 	Opcode 0x00 - Error response
@@ -1501,28 +1530,24 @@ Commands and responses:
 	Opcode 0x08 - Search Service command/response
 
 		Command parameters: Connection ID (4 octets)
-		                    Number of UUID Filters (1 octet)
-		                    UUID Filter # (16 octets)
-		                    ...
+		                    Filtered (1 octet)
+		                    Filter UUID (16 octets)
 		Response parameters: <none>
 
-		Valid Number of UUID Filters: 0x00
-		                              0x01
+		Filter UUID shall only be present when Filtered is non-zero.
 
 		In case of an error, the error response will be returned.
 
 	Opcode 0x09 - Get Included Service command/response
 
 		Command parameters: Connection ID (4 octets)
-		                    Number of GATT Service ID Elements (1 octet)
-		                    GATT Service ID # UUID (16 octets)
-		                    GATT Service ID # Instance ID (1 octet)
-		                    GATT Service ID # Is Primary (1 octet)
+		                    GATT Service ID (18 octets)
+		                    Continuation (1 octet)
+		                    GATT Included Service ID (18 octets)
 		                    ...
 		Response parameters: <none>
 
-		Valid Number of GATT Service ID Elements: 0x01
-		                                          0x02
+		GATT Included Service ID shall only be present when Continuation is non-zero.
 
 		In case of an error, the error response will be returned.
 
@@ -1530,18 +1555,12 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    Number of GATT ID Elements (1 octet)
-		                    GATT ID # UUID (16 octets)
-		                    GATT ID # Instance ID (1 octet)
+		                    Continuation (1 octet)
+		                    GATT Characteristic ID (17 octets)
 		                    ...
 		Response parameters: <none>
 
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid Number of GATT ID Elements: 0x00
-		                                  0x01
+		GATT Characteristic ID shall only be present when Continuation is non-zero.
 
 		In case of an error, the error response will be returned.
 
@@ -1549,18 +1568,13 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    Number of GATT ID Elements (1 octet)
-		                    GATT ID # UUID (16 octets)
-		                    GATT ID # Instance ID (1 octet)
+		                    GATT Characteristic ID (17 octets)
+		                    Continuation (1 octet)
+		                    GATT Descriptor ID (17 octets)
 		                    ...
 		Response parameters: <none>
 
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid Number of GATT ID Elements: 0x01
-		                                  0x02
+		GATT Descriptor ID shall only be present when Continuation is non-zero.
 
 		In case of an error, the error response will be returned.
 
@@ -1568,16 +1582,9 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
 		                    Authorization (4 octets)
 		Response parameters: <none>
-
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
 
 		In case of an error, the error response will be returned.
 
@@ -1585,19 +1592,17 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
 		                    Write Type (4 octets)
 		                    Length (4 octets)
 		                    Authorization Req. (4 octets)
 		                    Value (variable)
 		Response parameters: <none>
 
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
+		Valid Write Type: 0x01 = No response
+		                  0x02 = Default
+		                  0x03 = Prepare
+		                  0x04 = Signed
 
 		In case of an error, the error response will be returned.
 
@@ -1605,20 +1610,10 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
-		                    Descr. GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
+		                    GATT Descriptor ID (17 octets)
 		                    Authorization Req. (4 octets)
 		Response parameters: <none>
-
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
-
-		Valid Descr. GATT ID: UUID (16 octets)
-		                      Instance ID (1 octet)
 
 		In case of an error, the error response will be returned.
 
@@ -1626,23 +1621,18 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
-		                    Descr. GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
+		                    GATT Descriptor ID (17 octets)
 		                    Write Type (4 octets)
 		                    Length (4 octets)
 		                    Authorization Req. (4 octets)
 		                    Value (variable)
 		Response parameters: <none>
 
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
-
-		Valid Descr. GATT ID: UUID (16 octets)
-		                      Instance ID (1 octet)
+		Valid Write Type: 0x01 = No response
+		                  0x02 = Default
+		                  0x03 = Prepare
+		                  0x04 = Signed
 
 		In case of an error, the error response will be returned.
 
@@ -1659,15 +1649,8 @@ Commands and responses:
 		Command parameters: Client Interface (4 octets)
 		                    Remote address (6 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
 		Response parameters: <none>
-
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
 
 		In case of an error, the error response will be returned.
 
@@ -1676,15 +1659,8 @@ Commands and responses:
 		Command parameters: Client Interface (4 octets)
 		                    Remote address (6 octets)
 		                    GATT Service ID (18 octets)
-		                    GATT ID (17 octets)
+		                    GATT Characteristic ID (17 octets)
 		Response parameters: <none>
-
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
-
-		Valid GATT ID: UUID (16 octets)
-		               Instance ID (1 octet)
 
 		In case of an error, the error response will be returned.
 
@@ -1852,6 +1828,9 @@ Commands and responses:
 
 		Command parameters: Connection ID (4 octets)
 		                    Transaction ID (4 octets)
+		                    Handle (2 octets)
+		                    Offset (2 octets)
+		                    Auth Request (1 octect)
 		                    Status (4 octets)
 		                    GATT Response (4 octets)
 		Response parameters: <none>
@@ -1906,44 +1885,28 @@ Notifications:
 		Notification parameters: Connection ID (4 octets)
 		                         GATT Service ID (18 octets)
 
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octets)
-		                       Is Primary (1 octet)
-
 	Opcode 0x87 - Get Characteristic notification
 
 		Notification parameters: Connection ID (4 octets)
 		                         Status (4 octets)
 		                         GATT Service ID (18 octets)
-		                         GATT Char. ID (17 octets)
+		                         GATT Characteristic ID (17 octets)
 		                         Char Prop. (4 octets)
-
-		Valid GATT Service: As described in Search Result
-
-		Valid GATT Char. ID: UUID (16 octets)
-		                     Instance ID (1 octet)
 
 	Opcode 0x88 - Get Descriptor notification
 
 		Notification parameters: Connection ID (4 octets)
 		                         Status (4 octets)
 		                         GATT Service ID (18 octets)
-		                         GATT Char. ID (17 octets)
-		                         GATT Descr. ID (17 octets)
-
-		Valid GATT Service & Char. ID: As described in Get Characteristic
-
-		Valid GATT Descr. ID: UUID (16 octets)
-		                      Instance ID (1 octet)
+		                         GATT Characteristic ID (17 octets)
+		                         GATT Descriptor ID (17 octets)
 
 	Opcode 0x89 - Get Included Service notification
 
 		Notification parameters: Connection ID (4 octets)
 		                         Status (4 octets)
 		                         GATT Service ID (18 octets)
-		                         GATT Incl. Service ID (18 octets)
-
-		Valid GATT Service & Incl. Service ID: As described in Search Result
+		                         GATT Included Service ID (18 octets)
 
 	Opcode 0x8a - Register For Notification notification
 
@@ -1951,25 +1914,17 @@ Notifications:
 		                         Registered (4 octets)
 		                         Status (4 octets)
 		                         GATT Service ID (18 octets)
-		                         GATT Char. ID (17 octets)
-
-		Valid GATT Service ID: As described in Get Characteristic
-
-		Valid GATT Char. ID: As described in Get Characteristic
+		                         GATT Characteristic ID (17 octets)
 
 	Opcode 0x8b - Notify notification
 
 		Notification parameters: Connection ID (4 octets)
 		                         Address (6 octets)
 		                         GATT Service ID (18 octets)
-		                         GATT Char. ID (17 octets)
+		                         GATT Characteristic ID (17 octets)
 		                         Is Notify (1 octet)
 		                         Length (2 octets)
 		                         Value (variable)
-
-		Valid GATT Service ID: As described in Get Characteristic
-
-		Valid GATT Char. ID: As described in Get Characteristic
 
 	Opcode 0x8c - Read Characteristic notification
 
@@ -1978,16 +1933,12 @@ Notifications:
 		                         GATT Read Parameters (variable)
 
 		Valid GATT Read Parameters: GATT Service ID (18 octets)
-		                            GATT Char. ID (17 octets)
-		                            GATT Descr. ID (17 octets)
+		                            GATT Characteristic ID (17 octets)
+		                            GATT Descriptor ID (17 octets)
 		                            Value Type (4 octets)
 		                            Status (1 octet)
 		                            Length (2 octets)
 		                            Value (variable)
-
-		Valid GATT Service ID: As described in Get Characteristic
-
-		Valid GATT Char. & Decr. ID: As described in Get Descriptor
 
 	Opcode 0x8d - Write Characteristic notification
 
@@ -1999,10 +1950,6 @@ Notifications:
 		                             GATT Characteristic ID (17 octets)
 		                             GATT Description ID (17 octets)
 		                             Status (1 octet)
-
-		Valid GATT Service ID: As described in Get Descriptor
-
-		Valid GATT Char. & Decr. ID: As described in Get Descriptor
 
 	Opcode 0x8e - Read Descriptor notification
 
@@ -2056,10 +2003,6 @@ Notifications:
 		                         Server (4 octets)
 		                         GATT Service ID (18 octets)
 		                         Service Handle (4 octets)
-
-		Valid GATT Service ID: UUID (16 octets)
-		                       Instance ID (1 octet)
-		                       Is Primary (1 octet)
 
 	Opcode 0x96 - Included Service Added notification
 

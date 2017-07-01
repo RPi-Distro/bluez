@@ -331,36 +331,6 @@ done:
 			HAL_OP_AVRCP_REGISTER_NOTIFICATION, status);
 }
 
-static gboolean set_volume_rsp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
-					uint8_t *operands, size_t operand_count,
-					void *user_data)
-{
-	struct hal_ev_avrcp_volume_changed ev;
-	uint8_t *params;
-
-	if (code != AVC_CTYPE_ACCEPTED) {
-		ev.volume = 0;
-		ev.type = code;
-		goto done;
-	}
-
-	if (operands == NULL || operand_count < 7)
-		return FALSE;
-
-	params = &operands[7];
-
-	ev.volume = params[0] & 0x7F;
-	ev.type = code;
-
-done:
-	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
-					HAL_EV_AVRCP_VOLUME_CHANGED,
-					sizeof(ev), &ev);
-
-	return FALSE;
-}
-
 static void handle_set_volume(const void *buf, uint16_t len)
 {
 	struct hal_cmd_avrcp_set_volume *cmd = (void *) buf;
@@ -376,13 +346,13 @@ static void handle_set_volume(const void *buf, uint16_t len)
 		goto done;
 	}
 
-	/* Peek the first device since the HAL cannot really address a specific
+	/*
+	 * Peek the first device since the HAL cannot really address a specific
 	 * device it might mean there could only be one connected.
 	 */
 	dev = devices->data;
 
-	ret = avrcp_set_volume(dev->session, cmd->value & 0x7f, set_volume_rsp,
-									dev);
+	ret = avrcp_set_volume(dev->session, cmd->value & 0x7f);
 	if (ret < 0) {
 		status = HAL_STATUS_FAILED;
 		goto done;
@@ -609,9 +579,11 @@ static int handle_get_capabilities_cmd(struct avrcp *session,
 
 	DBG("");
 
-	/* Android do not provide this info via HAL so the list most
+	/*
+	 * Android do not provide this info via HAL so the list most
 	 * be hardcoded according to what RegisterNotification can
-	 * actually handle */
+	 * actually handle
+	 */
 	avrcp_get_capabilities_rsp(session, transaction, sizeof(events),
 								events);
 
@@ -724,72 +696,87 @@ static const struct avrcp_control_ind control_ind = {
 	.register_notification = handle_register_notification_cmd,
 };
 
-static gboolean register_notification_rsp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
-					uint8_t *operands, size_t operand_count,
-					void *user_data)
+static bool handle_register_notification_rsp(struct avrcp *session, int err,
+						uint8_t code, uint8_t event,
+						uint8_t *params,
+						void *user_data)
 {
 	struct avrcp_device *dev = user_data;
 	struct hal_ev_avrcp_volume_changed ev;
-	uint8_t *params;
+
+	if (err < 0) {
+		error("AVRCP: %s", strerror(-err));
+		return false;
+	}
 
 	if (code != AVC_CTYPE_INTERIM && code != AVC_CTYPE_CHANGED)
-		return FALSE;
+		return false;
 
-	if (operands == NULL || operand_count < 7)
-		return FALSE;
-
-	params = &operands[7];
-
-	if (params == NULL || params[0] != AVRCP_EVENT_VOLUME_CHANGED)
-		return FALSE;
+	if (event != AVRCP_EVENT_VOLUME_CHANGED)
+		return false;
 
 	ev.type = code;
-	ev.volume = params[1] & 0x7F;
+	ev.volume = params[0] & 0x7f;
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
 					HAL_EV_AVRCP_VOLUME_CHANGED,
 					sizeof(ev), &ev);
 
 	if (code == AVC_CTYPE_INTERIM)
-		return TRUE;
+		return true;
 
-	avrcp_register_notification(dev->session, params[0], 0,
-					register_notification_rsp, dev);
-	return FALSE;
+	avrcp_register_notification(dev->session, event, 0);
+	return false;
 }
 
-static gboolean get_capabilities_rsp(struct avctp *conn,
-					uint8_t code, uint8_t subunit,
-					uint8_t *operands, size_t operand_count,
+static void handle_get_capabilities_rsp(struct avrcp *session, int err,
+					uint8_t number, uint8_t *events,
 					void *user_data)
 {
 	struct avrcp_device *dev = user_data;
-	uint8_t *params;
-	uint8_t count;
+	int i;
 
-	if (operands == NULL || operand_count < 7)
-		return FALSE;
-
-	params = &operands[7];
-
-	if (params == NULL || params[0] != CAP_EVENTS_SUPPORTED)
-		return FALSE;
-
-	for (count = params[1]; count > 0; count--) {
-		uint8_t event = params[1 + count];
-
-		if (event != AVRCP_EVENT_VOLUME_CHANGED)
-			continue;
-
-		avrcp_register_notification(dev->session, event, 0,
-						register_notification_rsp,
-						dev);
-		return FALSE;
+	if (err < 0) {
+		error("AVRCP: %s", strerror(-err));
+		return;
 	}
 
-	return FALSE;
+	for (i = 0; i < number; i++) {
+		if (events[i] != AVRCP_EVENT_VOLUME_CHANGED)
+			continue;
+
+		avrcp_register_notification(dev->session, events[i], 0);
+		break;
+	}
+
+	return;
 }
+
+static void handle_set_volume_rsp(struct avrcp *session, int err,
+						uint8_t value, void *user_data)
+{
+	struct hal_ev_avrcp_volume_changed ev;
+
+	if (err < 0) {
+		ev.volume = 0;
+		ev.type = AVC_CTYPE_REJECTED;
+		goto done;
+	}
+
+	ev.volume = value;
+	ev.type = AVC_CTYPE_ACCEPTED;
+
+done:
+	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
+					HAL_EV_AVRCP_VOLUME_CHANGED,
+					sizeof(ev), &ev);
+}
+
+static const struct avrcp_control_cfm control_cfm = {
+	.get_capabilities = handle_get_capabilities_rsp,
+	.register_notification = handle_register_notification_rsp,
+	.set_volume = handle_set_volume_rsp,
+};
 
 static int avrcp_device_add_session(struct avrcp_device *dev, int fd,
 						uint16_t imtu, uint16_t omtu)
@@ -804,7 +791,7 @@ static int avrcp_device_add_session(struct avrcp_device *dev, int fd,
 	avrcp_set_destroy_cb(dev->session, disconnect_cb, dev);
 	avrcp_set_passthrough_handlers(dev->session, passthrough_handlers,
 									dev);
-	avrcp_register_player(dev->session, &control_ind, NULL, dev);
+	avrcp_register_player(dev->session, &control_ind, &control_cfm, dev);
 
 	dev->queue = g_queue_new();
 
@@ -828,8 +815,7 @@ static int avrcp_device_add_session(struct avrcp_device *dev, int fd,
 
 	ev.features |= HAL_AVRCP_FEATURE_ABSOLUTE_VOLUME;
 
-	avrcp_get_capabilities(dev->session, CAP_EVENTS_SUPPORTED,
-						get_capabilities_rsp, dev);
+	avrcp_get_capabilities(dev->session, CAP_EVENTS_SUPPORTED);
 
 done:
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
@@ -972,11 +958,10 @@ static void confirm_cb(GIOChannel *chan, gpointer data)
 {
 	struct avrcp_device *dev;
 	char address[18];
-	bdaddr_t src, dst;
+	bdaddr_t dst;
 	GError *err = NULL;
 
 	bt_io_get(chan, &err,
-			BT_IO_OPT_SOURCE_BDADDR, &src,
 			BT_IO_OPT_DEST_BDADDR, &dst,
 			BT_IO_OPT_DEST, address,
 			BT_IO_OPT_INVALID);

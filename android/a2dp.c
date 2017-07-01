@@ -709,7 +709,7 @@ static void transport_connect_cb(GIOChannel *chan, GError *err,
 static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 {
 	struct a2dp_device *dev;
-	bdaddr_t src, dst;
+	bdaddr_t dst;
 	char address[18];
 	GError *gerr = NULL;
 	GSList *l;
@@ -720,7 +720,6 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	}
 
 	bt_io_get(chan, &gerr,
-			BT_IO_OPT_SOURCE_BDADDR, &src,
 			BT_IO_OPT_DEST_BDADDR, &dst,
 			BT_IO_OPT_INVALID);
 	if (gerr) {
@@ -1577,6 +1576,7 @@ bool bt_a2dp_register(struct ipc *ipc, const bdaddr_t *addr, uint8_t mode)
 				BT_IO_OPT_SOURCE_BDADDR, &adapter_addr,
 				BT_IO_OPT_PSM, L2CAP_PSM_AVDTP,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
+				BT_IO_OPT_MASTER, true,
 				BT_IO_OPT_INVALID);
 	if (!server) {
 		error("Failed to listen on AVDTP channel: %s", err->message);

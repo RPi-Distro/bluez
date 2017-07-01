@@ -1331,6 +1331,29 @@ static GSList *create_pending_list(struct btd_device *dev, const char *uuid)
 	return dev->pending;
 }
 
+int btd_device_connect_services(struct btd_device *dev, GSList *services)
+{
+	GSList *l;
+
+	if (dev->pending || dev->connect || dev->browse)
+		return -EBUSY;
+
+	if (!btd_adapter_get_powered(dev->adapter))
+		return -ENETDOWN;
+
+	if (!dev->bredr_state.svc_resolved)
+		return -ENOENT;
+
+	for (l = services; l; l = g_slist_next(l)) {
+		struct btd_service *service = l->data;
+
+		dev->pending = g_slist_append(dev->pending,
+						btd_service_ref(service));
+	}
+
+	return connect_next(dev);
+}
+
 static DBusMessage *connect_profiles(struct btd_device *dev, uint8_t bdaddr_type,
 					DBusMessage *msg, const char *uuid)
 {
@@ -1425,7 +1448,7 @@ static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 
 	if (dev->bredr_state.connected)
 		bdaddr_type = dev->bdaddr_type;
-	else if (dev->le_state.connected)
+	else if (dev->le_state.connected && dev->bredr)
 		bdaddr_type = BDADDR_BREDR;
 	else
 		bdaddr_type = select_conn_bearer(dev);
@@ -1922,12 +1945,10 @@ void device_add_connection(struct btd_device *dev, uint8_t bdaddr_type)
 	}
 
 	/* If this is the first connection over this bearer */
-	if (bdaddr_type == BDADDR_BREDR) {
-		dev->bredr = true;
-	} else {
-		dev->le = true;
-		dev->bdaddr_type = bdaddr_type;
-	}
+	if (bdaddr_type == BDADDR_BREDR)
+		device_set_bredr_support(dev);
+	else
+		device_set_le_support(dev, bdaddr_type);
 
 	state->connected = true;
 
@@ -2444,9 +2465,24 @@ void device_update_addr(struct btd_device *device, const bdaddr_t *bdaddr,
 						DEVICE_INTERFACE, "Address");
 }
 
-void device_set_bredr_support(struct btd_device *device, bool bredr)
+void device_set_bredr_support(struct btd_device *device)
 {
-	device->bredr = bredr;
+	if (device->bredr)
+		return;
+
+	device->bredr = true;
+	store_device_info(device);
+}
+
+void device_set_le_support(struct btd_device *device, uint8_t bdaddr_type)
+{
+	if (device->le)
+		return;
+
+	device->le = true;
+	device->bdaddr_type = bdaddr_type;
+
+	store_device_info(device);
 }
 
 void device_update_last_seen(struct btd_device *device, uint8_t bdaddr_type)
@@ -2662,16 +2698,36 @@ int device_bdaddr_cmp(gconstpointer a, gconstpointer b)
 	return bacmp(&device->bdaddr, bdaddr);
 }
 
+static bool addr_is_public(uint8_t addr_type)
+{
+	if (addr_type == BDADDR_BREDR || addr_type == BDADDR_LE_PUBLIC)
+		return true;
+
+	return false;
+}
+
 int device_addr_type_cmp(gconstpointer a, gconstpointer b)
 {
 	const struct btd_device *dev = a;
 	const struct device_addr_type *addr = b;
+	int cmp;
+
+	cmp = bacmp(&dev->bdaddr, &addr->bdaddr);
+
+	/*
+	 * Address matches and both old and new are public addresses
+	 * (doesn't matter whether LE or BR/EDR, then consider this a
+	 * match.
+	 */
+	if (!cmp && addr_is_public(addr->bdaddr_type) &&
+					addr_is_public(dev->bdaddr_type))
+		return 0;
 
 	if (addr->bdaddr_type == BDADDR_BREDR) {
 		if (!dev->bredr)
 			return -1;
 
-		return bacmp(&dev->bdaddr, &addr->bdaddr);
+		return cmp;
 	}
 
 	if (!dev->le)
@@ -2680,7 +2736,7 @@ int device_addr_type_cmp(gconstpointer a, gconstpointer b)
 	if (addr->bdaddr_type != dev->bdaddr_type)
 		return -1;
 
-	return bacmp(&dev->bdaddr, &addr->bdaddr);
+	return cmp;
 }
 
 static gboolean record_has_uuid(const sdp_record_t *rec,
@@ -4051,6 +4107,38 @@ void device_set_paired(struct btd_device *dev, uint8_t bdaddr_type)
 
 	g_dbus_emit_property_changed(dbus_conn, dev->path,
 						DEVICE_INTERFACE, "Paired");
+}
+
+void device_set_unpaired(struct btd_device *dev, uint8_t bdaddr_type)
+{
+	struct bearer_state *state = get_state(dev, bdaddr_type);
+
+	if (!state->paired)
+		return;
+
+	state->paired = false;
+
+	/*
+	 * If the other bearer state is still true we don't need to
+	 * send any property signals or remove device.
+	 */
+	if (dev->bredr_state.paired != dev->le_state.paired) {
+		/* TODO disconnect only unpaired bearer */
+		if (state->connected)
+			device_request_disconnect(dev, NULL);
+
+		return;
+	}
+
+	g_dbus_emit_property_changed(dbus_conn, dev->path,
+						DEVICE_INTERFACE, "Paired");
+
+	btd_device_set_temporary(dev, TRUE);
+
+	if (btd_device_is_connected(dev))
+		device_request_disconnect(dev, NULL);
+	else
+		btd_adapter_remove_device(dev->adapter, dev);
 }
 
 static void device_auth_req_free(struct btd_device *device)

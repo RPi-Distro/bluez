@@ -18,6 +18,7 @@ android_bluetoothd_SOURCES = android/main.c \
 				src/log.c \
 				android/hal-msg.h \
 				android/audio-msg.h \
+				android/sco-msg.h \
 				android/utils.h \
 				src/sdpd-database.c src/sdpd-server.c \
 				src/sdpd-service.c src/sdpd-request.c \
@@ -29,6 +30,7 @@ android_bluetoothd_SOURCES = android/main.c \
 				src/shared/mgmt.h src/shared/mgmt.c \
 				src/shared/ringbuf.h src/shared/ringbuf.c \
 				src/shared/hfp.h src/shared/hfp.c \
+				src/shared/gatt-db.h src/shared/gatt-db.c \
 				android/bluetooth.h android/bluetooth.c \
 				android/hidhost.h android/hidhost.c \
 				android/ipc-common.h \
@@ -43,6 +45,7 @@ android_bluetoothd_SOURCES = android/main.c \
 				android/handsfree.h android/handsfree.c \
 				android/gatt.h android/gatt.c \
 				android/health.h android/health.c \
+				android/mcap-lib.h android/mcap-lib.c \
 				attrib/att.c attrib/att.h \
 				attrib/gatt.c attrib/gatt.h \
 				attrib/gattrib.c attrib/gattrib.h \
@@ -104,8 +107,10 @@ android_haltest_SOURCES = android/client/haltest.c \
 				android/client/if-hf.c \
 				android/client/if-hh.c \
 				android/client/if-pan.c \
+				android/client/if-hl.c \
 				android/client/if-sock.c \
 				android/client/if-audio.c \
+				android/client/if-sco.c \
 				android/hardware/hardware.c \
 				android/hal-utils.h android/hal-utils.c
 
@@ -166,6 +171,25 @@ android_audio_a2dp_default_la_SOURCES = android/audio-msg.h \
 					android/hardware/hardware.h \
 					android/system/audio.h
 
+android_audio_sco_default_la_SOURCES = android/hal-log.h \
+					android/sco-msg.h \
+					android/hal-sco.c \
+					android/hardware/audio.h \
+					android/hardware/audio_effect.h \
+					android/hardware/hardware.h \
+					android/audio_utils/resampler.c \
+					android/audio_utils/resampler.h \
+					android/system/audio.h
+
+android_audio_sco_default_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/android
+
+android_audio_sco_default_la_LIBADD = @SPEEXDSP_LIBS@
+
+android_audio_sco_default_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
+					-no-undefined -lrt
+
+plugin_LTLIBRARIES += android/audio.sco.default.la
+
 unit_tests += android/test-ipc
 
 android_test_ipc_SOURCES = android/test-ipc.c \
@@ -190,6 +214,9 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/init.bluetooth.rc \
 				android/hal-ipc-api.txt \
 				android/audio-ipc-api.txt \
+				android/pics-rfcomm.txt \
+				android/pics-spp.txt \
+				android/pics-sdp.txt \
 				android/pics-l2cap.txt \
 				android/pics-gap.txt \
 				android/pics-did.txt \
@@ -204,6 +231,11 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pics-hsp.txt \
 				android/pics-hfp.txt \
 				android/pics-gatt.txt \
+				android/pics-mcap.txt \
+				android/pics-hdp.txt \
+				android/pics-iopt.txt \
+				android/pics-sm.txt \
+				android/pics-mps.txt \
 				android/pixit-l2cap.txt \
 				android/pixit-gap.txt \
 				android/pixit-did.txt \
@@ -218,6 +250,13 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pixit-hsp.txt \
 				android/pixit-hfp.txt \
 				android/pixit-gatt.txt \
+				android/pixit-mcap.txt \
+				android/pixit-hdp.txt \
+				android/pixit-iopt.txt \
+				android/pixit-sm.txt \
+				android/pixit-mps.txt \
+				android/bite-rfcomm.txt \
+				android/bite-spp.txt \
 				android/pts-l2cap.txt \
 				android/pts-gap.txt \
 				android/pts-did.txt \
@@ -230,4 +269,10 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pts-avctp.txt \
 				android/pts-pbap.txt \
 				android/pts-hfp.txt \
-				android/pts-hsp.txt
+				android/pts-gatt.txt \
+				android/pts-hsp.txt \
+				android/pts-iopt.txt \
+				android/pts-hdp.txt \
+				android/pts-mcap.txt \
+				android/pts-mps.txt \
+				android/pts-sm.txt

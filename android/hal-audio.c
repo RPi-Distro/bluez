@@ -45,6 +45,11 @@
 
 #define MAX_FRAMES_IN_PAYLOAD 15
 
+#define MAX_DELAY	100000 /* 100ms */
+
+#define SBC_QUALITY_MIN_BITPOOL	33
+#define SBC_QUALITY_STEP	5
+
 static const uint8_t a2dp_src_uuid[] = {
 		0x00, 0x00, 0x11, 0x0a, 0x00, 0x00, 0x10, 0x00,
 		0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb };
@@ -126,6 +131,8 @@ struct sbc_data {
 
 	sbc_t enc;
 
+	uint16_t payload_len;
+
 	size_t in_frame_len;
 	size_t in_buf_size;
 
@@ -134,18 +141,6 @@ struct sbc_data {
 	unsigned frame_duration;
 	unsigned frames_per_packet;
 };
-
-static inline void timespec_diff(struct timespec *a, struct timespec *b,
-							struct timespec *res)
-{
-	res->tv_sec = a->tv_sec - b->tv_sec;
-	res->tv_nsec = a->tv_nsec - b->tv_nsec;
-
-	if (res->tv_nsec < 0) {
-		res->tv_sec--;
-		res->tv_nsec += 1000000000; /* 1sec */
-	}
-}
 
 static void timespec_add(struct timespec *base, uint64_t time_us,
 							struct timespec *res)
@@ -159,8 +154,30 @@ static void timespec_add(struct timespec *base, uint64_t time_us,
 	}
 }
 
+static void timespec_diff(struct timespec *a, struct timespec *b,
+							struct timespec *res)
+{
+	res->tv_sec = a->tv_sec - b->tv_sec;
+	res->tv_nsec = a->tv_nsec - b->tv_nsec;
+
+	if (res->tv_nsec < 0) {
+		res->tv_sec--;
+		res->tv_nsec += 1000000000; /* 1sec */
+	}
+}
+
+static uint64_t timespec_diff_us(struct timespec *a, struct timespec *b)
+{
+	struct timespec res;
+
+	timespec_diff(a, b, &res);
+
+	return res.tv_sec * 1000000ll + res.tv_nsec / 1000ll;
+}
+
 #if defined(ANDROID)
-/* Bionic does not have clock_nanosleep() prototype in time.h even though
+/*
+ * Bionic does not have clock_nanosleep() prototype in time.h even though
  * it provides its implementation.
  */
 extern int clock_nanosleep(clockid_t clock_id, int flags,
@@ -178,6 +195,10 @@ static size_t sbc_get_mediapacket_duration(void *codec_data);
 static ssize_t sbc_encode_mediapacket(void *codec_data, const uint8_t *buffer,
 					size_t len, struct media_packet *mp,
 					size_t mp_data_len, size_t *written);
+static bool sbc_update_qos(void *codec_data, uint8_t op);
+
+#define QOS_POLICY_DEFAULT	0x00
+#define QOS_POLICY_DECREASE	0x01
 
 struct audio_codec {
 	uint8_t type;
@@ -194,6 +215,7 @@ struct audio_codec {
 	ssize_t (*encode_mediapacket) (void *codec_data, const uint8_t *buffer,
 					size_t len, struct media_packet *mp,
 					size_t mp_data_len, size_t *written);
+	bool (*update_qos) (void *codec_data, uint8_t op);
 };
 
 static const struct audio_codec audio_codecs[] = {
@@ -208,6 +230,7 @@ static const struct audio_codec audio_codecs[] = {
 		.get_buffer_size = sbc_get_buffer_size,
 		.get_mediapacket_duration = sbc_get_mediapacket_duration,
 		.encode_mediapacket = sbc_encode_mediapacket,
+		.update_qos = sbc_update_qos,
 	}
 };
 
@@ -227,6 +250,8 @@ struct audio_endpoint {
 	uint16_t seq;
 	uint32_t samples;
 	struct timespec start;
+
+	bool resync;
 };
 
 static struct audio_endpoint audio_endpoints[MAX_AUDIO_ENDPOINTS];
@@ -408,13 +433,32 @@ static void sbc_init_encoder(struct sbc_data *sbc_data)
 			in->min_bitpool, in->max_bitpool);
 }
 
+static void sbc_codec_calculate(struct sbc_data *sbc_data)
+{
+	size_t in_frame_len;
+	size_t out_frame_len;
+	size_t num_frames;
+
+	in_frame_len = sbc_get_codesize(&sbc_data->enc);
+	out_frame_len = sbc_get_frame_length(&sbc_data->enc);
+	num_frames = sbc_data->payload_len / out_frame_len;
+
+	sbc_data->in_frame_len = in_frame_len;
+	sbc_data->in_buf_size = num_frames * in_frame_len;
+
+	sbc_data->out_frame_len = out_frame_len;
+
+	sbc_data->frame_duration = sbc_get_frame_duration(&sbc_data->enc);
+	sbc_data->frames_per_packet = num_frames;
+
+	DBG("in_frame_len=%zu out_frame_len=%zu frames_per_packet=%zu",
+				in_frame_len, out_frame_len, num_frames);
+}
+
 static int sbc_codec_init(struct audio_preset *preset, uint16_t payload_len,
 							void **codec_data)
 {
 	struct sbc_data *sbc_data;
-	size_t in_frame_len;
-	size_t out_frame_len;
-	size_t num_frames;
 
 	if (preset->len != sizeof(a2dp_sbc_t)) {
 		error("SBC: preset size mismatch");
@@ -429,20 +473,9 @@ static int sbc_codec_init(struct audio_preset *preset, uint16_t payload_len,
 
 	sbc_init_encoder(sbc_data);
 
-	in_frame_len = sbc_get_codesize(&sbc_data->enc);
-	out_frame_len = sbc_get_frame_length(&sbc_data->enc);
-	num_frames = payload_len / out_frame_len;
+	sbc_data->payload_len = payload_len;
 
-	sbc_data->in_frame_len = in_frame_len;
-	sbc_data->in_buf_size = num_frames * in_frame_len;
-
-	sbc_data->out_frame_len = out_frame_len;
-
-	sbc_data->frame_duration = sbc_get_frame_duration(&sbc_data->enc);
-	sbc_data->frames_per_packet = num_frames;
-
-	DBG("in_frame_len=%zu out_frame_len=%zu frames_per_packet=%zu",
-				in_frame_len, out_frame_len, num_frames);
+	sbc_codec_calculate(sbc_data);
 
 	*codec_data = sbc_data;
 
@@ -535,6 +568,38 @@ static ssize_t sbc_encode_mediapacket(void *codec_data, const uint8_t *buffer,
 	mp->payload.frame_count = frame_count;
 
 	return consumed;
+}
+
+static bool sbc_update_qos(void *codec_data, uint8_t op)
+{
+	struct sbc_data *sbc_data = (struct sbc_data *) codec_data;
+	uint8_t curr_bitpool = sbc_data->enc.bitpool;
+	uint8_t new_bitpool = curr_bitpool;
+
+	switch (op) {
+	case QOS_POLICY_DEFAULT:
+		new_bitpool = sbc_data->sbc.max_bitpool;
+		break;
+
+	case QOS_POLICY_DECREASE:
+		if (curr_bitpool > SBC_QUALITY_MIN_BITPOOL) {
+			new_bitpool = curr_bitpool - SBC_QUALITY_STEP;
+			if (new_bitpool < SBC_QUALITY_MIN_BITPOOL)
+				new_bitpool = SBC_QUALITY_MIN_BITPOOL;
+		}
+		break;
+	}
+
+	if (new_bitpool == curr_bitpool)
+		return false;
+
+	sbc_data->enc.bitpool = new_bitpool;
+
+	sbc_codec_calculate(sbc_data);
+
+	info("SBC: bitpool changed: %d -> %d", curr_bitpool, new_bitpool);
+
+	return true;
 }
 
 static int audio_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len,
@@ -842,26 +907,6 @@ static void unregister_endpoints(void)
 	}
 }
 
-static int set_blocking(int fd)
-{
-	int flags;
-
-	flags = fcntl(fd, F_GETFL, 0);
-	if (flags < 0) {
-		int err = -errno;
-		error("fcntl(F_GETFL): %s (%d)", strerror(-err), -err);
-		return err;
-	}
-
-	if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0) {
-		int err = -errno;
-		error("fcntl(F_SETFL): %s (%d)", strerror(-err), -err);
-		return err;
-	}
-
-	return 0;
-}
-
 static bool open_endpoint(struct audio_endpoint *ep,
 						struct audio_input_config *cfg)
 {
@@ -874,9 +919,6 @@ static bool open_endpoint(struct audio_endpoint *ep,
 	if (ipc_open_stream_cmd(ep->id, &mtu, &fd, &preset) !=
 							AUDIO_STATUS_SUCCESS)
 		return false;
-
-	if (set_blocking(fd) < 0)
-		goto failed;
 
 	DBG("mtu=%u", mtu);
 
@@ -922,6 +964,19 @@ static void close_endpoint(struct audio_endpoint *ep)
 	ep->codec_data = NULL;
 }
 
+static bool resume_endpoint(struct audio_endpoint *ep)
+{
+	if (ipc_resume_stream_cmd(ep->id) != AUDIO_STATUS_SUCCESS)
+		return false;
+
+	ep->samples = 0;
+	ep->resync = false;
+
+	ep->codec->update_qos(ep->codec_data, QOS_POLICY_DEFAULT);
+
+	return true;
+}
+
 static void downmix_to_mono(struct a2dp_stream_out *out, const uint8_t *buffer,
 								size_t bytes)
 {
@@ -937,6 +992,65 @@ static void downmix_to_mono(struct a2dp_stream_out *out, const uint8_t *buffer,
 	}
 }
 
+static bool wait_for_endpoint(struct audio_endpoint *ep, bool *writable)
+{
+	int ret;
+
+	while (true) {
+		struct pollfd pollfd;
+
+		pollfd.fd = ep->fd;
+		pollfd.events = POLLOUT;
+		pollfd.revents = 0;
+
+		ret = poll(&pollfd, 1, 500);
+
+		if (ret >= 0) {
+			*writable = !!(pollfd.revents & POLLOUT);
+			break;
+		}
+
+		if (errno != EINTR) {
+			ret = errno;
+			error("poll failed (%d)", ret);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool write_to_endpoint(struct audio_endpoint *ep, size_t bytes)
+{
+	struct media_packet *mp = (struct media_packet *) ep->mp;
+	int ret;
+
+	while (true) {
+		ret = write(ep->fd, mp, sizeof(*mp) + bytes);
+
+		if (ret >= 0)
+			break;
+
+		/*
+		 * this should not happen so let's issue warning, but do not
+		 * fail, we can try to write next packet
+		 */
+		if (errno == EAGAIN) {
+			ret = errno;
+			warn("write failed (%d)", ret);
+			break;
+		}
+
+		if (errno != EINTR) {
+			ret = errno;
+			error("write failed (%d)", ret);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static bool write_data(struct a2dp_stream_out *out, const void *buffer,
 								size_t bytes)
 {
@@ -950,58 +1064,94 @@ static bool write_data(struct a2dp_stream_out *out, const void *buffer,
 		ssize_t read;
 		uint32_t samples;
 		int ret;
-		uint64_t time_us;
-		struct timespec anchor;
+		struct timespec current;
+		uint64_t audio_sent, audio_passed;
+		bool do_write = false;
 
-		time_us = ep->samples * 1000000ll / out->cfg.rate;
-
-		timespec_add(&ep->start, time_us, &anchor);
-
-		while (true) {
-			ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME,
-								&anchor, NULL);
-
-			if (!ret)
-				break;
-
-			if (ret != EINTR) {
-				error("clock_nanosleep failed (%d)", ret);
-				return false;
-			}
-		}
-
+		/*
+		 * prepare media packet in advance so we don't waste time after
+		 * wakeup
+		 */
+		mp->hdr.sequence_number = htons(ep->seq++);
+		mp->hdr.timestamp = htonl(ep->samples);
 		read = ep->codec->encode_mediapacket(ep->codec_data,
-							buffer + consumed,
-							bytes - consumed, mp,
-							free_space, &written);
+						buffer + consumed,
+						bytes - consumed, mp,
+						free_space, &written);
 
-		/* This is non-fatal and we can just assume buffer was processed
-		 * properly and wait for next one.
+		/*
+		 * not much we can do here, let's just ignore remaining
+		 * data and continue
 		 */
 		if (read <= 0)
 			return true;
 
-		consumed += read;
+		/* calculate where are we and where we should be */
+		clock_gettime(CLOCK_MONOTONIC, &current);
+		if (!ep->samples)
+			memcpy(&ep->start, &current, sizeof(ep->start));
+		audio_sent = ep->samples * 1000000ll / out->cfg.rate;
+		audio_passed = timespec_diff_us(&current, &ep->start);
 
-		mp->hdr.sequence_number = htons(ep->seq++);
-		mp->hdr.timestamp = htonl(ep->samples);
+		/*
+		 * if we're ahead of stream then wait for next write point,
+		 * if we're lagging more than 100ms then stop writing and just
+		 * skip data until we're back in sync
+		 */
+		if (audio_sent > audio_passed) {
+			struct timespec anchor;
 
-		/* AudioFlinger provides 16bit PCM, so sample size is 2 bytes
-		 * multipled by number of channels. Number of channels is simply
-		 * number of bits set in channels mask.
+			ep->resync = false;
+
+			timespec_add(&ep->start, audio_sent, &anchor);
+
+			while (true) {
+				ret = clock_nanosleep(CLOCK_MONOTONIC,
+							TIMER_ABSTIME, &anchor,
+							NULL);
+
+				if (!ret)
+					break;
+
+				if (ret != EINTR) {
+					error("clock_nanosleep failed (%d)",
+									ret);
+					return false;
+				}
+			}
+		} else if (!ep->resync) {
+			uint64_t diff = audio_passed - audio_sent;
+
+			if (diff > MAX_DELAY) {
+				warn("lag is %jums, resyncing", diff / 1000);
+
+				ep->codec->update_qos(ep->codec_data,
+							QOS_POLICY_DECREASE);
+				ep->resync = true;
+			}
+		}
+
+		/* in resync mode we'll just drop mediapackets */
+		if (!ep->resync) {
+			/* wait some time for socket to be ready for write,
+			 * but we'll just skip writing data if timeout occurs
+			 */
+			if (!wait_for_endpoint(ep, &do_write))
+				return false;
+
+			if (do_write)
+				if (!write_to_endpoint(ep, written))
+					return false;
+		}
+
+		/*
+		 * AudioFlinger provides 16bit PCM, so sample size is 2 bytes
+		 * multiplied by number of channels. Number of channels is
+		 * simply number of bits set in channels mask.
 		 */
 		samples = read / (2 * popcount(out->cfg.channels));
 		ep->samples += samples;
-
-		while (true) {
-			ret = write(ep->fd, mp, sizeof(*mp) + written);
-
-			if (ret >= 0)
-				break;
-
-			if (errno != EINTR)
-				return false;
-		}
+		consumed += read;
 	}
 
 	return true;
@@ -1022,11 +1172,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
 	if (out->audio_state == AUDIO_A2DP_STATE_STANDBY) {
 		DBG("stream in standby, auto-start");
 
-		if (ipc_resume_stream_cmd(out->ep->id) != AUDIO_STATUS_SUCCESS)
+		if (!resume_endpoint(out->ep))
 			return -1;
-
-		clock_gettime(CLOCK_MONOTONIC, &out->ep->start);
-		out->ep->samples = 0;
 
 		out->audio_state = AUDIO_A2DP_STATE_STARTED;
 	}
@@ -1041,7 +1188,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
 		return -1;
 	}
 
-	/* currently Android audioflinger is not able to provide mono stream on
+	/*
+	 * currently Android audioflinger is not able to provide mono stream on
 	 * A2DP output so down mixing needs to be done in hal-audio plugin.
 	 *
 	 * for reference see
@@ -1093,7 +1241,8 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
 {
 	DBG("");
 
-	/* We should return proper buffer size calculated by codec (so each
+	/*
+	 * We should return proper buffer size calculated by codec (so each
 	 * input buffer is encoded into single media packed) but this does not
 	 * work well with AudioFlinger and causes problems. For this reason we
 	 * use magic value here and out_write code takes care of splitting
@@ -1106,7 +1255,8 @@ static uint32_t out_get_channels(const struct audio_stream *stream)
 {
 	DBG("");
 
-	/* AudioFlinger can only provide stereo stream, so we return it here and
+	/*
+	 * AudioFlinger can only provide stereo stream, so we return it here and
 	 * later we'll downmix this to mono in case codec requires it
 	 */
 
@@ -1161,6 +1311,9 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
 	DBG("%s", kvpairs);
 
 	str = strdup(kvpairs);
+	if (!str)
+		return -ENOMEM;
+
 	kvpair = strtok_r(str, ";", &saveptr);
 
 	for (; kvpair && *kvpair; kvpair = strtok_r(NULL, ";", &saveptr)) {
@@ -1718,9 +1871,11 @@ static int audio_open(const hw_module_t *module, const char *name,
 	a2dp_dev->dev.close_input_stream = audio_close_input_stream;
 	a2dp_dev->dev.dump = audio_dump;
 
-	/* Note that &a2dp_dev->dev.common is the same pointer as a2dp_dev.
+	/*
+	 * Note that &a2dp_dev->dev.common is the same pointer as a2dp_dev.
 	 * This results from the structure of following structs:a2dp_audio_dev,
-	 * audio_hw_device. We will rely on this later in the code.*/
+	 * audio_hw_device. We will rely on this later in the code.
+	 */
 	*device = &a2dp_dev->dev.common;
 
 	return 0;
@@ -1732,12 +1887,12 @@ static struct hw_module_methods_t hal_module_methods = {
 
 struct audio_module HAL_MODULE_INFO_SYM = {
 	.common = {
-	.tag = HARDWARE_MODULE_TAG,
-	.version_major = 1,
-	.version_minor = 0,
-	.id = AUDIO_HARDWARE_MODULE_ID,
-	.name = "A2DP Bluez HW HAL",
-	.author = "Intel Corporation",
-	.methods = &hal_module_methods,
+		.tag = HARDWARE_MODULE_TAG,
+		.version_major = 1,
+		.version_minor = 0,
+		.id = AUDIO_HARDWARE_MODULE_ID,
+		.name = "A2DP Bluez HW HAL",
+		.author = "Intel Corporation",
+		.methods = &hal_module_methods,
 	},
 };

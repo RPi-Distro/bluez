@@ -55,6 +55,8 @@ static const char BLUEZ_HAL_SK_PATH[] = "\0bluez_hal_socket";
 #define HAL_OP_STATUS			IPC_OP_STATUS
 
 #define HAL_MODE_DEFAULT		0x00
+#define HAL_MODE_BREDR			0x01
+#define HAL_MODE_LE			0x02
 
 #define HAL_OP_REGISTER_MODULE		0x01
 struct hal_cmd_register_module {
@@ -383,37 +385,43 @@ struct hal_cmd_pan_disconnect {
 	uint8_t bdaddr[6];
 } __attribute__((packed));
 
-struct hal_string {
-	uint8_t len;
-	uint8_t data[0];
-};
+#define HAL_HEALTH_MDEP_ROLE_SOURCE	0x00
+#define HAL_HEALTH_MDEP_ROLE_SINK	0x01
+
+#define HAL_HEALTH_CHANNEL_TYPE_RELIABLE	0x00
+#define HAL_HEALTH_CHANNEL_TYPE_STREAMING	0x01
+#define HAL_HEALTH_CHANNEL_TYPE_ANY		0x02
 
 #define HAL_OP_HEALTH_REG_APP		0x01
 struct hal_cmd_health_reg_app {
-	struct hal_string app_name;
-	struct hal_string provider_name;
-	struct hal_string service_name;
-	struct hal_string service_descr;
-	uint8_t num_of_mdep;
+	uint8_t  num_of_mdep;
+	uint16_t app_name_off;
+	uint16_t provider_name_off;
+	uint16_t service_name_off;
+	uint16_t service_descr_off;
+	uint16_t len;
+	uint8_t  data[0];
+} __attribute__((packed));
 
-	struct {
-		uint8_t role;
-		uint8_t data_type;
-		uint8_t channel_type;
-		struct  hal_string descr;
-	} mdep_cfg[0];
+#define HAL_OP_HEALTH_MDEP		0x02
+struct hal_cmd_health_mdep {
+	uint8_t  role;
+	uint8_t  data_type;
+	uint8_t  channel_type;
+	uint16_t descr_len;
+	uint8_t  descr[0];
 } __attribute__((packed));
 
 struct hal_rsp_health_reg_app {
 	uint16_t app_id;
 } __attribute__((packed));
 
-#define HAL_OP_HEALTH_UNREG_APP		0x02
+#define HAL_OP_HEALTH_UNREG_APP		0x03
 struct hal_cmd_health_unreg_app {
 	uint16_t app_id;
 } __attribute__((packed));
 
-#define HAL_OP_HEALTH_CONNECT_CHANNEL	0x03
+#define HAL_OP_HEALTH_CONNECT_CHANNEL	0x04
 struct hal_cmd_health_connect_channel {
 	uint16_t app_id;
 	uint8_t  bdaddr[6];
@@ -424,7 +432,7 @@ struct hal_rsp_health_connect_channel {
 	uint16_t  channel_id;
 } __attribute__((packed));
 
-#define HAL_OP_HEALTH_DESTROY_CHANNEL	0x04
+#define HAL_OP_HEALTH_DESTROY_CHANNEL	0x05
 struct hal_cmd_health_destroy_channel {
 	uint16_t channel_id;
 } __attribute__((packed));
@@ -604,7 +612,7 @@ struct hal_cmd_gatt_client_refresh {
 #define HAL_OP_GATT_CLIENT_SEARCH_SERVICE	0x08
 struct hal_cmd_gatt_client_search_service {
 	int32_t conn_id;
-	uint8_t number;
+	uint8_t filtered;
 	uint8_t filter_uuid[0];
 } __attribute__((packed));
 
@@ -617,8 +625,9 @@ struct hal_gatt_srvc_id {
 
 struct hal_cmd_gatt_client_get_included_service {
 	int32_t conn_id;
-	uint8_t number;
-	struct hal_gatt_srvc_id srvc_id[0];
+	struct hal_gatt_srvc_id srvc_id;
+	uint8_t continuation;
+	struct hal_gatt_srvc_id incl_srvc_id[0];
 } __attribute__((packed));
 
 #define HAL_OP_GATT_CLIENT_GET_CHARACTERISTIC	0x0a
@@ -630,31 +639,37 @@ struct hal_gatt_gatt_id {
 struct hal_cmd_gatt_client_get_characteristic {
 	int32_t conn_id;
 	struct hal_gatt_srvc_id srvc_id;
-	uint8_t number;
-	struct hal_gatt_gatt_id gatt_id[0];
+	uint8_t continuation;
+	struct hal_gatt_gatt_id char_id[0];
 } __attribute__((packed));
 
 #define HAL_OP_GATT_CLIENT_GET_DESCRIPTOR	0x0b
 struct hal_cmd_gatt_client_get_descriptor {
 	int32_t conn_id;
 	struct hal_gatt_srvc_id srvc_id;
-	uint8_t number;
-	struct hal_gatt_gatt_id gatt_id[0];
+	struct hal_gatt_gatt_id char_id;
+	uint8_t continuation;
+	struct hal_gatt_gatt_id descr_id[0];
 } __attribute__((packed));
 
 #define HAL_OP_GATT_CLIENT_READ_CHARACTERISTIC	0x0c
 struct hal_cmd_gatt_client_read_characteristic {
 	int32_t conn_id;
 	struct hal_gatt_srvc_id srvc_id;
-	struct hal_gatt_gatt_id gatt_id;
+	struct hal_gatt_gatt_id char_id;
 	int32_t auth_req;
 } __attribute__((packed));
+
+#define GATT_WRITE_TYPE_NO_RESPONSE	0x01
+#define GATT_WRITE_TYPE_DEFAULT		0x02
+#define GATT_WRITE_TYPE_PREPARE		0x03
+#define GATT_WRITE_TYPE_SIGNED		0x04
 
 #define HAL_OP_GATT_CLIENT_WRITE_CHARACTERISTIC	0x0d
 struct hal_cmd_gatt_client_write_characteristic {
 	int32_t conn_id;
 	struct hal_gatt_srvc_id srvc_id;
-	struct hal_gatt_gatt_id gatt_id;
+	struct hal_gatt_gatt_id char_id;
 	int32_t write_type;
 	int32_t len;
 	int32_t auth_req;
@@ -713,6 +728,10 @@ struct hal_cmd_gatt_client_read_remote_rssi {
 #define HAL_OP_GATT_CLIENT_GET_DEVICE_TYPE	0x14
 struct hal_cmd_gatt_client_get_device_type {
 	uint8_t bdaddr[6];
+} __attribute__((packed));
+
+struct hal_rsp_gatt_client_get_device_type {
+	uint8_t type;
 } __attribute__((packed));
 
 #define HAL_OP_GATT_CLIENT_SET_ADV_DATA		0x015
@@ -828,6 +847,9 @@ struct hal_cmd_gatt_server_send_indication {
 struct hal_cmd_gatt_server_send_response {
 	int32_t conn_id;
 	int32_t trans_id;
+	uint16_t handle;
+	uint16_t offset;
+	uint8_t auth_req;
 	int32_t status;
 	uint16_t len;
 	uint8_t data[0];

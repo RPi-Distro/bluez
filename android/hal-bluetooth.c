@@ -29,6 +29,8 @@
 #include "hal-ipc.h"
 #include "hal-utils.h"
 
+#define MODE_PROPERTY_NAME "persist.sys.bluetooth.mode"
+
 static const bt_callbacks_t *bt_hal_cbacks = NULL;
 
 #define enum_prop_to_hal(prop, hal_prop, type) do { \
@@ -349,8 +351,10 @@ static void handle_le_test_mode(void *buf, uint16_t len)
 		bt_hal_cbacks->le_test_mode_cb(ev->status, ev->num_packets);
 }
 
-/* handlers will be called from notification thread context,
- * index in table equals to 'opcode - HAL_MINIMUM_EVENT' */
+/*
+ * handlers will be called from notification thread context,
+ * index in table equals to 'opcode - HAL_MINIMUM_EVENT'
+ */
 static const struct hal_ipc_handler ev_handlers[] = {
 	{	/* HAL_EV_ADAPTER_STATE_CHANGED */
 		.handler = handle_adapter_state_changed,
@@ -412,6 +416,21 @@ static const struct hal_ipc_handler ev_handlers[] = {
 	}
 };
 
+static uint8_t get_mode(void)
+{
+	char value[PROPERTY_VALUE_MAX];
+
+	if (property_get(MODE_PROPERTY_NAME, value, "") > 0 &&
+					(!strcasecmp(value, "bredr")))
+		return HAL_MODE_BREDR;
+
+	if (property_get(MODE_PROPERTY_NAME, value, "") > 0 &&
+					(!strcasecmp(value, "le")))
+		return HAL_MODE_LE;
+
+	return HAL_MODE_DEFAULT;
+}
+
 static int init(bt_callbacks_t *callbacks)
 {
 	struct hal_cmd_register_module cmd;
@@ -433,7 +452,7 @@ static int init(bt_callbacks_t *callbacks)
 	}
 
 	cmd.service_id = HAL_SERVICE_ID_BLUETOOTH;
-	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.mode = get_mode();
 
 	status = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);

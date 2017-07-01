@@ -123,7 +123,7 @@ DIST_COMMON = README $(am__configure_deps) $(am__include_HEADERS_DIST) \
 @EXPERIMENTAL_TRUE@	tools/btmgmt tools/btinfo tools/btattach \
 @EXPERIMENTAL_TRUE@	tools/btsnoop tools/btproxy tools/btiotest \
 @EXPERIMENTAL_TRUE@	tools/mpris-player tools/cltest \
-@EXPERIMENTAL_TRUE@	tools/seq2bseq tools/ibeacon
+@EXPERIMENTAL_TRUE@	tools/seq2bseq tools/hex2hcd tools/ibeacon
 @TOOLS_TRUE@am__append_17 = tools/hciattach tools/hciconfig tools/hcitool tools/hcidump \
 @TOOLS_TRUE@			tools/rfcomm tools/rctest tools/l2test tools/l2ping \
 @TOOLS_TRUE@			tools/sdptool tools/ciptool tools/bccmd tools/bluemoon
@@ -161,6 +161,7 @@ DIST_COMMON = README $(am__configure_deps) $(am__include_HEADERS_DIST) \
 @ANDROID_TRUE@	android/haltest android/android-tester \
 @ANDROID_TRUE@	android/ipc-tester
 @ANDROID_TRUE@am__append_30 = android/bluetooth.default.la \
+@ANDROID_TRUE@	android/audio.sco.default.la \
 @ANDROID_TRUE@	android/audio.a2dp.default.la
 @ANDROID_TRUE@am__append_31 = android/test-ipc
 @HID2HCI_TRUE@am__append_32 = $(rules_DATA)
@@ -248,6 +249,23 @@ android_audio_a2dp_default_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(android_audio_a2dp_default_la_CFLAGS) $(CFLAGS) \
 	$(android_audio_a2dp_default_la_LDFLAGS) $(LDFLAGS) -o $@
 @ANDROID_TRUE@am_android_audio_a2dp_default_la_rpath = -rpath \
+@ANDROID_TRUE@	$(plugindir)
+android_audio_sco_default_la_DEPENDENCIES =
+am__android_audio_sco_default_la_SOURCES_DIST = android/hal-log.h \
+	android/sco-msg.h android/hal-sco.c android/hardware/audio.h \
+	android/hardware/audio_effect.h android/hardware/hardware.h \
+	android/audio_utils/resampler.c \
+	android/audio_utils/resampler.h android/system/audio.h
+@ANDROID_TRUE@am_android_audio_sco_default_la_OBJECTS =  \
+@ANDROID_TRUE@	android/android_audio_sco_default_la-hal-sco.lo \
+@ANDROID_TRUE@	android/audio_utils/android_audio_sco_default_la-resampler.lo
+android_audio_sco_default_la_OBJECTS =  \
+	$(am_android_audio_sco_default_la_OBJECTS)
+android_audio_sco_default_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(android_audio_sco_default_la_CFLAGS) $(CFLAGS) \
+	$(android_audio_sco_default_la_LDFLAGS) $(LDFLAGS) -o $@
+@ANDROID_TRUE@am_android_audio_sco_default_la_rpath = -rpath \
 @ANDROID_TRUE@	$(plugindir)
 android_bluetooth_default_la_LIBADD =
 am__android_bluetooth_default_la_SOURCES_DIST = android/hal.h \
@@ -364,6 +382,7 @@ plugins_sixaxis_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @EXPERIMENTAL_TRUE@	tools/mpris-player$(EXEEXT) \
 @EXPERIMENTAL_TRUE@	tools/cltest$(EXEEXT) \
 @EXPERIMENTAL_TRUE@	tools/seq2bseq$(EXEEXT) \
+@EXPERIMENTAL_TRUE@	tools/hex2hcd$(EXEEXT) \
 @EXPERIMENTAL_TRUE@	tools/ibeacon$(EXEEXT)
 @READLINE_TRUE@am__EXEEXT_5 = attrib/gatttool$(EXEEXT) \
 @READLINE_TRUE@	tools/obex-client-tool$(EXEEXT) \
@@ -424,14 +443,15 @@ android_android_tester_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(android_android_tester_CFLAGS) $(CFLAGS) \
 	$(android_android_tester_LDFLAGS) $(LDFLAGS) -o $@
 am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
-	android/hal-msg.h android/audio-msg.h android/utils.h \
-	src/sdpd-database.c src/sdpd-server.c src/sdpd-service.c \
-	src/sdpd-request.c src/uuid-helper.h src/uuid-helper.c \
-	src/eir.h src/eir.c src/shared/io.h src/shared/io-glib.c \
-	src/shared/queue.h src/shared/queue.c src/shared/util.h \
-	src/shared/util.c src/shared/mgmt.h src/shared/mgmt.c \
-	src/shared/ringbuf.h src/shared/ringbuf.c src/shared/hfp.h \
-	src/shared/hfp.c android/bluetooth.h android/bluetooth.c \
+	android/hal-msg.h android/audio-msg.h android/sco-msg.h \
+	android/utils.h src/sdpd-database.c src/sdpd-server.c \
+	src/sdpd-service.c src/sdpd-request.c src/uuid-helper.h \
+	src/uuid-helper.c src/eir.h src/eir.c src/shared/io.h \
+	src/shared/io-glib.c src/shared/queue.h src/shared/queue.c \
+	src/shared/util.h src/shared/util.c src/shared/mgmt.h \
+	src/shared/mgmt.c src/shared/ringbuf.h src/shared/ringbuf.c \
+	src/shared/hfp.h src/shared/hfp.c src/shared/gatt-db.h \
+	src/shared/gatt-db.c android/bluetooth.h android/bluetooth.c \
 	android/hidhost.h android/hidhost.c android/ipc-common.h \
 	android/ipc.h android/ipc.c android/avdtp.h android/avdtp.c \
 	android/a2dp.h android/a2dp.c android/avctp.h android/avctp.c \
@@ -439,9 +459,10 @@ am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
 	android/avrcp-lib.c android/socket.h android/socket.c \
 	android/pan.h android/pan.c android/handsfree.h \
 	android/handsfree.c android/gatt.h android/gatt.c \
-	android/health.h android/health.c attrib/att.c attrib/att.h \
-	attrib/gatt.c attrib/gatt.h attrib/gattrib.c attrib/gattrib.h \
-	btio/btio.h btio/btio.c src/sdp-client.h src/sdp-client.c \
+	android/health.h android/health.c android/mcap-lib.h \
+	android/mcap-lib.c attrib/att.c attrib/att.h attrib/gatt.c \
+	attrib/gatt.h attrib/gattrib.c attrib/gattrib.h btio/btio.h \
+	btio/btio.c src/sdp-client.h src/sdp-client.c \
 	profiles/network/bnep.h profiles/network/bnep.c
 @ANDROID_TRUE@am_android_bluetoothd_OBJECTS = android/main.$(OBJEXT) \
 @ANDROID_TRUE@	src/log.$(OBJEXT) src/sdpd-database.$(OBJEXT) \
@@ -455,6 +476,7 @@ am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
 @ANDROID_TRUE@	src/shared/mgmt.$(OBJEXT) \
 @ANDROID_TRUE@	src/shared/ringbuf.$(OBJEXT) \
 @ANDROID_TRUE@	src/shared/hfp.$(OBJEXT) \
+@ANDROID_TRUE@	src/shared/gatt-db.$(OBJEXT) \
 @ANDROID_TRUE@	android/bluetooth.$(OBJEXT) \
 @ANDROID_TRUE@	android/hidhost.$(OBJEXT) android/ipc.$(OBJEXT) \
 @ANDROID_TRUE@	android/avdtp.$(OBJEXT) android/a2dp.$(OBJEXT) \
@@ -463,9 +485,9 @@ am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
 @ANDROID_TRUE@	android/socket.$(OBJEXT) android/pan.$(OBJEXT) \
 @ANDROID_TRUE@	android/handsfree.$(OBJEXT) \
 @ANDROID_TRUE@	android/gatt.$(OBJEXT) android/health.$(OBJEXT) \
-@ANDROID_TRUE@	attrib/att.$(OBJEXT) attrib/gatt.$(OBJEXT) \
-@ANDROID_TRUE@	attrib/gattrib.$(OBJEXT) btio/btio.$(OBJEXT) \
-@ANDROID_TRUE@	src/sdp-client.$(OBJEXT) \
+@ANDROID_TRUE@	android/mcap-lib.$(OBJEXT) attrib/att.$(OBJEXT) \
+@ANDROID_TRUE@	attrib/gatt.$(OBJEXT) attrib/gattrib.$(OBJEXT) \
+@ANDROID_TRUE@	btio/btio.$(OBJEXT) src/sdp-client.$(OBJEXT) \
 @ANDROID_TRUE@	profiles/network/bnep.$(OBJEXT)
 android_bluetoothd_OBJECTS = $(am_android_bluetoothd_OBJECTS)
 @ANDROID_TRUE@android_bluetoothd_DEPENDENCIES =  \
@@ -488,8 +510,9 @@ am__android_haltest_SOURCES_DIST = android/client/haltest.c \
 	android/client/if-av.c android/client/if-rc.c \
 	android/client/if-bt.c android/client/if-gatt.c \
 	android/client/if-hf.c android/client/if-hh.c \
-	android/client/if-pan.c android/client/if-sock.c \
-	android/client/if-audio.c android/hardware/hardware.c \
+	android/client/if-pan.c android/client/if-hl.c \
+	android/client/if-sock.c android/client/if-audio.c \
+	android/client/if-sco.c android/hardware/hardware.c \
 	android/hal-utils.h android/hal-utils.c
 @ANDROID_TRUE@am_android_haltest_OBJECTS = android/client/android_haltest-haltest.$(OBJEXT) \
 @ANDROID_TRUE@	android/client/android_haltest-pollhandler.$(OBJEXT) \
@@ -503,8 +526,10 @@ am__android_haltest_SOURCES_DIST = android/client/haltest.c \
 @ANDROID_TRUE@	android/client/android_haltest-if-hf.$(OBJEXT) \
 @ANDROID_TRUE@	android/client/android_haltest-if-hh.$(OBJEXT) \
 @ANDROID_TRUE@	android/client/android_haltest-if-pan.$(OBJEXT) \
+@ANDROID_TRUE@	android/client/android_haltest-if-hl.$(OBJEXT) \
 @ANDROID_TRUE@	android/client/android_haltest-if-sock.$(OBJEXT) \
 @ANDROID_TRUE@	android/client/android_haltest-if-audio.$(OBJEXT) \
+@ANDROID_TRUE@	android/client/android_haltest-if-sco.$(OBJEXT) \
 @ANDROID_TRUE@	android/hardware/android_haltest-hardware.$(OBJEXT) \
 @ANDROID_TRUE@	android/android_haltest-hal-utils.$(OBJEXT)
 android_haltest_OBJECTS = $(am_android_haltest_OBJECTS)
@@ -785,23 +810,23 @@ am__src_bluetoothd_SOURCES_DIST = plugins/hostname.c plugins/wiimote.c \
 	profiles/network/connection.c profiles/input/manager.c \
 	profiles/input/server.h profiles/input/server.c \
 	profiles/input/device.h profiles/input/device.c \
-	profiles/input/hog.c profiles/input/uhid_copy.h \
-	profiles/input/suspend.h profiles/input/suspend-dummy.c \
-	profiles/health/mcap_lib.h profiles/health/mcap_internal.h \
-	profiles/health/mcap.h profiles/health/mcap.c \
-	profiles/health/mcap_sync.c profiles/health/hdp_main.c \
-	profiles/health/hdp_types.h profiles/health/hdp_manager.h \
-	profiles/health/hdp_manager.c profiles/health/hdp.h \
-	profiles/health/hdp.c profiles/health/hdp_util.h \
-	profiles/health/hdp_util.c profiles/gatt/gas.c \
-	profiles/scanparam/scan.c profiles/deviceinfo/deviceinfo.c \
-	profiles/alert/server.c profiles/time/server.c \
-	profiles/proximity/main.c profiles/proximity/manager.h \
-	profiles/proximity/manager.c profiles/proximity/monitor.h \
-	profiles/proximity/monitor.c profiles/proximity/reporter.h \
-	profiles/proximity/reporter.c profiles/proximity/linkloss.h \
-	profiles/proximity/linkloss.c profiles/proximity/immalert.h \
-	profiles/proximity/immalert.c \
+	profiles/input/uhid_copy.h profiles/input/hidp_defs.h \
+	profiles/input/hog.c profiles/input/suspend.h \
+	profiles/input/suspend-dummy.c profiles/health/mcap_lib.h \
+	profiles/health/mcap_internal.h profiles/health/mcap.h \
+	profiles/health/mcap.c profiles/health/mcap_sync.c \
+	profiles/health/hdp_main.c profiles/health/hdp_types.h \
+	profiles/health/hdp_manager.h profiles/health/hdp_manager.c \
+	profiles/health/hdp.h profiles/health/hdp.c \
+	profiles/health/hdp_util.h profiles/health/hdp_util.c \
+	profiles/gatt/gas.c profiles/scanparam/scan.c \
+	profiles/deviceinfo/deviceinfo.c profiles/alert/server.c \
+	profiles/time/server.c profiles/proximity/main.c \
+	profiles/proximity/manager.h profiles/proximity/manager.c \
+	profiles/proximity/monitor.h profiles/proximity/monitor.c \
+	profiles/proximity/reporter.h profiles/proximity/reporter.c \
+	profiles/proximity/linkloss.h profiles/proximity/linkloss.c \
+	profiles/proximity/immalert.h profiles/proximity/immalert.c \
 	profiles/thermometer/thermometer.c \
 	profiles/heartrate/heartrate.c \
 	profiles/cyclingspeed/cyclingspeed.c attrib/att.h \
@@ -923,14 +948,16 @@ am__tools_3dsp_SOURCES_DIST = tools/3dsp.c monitor/bt.h \
 	src/shared/io-mainloop.c src/shared/timeout.h \
 	src/shared/timeout-mainloop.c src/shared/hci.h \
 	src/shared/hci.c src/shared/util.h src/shared/util.c \
-	src/shared/queue.h src/shared/queue.c
+	src/shared/queue.h src/shared/queue.c src/shared/ringbuf.h \
+	src/shared/ringbuf.c
 @EXPERIMENTAL_TRUE@am_tools_3dsp_OBJECTS = tools/3dsp.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	monitor/mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/io-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/timeout-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/hci.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/util.$(OBJEXT) \
-@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT)
+@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT) \
+@EXPERIMENTAL_TRUE@	src/shared/ringbuf.$(OBJEXT)
 tools_3dsp_OBJECTS = $(am_tools_3dsp_OBJECTS)
 tools_3dsp_LDADD = $(LDADD)
 tools_amptest_SOURCES = tools/amptest.c
@@ -965,12 +992,13 @@ am__tools_bluemoon_SOURCES_DIST = tools/bluemoon.c monitor/bt.h \
 	monitor/mainloop.h monitor/mainloop.c src/shared/io.h \
 	src/shared/io-mainloop.c src/shared/hci.h src/shared/hci.c \
 	src/shared/util.h src/shared/util.c src/shared/queue.h \
-	src/shared/queue.c
+	src/shared/queue.c src/shared/ringbuf.h src/shared/ringbuf.c
 @TOOLS_TRUE@am_tools_bluemoon_OBJECTS = tools/bluemoon.$(OBJEXT) \
 @TOOLS_TRUE@	monitor/mainloop.$(OBJEXT) \
 @TOOLS_TRUE@	src/shared/io-mainloop.$(OBJEXT) \
 @TOOLS_TRUE@	src/shared/hci.$(OBJEXT) src/shared/util.$(OBJEXT) \
-@TOOLS_TRUE@	src/shared/queue.$(OBJEXT)
+@TOOLS_TRUE@	src/shared/queue.$(OBJEXT) \
+@TOOLS_TRUE@	src/shared/ringbuf.$(OBJEXT)
 tools_bluemoon_OBJECTS = $(am_tools_bluemoon_OBJECTS)
 tools_bluemoon_LDADD = $(LDADD)
 am__tools_bluetooth_player_SOURCES_DIST = tools/bluetooth-player.c \
@@ -989,14 +1017,16 @@ am__tools_btinfo_SOURCES_DIST = tools/btinfo.c monitor/bt.h \
 	src/shared/io-mainloop.c src/shared/timeout.h \
 	src/shared/timeout-mainloop.c src/shared/hci.h \
 	src/shared/hci.c src/shared/util.h src/shared/util.c \
-	src/shared/queue.h src/shared/queue.c
+	src/shared/queue.h src/shared/queue.c src/shared/ringbuf.h \
+	src/shared/ringbuf.c
 @EXPERIMENTAL_TRUE@am_tools_btinfo_OBJECTS = tools/btinfo.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	monitor/mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/io-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/timeout-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/hci.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/util.$(OBJEXT) \
-@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT)
+@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT) \
+@EXPERIMENTAL_TRUE@	src/shared/ringbuf.$(OBJEXT)
 tools_btinfo_OBJECTS = $(am_tools_btinfo_OBJECTS)
 tools_btinfo_LDADD = $(LDADD)
 am__tools_btiotest_SOURCES_DIST = tools/btiotest.c btio/btio.h \
@@ -1078,28 +1108,31 @@ tools_gatt_service_OBJECTS = $(am_tools_gatt_service_OBJECTS)
 am__tools_hci_tester_SOURCES_DIST = tools/hci-tester.c monitor/bt.h \
 	src/shared/io.h src/shared/io-glib.c src/shared/hci.h \
 	src/shared/hci.c src/shared/util.h src/shared/util.c \
-	src/shared/queue.h src/shared/queue.c src/shared/tester.h \
-	src/shared/tester.c
+	src/shared/queue.h src/shared/queue.c src/shared/ringbuf.h \
+	src/shared/ringbuf.c src/shared/tester.h src/shared/tester.c
 @EXPERIMENTAL_TRUE@am_tools_hci_tester_OBJECTS =  \
 @EXPERIMENTAL_TRUE@	tools/hci-tester.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/io-glib.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/hci.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/util.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT) \
+@EXPERIMENTAL_TRUE@	src/shared/ringbuf.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/tester.$(OBJEXT)
 tools_hci_tester_OBJECTS = $(am_tools_hci_tester_OBJECTS)
 tools_hci_tester_DEPENDENCIES =
 am__tools_hciattach_SOURCES_DIST = tools/hciattach.c tools/hciattach.h \
 	tools/hciattach_st.c tools/hciattach_ti.c \
 	tools/hciattach_tialt.c tools/hciattach_ath3k.c \
-	tools/hciattach_qualcomm.c tools/hciattach_intel.c
+	tools/hciattach_qualcomm.c tools/hciattach_intel.c \
+	tools/hciattach_bcm43xx.c
 @TOOLS_TRUE@am_tools_hciattach_OBJECTS = tools/hciattach.$(OBJEXT) \
 @TOOLS_TRUE@	tools/hciattach_st.$(OBJEXT) \
 @TOOLS_TRUE@	tools/hciattach_ti.$(OBJEXT) \
 @TOOLS_TRUE@	tools/hciattach_tialt.$(OBJEXT) \
 @TOOLS_TRUE@	tools/hciattach_ath3k.$(OBJEXT) \
 @TOOLS_TRUE@	tools/hciattach_qualcomm.$(OBJEXT) \
-@TOOLS_TRUE@	tools/hciattach_intel.$(OBJEXT)
+@TOOLS_TRUE@	tools/hciattach_intel.$(OBJEXT) \
+@TOOLS_TRUE@	tools/hciattach_bcm43xx.$(OBJEXT)
 tools_hciattach_OBJECTS = $(am_tools_hciattach_OBJECTS)
 @TOOLS_TRUE@tools_hciattach_DEPENDENCIES =  \
 @TOOLS_TRUE@	lib/libbluetooth-internal.la
@@ -1159,6 +1192,10 @@ am__tools_hcitool_SOURCES_DIST = tools/hcitool.c src/oui.h src/oui.c
 @TOOLS_TRUE@	src/oui.$(OBJEXT)
 tools_hcitool_OBJECTS = $(am_tools_hcitool_OBJECTS)
 @TOOLS_TRUE@tools_hcitool_DEPENDENCIES = lib/libbluetooth-internal.la
+am__tools_hex2hcd_SOURCES_DIST = tools/hex2hcd.c
+@EXPERIMENTAL_TRUE@am_tools_hex2hcd_OBJECTS = tools/hex2hcd.$(OBJEXT)
+tools_hex2hcd_OBJECTS = $(am_tools_hex2hcd_OBJECTS)
+tools_hex2hcd_LDADD = $(LDADD)
 tools_hid2hci_SOURCES = tools/hid2hci.c
 tools_hid2hci_OBJECTS = tools/hid2hci.$(OBJEXT)
 tools_hid2hci_DEPENDENCIES =
@@ -1171,14 +1208,16 @@ am__tools_ibeacon_SOURCES_DIST = tools/ibeacon.c monitor/bt.h \
 	src/shared/io-mainloop.c src/shared/timeout.h \
 	src/shared/timeout-mainloop.c src/shared/hci.h \
 	src/shared/hci.c src/shared/util.h src/shared/util.c \
-	src/shared/queue.h src/shared/queue.c
+	src/shared/queue.h src/shared/queue.c src/shared/ringbuf.h \
+	src/shared/ringbuf.c
 @EXPERIMENTAL_TRUE@am_tools_ibeacon_OBJECTS = tools/ibeacon.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	monitor/mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/io-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/timeout-mainloop.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/hci.$(OBJEXT) \
 @EXPERIMENTAL_TRUE@	src/shared/util.$(OBJEXT) \
-@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT)
+@EXPERIMENTAL_TRUE@	src/shared/queue.$(OBJEXT) \
+@EXPERIMENTAL_TRUE@	src/shared/ringbuf.$(OBJEXT)
 tools_ibeacon_OBJECTS = $(am_tools_ibeacon_OBJECTS)
 tools_ibeacon_LDADD = $(LDADD)
 am__tools_l2cap_tester_SOURCES_DIST = tools/l2cap-tester.c \
@@ -1483,6 +1522,7 @@ am__v_GEN_ = $(am__v_GEN_@AM_DEFAULT_V@)
 am__v_GEN_0 = @echo "  GEN   " $@;
 SOURCES = $(profiles_sap_libsap_a_SOURCES) \
 	$(android_audio_a2dp_default_la_SOURCES) \
+	$(android_audio_sco_default_la_SOURCES) \
 	$(android_bluetooth_default_la_SOURCES) \
 	$(gdbus_libgdbus_internal_la_SOURCES) \
 	$(lib_libbluetooth_internal_la_SOURCES) \
@@ -1512,10 +1552,10 @@ SOURCES = $(profiles_sap_libsap_a_SOURCES) \
 	$(tools_hci_tester_SOURCES) $(tools_hciattach_SOURCES) \
 	$(tools_hciconfig_SOURCES) $(tools_hcidump_SOURCES) \
 	tools/hcieventmask.c tools/hcisecfilter.c \
-	$(tools_hcitool_SOURCES) tools/hid2hci.c tools/hwdb.c \
-	$(tools_ibeacon_SOURCES) $(tools_l2cap_tester_SOURCES) \
-	tools/l2ping.c tools/l2test.c $(tools_mgmt_tester_SOURCES) \
-	$(tools_mpris_player_SOURCES) \
+	$(tools_hcitool_SOURCES) $(tools_hex2hcd_SOURCES) \
+	tools/hid2hci.c tools/hwdb.c $(tools_ibeacon_SOURCES) \
+	$(tools_l2cap_tester_SOURCES) tools/l2ping.c tools/l2test.c \
+	$(tools_mgmt_tester_SOURCES) $(tools_mpris_player_SOURCES) \
 	$(tools_obex_client_tool_SOURCES) \
 	$(tools_obex_server_tool_SOURCES) $(tools_obexctl_SOURCES) \
 	tools/rctest.c tools/rfcomm.c $(tools_rfcomm_tester_SOURCES) \
@@ -1535,6 +1575,7 @@ SOURCES = $(profiles_sap_libsap_a_SOURCES) \
 	$(unit_test_uuid_SOURCES)
 DIST_SOURCES = $(am__profiles_sap_libsap_a_SOURCES_DIST) \
 	$(am__android_audio_a2dp_default_la_SOURCES_DIST) \
+	$(am__android_audio_sco_default_la_SOURCES_DIST) \
 	$(am__android_bluetooth_default_la_SOURCES_DIST) \
 	$(gdbus_libgdbus_internal_la_SOURCES) \
 	$(lib_libbluetooth_internal_la_SOURCES) \
@@ -1576,7 +1617,8 @@ DIST_SOURCES = $(am__profiles_sap_libsap_a_SOURCES_DIST) \
 	$(am__tools_hciconfig_SOURCES_DIST) \
 	$(am__tools_hcidump_SOURCES_DIST) tools/hcieventmask.c \
 	tools/hcisecfilter.c $(am__tools_hcitool_SOURCES_DIST) \
-	tools/hid2hci.c tools/hwdb.c $(am__tools_ibeacon_SOURCES_DIST) \
+	$(am__tools_hex2hcd_SOURCES_DIST) tools/hid2hci.c tools/hwdb.c \
+	$(am__tools_ibeacon_SOURCES_DIST) \
 	$(am__tools_l2cap_tester_SOURCES_DIST) tools/l2ping.c \
 	tools/l2test.c $(am__tools_mgmt_tester_SOURCES_DIST) \
 	$(am__tools_mpris_player_SOURCES_DIST) \
@@ -1728,6 +1770,8 @@ SBC_LIBS = @SBC_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
+SPEEXDSP_CFLAGS = @SPEEXDSP_CFLAGS@
+SPEEXDSP_LIBS = @SPEEXDSP_LIBS@
 STRIP = @STRIP@
 SYSTEMD_SYSTEMUNITDIR = @SYSTEMD_SYSTEMUNITDIR@
 SYSTEMD_USERUNITDIR = @SYSTEMD_USERUNITDIR@
@@ -1806,25 +1850,33 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	obexd/src/org.bluez.obex.service obexd/src/genbuiltin \
 	android/Android.mk android/README android/init.bluetooth.rc \
 	android/hal-ipc-api.txt android/audio-ipc-api.txt \
-	android/pics-l2cap.txt android/pics-gap.txt \
-	android/pics-did.txt android/pics-hid.txt android/pics-pan.txt \
-	android/pics-opp.txt android/pics-map.txt \
+	android/pics-rfcomm.txt android/pics-spp.txt \
+	android/pics-sdp.txt android/pics-l2cap.txt \
+	android/pics-gap.txt android/pics-did.txt android/pics-hid.txt \
+	android/pics-pan.txt android/pics-opp.txt android/pics-map.txt \
 	android/pics-pbap.txt android/pics-a2dp.txt \
 	android/pics-avctp.txt android/pics-avrcp.txt \
 	android/pics-hsp.txt android/pics-hfp.txt \
-	android/pics-gatt.txt android/pixit-l2cap.txt \
+	android/pics-gatt.txt android/pics-mcap.txt \
+	android/pics-hdp.txt android/pics-iopt.txt android/pics-sm.txt \
+	android/pics-mps.txt android/pixit-l2cap.txt \
 	android/pixit-gap.txt android/pixit-did.txt \
 	android/pixit-hid.txt android/pixit-pan.txt \
 	android/pixit-opp.txt android/pixit-map.txt \
 	android/pixit-pbap.txt android/pixit-a2dp.txt \
 	android/pixit-avctp.txt android/pixit-avrcp.txt \
 	android/pixit-hsp.txt android/pixit-hfp.txt \
-	android/pixit-gatt.txt android/pts-l2cap.txt \
-	android/pts-gap.txt android/pts-did.txt android/pts-hid.txt \
-	android/pts-pan.txt android/pts-opp.txt android/pts-map.txt \
-	android/pts-a2dp.txt android/pts-avrcp.txt \
+	android/pixit-gatt.txt android/pixit-mcap.txt \
+	android/pixit-hdp.txt android/pixit-iopt.txt \
+	android/pixit-sm.txt android/pixit-mps.txt \
+	android/bite-rfcomm.txt android/bite-spp.txt \
+	android/pts-l2cap.txt android/pts-gap.txt android/pts-did.txt \
+	android/pts-hid.txt android/pts-pan.txt android/pts-opp.txt \
+	android/pts-map.txt android/pts-a2dp.txt android/pts-avrcp.txt \
 	android/pts-avctp.txt android/pts-pbap.txt android/pts-hfp.txt \
-	android/pts-hsp.txt tools/hid2hci.rules $(test_scripts) \
+	android/pts-gatt.txt android/pts-hsp.txt android/pts-iopt.txt \
+	android/pts-hdp.txt android/pts-mcap.txt android/pts-mps.txt \
+	android/pts-sm.txt tools/hid2hci.rules $(test_scripts) \
 	doc/assigned-numbers.txt doc/supported-features.txt \
 	doc/test-coverage.txt doc/settings-storage.txt \
 	doc/mgmt-api.txt doc/adapter-api.txt doc/device-api.txt \
@@ -1862,7 +1914,7 @@ extra_sources = lib/uuid.c
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 BUILT_SOURCES = $(local_headers) src/builtin.h obexd/src/builtin.h
 @LIBRARY_TRUE@lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:8:17
+@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:9:17
 @LIBRARY_TRUE@lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 lib_libbluetooth_internal_la_SOURCES = $(lib_headers) $(lib_sources) \
 					$(extra_headers) $(extra_sources)
@@ -1906,6 +1958,7 @@ builtin_sources = plugins/hostname.c plugins/wiimote.c \
 	profiles/network/connection.c profiles/input/manager.c \
 	profiles/input/server.h profiles/input/server.c \
 	profiles/input/device.h profiles/input/device.c \
+	profiles/input/uhid_copy.h profiles/input/hidp_defs.h \
 	profiles/input/hog.c profiles/input/uhid_copy.h \
 	profiles/input/suspend.h profiles/input/suspend-dummy.c \
 	$(am__append_9) profiles/gatt/gas.c profiles/scanparam/scan.c \
@@ -1973,15 +2026,15 @@ man_MANS = src/bluetoothd.8
 test_scripts = test/sap_client.py test/bluezutils.py test/dbusdef.py \
 	test/monitor-bluetooth test/list-devices test/test-discovery \
 	test/test-manager test/test-adapter test/test-device \
-	test/simple-agent test/simple-service test/simple-endpoint \
-	test/test-sap-server test/test-proximity test/test-network \
-	test/test-thermometer test/test-profile test/test-health \
-	test/test-health-sink test/service-record.dtd \
-	test/service-did.xml test/service-spp.xml test/service-opp.xml \
-	test/service-ftp.xml test/simple-player test/test-nap \
-	test/test-heartrate test/test-alert test/test-hfp \
-	test/test-cyclingspeed test/opp-client test/ftp-client \
-	test/pbap-client test/map-client
+	test/simple-agent test/simple-endpoint test/test-sap-server \
+	test/test-proximity test/test-network test/test-thermometer \
+	test/test-profile test/test-health test/test-health-sink \
+	test/service-record.dtd test/service-did.xml \
+	test/service-spp.xml test/service-opp.xml test/service-ftp.xml \
+	test/simple-player test/test-nap test/test-heartrate \
+	test/test-alert test/test-hfp test/test-cyclingspeed \
+	test/opp-client test/ftp-client test/pbap-client \
+	test/map-client
 unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 	unit/test-textfile unit/test-crc unit/test-ringbuf \
 	unit/test-queue unit/test-mgmt unit/test-sdp unit/test-avdtp \
@@ -2051,7 +2104,8 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @EXPERIMENTAL_TRUE@				src/shared/timeout-mainloop.c \
 @EXPERIMENTAL_TRUE@				src/shared/hci.h src/shared/hci.c \
 @EXPERIMENTAL_TRUE@				src/shared/util.h src/shared/util.c \
-@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c
+@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c \
+@EXPERIMENTAL_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c
 
 @EXPERIMENTAL_TRUE@tools_mgmt_tester_SOURCES = tools/mgmt-tester.c monitor/bt.h \
 @EXPERIMENTAL_TRUE@				emulator/btdev.h emulator/btdev.c \
@@ -2143,6 +2197,7 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @EXPERIMENTAL_TRUE@				src/shared/hci.h src/shared/hci.c \
 @EXPERIMENTAL_TRUE@				src/shared/util.h src/shared/util.c \
 @EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c \
+@EXPERIMENTAL_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c \
 @EXPERIMENTAL_TRUE@				src/shared/tester.h src/shared/tester.c
 
 @EXPERIMENTAL_TRUE@tools_hci_tester_LDADD = @GLIB_LIBS@
@@ -2152,13 +2207,14 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @TOOLS_TRUE@						tools/hciattach_tialt.c \
 @TOOLS_TRUE@						tools/hciattach_ath3k.c \
 @TOOLS_TRUE@						tools/hciattach_qualcomm.c \
-@TOOLS_TRUE@						tools/hciattach_intel.c
+@TOOLS_TRUE@						tools/hciattach_intel.c \
+@TOOLS_TRUE@						tools/hciattach_bcm43xx.c
 
 @TOOLS_TRUE@tools_hciattach_LDADD = lib/libbluetooth-internal.la
 @TOOLS_TRUE@tools_hciconfig_SOURCES = tools/hciconfig.c tools/csr.h tools/csr.c
 @TOOLS_TRUE@tools_hciconfig_LDADD = lib/libbluetooth-internal.la
 @TOOLS_TRUE@tools_hcitool_SOURCES = tools/hcitool.c src/oui.h src/oui.c
-@TOOLS_TRUE@tools_hcitool_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@ @UDEV_LIBS@
+@TOOLS_TRUE@tools_hcitool_LDADD = lib/libbluetooth-internal.la @UDEV_LIBS@
 @TOOLS_TRUE@tools_hcidump_SOURCES = tools/hcidump.c \
 @TOOLS_TRUE@				tools/parser/parser.h tools/parser/parser.c \
 @TOOLS_TRUE@				tools/parser/lmp.c \
@@ -2204,7 +2260,8 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @TOOLS_TRUE@				src/shared/io.h src/shared/io-mainloop.c \
 @TOOLS_TRUE@				src/shared/hci.h src/shared/hci.c \
 @TOOLS_TRUE@				src/shared/util.h src/shared/util.c \
-@TOOLS_TRUE@				src/shared/queue.h src/shared/queue.c
+@TOOLS_TRUE@				src/shared/queue.h src/shared/queue.c \
+@TOOLS_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c
 
 @HID2HCI_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @UDEV_LIBS@
@@ -2231,7 +2288,8 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @EXPERIMENTAL_TRUE@				src/shared/timeout-mainloop.c \
 @EXPERIMENTAL_TRUE@				src/shared/hci.h src/shared/hci.c \
 @EXPERIMENTAL_TRUE@				src/shared/util.h src/shared/util.c \
-@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c
+@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c \
+@EXPERIMENTAL_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c
 
 @EXPERIMENTAL_TRUE@tools_btsnoop_SOURCES = tools/btsnoop.c \
 @EXPERIMENTAL_TRUE@				src/shared/pcap.h src/shared/pcap.c \
@@ -2248,6 +2306,7 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @EXPERIMENTAL_TRUE@tools_cltest_SOURCES = tools/cltest.c monitor/mainloop.h monitor/mainloop.c
 @EXPERIMENTAL_TRUE@tools_cltest_LDADD = lib/libbluetooth-internal.la
 @EXPERIMENTAL_TRUE@tools_seq2bseq_SOURCES = tools/seq2bseq.c
+@EXPERIMENTAL_TRUE@tools_hex2hcd_SOURCES = tools/hex2hcd.c
 @EXPERIMENTAL_TRUE@tools_ibeacon_SOURCES = tools/ibeacon.c monitor/bt.h \
 @EXPERIMENTAL_TRUE@				monitor/mainloop.h monitor/mainloop.c \
 @EXPERIMENTAL_TRUE@				src/shared/io.h src/shared/io-mainloop.c \
@@ -2255,7 +2314,8 @@ unit_tests = $(am__append_31) unit/test-eir unit/test-uuid \
 @EXPERIMENTAL_TRUE@				src/shared/timeout-mainloop.c \
 @EXPERIMENTAL_TRUE@				src/shared/hci.h src/shared/hci.c \
 @EXPERIMENTAL_TRUE@				src/shared/util.h src/shared/util.c \
-@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c
+@EXPERIMENTAL_TRUE@				src/shared/queue.h src/shared/queue.c \
+@EXPERIMENTAL_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c
 
 @READLINE_TRUE@attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
 @READLINE_TRUE@				attrib/gattrib.c btio/btio.c \
@@ -2371,6 +2431,7 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@				src/log.c \
 @ANDROID_TRUE@				android/hal-msg.h \
 @ANDROID_TRUE@				android/audio-msg.h \
+@ANDROID_TRUE@				android/sco-msg.h \
 @ANDROID_TRUE@				android/utils.h \
 @ANDROID_TRUE@				src/sdpd-database.c src/sdpd-server.c \
 @ANDROID_TRUE@				src/sdpd-service.c src/sdpd-request.c \
@@ -2382,6 +2443,7 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@				src/shared/mgmt.h src/shared/mgmt.c \
 @ANDROID_TRUE@				src/shared/ringbuf.h src/shared/ringbuf.c \
 @ANDROID_TRUE@				src/shared/hfp.h src/shared/hfp.c \
+@ANDROID_TRUE@				src/shared/gatt-db.h src/shared/gatt-db.c \
 @ANDROID_TRUE@				android/bluetooth.h android/bluetooth.c \
 @ANDROID_TRUE@				android/hidhost.h android/hidhost.c \
 @ANDROID_TRUE@				android/ipc-common.h \
@@ -2396,6 +2458,7 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@				android/handsfree.h android/handsfree.c \
 @ANDROID_TRUE@				android/gatt.h android/gatt.c \
 @ANDROID_TRUE@				android/health.h android/health.c \
+@ANDROID_TRUE@				android/mcap-lib.h android/mcap-lib.c \
 @ANDROID_TRUE@				attrib/att.c attrib/att.h \
 @ANDROID_TRUE@				attrib/gatt.c attrib/gatt.h \
 @ANDROID_TRUE@				attrib/gattrib.c attrib/gattrib.h \
@@ -2452,8 +2515,10 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@				android/client/if-hf.c \
 @ANDROID_TRUE@				android/client/if-hh.c \
 @ANDROID_TRUE@				android/client/if-pan.c \
+@ANDROID_TRUE@				android/client/if-hl.c \
 @ANDROID_TRUE@				android/client/if-sock.c \
 @ANDROID_TRUE@				android/client/if-audio.c \
+@ANDROID_TRUE@				android/client/if-sco.c \
 @ANDROID_TRUE@				android/hardware/hardware.c \
 @ANDROID_TRUE@				android/hal-utils.h android/hal-utils.c
 
@@ -2504,6 +2569,21 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@					android/hardware/audio_effect.h \
 @ANDROID_TRUE@					android/hardware/hardware.h \
 @ANDROID_TRUE@					android/system/audio.h
+
+@ANDROID_TRUE@android_audio_sco_default_la_SOURCES = android/hal-log.h \
+@ANDROID_TRUE@					android/sco-msg.h \
+@ANDROID_TRUE@					android/hal-sco.c \
+@ANDROID_TRUE@					android/hardware/audio.h \
+@ANDROID_TRUE@					android/hardware/audio_effect.h \
+@ANDROID_TRUE@					android/hardware/hardware.h \
+@ANDROID_TRUE@					android/audio_utils/resampler.c \
+@ANDROID_TRUE@					android/audio_utils/resampler.h \
+@ANDROID_TRUE@					android/system/audio.h
+
+@ANDROID_TRUE@android_audio_sco_default_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/android
+@ANDROID_TRUE@android_audio_sco_default_la_LIBADD = @SPEEXDSP_LIBS@
+@ANDROID_TRUE@android_audio_sco_default_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
+@ANDROID_TRUE@					-no-undefined -lrt
 
 @ANDROID_TRUE@android_test_ipc_SOURCES = android/test-ipc.c \
 @ANDROID_TRUE@				src/shared/util.h src/shared/util.c \
@@ -2779,6 +2859,19 @@ android/android_audio_a2dp_default_la-hal-audio.lo:  \
 	android/$(am__dirstamp) android/$(DEPDIR)/$(am__dirstamp)
 android/audio.a2dp.default.la: $(android_audio_a2dp_default_la_OBJECTS) $(android_audio_a2dp_default_la_DEPENDENCIES) $(EXTRA_android_audio_a2dp_default_la_DEPENDENCIES) android/$(am__dirstamp)
 	$(AM_V_CCLD)$(android_audio_a2dp_default_la_LINK) $(am_android_audio_a2dp_default_la_rpath) $(android_audio_a2dp_default_la_OBJECTS) $(android_audio_a2dp_default_la_LIBADD) $(LIBS)
+android/android_audio_sco_default_la-hal-sco.lo:  \
+	android/$(am__dirstamp) android/$(DEPDIR)/$(am__dirstamp)
+android/audio_utils/$(am__dirstamp):
+	@$(MKDIR_P) android/audio_utils
+	@: > android/audio_utils/$(am__dirstamp)
+android/audio_utils/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) android/audio_utils/$(DEPDIR)
+	@: > android/audio_utils/$(DEPDIR)/$(am__dirstamp)
+android/audio_utils/android_audio_sco_default_la-resampler.lo:  \
+	android/audio_utils/$(am__dirstamp) \
+	android/audio_utils/$(DEPDIR)/$(am__dirstamp)
+android/audio.sco.default.la: $(android_audio_sco_default_la_OBJECTS) $(android_audio_sco_default_la_DEPENDENCIES) $(EXTRA_android_audio_sco_default_la_DEPENDENCIES) android/$(am__dirstamp)
+	$(AM_V_CCLD)$(android_audio_sco_default_la_LINK) $(am_android_audio_sco_default_la_rpath) $(android_audio_sco_default_la_OBJECTS) $(android_audio_sco_default_la_LIBADD) $(LIBS)
 android/android_bluetooth_default_la-hal-bluetooth.lo:  \
 	android/$(am__dirstamp) android/$(DEPDIR)/$(am__dirstamp)
 android/android_bluetooth_default_la-hal-socket.lo:  \
@@ -3126,6 +3219,8 @@ src/shared/ringbuf.$(OBJEXT): src/shared/$(am__dirstamp) \
 	src/shared/$(DEPDIR)/$(am__dirstamp)
 src/shared/hfp.$(OBJEXT): src/shared/$(am__dirstamp) \
 	src/shared/$(DEPDIR)/$(am__dirstamp)
+src/shared/gatt-db.$(OBJEXT): src/shared/$(am__dirstamp) \
+	src/shared/$(DEPDIR)/$(am__dirstamp)
 android/bluetooth.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 android/hidhost.$(OBJEXT): android/$(am__dirstamp) \
@@ -3151,6 +3246,8 @@ android/handsfree.$(OBJEXT): android/$(am__dirstamp) \
 android/gatt.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 android/health.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
+android/mcap-lib.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 attrib/$(am__dirstamp):
 	@$(MKDIR_P) attrib
@@ -3242,10 +3339,16 @@ android/client/android_haltest-if-hh.$(OBJEXT):  \
 android/client/android_haltest-if-pan.$(OBJEXT):  \
 	android/client/$(am__dirstamp) \
 	android/client/$(DEPDIR)/$(am__dirstamp)
+android/client/android_haltest-if-hl.$(OBJEXT):  \
+	android/client/$(am__dirstamp) \
+	android/client/$(DEPDIR)/$(am__dirstamp)
 android/client/android_haltest-if-sock.$(OBJEXT):  \
 	android/client/$(am__dirstamp) \
 	android/client/$(DEPDIR)/$(am__dirstamp)
 android/client/android_haltest-if-audio.$(OBJEXT):  \
+	android/client/$(am__dirstamp) \
+	android/client/$(DEPDIR)/$(am__dirstamp)
+android/client/android_haltest-if-sco.$(OBJEXT):  \
 	android/client/$(am__dirstamp) \
 	android/client/$(DEPDIR)/$(am__dirstamp)
 android/hardware/android_haltest-hardware.$(OBJEXT):  \
@@ -3963,6 +4066,8 @@ tools/hciattach_qualcomm.$(OBJEXT): tools/$(am__dirstamp) \
 	tools/$(DEPDIR)/$(am__dirstamp)
 tools/hciattach_intel.$(OBJEXT): tools/$(am__dirstamp) \
 	tools/$(DEPDIR)/$(am__dirstamp)
+tools/hciattach_bcm43xx.$(OBJEXT): tools/$(am__dirstamp) \
+	tools/$(DEPDIR)/$(am__dirstamp)
 tools/hciattach$(EXEEXT): $(tools_hciattach_OBJECTS) $(tools_hciattach_DEPENDENCIES) $(EXTRA_tools_hciattach_DEPENDENCIES) tools/$(am__dirstamp)
 	@rm -f tools/hciattach$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(tools_hciattach_OBJECTS) $(tools_hciattach_LDADD) $(LIBS)
@@ -4045,6 +4150,11 @@ tools/hcitool.$(OBJEXT): tools/$(am__dirstamp) \
 tools/hcitool$(EXEEXT): $(tools_hcitool_OBJECTS) $(tools_hcitool_DEPENDENCIES) $(EXTRA_tools_hcitool_DEPENDENCIES) tools/$(am__dirstamp)
 	@rm -f tools/hcitool$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(tools_hcitool_OBJECTS) $(tools_hcitool_LDADD) $(LIBS)
+tools/hex2hcd.$(OBJEXT): tools/$(am__dirstamp) \
+	tools/$(DEPDIR)/$(am__dirstamp)
+tools/hex2hcd$(EXEEXT): $(tools_hex2hcd_OBJECTS) $(tools_hex2hcd_DEPENDENCIES) $(EXTRA_tools_hex2hcd_DEPENDENCIES) tools/$(am__dirstamp)
+	@rm -f tools/hex2hcd$(EXEEXT)
+	$(AM_V_CCLD)$(LINK) $(tools_hex2hcd_OBJECTS) $(tools_hex2hcd_LDADD) $(LIBS)
 tools/hid2hci.$(OBJEXT): tools/$(am__dirstamp) \
 	tools/$(DEPDIR)/$(am__dirstamp)
 tools/hid2hci$(EXEEXT): $(tools_hid2hci_OBJECTS) $(tools_hid2hci_DEPENDENCIES) $(EXTRA_tools_hid2hci_DEPENDENCIES) tools/$(am__dirstamp)
@@ -4301,6 +4411,8 @@ mostlyclean-compile:
 	-rm -f android/android_android_tester-android-tester.$(OBJEXT)
 	-rm -f android/android_audio_a2dp_default_la-hal-audio.$(OBJEXT)
 	-rm -f android/android_audio_a2dp_default_la-hal-audio.lo
+	-rm -f android/android_audio_sco_default_la-hal-sco.$(OBJEXT)
+	-rm -f android/android_audio_sco_default_la-hal-sco.lo
 	-rm -f android/android_bluetooth_default_la-hal-a2dp.$(OBJEXT)
 	-rm -f android/android_bluetooth_default_la-hal-a2dp.lo
 	-rm -f android/android_bluetooth_default_la-hal-avrcp.$(OBJEXT)
@@ -4326,6 +4438,8 @@ mostlyclean-compile:
 	-rm -f android/android_haltest-hal-utils.$(OBJEXT)
 	-rm -f android/android_ipc_tester-hal-utils.$(OBJEXT)
 	-rm -f android/android_ipc_tester-ipc-tester.$(OBJEXT)
+	-rm -f android/audio_utils/android_audio_sco_default_la-resampler.$(OBJEXT)
+	-rm -f android/audio_utils/android_audio_sco_default_la-resampler.lo
 	-rm -f android/avctp.$(OBJEXT)
 	-rm -f android/avdtp.$(OBJEXT)
 	-rm -f android/avrcp-lib.$(OBJEXT)
@@ -4340,8 +4454,10 @@ mostlyclean-compile:
 	-rm -f android/client/android_haltest-if-gatt.$(OBJEXT)
 	-rm -f android/client/android_haltest-if-hf.$(OBJEXT)
 	-rm -f android/client/android_haltest-if-hh.$(OBJEXT)
+	-rm -f android/client/android_haltest-if-hl.$(OBJEXT)
 	-rm -f android/client/android_haltest-if-pan.$(OBJEXT)
 	-rm -f android/client/android_haltest-if-rc.$(OBJEXT)
+	-rm -f android/client/android_haltest-if-sco.$(OBJEXT)
 	-rm -f android/client/android_haltest-if-sock.$(OBJEXT)
 	-rm -f android/client/android_haltest-pollhandler.$(OBJEXT)
 	-rm -f android/client/android_haltest-tabcompletion.$(OBJEXT)
@@ -4354,6 +4470,7 @@ mostlyclean-compile:
 	-rm -f android/hidhost.$(OBJEXT)
 	-rm -f android/ipc.$(OBJEXT)
 	-rm -f android/main.$(OBJEXT)
+	-rm -f android/mcap-lib.$(OBJEXT)
 	-rm -f android/pan.$(OBJEXT)
 	-rm -f android/socket.$(OBJEXT)
 	-rm -f android/system-emulator.$(OBJEXT)
@@ -4588,6 +4705,7 @@ mostlyclean-compile:
 	-rm -f src/shared/bluetoothd-util.$(OBJEXT)
 	-rm -f src/shared/btsnoop.$(OBJEXT)
 	-rm -f src/shared/crypto.$(OBJEXT)
+	-rm -f src/shared/gatt-db.$(OBJEXT)
 	-rm -f src/shared/hci.$(OBJEXT)
 	-rm -f src/shared/hciemu.$(OBJEXT)
 	-rm -f src/shared/hfp.$(OBJEXT)
@@ -4630,6 +4748,7 @@ mostlyclean-compile:
 	-rm -f tools/hci-tester.$(OBJEXT)
 	-rm -f tools/hciattach.$(OBJEXT)
 	-rm -f tools/hciattach_ath3k.$(OBJEXT)
+	-rm -f tools/hciattach_bcm43xx.$(OBJEXT)
 	-rm -f tools/hciattach_intel.$(OBJEXT)
 	-rm -f tools/hciattach_qualcomm.$(OBJEXT)
 	-rm -f tools/hciattach_st.$(OBJEXT)
@@ -4640,6 +4759,7 @@ mostlyclean-compile:
 	-rm -f tools/hcieventmask.$(OBJEXT)
 	-rm -f tools/hcisecfilter.$(OBJEXT)
 	-rm -f tools/hcitool.$(OBJEXT)
+	-rm -f tools/hex2hcd.$(OBJEXT)
 	-rm -f tools/hid2hci.$(OBJEXT)
 	-rm -f tools/hwdb.$(OBJEXT)
 	-rm -f tools/ibeacon.$(OBJEXT)
@@ -4711,6 +4831,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/a2dp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_android_tester-android-tester.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_audio_a2dp_default_la-hal-audio.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_audio_sco_default_la-hal-sco.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_bluetooth_default_la-hal-a2dp.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_bluetooth_default_la-hal-avrcp.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_bluetooth_default_la-hal-bluetooth.Plo@am__quote@
@@ -4737,10 +4858,12 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/hidhost.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/ipc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/main.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/mcap-lib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/pan.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/socket.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/system-emulator.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/test-ipc.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/audio_utils/$(DEPDIR)/android_audio_sco_default_la-resampler.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-haltest.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-history.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-audio.Po@am__quote@
@@ -4749,8 +4872,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-gatt.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-hf.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-hh.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-hl.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-pan.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-rc.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-sco.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-if-sock.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-pollhandler.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/client/$(DEPDIR)/android_haltest-tabcompletion.Po@am__quote@
@@ -4978,6 +5103,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/bluetoothd-util.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/btsnoop.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/crypto.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/gatt-db.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/hci.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/hciemu.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/hfp.Po@am__quote@
@@ -5018,6 +5144,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hci-tester.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach_ath3k.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach_bcm43xx.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach_intel.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach_qualcomm.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hciattach_st.Po@am__quote@
@@ -5028,6 +5155,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hcieventmask.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hcisecfilter.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hcitool.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hex2hcd.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hid2hci.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/hwdb.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/ibeacon.Po@am__quote@
@@ -5123,6 +5251,20 @@ android/android_audio_a2dp_default_la-hal-audio.lo: android/hal-audio.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/hal-audio.c' object='android/android_audio_a2dp_default_la-hal-audio.lo' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_audio_a2dp_default_la_CFLAGS) $(CFLAGS) -c -o android/android_audio_a2dp_default_la-hal-audio.lo `test -f 'android/hal-audio.c' || echo '$(srcdir)/'`android/hal-audio.c
+
+android/android_audio_sco_default_la-hal-sco.lo: android/hal-sco.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_audio_sco_default_la_CFLAGS) $(CFLAGS) -MT android/android_audio_sco_default_la-hal-sco.lo -MD -MP -MF android/$(DEPDIR)/android_audio_sco_default_la-hal-sco.Tpo -c -o android/android_audio_sco_default_la-hal-sco.lo `test -f 'android/hal-sco.c' || echo '$(srcdir)/'`android/hal-sco.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/$(DEPDIR)/android_audio_sco_default_la-hal-sco.Tpo android/$(DEPDIR)/android_audio_sco_default_la-hal-sco.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/hal-sco.c' object='android/android_audio_sco_default_la-hal-sco.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_audio_sco_default_la_CFLAGS) $(CFLAGS) -c -o android/android_audio_sco_default_la-hal-sco.lo `test -f 'android/hal-sco.c' || echo '$(srcdir)/'`android/hal-sco.c
+
+android/audio_utils/android_audio_sco_default_la-resampler.lo: android/audio_utils/resampler.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_audio_sco_default_la_CFLAGS) $(CFLAGS) -MT android/audio_utils/android_audio_sco_default_la-resampler.lo -MD -MP -MF android/audio_utils/$(DEPDIR)/android_audio_sco_default_la-resampler.Tpo -c -o android/audio_utils/android_audio_sco_default_la-resampler.lo `test -f 'android/audio_utils/resampler.c' || echo '$(srcdir)/'`android/audio_utils/resampler.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/audio_utils/$(DEPDIR)/android_audio_sco_default_la-resampler.Tpo android/audio_utils/$(DEPDIR)/android_audio_sco_default_la-resampler.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/audio_utils/resampler.c' object='android/audio_utils/android_audio_sco_default_la-resampler.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_audio_sco_default_la_CFLAGS) $(CFLAGS) -c -o android/audio_utils/android_audio_sco_default_la-resampler.lo `test -f 'android/audio_utils/resampler.c' || echo '$(srcdir)/'`android/audio_utils/resampler.c
 
 android/android_bluetooth_default_la-hal-bluetooth.lo: android/hal-bluetooth.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_bluetooth_default_la_CFLAGS) $(CFLAGS) -MT android/android_bluetooth_default_la-hal-bluetooth.lo -MD -MP -MF android/$(DEPDIR)/android_bluetooth_default_la-hal-bluetooth.Tpo -c -o android/android_bluetooth_default_la-hal-bluetooth.lo `test -f 'android/hal-bluetooth.c' || echo '$(srcdir)/'`android/hal-bluetooth.c
@@ -5565,6 +5707,20 @@ android/client/android_haltest-if-pan.obj: android/client/if-pan.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-pan.obj `if test -f 'android/client/if-pan.c'; then $(CYGPATH_W) 'android/client/if-pan.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-pan.c'; fi`
 
+android/client/android_haltest-if-hl.o: android/client/if-hl.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/client/android_haltest-if-hl.o -MD -MP -MF android/client/$(DEPDIR)/android_haltest-if-hl.Tpo -c -o android/client/android_haltest-if-hl.o `test -f 'android/client/if-hl.c' || echo '$(srcdir)/'`android/client/if-hl.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/client/$(DEPDIR)/android_haltest-if-hl.Tpo android/client/$(DEPDIR)/android_haltest-if-hl.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/client/if-hl.c' object='android/client/android_haltest-if-hl.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-hl.o `test -f 'android/client/if-hl.c' || echo '$(srcdir)/'`android/client/if-hl.c
+
+android/client/android_haltest-if-hl.obj: android/client/if-hl.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/client/android_haltest-if-hl.obj -MD -MP -MF android/client/$(DEPDIR)/android_haltest-if-hl.Tpo -c -o android/client/android_haltest-if-hl.obj `if test -f 'android/client/if-hl.c'; then $(CYGPATH_W) 'android/client/if-hl.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-hl.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/client/$(DEPDIR)/android_haltest-if-hl.Tpo android/client/$(DEPDIR)/android_haltest-if-hl.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/client/if-hl.c' object='android/client/android_haltest-if-hl.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-hl.obj `if test -f 'android/client/if-hl.c'; then $(CYGPATH_W) 'android/client/if-hl.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-hl.c'; fi`
+
 android/client/android_haltest-if-sock.o: android/client/if-sock.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/client/android_haltest-if-sock.o -MD -MP -MF android/client/$(DEPDIR)/android_haltest-if-sock.Tpo -c -o android/client/android_haltest-if-sock.o `test -f 'android/client/if-sock.c' || echo '$(srcdir)/'`android/client/if-sock.c
 @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/client/$(DEPDIR)/android_haltest-if-sock.Tpo android/client/$(DEPDIR)/android_haltest-if-sock.Po
@@ -5592,6 +5748,20 @@ android/client/android_haltest-if-audio.obj: android/client/if-audio.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/client/if-audio.c' object='android/client/android_haltest-if-audio.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-audio.obj `if test -f 'android/client/if-audio.c'; then $(CYGPATH_W) 'android/client/if-audio.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-audio.c'; fi`
+
+android/client/android_haltest-if-sco.o: android/client/if-sco.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/client/android_haltest-if-sco.o -MD -MP -MF android/client/$(DEPDIR)/android_haltest-if-sco.Tpo -c -o android/client/android_haltest-if-sco.o `test -f 'android/client/if-sco.c' || echo '$(srcdir)/'`android/client/if-sco.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/client/$(DEPDIR)/android_haltest-if-sco.Tpo android/client/$(DEPDIR)/android_haltest-if-sco.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/client/if-sco.c' object='android/client/android_haltest-if-sco.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-sco.o `test -f 'android/client/if-sco.c' || echo '$(srcdir)/'`android/client/if-sco.c
+
+android/client/android_haltest-if-sco.obj: android/client/if-sco.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/client/android_haltest-if-sco.obj -MD -MP -MF android/client/$(DEPDIR)/android_haltest-if-sco.Tpo -c -o android/client/android_haltest-if-sco.obj `if test -f 'android/client/if-sco.c'; then $(CYGPATH_W) 'android/client/if-sco.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-sco.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/client/$(DEPDIR)/android_haltest-if-sco.Tpo android/client/$(DEPDIR)/android_haltest-if-sco.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/client/if-sco.c' object='android/client/android_haltest-if-sco.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -c -o android/client/android_haltest-if-sco.obj `if test -f 'android/client/if-sco.c'; then $(CYGPATH_W) 'android/client/if-sco.c'; else $(CYGPATH_W) '$(srcdir)/android/client/if-sco.c'; fi`
 
 android/hardware/android_haltest-hardware.o: android/hardware/hardware.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_haltest_CFLAGS) $(CFLAGS) -MT android/hardware/android_haltest-hardware.o -MD -MP -MF android/hardware/$(DEPDIR)/android_haltest-hardware.Tpo -c -o android/hardware/android_haltest-hardware.o `test -f 'android/hardware/hardware.c' || echo '$(srcdir)/'`android/hardware/hardware.c
@@ -7559,6 +7729,7 @@ mostlyclean-libtool:
 clean-libtool:
 	-rm -rf .libs _libs
 	-rm -rf android/.libs android/_libs
+	-rm -rf android/audio_utils/.libs android/audio_utils/_libs
 	-rm -rf attrib/.libs attrib/_libs
 	-rm -rf client/.libs client/_libs
 	-rm -rf emulator/.libs emulator/_libs
@@ -8233,6 +8404,8 @@ distclean-generic:
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
 	-rm -f android/$(DEPDIR)/$(am__dirstamp)
 	-rm -f android/$(am__dirstamp)
+	-rm -f android/audio_utils/$(DEPDIR)/$(am__dirstamp)
+	-rm -f android/audio_utils/$(am__dirstamp)
 	-rm -f android/client/$(DEPDIR)/$(am__dirstamp)
 	-rm -f android/client/$(am__dirstamp)
 	-rm -f android/hardware/$(DEPDIR)/$(am__dirstamp)
@@ -8320,7 +8493,7 @@ clean-am: clean-binPROGRAMS clean-cupsPROGRAMS clean-generic \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf android/$(DEPDIR) android/client/$(DEPDIR) android/hardware/$(DEPDIR) attrib/$(DEPDIR) btio/$(DEPDIR) client/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) gobex/$(DEPDIR) lib/$(DEPDIR) monitor/$(DEPDIR) obexd/client/$(DEPDIR) obexd/plugins/$(DEPDIR) obexd/src/$(DEPDIR) plugins/$(DEPDIR) profiles/alert/$(DEPDIR) profiles/audio/$(DEPDIR) profiles/cups/$(DEPDIR) profiles/cyclingspeed/$(DEPDIR) profiles/deviceinfo/$(DEPDIR) profiles/gatt/$(DEPDIR) profiles/health/$(DEPDIR) profiles/heartrate/$(DEPDIR) profiles/iap/$(DEPDIR) profiles/input/$(DEPDIR) profiles/network/$(DEPDIR) profiles/proximity/$(DEPDIR) profiles/sap/$(DEPDIR) profiles/scanparam/$(DEPDIR) profiles/thermometer/$(DEPDIR) profiles/time/$(DEPDIR) src/$(DEPDIR) src/shared/$(DEPDIR) tools/$(DEPDIR) tools/parser/$(DEPDIR) unit/$(DEPDIR)
+	-rm -rf android/$(DEPDIR) android/audio_utils/$(DEPDIR) android/client/$(DEPDIR) android/hardware/$(DEPDIR) attrib/$(DEPDIR) btio/$(DEPDIR) client/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) gobex/$(DEPDIR) lib/$(DEPDIR) monitor/$(DEPDIR) obexd/client/$(DEPDIR) obexd/plugins/$(DEPDIR) obexd/src/$(DEPDIR) plugins/$(DEPDIR) profiles/alert/$(DEPDIR) profiles/audio/$(DEPDIR) profiles/cups/$(DEPDIR) profiles/cyclingspeed/$(DEPDIR) profiles/deviceinfo/$(DEPDIR) profiles/gatt/$(DEPDIR) profiles/health/$(DEPDIR) profiles/heartrate/$(DEPDIR) profiles/iap/$(DEPDIR) profiles/input/$(DEPDIR) profiles/network/$(DEPDIR) profiles/proximity/$(DEPDIR) profiles/sap/$(DEPDIR) profiles/scanparam/$(DEPDIR) profiles/thermometer/$(DEPDIR) profiles/time/$(DEPDIR) src/$(DEPDIR) src/shared/$(DEPDIR) tools/$(DEPDIR) tools/parser/$(DEPDIR) unit/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -8375,7 +8548,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf android/$(DEPDIR) android/client/$(DEPDIR) android/hardware/$(DEPDIR) attrib/$(DEPDIR) btio/$(DEPDIR) client/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) gobex/$(DEPDIR) lib/$(DEPDIR) monitor/$(DEPDIR) obexd/client/$(DEPDIR) obexd/plugins/$(DEPDIR) obexd/src/$(DEPDIR) plugins/$(DEPDIR) profiles/alert/$(DEPDIR) profiles/audio/$(DEPDIR) profiles/cups/$(DEPDIR) profiles/cyclingspeed/$(DEPDIR) profiles/deviceinfo/$(DEPDIR) profiles/gatt/$(DEPDIR) profiles/health/$(DEPDIR) profiles/heartrate/$(DEPDIR) profiles/iap/$(DEPDIR) profiles/input/$(DEPDIR) profiles/network/$(DEPDIR) profiles/proximity/$(DEPDIR) profiles/sap/$(DEPDIR) profiles/scanparam/$(DEPDIR) profiles/thermometer/$(DEPDIR) profiles/time/$(DEPDIR) src/$(DEPDIR) src/shared/$(DEPDIR) tools/$(DEPDIR) tools/parser/$(DEPDIR) unit/$(DEPDIR)
+	-rm -rf android/$(DEPDIR) android/audio_utils/$(DEPDIR) android/client/$(DEPDIR) android/hardware/$(DEPDIR) attrib/$(DEPDIR) btio/$(DEPDIR) client/$(DEPDIR) emulator/$(DEPDIR) gdbus/$(DEPDIR) gobex/$(DEPDIR) lib/$(DEPDIR) monitor/$(DEPDIR) obexd/client/$(DEPDIR) obexd/plugins/$(DEPDIR) obexd/src/$(DEPDIR) plugins/$(DEPDIR) profiles/alert/$(DEPDIR) profiles/audio/$(DEPDIR) profiles/cups/$(DEPDIR) profiles/cyclingspeed/$(DEPDIR) profiles/deviceinfo/$(DEPDIR) profiles/gatt/$(DEPDIR) profiles/health/$(DEPDIR) profiles/heartrate/$(DEPDIR) profiles/iap/$(DEPDIR) profiles/input/$(DEPDIR) profiles/network/$(DEPDIR) profiles/proximity/$(DEPDIR) profiles/sap/$(DEPDIR) profiles/scanparam/$(DEPDIR) profiles/thermometer/$(DEPDIR) profiles/time/$(DEPDIR) src/$(DEPDIR) src/shared/$(DEPDIR) tools/$(DEPDIR) tools/parser/$(DEPDIR) unit/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

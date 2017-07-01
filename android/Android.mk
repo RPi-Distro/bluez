@@ -44,12 +44,14 @@ LOCAL_SRC_FILES := \
 	bluez/android/handsfree.c \
 	bluez/android/gatt.c \
 	bluez/android/health.c \
+	bluez/android/mcap-lib.c \
 	bluez/src/log.c \
 	bluez/src/shared/mgmt.c \
 	bluez/src/shared/util.c \
 	bluez/src/shared/queue.c \
 	bluez/src/shared/ringbuf.c \
 	bluez/src/shared/hfp.c \
+	bluez/src/shared/gatt-db.c \
 	bluez/src/shared/io-glib.c \
 	bluez/src/sdpd-database.c \
 	bluez/src/sdpd-service.c \
@@ -74,27 +76,14 @@ LOCAL_C_INCLUDES := \
 
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/bluez \
-	$(LOCAL_PATH)/bluez/lib \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
 LOCAL_SHARED_LIBRARIES := \
 	libglib \
 
-lib_headers := \
-	bluetooth.h \
-	hci.h \
-	hci_lib.h \
-	l2cap.h \
-	sdp_lib.h \
-	sdp.h \
-	rfcomm.h \
-	sco.h \
-	bnep.h \
-
-$(shell mkdir -p $(LOCAL_PATH)/bluez/lib/bluetooth)
-
-$(foreach file,$(lib_headers), $(shell ln -sf ../$(file) $(LOCAL_PATH)/bluez/lib/bluetooth/$(file)))
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_TAGS := optional
 
@@ -106,6 +95,8 @@ LOCAL_STRIP_MODULE := false
 else
 LOCAL_MODULE := bluetoothd
 endif
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -158,12 +149,14 @@ LOCAL_SRC_FILES := \
 	bluez/android/client/history.c \
 	bluez/android/client/tabcompletion.c \
 	bluez/android/client/if-audio.c \
+	bluez/android/client/if-sco.c \
 	bluez/android/client/if-av.c \
 	bluez/android/client/if-rc.c \
 	bluez/android/client/if-bt.c \
 	bluez/android/client/if-hf.c \
 	bluez/android/client/if-hh.c \
 	bluez/android/client/if-pan.c \
+	bluez/android/client/if-hl.c \
 	bluez/android/client/if-sock.c \
 	bluez/android/client/if-gatt.c \
 	bluez/android/hal-utils.c \
@@ -215,13 +208,17 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
-	$(LOCAL_PATH)/bluez/lib \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := btmon
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -244,6 +241,8 @@ LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := btproxy
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -273,6 +272,31 @@ LOCAL_MODULE := audio.a2dp.default
 include $(BUILD_SHARED_LIBRARY)
 
 #
+# SCO audio
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := bluez/android/hal-sco.c
+
+LOCAL_C_INCLUDES = \
+	$(call include-path-for, system-core) \
+	$(call include-path-for, libhardware) \
+	$(call include-path-for, audio-utils) \
+
+LOCAL_SHARED_LIBRARIES := \
+	libcutils \
+	libaudioutils \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
+LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE := audio.sco.default
+
+include $(BUILD_SHARED_LIBRARY)
+
+#
 # l2cap-test
 #
 
@@ -285,13 +309,17 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
-	$(LOCAL_PATH)/bluez/lib \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := l2test
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -314,6 +342,8 @@ LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := bluetoothd-snoop
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -350,13 +380,45 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
-	$(LOCAL_PATH)/bluez/lib \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := btmgmt
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
+
+include $(BUILD_EXECUTABLE)
+
+#
+# hcitool
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	bluez/tools/hcitool.c \
+	bluez/src/oui.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE := hcitool
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -371,14 +433,16 @@ LOCAL_SRC_FILES := \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
 
-LOCAL_C_INCLUDES := \
-	$(LOCAL_PATH)/bluez/lib \
-
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := l2ping
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -393,14 +457,46 @@ LOCAL_SRC_FILES := \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
 
-LOCAL_C_INCLUDES := \
-	$(LOCAL_PATH)/bluez/lib \
-
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := avtest
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
+
+include $(BUILD_EXECUTABLE)
+
+#
+# hciattach
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	bluez/tools/hciattach.c \
+	bluez/tools/hciattach_st.c \
+	bluez/tools/hciattach_ti.c \
+	bluez/tools/hciattach_tialt.c \
+	bluez/tools/hciattach_ath3k.c \
+	bluez/tools/hciattach_qualcomm.c \
+	bluez/tools/hciattach_intel.c \
+	bluez/tools/hciattach_bcm43xx.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_TAGS := optional
+LOCAL_MODULE := hciattach
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 
 include $(BUILD_EXECUTABLE)
 
@@ -466,3 +562,22 @@ LOCAL_REQUIRED_MODULES := \
 include $(BUILD_EXECUTABLE)
 
 endif
+
+#
+# bluetooth-headers
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := bluetooth-headers
+LOCAL_NODULE_TAGS := optional
+LOCAL_MODULE_CLASS := STATIC_LIBRARIES
+
+include_path := $(local-intermediates-dir)/include
+include_files := $(wildcard $(LOCAL_PATH)/bluez/lib/*.h)
+$(shell mkdir -p $(include_path)/bluetooth)
+$(foreach file,$(include_files),$(shell cp -u $(file) $(include_path)/bluetooth))
+
+LOCAL_EXPORT_C_INCLUDE_DIRS := $(include_path)
+
+include $(BUILD_STATIC_LIBRARY)

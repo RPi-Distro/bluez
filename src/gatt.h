@@ -81,6 +81,13 @@ typedef void (*btd_attr_write_t) (struct btd_attribute *attr,
 struct btd_attribute *btd_gatt_add_service(const bt_uuid_t *uuid);
 
 /*
+ * btd_gatt_remove_service - Remove a service (along with all its
+ * characteristics) from the local attribute database.
+ * @service:	Service declaration attribute.
+ */
+void btd_gatt_remove_service(struct btd_attribute *service);
+
+/*
  * btd_gatt_add_char - Add a characteristic (declaration and value attributes)
  * to local attribute database.
  * @uuid:	Characteristic UUID (16-bits or 128-bits).
@@ -94,5 +101,21 @@ struct btd_attribute *btd_gatt_add_service(const bt_uuid_t *uuid);
  */
 struct btd_attribute *btd_gatt_add_char(const bt_uuid_t *uuid,
 						uint8_t properties,
+						btd_attr_read_t read_cb,
+						btd_attr_write_t write_cb);
+
+/*
+ * btd_gatt_add_char_desc - Add a characteristic descriptor to the local
+ * attribute database.
+ * @uuid:	Characteristic Descriptor UUID (16-bits or 128-bits).
+ * @read_cb:	Callback that should be called once the characteristic
+ *		descriptor attribute is read.
+ * @write_cb:	Callback that should be called once the characteristic
+ *		descriptor attribute is written.
+ *
+ * Returns a reference to characteristic descriptor attribute. In case of
+ * error, NULL is returned.
+ */
+struct btd_attribute *btd_gatt_add_char_desc(const bt_uuid_t *uuid,
 						btd_attr_read_t read_cb,
 						btd_attr_write_t write_cb);

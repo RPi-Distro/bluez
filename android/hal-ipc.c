@@ -33,7 +33,7 @@
 #include "ipc-common.h"
 #include "hal-ipc.h"
 
-#define CONNECT_TIMEOUT (5 * 1000)
+#define CONNECT_TIMEOUT (10 * 1000)
 
 static int cmd_sk = -1;
 static int notif_sk = -1;
@@ -99,8 +99,10 @@ static void handle_msg(void *buf, ssize_t len)
 		exit(EXIT_FAILURE);
 	}
 
-	/* opcode is used as table offset and must be adjusted as events start
-	 * with HAL_MINIMUM_EVENT offset */
+	/*
+	 * opcode is used as table offset and must be adjusted as events start
+	 * with HAL_MINIMUM_EVENT offset
+	 */
 	opcode = msg->opcode - HAL_MINIMUM_EVENT;
 
 	/* if opcode is valid */

@@ -33,7 +33,7 @@ by BlueZ. SBC code is available at git://git.kernel.org/pub/scm/bluetooth/sbc
 - Bionic support - Currently only 'master' branch available at
 https://android.googlesource.com/platform/bionic provides all required
 functionality and running BlueZ on release branch requires backporting missing
-features (currently only epoll_create1 call for Android 4.4.2). Sample
+features (currently epoll_create1 and ppoll calls for Android 4.4.2). Sample
 Bionic for Android 4.4.2 with all required features backported is available at
 https://code.google.com/p/aosp-bluez.platform-bionic/
 
@@ -166,6 +166,10 @@ options.
 
 Property	Value		Description
 -------------------------------------------
+mode		bredr		Enable BlueZ in BR/EDR mode
+		le		Enable BlueZ in LE mode
+		<none>		Enable BlueZ in default mode - enable BR/EDR/LE
+				if available.
 handsfree	hfp		Enable Handsfree Profile (HFP) with narrowband
 				speech only
 		hfp_wbs		Enable Handsfree Profile (HFP) with narrowband
@@ -214,9 +218,9 @@ Profile ID    HAL header         Status
 ---------------------------------------
 core          bluetooth.h        complete
 a2dp          bt_av.h            complete
-gatt          bt_gatt.h          initial
-              bt_gatt_client.h   initial
-              bt_gatt_server.h   not started
+gatt          bt_gatt.h          partial
+              bt_gatt_client.h   partial
+              bt_gatt_server.h   initial
 handsfree     bt_hf.h            complete
 hidhost       bt_hh.h            complete
 health        bt_hl.h            initial
@@ -314,3 +318,5 @@ HFP		Enhanced Call Control		AT+CHLD={1x,2x}
 HFP		Explicit Call Transfer		AT+CHLD=4
 HFP		Response and Hold		AT+BTRH, +BTRH
 HFP		In-band Ring Tone		+BSIR
+AVRCP		Player Settings			HAL API present but not used
+AVRCP		Browsing			No HAL API

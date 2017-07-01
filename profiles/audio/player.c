@@ -393,7 +393,7 @@ static gboolean browsable_exists(const GDBusPropertyTable *property, void *data)
 {
 	struct media_player *mp = data;
 
-	return mp->scope != NULL;
+	return mp->folder != NULL;
 }
 
 static gboolean get_browsable(const GDBusPropertyTable *property,
@@ -402,7 +402,7 @@ static gboolean get_browsable(const GDBusPropertyTable *property,
 	struct media_player *mp = data;
 	dbus_bool_t value;
 
-	if (mp->scope == NULL)
+	if (mp->folder == NULL)
 		return FALSE;
 
 	DBG("%s", mp->browsable ? "true" : "false");
@@ -419,7 +419,7 @@ static gboolean searchable_exists(const GDBusPropertyTable *property,
 {
 	struct media_player *mp = data;
 
-	return mp->scope != NULL;
+	return mp->folder != NULL;
 }
 
 static gboolean get_searchable(const GDBusPropertyTable *property,
@@ -1012,6 +1012,14 @@ static DBusMessage *media_folder_change_folder(DBusConnection *conn,
 		media_player_change_scope(mp, folder);
 		return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 	}
+
+	/*
+	 * ChangePath can only navigate one level up/down so check if folder
+	 * is direct child or parent of the current folder otherwise fail.
+	 */
+	if (!g_slist_find(mp->folder->subfolders, folder) &&
+				!g_slist_find(folder->subfolders, mp->folder))
+		return btd_error_invalid_args(msg);
 
 	if (cb->cbs->change_folder == NULL)
 		return btd_error_not_supported(msg);

@@ -22,7 +22,8 @@
 
 const btgatt_interface_t *if_gatt = NULL;
 
-/* In version 19 some callback were changed.
+/*
+ * In version 19 some callback were changed.
  * btgatt_char_id_t -> btgatt_gatt_id_t
  * bt_uuid_t        -> btgatt_gatt_id_t
  */
@@ -63,6 +64,9 @@ const btgatt_interface_t *if_gatt = NULL;
 #define VERIFY_CLIENT_IF(n, v) VERIFY_INT_ARG(n, v, "No client_if specified\n")
 #define VERIFY_SERVER_IF(n, v) VERIFY_INT_ARG(n, v, "No server_if specified\n")
 #define VERIFY_CONN_ID(n, v) VERIFY_INT_ARG(n, v, "No conn_if specified\n")
+#define VERIFY_TRANS_ID(n, v) VERIFY_INT_ARG(n, v, "No trans_id specified\n")
+#define VERIFY_STATUS(n, v) VERIFY_INT_ARG(n, v, "No status specified\n")
+#define VERIFY_OFFSET(n, v) VERIFY_INT_ARG(n, v, "No offset specified\n")
 #define VERIFY_HANDLE(n, v) VERIFY_HEX_ARG(n, v, "No "#v" specified\n")
 #define VERIFY_SERVICE_HANDLE(n, v) VERIFY_HANDLE(n, v)
 
@@ -576,6 +580,13 @@ static void gattc_read_remote_rssi_cb(int client_if, bt_bdaddr_t *bda, int rssi,
 			client_if, bt_bdaddr_t2str(bda, buf), rssi, status);
 }
 
+/* Callback invoked in response to listen */
+static void gattc_listen_cb(int status, int client_if)
+{
+	haltest_info("%s: client_if=%d status=%d\n", __func__, client_if,
+								status);
+}
+
 static const btgatt_client_callbacks_t btgatt_client_callbacks = {
 	.register_client_cb = gattc_register_client_cb,
 	.scan_result_cb = gattc_scan_result_cb,
@@ -593,7 +604,8 @@ static const btgatt_client_callbacks_t btgatt_client_callbacks = {
 	.read_descriptor_cb = gattc_read_descriptor_cb,
 	.write_descriptor_cb = gattc_write_descriptor_cb,
 	.execute_write_cb = gattc_execute_write_cb,
-	.read_remote_rssi_cb = gattc_read_remote_rssi_cb
+	.read_remote_rssi_cb = gattc_read_remote_rssi_cb,
+	.listen_cb = gattc_listen_cb,
 };
 
 /* BT-GATT Server callbacks */
@@ -920,6 +932,27 @@ static void disconnect_p(int argc, const char **argv)
 	VERIFY_CONN_ID(4, conn_id);
 
 	EXEC(if_gatt->client->disconnect, client_if, &bd_addr, conn_id);
+}
+
+/* listen */
+
+/* Same completion as unregister for now, start stop is not auto completed */
+#define listen_c unregister_client_c
+
+static void listen_p(int argc, const char **argv)
+{
+	int client_if;
+	int start = 1;
+
+	RETURN_IF_NULL(if_gatt);
+
+	VERIFY_CLIENT_IF(2, client_if);
+
+	/* start */
+	if (argc >= 4)
+		start = atoi(argv[3]);
+
+	EXEC(if_gatt->client->listen, client_if, start);
 }
 
 /* refresh */
@@ -1405,6 +1438,7 @@ static struct method client_methods[] = {
 	STD_METHODCH(get_device_type, "<addr>"),
 	STD_METHODCH(test_command,
 			"<cmd> <addr> <uuid> [u1] [u2] [u3] [u4] [u5]"),
+	STD_METHODCH(listen, "<client_if> [1|0]"),
 	END_METHOD
 };
 
@@ -1720,7 +1754,38 @@ static void gatts_send_indication_p(int argc, const char *argv[])
 
 static void gatts_send_response_p(int argc, const char *argv[])
 {
-	haltest_warn("%s is not implemented yet\n", __func__);
+	int conn_id;
+	int trans_id;
+	int status;
+	btgatt_response_t data;
+
+	memset(&data, 0, sizeof(data));
+
+	RETURN_IF_NULL(if_gatt);
+
+	VERIFY_CONN_ID(2, conn_id);
+	VERIFY_TRANS_ID(3, trans_id);
+	VERIFY_STATUS(4, status);
+	VERIFY_HANDLE(5, data.attr_value.handle);
+	VERIFY_OFFSET(6, data.attr_value.offset);
+
+	data.attr_value.auth_req = 0;
+	data.attr_value.len = 0;
+
+	if (argc <= 7) {
+		haltest_error("No data specified\n");
+		return;
+	}
+
+	data.attr_value.len = strlen(argv[7]);
+	scan_field(argv[7], data.attr_value.len, data.attr_value.value,
+						sizeof(data.attr_value.value));
+
+
+	haltest_info("conn_id %d, trans_id %d, status %d", conn_id, trans_id,
+									status);
+
+	EXEC(if_gatt->server->send_response, conn_id, trans_id, status, &data);
 }
 
 #define GATTS_METHODH(n, h) METHOD(#n, gatts_##n##_p, NULL, h)
@@ -1736,14 +1801,16 @@ static struct method server_methods[] = {
 			"<server_if> <service_handle> <included_handle>"),
 	GATTS_METHODCH(add_characteristic,
 		"<server_if> <service_handle> <uuid> <properites> <permissions>"),
-	GATTS_METHODCH(add_descriptor, "<server_if> <uuid> <permissions>"),
+	GATTS_METHODCH(add_descriptor,
+			"<server_if> <service_handle> <uuid> <permissions>"),
 	GATTS_METHODCH(start_service,
 				"<server_if> <service_handle> <transport>"),
 	GATTS_METHODCH(stop_service, "<server_if> <service_handle>"),
 	GATTS_METHODCH(delete_service, "<server_if> <service_handle>"),
 	GATTS_METHODH(send_indication,
 			"<server_if> <attr_handle> <conn_id> <confirm> [<data>]"),
-	GATTS_METHODH(send_response, "<conn_id> <trans_id> <status>"),
+	GATTS_METHODH(send_response,
+		"<conn_id> <trans_id> <status> <handle> <offset> [<data>]"),
 	END_METHOD
 };
 
