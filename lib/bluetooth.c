@@ -4,7 +4,7 @@
  *
  *  Copyright (C) 2000-2001  Qualcomm Incorporated
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
- *  Copyright (C) 2002-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -464,6 +464,10 @@ char *bt_compidtostr(int compid)
 		return "Harman International Industries, Inc.";
 	case 88:
 		return "Vizio, Inc.";
+	case 89:
+		return "Nordic Semiconductor ASA";
+	case 90:
+		return "EM Microelectronic-Marin SA";
 	case 65535:
 		return "internal use";
 	default:

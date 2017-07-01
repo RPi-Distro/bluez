@@ -2,7 +2,7 @@
  *
  *  D-Bus helper library
  *
- *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -125,8 +125,10 @@ guint g_dbus_add_disconnect_watch(DBusConnection *connection, const char *name,
 				GDBusWatchFunction function,
 				void *user_data, GDBusDestroyFunction destroy);
 guint g_dbus_add_signal_watch(DBusConnection *connection,
-				const char *rule, GDBusSignalFunction function,
-				void *user_data, GDBusDestroyFunction destroy);
+				const char *sender, const char *path,
+				const char *interface, const char *member,
+				GDBusSignalFunction function, void *user_data,
+				GDBusDestroyFunction destroy);
 gboolean g_dbus_remove_watch(DBusConnection *connection, guint tag);
 void g_dbus_remove_all_watches(DBusConnection *connection);
 

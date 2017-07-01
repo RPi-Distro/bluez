@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 7:2:4
+lib_libbluetooth_la_LDFLAGS = -version-info 8:0:5
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -316,7 +316,7 @@ pkgconfigdir = $(libdir)/pkgconfig
 
 pkgconfig_DATA = bluez.pc
 
-DISTCHECK_CONFIGURE_FLAGS =
+DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
 
 DISTCLEANFILES = $(pkgconfig_DATA)
 
@@ -332,6 +332,9 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 src/bluetooth.exp: $(src_bluetoothd_OBJECTS)
 	$(AM_V_GEN)$(NM) $^ | $(AWK) '{ print $$3 }' | sort -u | \
 				$(EGREP) -e '^btd_' -e '^g_dbus_' > $@
+	$(AM_V_at)echo -e "info" >> $@
+	$(AM_V_at)echo -e "error" >> $@
+	$(AM_V_at)echo -e "debug" >> $@
 
 src/bluetooth.ver: src/bluetooth.exp
 	$(AM_V_at)echo "{ global:" > $@

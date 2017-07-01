@@ -2,8 +2,8 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2006-2007  Nokia Corporation
- *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2006-2010  Nokia Corporation
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -223,7 +223,7 @@ static void device_free(gpointer user_data)
 	struct agent *agent = adapter_get_agent(adapter);
 
 	if (device->agent)
-		agent_destroy(device->agent, FALSE);
+		agent_free(device->agent);
 
 	if (agent && (agent_is_busy(agent, device) ||
 				agent_is_busy(agent, device->authr)))
@@ -764,6 +764,11 @@ void device_remove_connection(struct btd_device *device, DBusConnection *conn,
 	}
 
 	device->handle = 0;
+
+	if (device->disconn_timer > 0) {
+		g_source_remove(device->disconn_timer);
+		device->disconn_timer = 0;
+	}
 
 	while (device->disconnects) {
 		DBusMessage *msg = device->disconnects->data;
@@ -1657,7 +1662,7 @@ static void bonding_request_free(struct bonding_req *bonding)
 		return;
 
 	agent_cancel(device->agent);
-	agent_destroy(device->agent, FALSE);
+	agent_free(device->agent);
 	device->agent = NULL;
 }
 
@@ -2044,12 +2049,13 @@ static void pincode_cb(struct agent *agent, DBusError *err, const char *pincode,
 	struct btd_device *device = auth->device;
 
 	/* No need to reply anything if the authentication already failed */
-	if (!auth->cb)
+	if (!auth || !auth->cb)
 		return;
 
 	((agent_pincode_cb) auth->cb)(agent, err, pincode, device);
 
-	auth->cb = NULL;
+	device->authr->cb = NULL;
+	device->authr->agent = NULL;
 }
 
 static void confirm_cb(struct agent *agent, DBusError *err, void *data)
@@ -2058,12 +2064,13 @@ static void confirm_cb(struct agent *agent, DBusError *err, void *data)
 	struct btd_device *device = auth->device;
 
 	/* No need to reply anything if the authentication already failed */
-	if (!auth->cb)
+	if (!auth || !auth->cb)
 		return;
 
 	((agent_cb) auth->cb)(agent, err, device);
 
-	auth->cb = NULL;
+	device->authr->cb = NULL;
+	device->authr->agent = NULL;
 }
 
 static void passkey_cb(struct agent *agent, DBusError *err, uint32_t passkey,
@@ -2073,12 +2080,13 @@ static void passkey_cb(struct agent *agent, DBusError *err, uint32_t passkey,
 	struct btd_device *device = auth->device;
 
 	/* No need to reply anything if the authentication already failed */
-	if (!auth->cb)
+	if (!auth || !auth->cb)
 		return;
 
 	((agent_passkey_cb) auth->cb)(agent, err, passkey, device);
 
-	auth->cb = NULL;
+	device->authr->cb = NULL;
+	device->authr->agent = NULL;
 }
 
 int device_request_authentication(struct btd_device *device, auth_type_t type,
@@ -2145,7 +2153,7 @@ static void cancel_authentication(struct authentication_req *auth)
 	struct agent *agent = auth->agent;
 	DBusError err;
 
-	if (!auth->cb)
+	if (!auth || !auth->cb)
 		return;
 
 	dbus_error_init(&err);

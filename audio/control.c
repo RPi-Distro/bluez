@@ -2,8 +2,8 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2006-2007  Nokia Corporation
- *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2006-2010  Nokia Corporation
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -650,6 +650,8 @@ static void init_uinput(struct control *control)
 	if (g_str_equal(name, "Nokia CK-20W")) {
 		control->key_quirks[FORWARD_OP] |= QUIRK_NO_RELEASE;
 		control->key_quirks[BACKWARD_OP] |= QUIRK_NO_RELEASE;
+		control->key_quirks[PLAY_OP] |= QUIRK_NO_RELEASE;
+		control->key_quirks[PAUSE_OP] |= QUIRK_NO_RELEASE;
 	}
 
 	ba2str(&dev->dst, address);

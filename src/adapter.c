@@ -2,8 +2,8 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2006-2007  Nokia Corporation
- *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2006-2010  Nokia Corporation
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -1066,7 +1066,7 @@ void adapter_remove_device(DBusConnection *conn, struct btd_adapter *adapter,
 	agent = device_get_agent(device);
 
 	if (agent) {
-		agent_destroy(agent, FALSE);
+		agent_free(agent);
 		device_set_agent(device, NULL);
 	}
 
@@ -1684,7 +1684,7 @@ static DBusMessage *unregister_agent(DBusConnection *conn,
 				ERROR_INTERFACE ".DoesNotExist",
 				"No such agent");
 
-	agent_destroy(adapter->agent, FALSE);
+	agent_free(adapter->agent);
 	adapter->agent = NULL;
 
 	return dbus_message_new_method_return(msg);
@@ -2347,7 +2347,7 @@ static void adapter_free(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
-	agent_destroy(adapter->agent, FALSE);
+	agent_free(adapter->agent);
 	adapter->agent = NULL;
 
 	debug("adapter_free(%p)", adapter);
