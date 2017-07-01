@@ -1014,7 +1014,7 @@ static void handle_call_status(DBusMessage *msg, const char *call_path)
 					DBUS_TYPE_UINT32, &cause_type,
 					DBUS_TYPE_UINT32, &cause,
 					DBUS_TYPE_INVALID)) {
-		error("Unexpected paramters in Instance.CallStatus() signal");
+		error("Unexpected parameters in Instance.CallStatus() signal");
 		return;
 	}
 
@@ -1951,9 +1951,10 @@ static DBusMessage *set_callerid(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_invalid_args(msg);
 }
 
-static GDBusMethodTable telephony_maemo_methods[] = {
-	{"SetCallerId",		"s",	"",	set_callerid,
-						G_DBUS_METHOD_FLAG_ASYNC},
+static const GDBusMethodTable telephony_maemo_methods[] = {
+	{ GDBUS_ASYNC_METHOD("SetCallerId",
+				GDBUS_ARGS({ "id", "s" }), NULL,
+				set_callerid) },
 	{ }
 };
 

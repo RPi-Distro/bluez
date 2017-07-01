@@ -197,20 +197,24 @@ static DBusMessage *control_get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static GDBusMethodTable control_methods[] = {
-	{ "IsConnected",	"",	"b",	control_is_connected,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetProperties",	"",	"a{sv}",control_get_properties },
-	{ "VolumeUp",		"",	"",	volume_up },
-	{ "VolumeDown",		"",	"",	volume_down },
-	{ NULL, NULL, NULL, NULL }
+static const GDBusMethodTable control_methods[] = {
+	{ GDBUS_ASYNC_METHOD("IsConnected",
+				NULL, GDBUS_ARGS({ "connected", "b" }),
+				control_is_connected) },
+	{ GDBUS_METHOD("GetProperties",
+				NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+				control_get_properties) },
+	{ GDBUS_METHOD("VolumeUp", NULL, NULL, volume_up) },
+	{ GDBUS_METHOD("VolumeDown", NULL, NULL, volume_down) },
+	{ }
 };
 
-static GDBusSignalTable control_signals[] = {
-	{ "Connected",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED},
-	{ "Disconnected",		"",	G_DBUS_SIGNAL_FLAG_DEPRECATED},
-	{ "PropertyChanged",		"sv"	},
-	{ NULL, NULL }
+static const GDBusSignalTable control_signals[] = {
+	{ GDBUS_DEPRECATED_SIGNAL("Connected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Disconnected", NULL) },
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 static void path_unregister(void *data)

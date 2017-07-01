@@ -168,7 +168,7 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
 	struct monitor *monitor = user_data;
-	struct att_char *chr;
+	struct gatt_char *chr;
 	uint8_t value = str2level(monitor->linklosslevel);
 
 	if (status) {
@@ -236,7 +236,7 @@ static void tx_power_handle_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
 	struct monitor *monitor = user_data;
-	struct att_char *chr;
+	struct gatt_char *chr;
 
 	if (status) {
 		error("Discover Tx Power handle: %s", att_ecode2str(status));
@@ -322,7 +322,7 @@ static void immediate_handle_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
 	struct monitor *monitor = user_data;
-	struct att_char *chr;
+	struct gatt_char *chr;
 
 	if (status) {
 		error("Discover Immediate Alert handle: %s",
@@ -546,15 +546,19 @@ static DBusMessage *set_property(DBusConnection *conn,
 	return btd_error_invalid_args(msg);
 }
 
-static GDBusMethodTable monitor_methods[] = {
-	{ "GetProperties",	"",	"a{sv}",	get_properties	},
-	{ "SetProperty",	"sv",	"",		set_property,
-						G_DBUS_METHOD_FLAG_ASYNC},
+static const GDBusMethodTable monitor_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_ASYNC_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			set_property) },
 	{ }
 };
 
-static GDBusSignalTable monitor_signals[] = {
-	{ "PropertyChanged",	"sv"	},
+static const GDBusSignalTable monitor_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ }
 };
 
@@ -583,8 +587,8 @@ static void monitor_destroy(gpointer user_data)
 }
 
 int monitor_register(DBusConnection *conn, struct btd_device *device,
-		struct att_primary *linkloss, struct att_primary *txpower,
-		struct att_primary *immediate, struct enabled *enabled)
+		struct gatt_primary *linkloss, struct gatt_primary *txpower,
+		struct gatt_primary *immediate, struct enabled *enabled)
 {
 	const char *path = device_get_path(device);
 	struct monitor *monitor;
@@ -617,8 +621,8 @@ int monitor_register(DBusConnection *conn, struct btd_device *device,
 
 	if (linkloss && enabled->linkloss) {
 		monitor->linkloss = g_new0(struct att_range, 1);
-		monitor->linkloss->start = linkloss->start;
-		monitor->linkloss->end = linkloss->end;
+		monitor->linkloss->start = linkloss->range.start;
+		monitor->linkloss->end = linkloss->range.end;
 
 		monitor->enabled.linkloss = TRUE;
 	}
@@ -626,16 +630,16 @@ int monitor_register(DBusConnection *conn, struct btd_device *device,
 	if (immediate) {
 		if (txpower && enabled->pathloss) {
 			monitor->txpower = g_new0(struct att_range, 1);
-			monitor->txpower->start = txpower->start;
-			monitor->txpower->end = txpower->end;
+			monitor->txpower->start = txpower->range.start;
+			monitor->txpower->end = txpower->range.end;
 
 			monitor->enabled.pathloss = TRUE;
 		}
 
 		if (enabled->pathloss || enabled->findme) {
 			monitor->immediate = g_new0(struct att_range, 1);
-			monitor->immediate->start = immediate->start;
-			monitor->immediate->end = immediate->end;
+			monitor->immediate->start = immediate->range.start;
+			monitor->immediate->end = immediate->range.end;
 		}
 
 		monitor->enabled.findme = enabled->findme;

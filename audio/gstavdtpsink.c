@@ -64,10 +64,6 @@ GST_DEBUG_CATEGORY_STATIC(avdtp_sink_debug);
 		g_mutex_unlock(s->sink_lock);		\
 	} G_STMT_END
 
-#ifndef DBUS_TYPE_UNIX_FD
-#define DBUS_TYPE_UNIX_FD -1
-#endif
-
 struct bluetooth_data {
 	struct bt_get_capabilities_rsp *caps; /* Bluetooth device caps */
 	guint link_mtu;
@@ -1121,6 +1117,11 @@ static gboolean gst_avdtp_sink_update_caps(GstAvdtpSink *self)
 	sbc = (void *) gst_avdtp_find_caps(self, BT_A2DP_SBC_SINK);
 	mpeg = (void *) gst_avdtp_find_caps(self, BT_A2DP_MPEG12_SINK);
 
+	if (!sbc) {
+		GST_ERROR_OBJECT(self, "Failed to find mandatory SBC sink");
+		return FALSE;
+	}
+
 	sbc_structure = gst_avdtp_sink_parse_sbc_caps(self, sbc);
 	mpeg_structure = gst_avdtp_sink_parse_mpeg_caps(self, mpeg);
 
@@ -1139,7 +1140,7 @@ static gboolean gst_avdtp_sink_update_caps(GstAvdtpSink *self)
 
 static gboolean gst_avdtp_sink_get_capabilities(GstAvdtpSink *self)
 {
-	gchar *buf[BT_SUGGESTED_BUFFER_SIZE];
+	gchar buf[BT_SUGGESTED_BUFFER_SIZE];
 	struct bt_get_capabilities_req *req = (void *) buf;
 	struct bt_get_capabilities_rsp *rsp = (void *) buf;
 	int err;
@@ -1336,6 +1337,8 @@ static gboolean gst_avdtp_sink_transport_acquire(GstAvdtpSink *self)
 	reply = dbus_connection_send_with_reply_and_block(self->data->conn,
 							msg, -1, &err);
 
+	dbus_message_unref(msg);
+
 	if (dbus_error_is_set(&err))
 		goto fail;
 
@@ -1362,7 +1365,7 @@ fail:
 	dbus_error_free(&err);
 
 	if (reply)
-		dbus_message_unref(msg);
+		dbus_message_unref(reply);
 
 	return FALSE;
 }

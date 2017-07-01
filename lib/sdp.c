@@ -60,8 +60,6 @@
 #define SDPDBG(fmt...)
 #endif
 
-#define BASE_UUID "00000000-0000-1000-8000-00805F9B34FB"
-
 static uint128_t bluetooth_base_uuid = {
 	.data = {	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
 			0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB }
@@ -1387,7 +1385,7 @@ static void attr_print_func(void *value, void *userData)
 
 	SDPDBG("=====================================\n");
 	SDPDBG("ATTRIBUTE IDENTIFIER : 0x%x\n",  d->attrId);
-	SDPDBG("ATTRIBUTE VALUE PTR : 0x%x\n", (uint32_t)value);
+	SDPDBG("ATTRIBUTE VALUE PTR : %p\n", value);
 	if (d)
 		sdp_data_print(d);
 	else
@@ -1934,7 +1932,6 @@ int sdp_get_uuidseq_attr(const sdp_record_t *rec, uint16_t attr,
 			if (!u)
 				goto fail;
 
-			memset(u, 0, sizeof(uuid_t));
 			*u = d->val.uuid;
 			*seqp = sdp_list_append(*seqp, u);
 		}
@@ -2064,8 +2061,13 @@ int sdp_get_profile_descs(const sdp_record_t *rec, sdp_list_t **profDescSeq)
 		uint16_t version = 0x100;
 
 		if (SDP_IS_UUID(seq->dtd)) {
+			sdp_data_t *next = seq->next;
 			uuid = &seq->val.uuid;
-		} else {
+			if (next && next->dtd == SDP_UINT16) {
+				version = next->val.uint16;
+				seq = next;
+			}
+		} else if (SDP_IS_SEQ(seq->dtd)) {
 			sdp_data_t *puuid = seq->val.dataseq;
 			sdp_data_t *pVnum = seq->val.dataseq->next;
 			if (puuid && pVnum) {
@@ -3406,7 +3408,6 @@ int sdp_service_search_req(sdp_session_t *session, const sdp_list_t *search,
 		scanned += sizeof(uint16_t);
 		pdata_len -= sizeof(uint16_t);
 
-		SDPDBG("Total svc count: %d\n", total_rec_count);
 		SDPDBG("Current svc count: %d\n", rec_count);
 		SDPDBG("ResponseLength: %d\n", rsplen);
 
@@ -3703,8 +3704,8 @@ int sdp_set_notify(sdp_session_t *session, sdp_callback_t *func, void *udata)
 
 /*
  * This function starts an asynchronous service search request.
- * The incomming and outgoing data are stored in the transaction structure
- * buffers. When there is incomming data the sdp_process function must be
+ * The incoming and outgoing data are stored in the transaction structure
+ * buffers. When there is incoming data the sdp_process function must be
  * called to get the data and handle the continuation state.
  *
  * INPUT :
@@ -3795,8 +3796,8 @@ end:
 
 /*
  * This function starts an asynchronous service attribute request.
- * The incomming and outgoing data are stored in the transaction structure
- * buffers. When there is incomming data the sdp_process function must be
+ * The incoming and outgoing data are stored in the transaction structure
+ * buffers. When there is incoming data the sdp_process function must be
  * called to get the data and handle the continuation state.
  *
  * INPUT :
@@ -3906,9 +3907,9 @@ end:
 
 /*
  * This function starts an asynchronous service search attributes.
- * It is a service search request combined with attribute request. The incomming
+ * It is a service search request combined with attribute request. The incoming
  * and outgoing data are stored in the transaction structure buffers. When there
- * is incomming data the sdp_process function must be called to get the data
+ * is incoming data the sdp_process function must be called to get the data
  * and handle the continuation state.
  *
  * INPUT:
@@ -4051,7 +4052,7 @@ int sdp_get_error(sdp_session_t *session)
 }
 
 /*
- * Receive the incomming SDP PDU. This function must be called when there is data
+ * Receive the incoming SDP PDU. This function must be called when there is data
  * available to be read. On continuation state, the original request (with a new
  * transaction ID) and the continuation state data will be appended in the initial PDU.
  * If an error happens or the transaction finishes the callback function will be called.
@@ -4103,7 +4104,7 @@ int sdp_process(sdp_session_t *session)
 	}
 
 	if (n == 0 || reqhdr->tid != rsphdr->tid ||
-		(n != (ntohs(rsphdr->plen) + (int) sizeof(sdp_pdu_hdr_t)))) {
+		(n != (int) (ntohs(rsphdr->plen) + sizeof(sdp_pdu_hdr_t)))) {
 		t->err = EPROTO;
 		SDPERR("Protocol error.");
 		goto end;
@@ -4789,3 +4790,16 @@ fail:
 	return -1;
 }
 
+void sdp_add_lang_attr(sdp_record_t *rec)
+{
+	sdp_lang_attr_t base_lang;
+	sdp_list_t *langs;
+
+	base_lang.code_ISO639 = (0x65 << 8) | 0x6e;
+	base_lang.encoding = 106;
+	base_lang.base_offset = SDP_PRIMARY_LANG_BASE;
+
+	langs = sdp_list_append(0, &base_lang);
+	sdp_set_lang_attr(rec, langs);
+	sdp_list_free(langs, NULL);
+}

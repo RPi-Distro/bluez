@@ -129,6 +129,10 @@ Properties	string Address [readonly]
 
 			Vendor unique numeric identifier.
 
+		uint16 VendorSource [readonly]
+
+			Vendor source numeric identifier.
+
 		uint16 Product [readonly]
 
 			Product unique numeric identifier.
@@ -187,7 +191,7 @@ Properties	string Address [readonly]
 			device name. Setting an empty string as alias will
 			convert it back to the remote device name.
 
-			When reseting the alias with an empty string, the
+			When resetting the alias with an empty string, the
 			emitted PropertyChanged signal will show the remote
 			name again.
 

@@ -52,7 +52,6 @@
 #include "source.h"
 #include "gateway.h"
 #include "unix.h"
-#include "glib-compat.h"
 
 #define check_nul(str) (str[sizeof(str) - 1] == '\0')
 
@@ -534,7 +533,7 @@ static int a2dp_append_codec(struct bt_get_capabilities_rsp *rsp,
 
 	space_left = BT_SUGGESTED_BUFFER_SIZE - rsp->h.length;
 
-	/* endianess prevent direct cast */
+	/* endianness prevents direct cast */
 	if (codec_cap->media_codec_type == A2DP_CODEC_SBC) {
 		struct sbc_codec_cap *sbc_cap = (void *) codec_cap;
 		sbc_capabilities_t *sbc = (void *) codec;

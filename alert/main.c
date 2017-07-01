@@ -28,6 +28,7 @@
 
 #include <stdint.h>
 #include <glib.h>
+#include <errno.h>
 
 #include "plugin.h"
 #include "hcid.h"
@@ -36,9 +37,9 @@
 
 static int alert_init(void)
 {
-	if (!main_opts.attrib_server) {
-		DBG("Attribute server is disabled");
-		return -1;
+	if (!main_opts.gatt_enabled) {
+		DBG("GATT is disabled");
+		return -ENOTSUP;
 	}
 
 	return alert_server_init();
@@ -46,7 +47,7 @@ static int alert_init(void)
 
 static void alert_exit(void)
 {
-	if (!main_opts.attrib_server)
+	if (!main_opts.gatt_enabled)
 		return;
 
 	alert_server_exit();

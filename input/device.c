@@ -37,6 +37,7 @@
 #include <bluetooth/hidp.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 
 #include <glib.h>
 #include <dbus/dbus.h>
@@ -56,6 +57,8 @@
 #include "fakehid.h"
 #include "btio.h"
 
+#include "sdp-client.h"
+
 #define INPUT_DEVICE_INTERFACE "org.bluez.Input"
 
 #define BUF_SIZE		16
@@ -68,12 +71,13 @@ struct input_conn {
 	struct fake_input	*fake;
 	DBusMessage		*pending_connect;
 	char			*uuid;
-	char			*alias;
 	GIOChannel		*ctrl_io;
 	GIOChannel		*intr_io;
 	guint			ctrl_watch;
 	guint			intr_watch;
+	guint			sec_watch;
 	int			timeout;
+	struct hidp_connadd_req *req;
 	struct input_device	*idev;
 };
 
@@ -84,6 +88,7 @@ struct input_device {
 	bdaddr_t		dst;
 	uint32_t		handle;
 	guint			dc_id;
+	gboolean		disable_sdp;
 	char			*name;
 	struct btd_device	*device;
 	GSList			*connections;
@@ -110,9 +115,6 @@ static struct input_conn *find_connection(GSList *list, const char *pattern)
 
 		if (!strcasecmp(iconn->uuid, pattern))
 			return iconn;
-
-		if (!strcasecmp(iconn->alias, pattern))
-			return iconn;
 	}
 
 	return NULL;
@@ -129,6 +131,9 @@ static void input_conn_free(struct input_conn *iconn)
 	if (iconn->intr_watch)
 		g_source_remove(iconn->intr_watch);
 
+	if (iconn->sec_watch)
+		g_source_remove(iconn->sec_watch);
+
 	if (iconn->intr_io)
 		g_io_channel_unref(iconn->intr_io);
 
@@ -136,7 +141,6 @@ static void input_conn_free(struct input_conn *iconn)
 		g_io_channel_unref(iconn->ctrl_io);
 
 	g_free(iconn->uuid);
-	g_free(iconn->alias);
 	g_free(iconn->fake);
 	g_free(iconn);
 }
@@ -568,14 +572,31 @@ cleanup:
 	g_free(req);
 }
 
+static gboolean encrypt_notify(GIOChannel *io, GIOCondition condition,
+								gpointer data)
+{
+	struct input_conn *iconn = data;
+	struct hidp_connadd_req *req = iconn->req;
+
+	DBG(" ");
+
+	encrypt_completed(0, req);
+
+	iconn->sec_watch = 0;
+	iconn->req = NULL;
+
+	return FALSE;
+}
+
 static int hidp_add_connection(const struct input_device *idev,
-				const struct input_conn *iconn)
+					struct input_conn *iconn)
 {
 	struct hidp_connadd_req *req;
 	struct fake_hid *fake_hid;
 	struct fake_input *fake;
 	sdp_record_t *rec;
 	char src_addr[18], dst_addr[18];
+	GError *gerr = NULL;
 	int err;
 
 	req = g_new0(struct hidp_connadd_req, 1);
@@ -629,7 +650,12 @@ static int hidp_add_connection(const struct input_device *idev,
 		if (err == 0) {
 			/* Waiting async encryption */
 			return 0;
-		} else if (err != -EALREADY) {
+		}
+
+		if (err == -ENOSYS)
+			goto nosys;
+
+		if (err != -EALREADY) {
 			error("encrypt_link: %s (%d)", strerror(-err), -err);
 			goto cleanup;
 		}
@@ -642,6 +668,20 @@ cleanup:
 	g_free(req);
 
 	return err;
+
+nosys:
+	if (!bt_io_set(iconn->intr_io, BT_IO_L2CAP, &gerr,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
+				BT_IO_OPT_INVALID)) {
+		error("btio: %s", gerr->message);
+		g_error_free(gerr);
+		goto cleanup;
+	}
+
+	iconn->req = req;
+	iconn->sec_watch = g_io_add_watch(iconn->intr_io, G_IO_OUT,
+							encrypt_notify, iconn);
+	return 0;
 }
 
 static int is_connected(struct input_conn *iconn)
@@ -915,7 +955,7 @@ static DBusMessage *input_device_connect(DBusConnection *conn,
 	DBusMessage *reply;
 	GError *err = NULL;
 
-	iconn = find_connection(idev->connections, "HID");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return btd_error_not_supported(msg);
 
@@ -935,6 +975,9 @@ static DBusMessage *input_device_connect(DBusConnection *conn,
 	} else {
 		/* HID devices */
 		GIOChannel *io;
+
+		if (idev->disable_sdp)
+			bt_clear_cached_session(&idev->src, &idev->dst);
 
 		io = bt_io_connect(BT_IO_L2CAP, control_connect_cb, iconn,
 					NULL, &err,
@@ -1018,37 +1061,42 @@ static DBusMessage *input_device_get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static GDBusMethodTable device_methods[] = {
-	{ "Connect",		"",	"",	input_device_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	input_device_disconnect	},
-	{ "GetProperties",	"",	"a{sv}",input_device_get_properties },
+static const GDBusMethodTable device_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect",
+				NULL, NULL, input_device_connect) },
+	{ GDBUS_METHOD("Disconnect",
+				NULL, NULL, input_device_disconnect) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			input_device_get_properties) },
 	{ }
 };
 
-static GDBusSignalTable device_signals[] = {
-	{ "PropertyChanged",	"sv"	},
+static const GDBusSignalTable device_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ }
 };
 
 static struct input_device *input_device_new(DBusConnection *conn,
-					struct btd_device *device, const char *path,
-					const bdaddr_t *src, const bdaddr_t *dst,
-					const uint32_t handle)
+				struct btd_device *device, const char *path,
+				const uint32_t handle, gboolean disable_sdp)
 {
+	struct btd_adapter *adapter = device_get_adapter(device);
 	struct input_device *idev;
 	char name[249], src_addr[18], dst_addr[18];
 
 	idev = g_new0(struct input_device, 1);
-	bacpy(&idev->src, src);
-	bacpy(&idev->dst, dst);
+	adapter_get_address(adapter, &idev->src);
+	device_get_address(device, &idev->dst, NULL);
 	idev->device = btd_device_ref(device);
 	idev->path = g_strdup(path);
 	idev->conn = dbus_connection_ref(conn);
 	idev->handle = handle;
+	idev->disable_sdp = disable_sdp;
 
-	ba2str(src, src_addr);
-	ba2str(dst, dst_addr);
+	ba2str(&idev->src, src_addr);
+	ba2str(&idev->dst, dst_addr);
 	if (read_device_name(src_addr, dst_addr, name) == 0)
 		idev->name = g_strdup(name);
 
@@ -1068,39 +1116,44 @@ static struct input_device *input_device_new(DBusConnection *conn,
 }
 
 static struct input_conn *input_conn_new(struct input_device *idev,
-					const char *uuid, const char *alias,
-					int timeout)
+					const char *uuid, int timeout)
 {
 	struct input_conn *iconn;
 
 	iconn = g_new0(struct input_conn, 1);
 	iconn->timeout = timeout;
 	iconn->uuid = g_strdup(uuid);
-	iconn->alias = g_strdup(alias);
 	iconn->idev = idev;
 
 	return iconn;
 }
 
+static gboolean is_device_sdp_disable(const sdp_record_t *rec)
+{
+	sdp_data_t *data;
+
+	data = sdp_data_get(rec, SDP_ATTR_HID_SDP_DISABLE);
+
+	return data && data->val.uint8;
+}
+
 int input_device_register(DBusConnection *conn, struct btd_device *device,
-			const char *path, const bdaddr_t *src,
-			const bdaddr_t *dst, const char *uuid,
-			uint32_t handle, int timeout)
+					const char *path, const char *uuid,
+					const sdp_record_t *rec, int timeout)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, device, path, src, dst, handle);
+		idev = input_device_new(conn, device, path, rec->handle,
+					is_device_sdp_disable(rec));
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
 	}
 
-	iconn = input_conn_new(idev, uuid, "hid", timeout);
-	if (!iconn)
-		return -EINVAL;
+	iconn = input_conn_new(idev, uuid, timeout);
 
 	idev->connections = g_slist_append(idev->connections, iconn);
 
@@ -1108,24 +1161,20 @@ int input_device_register(DBusConnection *conn, struct btd_device *device,
 }
 
 int fake_input_register(DBusConnection *conn, struct btd_device *device,
-			const char *path, bdaddr_t *src, bdaddr_t *dst,
-			const char *uuid, uint8_t channel)
+			const char *path, const char *uuid, uint8_t channel)
 {
 	struct input_device *idev;
 	struct input_conn *iconn;
 
 	idev = find_device_by_path(devices, path);
 	if (!idev) {
-		idev = input_device_new(conn, device, path, src, dst, 0);
+		idev = input_device_new(conn, device, path, 0, FALSE);
 		if (!idev)
 			return -EINVAL;
 		devices = g_slist_append(devices, idev);
 	}
 
-	iconn = input_conn_new(idev, uuid, "hsp", 0);
-	if (!iconn)
-		return -EINVAL;
-
+	iconn = input_conn_new(idev, uuid, 0);
 	iconn->fake = g_new0(struct fake_input, 1);
 	iconn->fake->ch = channel;
 	iconn->fake->connect = rfcomm_connect;
@@ -1214,7 +1263,7 @@ int input_device_set_channel(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 	if (!idev)
 		return -ENOENT;
 
-	iconn = find_connection(idev->connections, "hid");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return -ENOENT;
 
@@ -1245,7 +1294,7 @@ int input_device_close_channels(const bdaddr_t *src, const bdaddr_t *dst)
 	if (!idev)
 		return -ENOENT;
 
-	iconn = find_connection(idev->connections, "hid");
+	iconn = find_connection(idev->connections, HID_UUID);
 	if (!iconn)
 		return -ENOENT;
 

@@ -130,20 +130,6 @@ static void proxy_free(struct serial_proxy *prx)
 	g_free(prx);
 }
 
-static void add_lang_attr(sdp_record_t *r)
-{
-	sdp_lang_attr_t base_lang;
-	sdp_list_t *langs = 0;
-
-	/* UTF-8 MIBenum (http://www.iana.org/assignments/character-sets) */
-	base_lang.code_ISO639 = (0x65 << 8) | 0x6e;
-	base_lang.encoding = 106;
-	base_lang.base_offset = SDP_PRIMARY_LANG_BASE;
-	langs = sdp_list_append(0, &base_lang);
-	sdp_set_lang_attr(r, langs);
-	sdp_list_free(langs, 0);
-}
-
 static sdp_record_t *proxy_record_new(const char *uuid128, uint8_t channel)
 {
 	sdp_list_t *apseq, *aproto, *profiles, *proto[2], *root, *svclass_id;
@@ -186,7 +172,7 @@ static sdp_record_t *proxy_record_new(const char *uuid128, uint8_t channel)
 	aproto = sdp_list_append(NULL, apseq);
 	sdp_set_access_protos(record, aproto);
 
-	add_lang_attr(record);
+	sdp_add_lang_attr(record);
 
 	sdp_set_info_attr(record, "Serial Proxy", NULL, "Serial Proxy");
 
@@ -742,11 +728,16 @@ static DBusMessage *proxy_set_serial_params(DBusConnection *conn,
 	return dbus_message_new_method_return(msg);
 }
 
-static GDBusMethodTable proxy_methods[] = {
-	{ "Enable",			"",	"",	proxy_enable },
-	{ "Disable",			"",	"",	proxy_disable },
-	{ "GetInfo",			"",	"a{sv}",proxy_get_info },
-	{ "SetSerialParameters",	"syys",	"",	proxy_set_serial_params },
+static const GDBusMethodTable proxy_methods[] = {
+	{ GDBUS_METHOD("Enable", NULL, NULL, proxy_enable) },
+	{ GDBUS_METHOD("Disable", NULL, NULL, proxy_disable) },
+	{ GDBUS_METHOD("GetInfo",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			proxy_get_info) },
+	{ GDBUS_METHOD("SetSerialParameters",
+			GDBUS_ARGS({ "rate", "s" }, { "data", "y" },
+					{ "stop", "y" }, { "parity", "s" }),
+			NULL, proxy_set_serial_params) },
 	{ },
 };
 
@@ -1125,16 +1116,24 @@ static void manager_path_unregister(void *data)
 	g_free(adapter);
 }
 
-static GDBusMethodTable manager_methods[] = {
-	{ "CreateProxy",		"ss",	"s",	create_proxy },
-	{ "ListProxies",		"",	"as",	list_proxies },
-	{ "RemoveProxy",		"s",	"",	remove_proxy },
+static const GDBusMethodTable manager_methods[] = {
+	{ GDBUS_METHOD("CreateProxy",
+			GDBUS_ARGS({ "pattern", "s" },
+					{ "address", "s" }),
+			GDBUS_ARGS({ "path", "s" }),
+			create_proxy) },
+	{ GDBUS_METHOD("ListProxies",
+			NULL, GDBUS_ARGS({ "paths", "as" }),
+			list_proxies) },
+	{ GDBUS_METHOD("RemoveProxy",
+			GDBUS_ARGS({ "path", "s" }), NULL,
+			remove_proxy) },
 	{ },
 };
 
-static GDBusSignalTable manager_signals[] = {
-	{ "ProxyCreated",		"s"	},
-	{ "ProxyRemoved",		"s"	},
+static const GDBusSignalTable manager_signals[] = {
+	{ GDBUS_SIGNAL("ProxyCreated", GDBUS_ARGS({ "path", "s" })) },
+	{ GDBUS_SIGNAL("ProxyRemoved", GDBUS_ARGS({ "path", "s" })) },
 	{ }
 };
 

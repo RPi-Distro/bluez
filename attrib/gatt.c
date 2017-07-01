@@ -33,8 +33,6 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "glib-compat.h"
-
 #include "att.h"
 #include "gattrib.h"
 #include "gatt.h"
@@ -172,7 +170,7 @@ static void primary_all_cb(guint8 status, const guint8 *ipdu, guint16 iplen,
 
 	for (i = 0, end = 0; i < list->num; i++) {
 		const uint8_t *data = list->data[i];
-		struct att_primary *primary;
+		struct gatt_primary *primary;
 		bt_uuid_t uuid;
 
 		start = att_get_u16(&data[0]);
@@ -188,13 +186,13 @@ static void primary_all_cb(guint8 status, const guint8 *ipdu, guint16 iplen,
 			continue;
 		}
 
-		primary = g_try_new0(struct att_primary, 1);
+		primary = g_try_new0(struct gatt_primary, 1);
 		if (!primary) {
 			err = ATT_ECODE_INSUFF_RESOURCES;
 			goto done;
 		}
-		primary->start = start;
-		primary->end = end;
+		primary->range.start = start;
+		primary->range.end = end;
 		bt_uuid_to_string(&uuid, primary->uuid, sizeof(primary->uuid));
 		dp->primaries = g_slist_append(dp->primaries, primary);
 	}
@@ -274,7 +272,7 @@ static void char_discovered_cb(guint8 status, const guint8 *ipdu, guint16 iplen,
 
 	for (i = 0; i < list->num; i++) {
 		uint8_t *value = list->data[i];
-		struct att_char *chars;
+		struct gatt_char *chars;
 		bt_uuid_t uuid;
 
 		last = att_get_u16(value);
@@ -285,7 +283,7 @@ static void char_discovered_cb(guint8 status, const guint8 *ipdu, guint16 iplen,
 		} else
 			uuid = att_get_uuid128(&value[5]);
 
-		chars = g_try_new0(struct att_char, 1);
+		chars = g_try_new0(struct gatt_char, 1);
 		if (!chars) {
 			err = ATT_ECODE_INSUFF_RESOURCES;
 			goto done;
@@ -305,7 +303,7 @@ static void char_discovered_cb(guint8 status, const guint8 *ipdu, guint16 iplen,
 	att_data_list_free(list);
 	err = 0;
 
-	if (last != 0) {
+	if (last != 0 && (last + 1 < dc->end)) {
 		buf = g_attrib_get_buffer(dc->attrib, &buflen);
 
 		bt_uuid16_create(&uuid, GATT_CHARAC_UUID);

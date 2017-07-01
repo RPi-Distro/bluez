@@ -618,17 +618,19 @@ static DBusMessage *dev_get_properties(DBusConnection *conn, DBusMessage *msg,
 	return reply;
 }
 
-static GDBusMethodTable dev_methods[] = {
-	{ "Connect",		"",	"",	dev_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	dev_disconnect },
-	{ "GetProperties",	"",	"a{sv}",dev_get_properties },
-	{ NULL, NULL, NULL, NULL }
+static const GDBusMethodTable dev_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect", NULL, NULL, dev_connect) },
+	{ GDBUS_METHOD("Disconnect", NULL, NULL, dev_disconnect) },
+	{ GDBUS_METHOD("GetProperties",
+		NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+		dev_get_properties) },
+	{ }
 };
 
-static GDBusSignalTable dev_signals[] = {
-	{ "PropertyChanged",		"sv"	},
-	{ NULL, NULL }
+static const GDBusSignalTable dev_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 struct audio_device *audio_device_register(DBusConnection *conn,
@@ -701,7 +703,7 @@ gboolean audio_device_is_active(struct audio_device *dev,
 				control_is_active(dev))
 		return TRUE;
 	else if (!strcmp(interface, AUDIO_GATEWAY_INTERFACE) && dev->gateway &&
-				gateway_is_connected(dev))
+				gateway_is_active(dev))
 		return TRUE;
 
 	return FALSE;

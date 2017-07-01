@@ -33,11 +33,8 @@
 #include <sys/types.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/hidp.h>
-#include <bluetooth/sdp.h>
 
 #include <glib.h>
-#include <dbus/dbus.h>
 
 #include "../src/adapter.h"
 #include "../src/device.h"
@@ -46,8 +43,6 @@
 #include "device.h"
 #include "fakehid.h"
 #include "uinput.h"
-
-#define PS3_FLAGS_MASK 0xFFFFFF00
 
 enum ps3remote_special_keys {
 	PS3R_BIT_PS = 0,

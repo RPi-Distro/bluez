@@ -44,6 +44,7 @@ static GString *prompt;
 
 static gchar *opt_src = NULL;
 static gchar *opt_dst = NULL;
+static gchar *opt_dst_type = NULL;
 static gchar *opt_sec_level = NULL;
 static int opt_psm = 0;
 static int opt_mtu = 0;
@@ -149,6 +150,22 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 	set_state(STATE_CONNECTED);
 }
 
+static void disconnect_io()
+{
+	if (conn_state == STATE_DISCONNECTED)
+		return;
+
+	g_attrib_unref(attrib);
+	attrib = NULL;
+	opt_mtu = 0;
+
+	g_io_channel_shutdown(iochannel, FALSE, NULL);
+	g_io_channel_unref(iochannel);
+	iochannel = NULL;
+
+	set_state(STATE_DISCONNECTED);
+}
+
 static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 {
 	GSList *l;
@@ -161,9 +178,9 @@ static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 
 	printf("\n");
 	for (l = services; l; l = l->next) {
-		struct att_primary *prim = l->data;
+		struct gatt_primary *prim = l->data;
 		printf("attr handle: 0x%04x, end grp handle: 0x%04x "
-			"uuid: %s\n", prim->start, prim->end, prim->uuid);
+			"uuid: %s\n", prim->range.start, prim->range.end, prim->uuid);
 	}
 
 	rl_forced_update_display();
@@ -202,7 +219,7 @@ static void char_cb(GSList *characteristics, guint8 status, gpointer user_data)
 
 	printf("\n");
 	for (l = characteristics; l; l = l->next) {
-		struct att_char *chars = l->data;
+		struct gatt_char *chars = l->data;
 
 		printf("handle: 0x%04x, char properties: 0x%02x, char value "
 				"handle: 0x%04x, uuid: %s\n", chars->handle,
@@ -327,6 +344,14 @@ static void cmd_exit(int argcp, char **argvp)
 	g_main_loop_quit(event_loop);
 }
 
+static gboolean channel_watcher(GIOChannel *chan, GIOCondition cond,
+				gpointer user_data)
+{
+	disconnect_io();
+
+	return FALSE;
+}
+
 static void cmd_connect(int argcp, char **argvp)
 {
 	if (conn_state != STATE_DISCONNECTED)
@@ -335,6 +360,12 @@ static void cmd_connect(int argcp, char **argvp)
 	if (argcp > 1) {
 		g_free(opt_dst);
 		opt_dst = g_strdup(argvp[1]);
+
+		g_free(opt_dst_type);
+		if (argcp > 2)
+			opt_dst_type = g_strdup(argvp[2]);
+		else
+			opt_dst_type = g_strdup("public");
 	}
 
 	if (opt_dst == NULL) {
@@ -343,26 +374,17 @@ static void cmd_connect(int argcp, char **argvp)
 	}
 
 	set_state(STATE_CONNECTING);
-	iochannel = gatt_connect(opt_src, opt_dst, opt_sec_level, opt_psm,
-						opt_mtu, connect_cb);
+	iochannel = gatt_connect(opt_src, opt_dst, opt_dst_type, opt_sec_level,
+						opt_psm, opt_mtu, connect_cb);
 	if (iochannel == NULL)
 		set_state(STATE_DISCONNECTED);
+	else
+		g_io_add_watch(iochannel, G_IO_HUP, channel_watcher, NULL);
 }
 
 static void cmd_disconnect(int argcp, char **argvp)
 {
-	if (conn_state == STATE_DISCONNECTED)
-		return;
-
-	g_attrib_unref(attrib);
-	attrib = NULL;
-	opt_mtu = 0;
-
-	g_io_channel_shutdown(iochannel, FALSE, NULL);
-	g_io_channel_unref(iochannel);
-	iochannel = NULL;
-
-	set_state(STATE_DISCONNECTED);
+	disconnect_io();
 }
 
 static void cmd_primary(int argcp, char **argvp)
@@ -586,8 +608,8 @@ static void cmd_char_write(int argcp, char **argvp)
 		return;
 	}
 
-	handle = strtoll(argvp[1], NULL, 16);
-	if (errno != 0 || handle <= 0) {
+	handle = strtohandle(argvp[1]);
+	if (handle <= 0) {
 		printf("A valid handle is required\n");
 		return;
 	}
@@ -720,7 +742,7 @@ static struct {
 		"Exit interactive mode" },
 	{ "quit",		cmd_exit,	"",
 		"Exit interactive mode" },
-	{ "connect",		cmd_connect,	"[address]",
+	{ "connect",		cmd_connect,	"[address [address type]]",
 		"Connect to a remote device" },
 	{ "disconnect",		cmd_disconnect,	"",
 		"Disconnect from a remote device" },
@@ -827,7 +849,8 @@ static char **commands_completion(const char *text, int start, int end)
 		return NULL;
 }
 
-int interactive(const gchar *src, const gchar *dst, int psm)
+int interactive(const gchar *src, const gchar *dst,
+		const gchar *dst_type, int psm)
 {
 	GIOChannel *pchan;
 	gint events;
@@ -836,6 +859,7 @@ int interactive(const gchar *src, const gchar *dst, int psm)
 
 	opt_src = g_strdup(src);
 	opt_dst = g_strdup(dst);
+	opt_dst_type = g_strdup(dst_type);
 	opt_psm = psm;
 
 	prompt = g_string_new(NULL);

@@ -48,7 +48,6 @@
 #include "../src/dbus-common.h"
 
 #include "log.h"
-#include "glib-compat.h"
 #include "glib-helper.h"
 #include "sdp-client.h"
 #include "btio.h"
@@ -64,10 +63,6 @@
 
 #define MAX_OPEN_TRIES		5
 #define OPEN_WAIT		300	/* ms. udev node creation retry wait */
-
-#ifndef DBUS_TYPE_UNIX_FD
-#define DBUS_TYPE_UNIX_FD -1
-#endif
 
 struct serial_device {
 	DBusConnection	*conn;		/* for name listener handling */
@@ -496,9 +491,6 @@ static DBusMessage *port_connect(DBusConnection *conn,
 	const char *pattern;
 	int err;
 
-	if (dbus_message_has_member(msg, "ConnectFD") && DBUS_TYPE_UNIX_FD < 0)
-		return btd_error_not_supported(msg);
-
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &pattern,
 						DBUS_TYPE_INVALID) == FALSE)
 		return NULL;
@@ -568,10 +560,16 @@ static DBusMessage *port_disconnect(DBusConnection *conn,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
-static GDBusMethodTable port_methods[] = {
-	{ "Connect",    "s", "s", port_connect, G_DBUS_METHOD_FLAG_ASYNC },
-	{ "ConnectFD",    "s", "h", port_connect, G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect", "s", "",  port_disconnect },
+static const GDBusMethodTable port_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect",
+		GDBUS_ARGS({ "pattern", "s" }),	GDBUS_ARGS({ "tty", "s" }),
+		port_connect) },
+	{ GDBUS_ASYNC_METHOD("ConnectFD",
+		GDBUS_ARGS({ "pattern", "s" }), GDBUS_ARGS({ "fd", "s" }),
+		port_connect) },
+	{ GDBUS_METHOD("Disconnect",
+		GDBUS_ARGS({ "device", "s" }), NULL,
+		port_disconnect) },
 	{ }
 };
 

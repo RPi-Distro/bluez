@@ -39,15 +39,16 @@
 
 #include "log.h"
 #include "gdbus.h"
-#include "glib-compat.h"
 #include "btio.h"
 #include "sdpd.h"
 #include "hcid.h"
 #include "adapter.h"
 #include "device.h"
 #include "manager.h"
-#include "att.h"
 #include "gattrib.h"
+#include "att.h"
+#include "gatt.h"
+#include "att-database.h"
 #include "storage.h"
 
 #include "attrib-server.h"
@@ -76,6 +77,7 @@ struct gatt_channel {
 	gboolean encrypted;
 	struct gatt_server *server;
 	guint cleanup_id;
+	struct btd_device *device;
 };
 
 struct group_elem {
@@ -111,6 +113,9 @@ static void channel_free(struct gatt_channel *channel)
 
 	if (channel->cleanup_id)
 		g_source_remove(channel->cleanup_id);
+
+	if (channel->device)
+		btd_device_unref(channel->device);
 
 	g_attrib_unref(channel->attrib);
 	g_free(channel);
@@ -253,8 +258,8 @@ static int attribute_cmp(gconstpointer a1, gconstpointer a2)
 	return attrib1->handle - attrib2->handle;
 }
 
-static struct attribute *find_primary_range(struct gatt_server *server,
-						uint16_t start, uint16_t *end)
+static struct attribute *find_svc_range(struct gatt_server *server,
+					uint16_t start, uint16_t *end)
 {
 	struct attribute *attrib;
 	guint h = start;
@@ -270,7 +275,8 @@ static struct attribute *find_primary_range(struct gatt_server *server,
 
 	attrib = l->data;
 
-	if (bt_uuid_cmp(&attrib->uuid, &prim_uuid) != 0)
+	if (bt_uuid_cmp(&attrib->uuid, &prim_uuid) != 0 &&
+			bt_uuid_cmp(&attrib->uuid, &snd_uuid) != 0)
 		return NULL;
 
 	*end = start;
@@ -297,7 +303,7 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 	uuid_t svc, gap_uuid;
 	bdaddr_t addr;
 
-	a = find_primary_range(server, handle, &end);
+	a = find_svc_range(server, handle, &end);
 
 	if (a == NULL)
 		return 0;
@@ -452,7 +458,8 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 								a->read_reqs);
 
 		if (status == 0x00 && a->read_cb)
-			status = a->read_cb(a, a->cb_user_data);
+			status = a->read_cb(a, channel->device,
+							a->cb_user_data);
 
 		if (status) {
 			g_slist_free_full(groups, g_free);
@@ -541,7 +548,8 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 								a->read_reqs);
 
 		if (status == 0x00 && a->read_cb)
-			status = a->read_cb(a, a->cb_user_data);
+			status = a->read_cb(a, channel->device,
+							a->cb_user_data);
 
 		if (status) {
 			g_slist_free(types);
@@ -731,6 +739,7 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 	uint8_t status;
 	GList *l;
 	uint16_t cccval;
+	uint8_t bdaddr_type;
 	guint h = handle;
 
 	l = g_list_find_custom(channel->server->database,
@@ -741,9 +750,11 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 
 	a = l->data;
 
+	bdaddr_type = device_get_addr_type(channel->device);
+
 	if (bt_uuid_cmp(&ccc_uuid, &a->uuid) == 0 &&
-		read_device_ccc(&channel->src, &channel->dst,
-					handle, &cccval) == 0) {
+		read_device_ccc(&channel->src, &channel->dst, bdaddr_type,
+							handle, &cccval) == 0) {
 		uint8_t config[2];
 
 		att_put_u16(cccval, config);
@@ -753,7 +764,7 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 	status = att_check_reqs(channel, ATT_OP_READ_REQ, a->read_reqs);
 
 	if (status == 0x00 && a->read_cb)
-		status = a->read_cb(a, a->cb_user_data);
+		status = a->read_cb(a, channel->device, a->cb_user_data);
 
 	if (status)
 		return enc_error_resp(ATT_OP_READ_REQ, handle, status, pdu,
@@ -769,6 +780,7 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 	uint8_t status;
 	GList *l;
 	uint16_t cccval;
+	uint8_t bdaddr_type;
 	guint h = handle;
 
 	l = g_list_find_custom(channel->server->database,
@@ -783,9 +795,11 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
 					ATT_ECODE_INVALID_OFFSET, pdu, len);
 
+	bdaddr_type = device_get_addr_type(channel->device);
+
 	if (bt_uuid_cmp(&ccc_uuid, &a->uuid) == 0 &&
-		read_device_ccc(&channel->src, &channel->dst,
-					handle, &cccval) == 0) {
+		read_device_ccc(&channel->src, &channel->dst, bdaddr_type,
+							handle, &cccval) == 0) {
 		uint8_t config[2];
 
 		att_put_u16(cccval, config);
@@ -796,7 +810,7 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 	status = att_check_reqs(channel, ATT_OP_READ_BLOB_REQ, a->read_reqs);
 
 	if (status == 0x00 && a->read_cb)
-		status = a->read_cb(a, a->cb_user_data);
+		status = a->read_cb(a, channel->device, a->cb_user_data);
 
 	if (status)
 		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle, status,
@@ -833,14 +847,18 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 							value, vlen, NULL);
 
 		if (a->write_cb) {
-			status = a->write_cb(a, a->cb_user_data);
+			status = a->write_cb(a, channel->device,
+							a->cb_user_data);
 			if (status)
 				return enc_error_resp(ATT_OP_WRITE_REQ, handle,
 							status, pdu, len);
 		}
 	} else {
 		uint16_t cccval = att_get_u16(value);
-		write_device_ccc(&channel->src, &channel->dst, handle, cccval);
+		uint8_t bdaddr_type = device_get_addr_type(channel->device);
+
+		write_device_ccc(&channel->src, &channel->dst, bdaddr_type,
+								handle, cccval);
 	}
 
 	return enc_write_resp(pdu, len);
@@ -849,18 +867,28 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
 		uint8_t *pdu, int len)
 {
-	guint old_mtu = channel->mtu;
+	GError *gerr = NULL;
+	GIOChannel *io;
+	uint16_t imtu;
 
 	if (mtu < ATT_DEFAULT_LE_MTU)
-		channel->mtu = ATT_DEFAULT_LE_MTU;
-	else
-		channel->mtu = MIN(mtu, channel->mtu);
+		return enc_error_resp(ATT_OP_MTU_REQ, 0,
+					ATT_ECODE_REQ_NOT_SUPP, pdu, len);
 
-	bt_io_set(channel->server->le_io, BT_IO_L2CAP, NULL,
-			BT_IO_OPT_OMTU, channel->mtu,
+	io = g_attrib_get_channel(channel->attrib);
+
+	bt_io_get(io, BT_IO_L2CAP, &gerr,
+			BT_IO_OPT_IMTU, &imtu,
 			BT_IO_OPT_INVALID);
 
-	return enc_mtu_resp(old_mtu, pdu, len);
+	if (gerr)
+		return enc_error_resp(ATT_OP_MTU_REQ, 0,
+					ATT_ECODE_UNLIKELY, pdu, len);
+
+	channel->mtu = MIN(mtu, imtu);
+	g_attrib_set_mtu(channel->attrib, channel->mtu);
+
+	return enc_mtu_resp(imtu, pdu, len);
 }
 
 static void channel_remove(struct gatt_channel *channel)
@@ -981,6 +1009,10 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 		break;
 	case ATT_OP_HANDLE_CNF:
 		return;
+	case ATT_OP_HANDLE_IND:
+	case ATT_OP_HANDLE_NOTIFY:
+		/* The attribute client is already handling these */
+		return;
 	case ATT_OP_READ_MULTI_REQ:
 	case ATT_OP_PREP_WRITE_REQ:
 	case ATT_OP_EXEC_WRITE_REQ:
@@ -1011,6 +1043,7 @@ guint attrib_channel_attach(GAttrib *attrib)
 	GError *gerr = NULL;
 	char addr[18];
 	uint16_t cid;
+	guint mtu = 0;
 
 	io = g_attrib_get_channel(attrib);
 
@@ -1020,7 +1053,7 @@ guint attrib_channel_attach(GAttrib *attrib)
 			BT_IO_OPT_SOURCE_BDADDR, &channel->src,
 			BT_IO_OPT_DEST_BDADDR, &channel->dst,
 			BT_IO_OPT_CID, &cid,
-			BT_IO_OPT_OMTU, &channel->mtu,
+			BT_IO_OPT_IMTU, &mtu,
 			BT_IO_OPT_INVALID);
 	if (gerr) {
 		error("bt_io_get: %s", gerr->message);
@@ -1047,14 +1080,13 @@ guint attrib_channel_attach(GAttrib *attrib)
 	if (device == NULL || device_is_bonded(device) == FALSE)
 		delete_device_ccc(&channel->src, &channel->dst);
 
-	if (channel->mtu > ATT_MAX_MTU)
-		channel->mtu = ATT_MAX_MTU;
-
-	if (cid != ATT_CID)
+	if (cid != ATT_CID) {
 		channel->le = FALSE;
-	else
+		channel->mtu = mtu;
+	} else {
 		channel->le = TRUE;
-
+		channel->mtu = ATT_DEFAULT_LE_MTU;
+	}
 
 	channel->attrib = g_attrib_ref(attrib);
 	channel->id = g_attrib_register(channel->attrib, GATTRIB_ALL_REQS,
@@ -1062,6 +1094,8 @@ guint attrib_channel_attach(GAttrib *attrib)
 
 	channel->cleanup_id = g_io_add_watch(io, G_IO_HUP, channel_watch_cb,
 								channel);
+
+	channel->device = btd_device_ref(device);
 
 	server->clients = g_slist_append(server->clients, channel);
 
@@ -1434,7 +1468,7 @@ int attrib_db_update(struct btd_adapter *adapter, uint16_t handle,
 	a = dl->data;
 
 	a->data = g_try_realloc(a->data, len);
-	if (a->data == NULL)
+	if (len && a->data == NULL)
 		return -ENOMEM;
 
 	a->len = len;

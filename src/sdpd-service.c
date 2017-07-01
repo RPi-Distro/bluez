@@ -44,6 +44,7 @@
 #include <glib.h>
 #include <dbus/dbus.h>
 
+#include "hcid.h"
 #include "sdpd.h"
 #include "log.h"
 #include "adapter.h"
@@ -172,10 +173,9 @@ void register_server_service(void)
 	update_db_timestamp();
 }
 
-void register_device_id(const uint16_t vendor, const uint16_t product,
-						const uint16_t version)
+void register_device_id(void)
 {
-	const uint16_t spec = 0x0102, source = 0x0002;
+	const uint16_t spec = 0x0103;
 	const uint8_t primary = 1;
 	sdp_list_t *class_list, *group_list, *profile_list;
 	uuid_t class_uuid, group_uuid;
@@ -184,9 +184,9 @@ void register_device_id(const uint16_t vendor, const uint16_t product,
 	sdp_profile_desc_t profile;
 	sdp_record_t *record = sdp_record_alloc();
 
-	info("Adding device id record for %04x:%04x", vendor, product);
-
-	btd_manager_set_did(vendor, product, version);
+	info("Adding device id record for %04x:%04x:%04x:%04x",
+				main_opts.did_source, main_opts.did_vendor,
+				main_opts.did_product, main_opts.did_version);
 
 	record->handle = sdp_next_handle();
 
@@ -213,19 +213,19 @@ void register_device_id(const uint16_t vendor, const uint16_t product,
 	spec_data = sdp_data_alloc(SDP_UINT16, &spec);
 	sdp_attr_add(record, 0x0200, spec_data);
 
-	vendor_data = sdp_data_alloc(SDP_UINT16, &vendor);
+	vendor_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_vendor);
 	sdp_attr_add(record, 0x0201, vendor_data);
 
-	product_data = sdp_data_alloc(SDP_UINT16, &product);
+	product_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_product);
 	sdp_attr_add(record, 0x0202, product_data);
 
-	version_data = sdp_data_alloc(SDP_UINT16, &version);
+	version_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_version);
 	sdp_attr_add(record, 0x0203, version_data);
 
 	primary_data = sdp_data_alloc(SDP_BOOL, &primary);
 	sdp_attr_add(record, 0x0204, primary_data);
 
-	source_data = sdp_data_alloc(SDP_UINT16, &source);
+	source_data = sdp_data_alloc(SDP_UINT16, &main_opts.did_source);
 	sdp_attr_add(record, 0x0205, source_data);
 
 	update_db_timestamp();
@@ -276,6 +276,10 @@ int add_record_to_server(const bdaddr_t *src, sdp_record_t *rec)
 int remove_record_from_server(uint32_t handle)
 {
 	sdp_record_t *rec;
+
+	/* Refuse to remove the server's own record */
+	if (handle == SDP_SERVER_RECORD_HANDLE)
+		return -EINVAL;
 
 	DBG("Removing record with handle 0x%05x", handle);
 

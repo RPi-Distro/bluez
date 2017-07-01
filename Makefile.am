@@ -25,10 +25,15 @@ includedir = @includedir@/bluetooth
 
 include_HEADERS =
 
+AM_CFLAGS = $(WARNING_CFLAGS) $(MISC_CFLAGS)
+AM_LDFLAGS = $(MISC_LDFLAGS)
+
 if DATAFILES
 dbusdir = $(sysconfdir)/dbus-1/system.d
+dbusservicedir = $(datadir)/dbus-1/system-services
 
 dbus_DATA = src/bluetooth.conf
+dbusservice_DATA = src/org.bluez.service
 
 confdir = $(sysconfdir)/bluetooth
 
@@ -70,7 +75,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
-lib_libbluetooth_la_LDFLAGS = -version-info 15:0:12
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 16:0:13
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 noinst_LTLIBRARIES += lib/libbluetooth-private.la
@@ -106,7 +111,8 @@ sbc_sbctest_CFLAGS = $(AM_CFLAGS) @SNDFILE_CFLAGS@
 endif
 endif
 
-attrib_sources = attrib/att.h attrib/att.c attrib/gatt.h attrib/gatt.c \
+attrib_sources = attrib/att.h attrib/att-database.h attrib/att.c \
+		attrib/gatt.h attrib/gatt.c \
 		attrib/gattrib.h attrib/gattrib.c attrib/client.h \
 		attrib/client.c attrib/gatt-service.h attrib/gatt-service.c
 
@@ -199,34 +205,9 @@ builtin_sources += network/main.c \
 			network/connection.h network/connection.c
 endif
 
-if PROXIMITYPLUGIN
-builtin_modules += proximity
-builtin_sources += proximity/main.c \
-			proximity/manager.h proximity/manager.c \
-			proximity/monitor.h proximity/monitor.c \
-			proximity/reporter.h proximity/reporter.c
-endif
-
 if SERVICEPLUGIN
 builtin_modules += service
 builtin_sources += plugins/service.c
-endif
-
-if GATT_EXAMPLE_PLUGIN
-builtin_modules += gatt_example
-builtin_sources += plugins/gatt-example.c
-endif
-
-if TIMEPLUGIN
-builtin_modules += time
-builtin_sources += time/main.c \
-		   time/server.h time/server.c
-endif
-
-if ALERTPLUGIN
-builtin_modules += alert
-builtin_sources += alert/main.c \
-		   alert/server.h alert/server.c
 endif
 
 if HEALTHPLUGIN
@@ -237,12 +218,25 @@ builtin_sources += health/hdp_main.c health/hdp_types.h \
 			health/hdp_util.h health/hdp_util.c
 endif
 
-if THERMOMETERPLUGIN
-builtin_modules += thermometer
+if GATTMODULES
+builtin_modules += thermometer alert time gatt_example proximity \
+			deviceinfo
 builtin_sources += thermometer/main.c \
 			thermometer/manager.h thermometer/manager.c \
-			thermometer/thermometer.h thermometer/thermometer.c
+			thermometer/thermometer.h thermometer/thermometer.c \
+			alert/main.c alert/server.h alert/server.c \
+			time/main.c time/server.h time/server.c \
+			plugins/gatt-example.c \
+			proximity/main.c proximity/manager.h proximity/manager.c \
+			proximity/monitor.h proximity/monitor.c \
+			proximity/reporter.h proximity/reporter.c \
+			proximity/linkloss.h proximity/linkloss.c \
+			proximity/immalert.h proximity/immalert.c \
+			deviceinfo/main.c \
+			deviceinfo/manager.h deviceinfo/manager.c \
+			deviceinfo/deviceinfo.h deviceinfo/deviceinfo.c
 endif
+
 
 builtin_modules += hciops mgmtops
 builtin_sources += plugins/hciops.c plugins/mgmtops.c
@@ -281,7 +275,8 @@ endif
 if MAINTAINER_MODE
 plugin_LTLIBRARIES += plugins/external-dummy.la
 plugins_external_dummy_la_SOURCES = plugins/external-dummy.c
-plugins_external_dummy_la_LDFLAGS = -module -avoid-version -no-undefined
+plugins_external_dummy_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
+				    -no-undefined
 plugins_external_dummy_la_CFLAGS = $(AM_CFLAGS) -fvisibility=hidden
 endif
 
@@ -297,7 +292,7 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/attrib-server.h src/attrib-server.c \
 			src/sdp-xml.h src/sdp-xml.c \
 			src/sdp-client.h src/sdp-client.c \
-			src/textfile.h src/textfile.c src/glib-compat.h \
+			src/textfile.h src/textfile.c \
 			src/glib-helper.h src/glib-helper.c \
 			src/oui.h src/oui.c src/uinput.h src/ppoll.h \
 			src/plugin.h src/plugin.c \
@@ -311,8 +306,8 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/event.h src/event.c \
 			src/oob.h src/oob.c src/eir.h src/eir.c
 src_bluetoothd_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @DBUS_LIBS@ \
-							@CAPNG_LIBS@ -ldl -lrt
-src_bluetoothd_LDFLAGS = -Wl,--export-dynamic \
+								-ldl -lrt
+src_bluetoothd_LDFLAGS = $(AM_LDFLAGS) -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/bluetooth.ver
 
 src_bluetoothd_DEPENDENCIES = lib/libbluetooth-private.la
@@ -333,7 +328,7 @@ if DATAFILES
 conf_DATA += src/main.conf
 endif
 
-EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
+EXTRA_DIST += src/genbuiltin src/bluetooth.conf src/org.bluez.service \
 			src/main.conf network/network.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
@@ -349,17 +344,19 @@ alsa_LTLIBRARIES = audio/libasound_module_pcm_bluetooth.la \
 
 audio_libasound_module_pcm_bluetooth_la_SOURCES = audio/pcm_bluetooth.c \
 					audio/rtp.h audio/ipc.h audio/ipc.c
-audio_libasound_module_pcm_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_pcm_.*
+audio_libasound_module_pcm_bluetooth_la_LDFLAGS = $(AM_LDFLAGS) -module \
+						  -avoid-version
 audio_libasound_module_pcm_bluetooth_la_LIBADD = sbc/libsbc.la \
 					lib/libbluetooth-private.la @ALSA_LIBS@
 audio_libasound_module_pcm_bluetooth_la_CFLAGS = $(AM_CFLAGS) @ALSA_CFLAGS@
 
 audio_libasound_module_ctl_bluetooth_la_SOURCES = audio/ctl_bluetooth.c \
 					audio/rtp.h audio/ipc.h audio/ipc.c
-audio_libasound_module_ctl_bluetooth_la_LDFLAGS = -module -avoid-version #-export-symbols-regex [_]*snd_ctl_.*
+audio_libasound_module_ctl_bluetooth_la_LDFLAGS = $(AM_LDFLAGS) -module \
+						  -avoid-version
 audio_libasound_module_ctl_bluetooth_la_LIBADD = \
 					lib/libbluetooth-private.la @ALSA_LIBS@
-audio_libasound_module_ctl_bluetooth_la_CFLAGS = $(AM_CLAGS) @ALSA_CFLAGS@
+audio_libasound_module_ctl_bluetooth_la_CFLAGS = $(AM_CFLAGS) @ALSA_CFLAGS@
 
 if DATAFILES
 alsaconfdir = $(datadir)/alsa
@@ -383,12 +380,12 @@ audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
 				audio/gstsbcutil.h audio/gstsbcutil.c \
 				audio/gstrtpsbcpay.h audio/gstrtpsbcpay.c \
 				audio/rtp.h audio/ipc.h audio/ipc.c
-audio_libgstbluetooth_la_LDFLAGS = -module -avoid-version
+audio_libgstbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version
 audio_libgstbluetooth_la_LIBADD = sbc/libsbc.la lib/libbluetooth-private.la \
 						@DBUS_LIBS@ @GSTREAMER_LIBS@ \
 						-lgstaudio-0.10 -lgstrtp-0.10
 audio_libgstbluetooth_la_CFLAGS = -fvisibility=hidden -fno-strict-aliasing \
-				$(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
+                               $(AM_CFLAGS) @DBUS_CFLAGS@ @GSTREAMER_CFLAGS@
 endif
 endif
 
@@ -400,7 +397,7 @@ include Makefile.tools
 if DATAFILES
 rulesdir = @UDEV_DIR@/rules.d
 
-udev_files = scripts/bluetooth.rules
+udev_files =
 
 if HID2HCI
 udev_files += scripts/bluetooth-hid2hci.rules
@@ -419,8 +416,7 @@ endif
 
 CLEANFILES += $(rules_DATA)
 
-EXTRA_DIST += scripts/bluetooth.rules \
-		scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules
+EXTRA_DIST += scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules
 
 EXTRA_DIST += doc/manager-api.txt \
 		doc/adapter-api.txt doc/device-api.txt \
@@ -432,7 +428,7 @@ EXTRA_DIST += doc/manager-api.txt \
 
 AM_YFLAGS = -d
 
-AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
+AM_CFLAGS += @DBUS_CFLAGS@ @GLIB_CFLAGS@
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \

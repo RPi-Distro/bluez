@@ -11,19 +11,19 @@ AC_DEFUN([AC_PROG_CC_PIE], [
 ])
 
 AC_DEFUN([COMPILER_FLAGS], [
-	if (test "${CFLAGS}" = ""); then
-		CFLAGS="-Wall -O2"
-	fi
+	with_cflags=""
 	if (test "$USE_MAINTAINER_MODE" = "yes"); then
-		CFLAGS="$CFLAGS -Werror -Wextra"
-		CFLAGS="$CFLAGS -Wno-unused-parameter"
-		CFLAGS="$CFLAGS -Wno-missing-field-initializers"
-		CFLAGS="$CFLAGS -Wdeclaration-after-statement"
-		CFLAGS="$CFLAGS -Wmissing-declarations"
-		CFLAGS="$CFLAGS -Wredundant-decls"
-		CFLAGS="$CFLAGS -Wcast-align"
-		CFLAGS="$CFLAGS -DG_DISABLE_DEPRECATED"
+		with_cflags="$with_cflags -Wall -Werror -Wextra"
+		with_cflags="$with_cflags -Wno-unused-parameter"
+		with_cflags="$with_cflags -Wno-missing-field-initializers"
+		with_cflags="$with_cflags -Wdeclaration-after-statement"
+		with_cflags="$with_cflags -Wmissing-declarations"
+		with_cflags="$with_cflags -Wredundant-decls"
+		with_cflags="$with_cflags -Wcast-align"
+		with_cflags="$with_cflags -DG_DISABLE_DEPRECATED"
 	fi
+
+	AC_SUBST([WARNING_CFLAGS], $with_cflags)
 ])
 
 AC_DEFUN([AC_FUNC_PPOLL], [
@@ -92,28 +92,15 @@ AC_DEFUN([AC_INIT_BLUEZ], [
 ])
 
 AC_DEFUN([AC_PATH_DBUS], [
-	PKG_CHECK_MODULES(DBUS, dbus-1 >= 1.0, dummy=yes,
-				AC_MSG_ERROR(D-Bus library is required))
-	AC_CHECK_LIB(dbus-1, dbus_watch_get_unix_fd, dummy=yes,
-		AC_DEFINE(NEED_DBUS_WATCH_GET_UNIX_FD, 1,
-			[Define to 1 if you need the dbus_watch_get_unix_fd() function.]))
-	AC_CHECK_LIB(dbus-1, dbus_connection_can_send_type, dummy=yes,
-		AC_DEFINE(NEED_DBUS_CONNECTION_CAN_SEND_TYPE, 1,
-			[Define to 1 if you need the dbus_connection_can_send_type() function.]
-))
+	PKG_CHECK_MODULES(DBUS, dbus-1 >= 1.4, dummy=yes,
+				AC_MSG_ERROR(D-Bus >= 1.4 is required))
 	AC_SUBST(DBUS_CFLAGS)
 	AC_SUBST(DBUS_LIBS)
 ])
 
 AC_DEFUN([AC_PATH_GLIB], [
-	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.16, dummy=yes,
-				AC_MSG_ERROR(GLib library version 2.16 or later is required))
-	AC_CHECK_LIB(glib-2.0, g_slist_free_full, dummy=yes,
-		AC_DEFINE(NEED_G_SLIST_FREE_FULL, 1,
-			[Define to 1 if you need g_slist_free_full() function.]))
-	AC_CHECK_LIB(glib-2.0, g_list_free_full, dummy=yes,
-		AC_DEFINE(NEED_G_LIST_FREE_FULL, 1,
-			[Define to 1 if you need g_list_free_full() function.]))
+	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.28, dummy=yes,
+				AC_MSG_ERROR(GLib >= 2.28 is required))
 	AC_SUBST(GLIB_CFLAGS)
 	AC_SUBST(GLIB_LIBS)
 ])
@@ -196,13 +183,9 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	serial_enable=yes
 	network_enable=yes
 	sap_enable=no
-	proximity_enable=no
-	time_enable=no
-	alert_enable=no
 	service_enable=yes
 	health_enable=no
 	pnat_enable=no
-	gatt_example_enable=no
 	tools_enable=yes
 	hidd_enable=no
 	pand_enable=no
@@ -219,7 +202,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	sap_driver=dummy
 	dbusoob_enable=no
 	wiimote_enable=no
-	thermometer_enable=no
+	gatt_enable=no
 
 	AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization], [disable code optimization]), [
 		optimization_enable=${enableval}
@@ -246,18 +229,6 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	])
 	AC_SUBST([SAP_DRIVER], [sap-${sap_driver}.c])
 
-	AC_ARG_ENABLE(proximity, AC_HELP_STRING([--enable-proximity], [enable proximity plugin]), [
-		proximity_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(time, AC_HELP_STRING([--enable-time], [enable Time Profile plugin]), [
-		time_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(alert, AC_HELP_STRING([--enable-alert], [enable Phone Alert Profile plugin]), [
-		alert_enable=${enableval}
-	])
-
 	AC_ARG_ENABLE(serial, AC_HELP_STRING([--disable-serial], [disable serial plugin]), [
 		serial_enable=${enableval}
 	])
@@ -280,10 +251,6 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 
 	AC_ARG_ENABLE(pnat, AC_HELP_STRING([--enable-pnat], [enable pnat plugin]), [
 		pnat_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(gatt-example, AC_HELP_STRING([--enable-gatt-example], [enable GATT example plugin]), [
-		gatt_example_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(gstreamer, AC_HELP_STRING([--enable-gstreamer], [enable GStreamer support]), [
@@ -368,26 +335,32 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		hal_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(thermometer, AC_HELP_STRING([--enable-thermometer], [enable thermometer plugin]), [
-		thermometer_enable=${enableval}
+	AC_ARG_ENABLE(gatt, AC_HELP_STRING([--enable-gatt], [enable gatt module]), [
+		gatt_enable=${enableval}
 	])
 
+	misc_cflags=""
+	misc_ldflags=""
+
 	if (test "${fortify_enable}" = "yes"); then
-		CFLAGS="$CFLAGS -D_FORTIFY_SOURCE=2"
+		misc_cflags="$misc_cflags -D_FORTIFY_SOURCE=2"
 	fi
 
 	if (test "${pie_enable}" = "yes" && test "${ac_cv_prog_cc_pie}" = "yes"); then
-		CFLAGS="$CFLAGS -fPIC"
-		LDFLAGS="$LDFLAGS -pie"
+		misc_cflags="$misc_cflags -fPIC"
+		misc_ldflags="$misc_ldflags -pie"
 	fi
 
 	if (test "${debug_enable}" = "yes" && test "${ac_cv_prog_cc_g}" = "yes"); then
-		CFLAGS="$CFLAGS -g"
+		misc_cflags="$misc_cflags -g"
 	fi
 
 	if (test "${optimization_enable}" = "no"); then
-		CFLAGS="$CFLAGS -O0"
+		misc_cflags="$misc_cflags -O0"
 	fi
+
+	AC_SUBST([MISC_CFLAGS], $misc_cflags)
+	AC_SUBST([MISC_LDFLAGS], $misc_ldflags)
 
 	if (test "${usb_enable}" = "yes" && test "${usb_found}" = "yes"); then
 		AC_DEFINE(HAVE_LIBUSB, 1, [Define to 1 if you have USB library.])
@@ -404,15 +377,11 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(SERIALPLUGIN, test "${serial_enable}" = "yes")
 	AM_CONDITIONAL(NETWORKPLUGIN, test "${network_enable}" = "yes")
 	AM_CONDITIONAL(SAPPLUGIN, test "${sap_enable}" = "yes")
-	AM_CONDITIONAL(PROXIMITYPLUGIN, test "${proximity_enable}" = "yes")
-	AM_CONDITIONAL(TIMEPLUGIN, test "${time_enable}" = "yes")
-	AM_CONDITIONAL(ALERTPLUGIN, test "${alert_enable}" = "yes")
 	AM_CONDITIONAL(SERVICEPLUGIN, test "${service_enable}" = "yes")
 	AM_CONDITIONAL(HEALTHPLUGIN, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(MCAP, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(HAL, test "${hal_enable}" = "yes")
 	AM_CONDITIONAL(READLINE, test "${readline_found}" = "yes")
-	AM_CONDITIONAL(GATT_EXAMPLE_PLUGIN, test "${gatt_example_enable}" = "yes")
 	AM_CONDITIONAL(PNATPLUGIN, test "${pnat_enable}" = "yes")
 	AM_CONDITIONAL(HIDD, test "${hidd_enable}" = "yes")
 	AM_CONDITIONAL(PAND, test "${pand_enable}" = "yes")
@@ -428,5 +397,5 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(MAEMO6PLUGIN, test "${maemo6_enable}" = "yes")
 	AM_CONDITIONAL(DBUSOOBPLUGIN, test "${dbusoob_enable}" = "yes")
 	AM_CONDITIONAL(WIIMOTEPLUGIN, test "${wiimote_enable}" = "yes")
-	AM_CONDITIONAL(THERMOMETERPLUGIN, test "${thermometer_enable}" = "yes")
+	AM_CONDITIONAL(GATTMODULES, test "${gatt_enable}" = "yes")
 ])
