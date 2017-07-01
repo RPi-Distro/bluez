@@ -121,7 +121,7 @@ struct attio_data {
 
 struct btd_device {
 	bdaddr_t	bdaddr;
-	device_type_t	type;
+	addr_type_t	type;
 	gchar		*path;
 	char		name[MAX_NAME_LENGTH + 1];
 	char		*alias;
@@ -253,6 +253,16 @@ static void device_free(gpointer user_data)
 	g_free(device->path);
 	g_free(device->alias);
 	g_free(device);
+}
+
+gboolean device_is_bredr(struct btd_device *device)
+{
+	return (device->type == ADDR_TYPE_BREDR);
+}
+
+gboolean device_is_le(struct btd_device *device)
+{
+	return (device->type != ADDR_TYPE_BREDR);
 }
 
 gboolean device_is_paired(struct btd_device *device)
@@ -970,7 +980,7 @@ static void device_set_version(struct btd_device *device, uint16_t value)
 
 struct btd_device *device_create(DBusConnection *conn,
 				struct btd_adapter *adapter,
-				const gchar *address, device_type_t type)
+				const gchar *address, addr_type_t type)
 {
 	gchar *address_up;
 	struct btd_device *device;
@@ -1049,11 +1059,6 @@ void device_set_name(struct btd_device *device, const char *name)
 void device_get_name(struct btd_device *device, char *name, size_t len)
 {
 	strncpy(name, device->name, len);
-}
-
-device_type_t device_get_type(struct btd_device *device)
-{
-	return device->type;
 }
 
 uint16_t btd_device_get_vendor(struct btd_device *device)
@@ -1590,7 +1595,7 @@ cleanup:
 		bdaddr_t sba, dba;
 
 		adapter_get_address(device->adapter, &sba);
-		device_get_address(device, &dba);
+		device_get_address(device, &dba, NULL);
 
 		store_profiles(device);
 	}
@@ -1678,7 +1683,7 @@ static void store_services(struct btd_device *device)
 	char *str = primary_list_to_string(device->primaries);
 
 	adapter_get_address(adapter, &sba);
-	device_get_address(device, &dba);
+	device_get_address(device, &dba, NULL);
 
 	write_device_services(&sba, &dba, str);
 
@@ -1725,7 +1730,7 @@ static void attrib_disconnected(gpointer user_data)
 
 	g_slist_foreach(device->attios, attio_disconnected, NULL);
 
-	attrib_channel_detach(device->attachid);
+	attrib_channel_detach(device->attrib, device->attachid);
 	g_attrib_unref(device->attrib);
 	device->attrib = NULL;
 
@@ -1774,7 +1779,7 @@ static void primary_cb(GSList *services, guint8 status, gpointer user_data)
 	device_probe_drivers(device, uuids);
 
 	if (device->attios == NULL && device->attios_offline == NULL) {
-		attrib_channel_detach(device->attachid);
+		attrib_channel_detach(device->attrib, device->attachid);
 		g_attrib_unref(device->attrib);
 		device->attrib = NULL;
 	} else
@@ -1852,7 +1857,7 @@ static gboolean att_connect(gpointer user_data)
 
 	DBG("Connection attempt to: %s", addr);
 
-	if (device->type != DEVICE_TYPE_LE) {
+	if (device_is_bredr(device)) {
 		io = bt_io_connect(BT_IO_L2CAP, att_connect_cb,
 					device, NULL, &gerr,
 					BT_IO_OPT_SOURCE_BDADDR, &sba,
@@ -1991,9 +1996,12 @@ struct btd_adapter *device_get_adapter(struct btd_device *device)
 	return device->adapter;
 }
 
-void device_get_address(struct btd_device *device, bdaddr_t *bdaddr)
+void device_get_address(struct btd_device *device, bdaddr_t *bdaddr,
+							addr_type_t *type)
 {
 	bacpy(bdaddr, &device->bdaddr);
+	if (type != NULL)
+		*type = device->type;
 }
 
 const gchar *device_get_path(struct btd_device *device)
@@ -2080,14 +2088,6 @@ void device_set_auto_connect(struct btd_device *device, gboolean enable)
 	device->auto_id = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
 						att_connect, device,
 						att_connect_dispatched);
-}
-
-void device_set_type(struct btd_device *device, device_type_t type)
-{
-	if (!device)
-		return;
-
-	device->type = type;
 }
 
 static gboolean start_discovery(gpointer user_data)
@@ -2183,8 +2183,6 @@ static void bonding_request_free(struct bonding_req *bonding)
 
 	device->bonding = NULL;
 
-	adapter_resume_discovery(device->adapter);
-
 	if (!device->agent)
 		return;
 
@@ -2255,8 +2253,6 @@ proceed:
 
 	bonding->conn = dbus_connection_ref(conn);
 	bonding->msg = dbus_message_ref(msg);
-
-	adapter_suspend_discovery(device->adapter);
 
 	return bonding;
 }
@@ -2869,7 +2865,7 @@ gboolean btd_device_remove_attio_callback(struct btd_device *device, guint id)
 		return TRUE;
 
 	if (device->attachid) {
-		attrib_channel_detach(device->attachid);
+		attrib_channel_detach(device->attrib, device->attachid);
 		device->attachid = 0;
 	}
 

@@ -124,12 +124,6 @@ AC_DEFUN([AC_PATH_GSTREAMER], [
 	AC_SUBST(GSTREAMER_PLUGINSDIR)
 ])
 
-AC_DEFUN([AC_PATH_PULSE], [
-	PKG_CHECK_MODULES(PULSE, libpulse, pulse_found=yes, pulse_found=no)
-	AC_SUBST(PULSE_CFLAGS)
-	AC_SUBST(PULSE_LIBS)
-])
-
 AC_DEFUN([AC_PATH_ALSA], [
 	PKG_CHECK_MODULES(ALSA, alsa, alsa_found=yes, alsa_found=no)
 	AC_CHECK_LIB(rt, clock_gettime, ALSA_LIBS="$ALSA_LIBS -lrt", alsa_found=no)
@@ -168,6 +162,12 @@ AC_DEFUN([AC_PATH_READLINE], [
 			AC_SUBST(READLINE_LIBS, "-lreadline")
 			], readline_found=no),
 		[])
+])
+
+AC_DEFUN([AC_PATH_CHECK], [
+	PKG_CHECK_MODULES(CHECK, check >= 0.9.6, check_found=yes, check_found=no)
+	AC_SUBST(CHECK_CFLAGS)
+	AC_SUBST(CHECK_LIBS)
 ])
 
 AC_DEFUN([AC_PATH_OUI], [
@@ -415,14 +415,13 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(HAL, test "${hal_enable}" = "yes")
 	AM_CONDITIONAL(READLINE, test "${readline_found}" = "yes")
 	AM_CONDITIONAL(GATT_EXAMPLE_PLUGIN, test "${gatt_example_enable}" = "yes")
-	AM_CONDITIONAL(ECHOPLUGIN, test "no" = "yes")
 	AM_CONDITIONAL(PNATPLUGIN, test "${pnat_enable}" = "yes")
 	AM_CONDITIONAL(TRACER, test "${tracer_enable}" = "yes")
 	AM_CONDITIONAL(HIDD, test "${hidd_enable}" = "yes")
 	AM_CONDITIONAL(PAND, test "${pand_enable}" = "yes")
 	AM_CONDITIONAL(DUND, test "${dund_enable}" = "yes")
 	AM_CONDITIONAL(CUPS, test "${cups_enable}" = "yes")
-	AM_CONDITIONAL(TEST, test "${test_enable}" = "yes")
+	AM_CONDITIONAL(TEST, test "${test_enable}" = "yes" && test "${check_found}" = "yes")
 	AM_CONDITIONAL(TOOLS, test "${tools_enable}" = "yes")
 	AM_CONDITIONAL(BCCMD, test "${bccmd_enable}" = "yes")
 	AM_CONDITIONAL(PCMCIA, test "${pcmcia_enable}" = "yes")

@@ -119,6 +119,7 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 
 	while (len < eir_len - 1) {
 		uint8_t field_len = eir_data[0];
+		uint8_t name_len;
 
 		/* Check for the end of EIR */
 		if (field_len == 0)
@@ -154,8 +155,15 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 
 		case EIR_NAME_SHORT:
 		case EIR_NAME_COMPLETE:
+			/* Some vendors put a NUL byte terminator into
+			 * the name */
+			name_len = field_len - 1;
+
+			while (name_len > 0 && eir_data[name_len - 1] == '\0')
+				name_len--;
+
 			if (!g_utf8_validate((char *) &eir_data[2],
-							field_len - 1, NULL))
+								name_len, NULL))
 				break;
 
 			g_free(eir->name);
@@ -332,4 +340,29 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 	/* Group all UUID128 types */
 	if (eir_len <= HCI_MAX_EIR_LENGTH - 2)
 		eir_generate_uuid128(uuids, ptr, &eir_len);
+}
+
+gboolean eir_has_complete_name(uint8_t *data, size_t len)
+{
+	uint8_t field_len;
+	size_t parsed;
+
+	for (parsed = 0; parsed < len - 1; parsed += field_len) {
+		field_len = data[0];
+
+		if (field_len == 0)
+			break;
+
+		parsed += field_len + 1;
+
+		if (parsed > len)
+			break;
+
+		if (data[1] == EIR_NAME_COMPLETE)
+			return TRUE;
+
+		data += field_len + 1;
+	}
+
+	return FALSE;
 }

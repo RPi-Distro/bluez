@@ -22,14 +22,18 @@
  *
  */
 
-uint16_t attrib_db_find_avail(uint16_t nitems);
-struct attribute *attrib_db_add(uint16_t handle, bt_uuid_t *uuid, int read_reqs,
-				int write_reqs, const uint8_t *value, int len);
-int attrib_db_update(uint16_t handle, bt_uuid_t *uuid, const uint8_t *value,
+uint16_t attrib_db_find_avail(struct btd_adapter *adapter, uint16_t nitems);
+struct attribute *attrib_db_add(struct btd_adapter *adapter, uint16_t handle,
+				bt_uuid_t *uuid, int read_reqs, int write_reqs,
+				const uint8_t *value, int len);
+int attrib_db_update(struct btd_adapter *adapter, uint16_t handle,
+					bt_uuid_t *uuid, const uint8_t *value,
 					int len, struct attribute **attr);
-int attrib_db_del(uint16_t handle);
-int attrib_gap_set(uint16_t uuid, const uint8_t *value, int len);
-uint32_t attrib_create_sdp(uint16_t handle, const char *name);
+int attrib_db_del(struct btd_adapter *adapter, uint16_t handle);
+int attrib_gap_set(struct btd_adapter *adapter, uint16_t uuid,
+						const uint8_t *value, int len);
+uint32_t attrib_create_sdp(struct btd_adapter *adapter, uint16_t handle,
+							const char *name);
 void attrib_free_sdp(uint32_t sdp_handle);
 guint attrib_channel_attach(GAttrib *attrib, gboolean out);
-gboolean attrib_channel_detach(guint id);
+gboolean attrib_channel_detach(GAttrib *attrib, guint id);
