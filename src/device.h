@@ -37,8 +37,8 @@ typedef enum {
 struct btd_device *device_create(DBusConnection *conn, struct btd_adapter *adapter,
 				const gchar *address);
 void device_set_name(struct btd_device *device, const char *name);
-void device_remove(struct btd_device *device, DBusConnection *conn,
-						gboolean remove_stored);
+void device_get_name(struct btd_device *device, char *name, size_t len);
+void device_remove(struct btd_device *device, gboolean remove_stored);
 gint device_address_cmp(struct btd_device *device, const gchar *address);
 int device_browse(struct btd_device *device, DBusConnection *conn,
 			DBusMessage *msg, uuid_t *search, gboolean reverse);
@@ -54,12 +54,14 @@ void device_set_agent(struct btd_device *device, struct agent *agent);
 gboolean device_is_busy(struct btd_device *device);
 gboolean device_is_temporary(struct btd_device *device);
 gboolean device_is_paired(struct btd_device *device);
+void device_set_paired(struct btd_device *device, gboolean paired);
 void device_set_temporary(struct btd_device *device, gboolean temporary);
 void device_set_cap(struct btd_device *device, uint8_t cap);
 uint8_t device_get_cap(struct btd_device *device);
 void device_set_auth(struct btd_device *device, uint8_t auth);
 uint8_t device_get_auth(struct btd_device *device);
 gboolean device_is_connected(struct btd_device *device);
+gboolean device_get_secmode3_conn(struct btd_device *device);
 void device_set_secmode3_conn(struct btd_device *device, gboolean enable);
 DBusMessage *device_create_bonding(struct btd_device *device,
 				DBusConnection *conn, DBusMessage *msg,

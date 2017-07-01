@@ -40,18 +40,19 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-
 #include <netinet/in.h>
+
+#include "bluetooth.h"
+#include "hci.h"
+#include "hci_lib.h"
+#include "l2cap.h"
+#include "sdp.h"
+#include "sdp_lib.h"
 
 #define SDPINF(fmt, arg...) syslog(LOG_INFO, fmt "\n", ## arg)
 #define SDPERR(fmt, arg...) syslog(LOG_ERR, "%s: " fmt "\n", __func__ , ## arg)
+
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 #ifdef SDP_DEBUG
 #define SDPDBG(fmt, arg...) syslog(LOG_DEBUG, "%s: " fmt "\n", __func__ , ## arg)
@@ -2025,7 +2026,7 @@ int sdp_get_lang_attr(const sdp_record_t *rec, sdp_list_t **langSeq)
 		sdp_data_t *pCode = curr_data;
 		sdp_data_t *pEncoding = pCode->next;
 		sdp_data_t *pOffset = pEncoding->next;
-		if (pCode && pEncoding && pOffset) {
+		if (pEncoding && pOffset) {
 			lang = malloc(sizeof(sdp_lang_attr_t));
 			lang->code_ISO639 = pCode->val.uint16;
 			lang->encoding = pEncoding->val.uint16;
@@ -2236,7 +2237,7 @@ static sdp_data_t *access_proto_to_dataseq(sdp_record_t *rec, sdp_list_t *proto)
 		sdp_data_t *s;
 		uuid_t *uuid = NULL;
 		unsigned int pslen = 0;
-		for (; elt && pslen < sizeof(dtds); elt = elt->next, pslen++) {
+		for (; elt && pslen < ARRAY_SIZE(dtds); elt = elt->next, pslen++) {
 			sdp_data_t *d = (sdp_data_t *)elt->data;
 			dtds[pslen] = &d->dtd;
 			switch (d->dtd) {
@@ -2548,6 +2549,24 @@ uuid_t *sdp_uuid128_create(uuid_t *u, const void *val)
 	u->type = SDP_UUID128;
 	memcpy(&u->value.uuid128, val, sizeof(uint128_t));
 	return u;
+}
+
+/*
+ * UUID comparison function
+ * returns 0 if uuidValue1 == uuidValue2 else -1
+ */
+int sdp_uuid_cmp(const void *p1, const void *p2)
+{
+	uuid_t *u1 = sdp_uuid_to_uuid128((uuid_t *) p1);
+	uuid_t *u2 = sdp_uuid_to_uuid128((uuid_t *) p2);
+	int ret;
+
+	ret = sdp_uuid128_cmp(u1, u2);
+
+	bt_free(u1);
+	bt_free(u2);
+
+	return ret;
 }
 
 /*
@@ -3153,7 +3172,15 @@ static int gen_dataseq_pdu(uint8_t *dst, const sdp_list_t *seq, uint8_t dtd)
 	SDPDBG("Seq length : %d\n", seqlen);
 
 	types = malloc(seqlen * sizeof(void *));
+	if (!types)
+		return -ENOMEM;
+
 	values = malloc(seqlen * sizeof(void *));
+	if (!values) {
+		free(types);
+		return -ENOMEM;
+	}
+
 	for (i = 0; i < seqlen; i++) {
 		void *data = seq->data;
 		types[i] = &dtd;
@@ -3164,12 +3191,22 @@ static int gen_dataseq_pdu(uint8_t *dst, const sdp_list_t *seq, uint8_t dtd)
 	}
 
 	dataseq = sdp_seq_alloc(types, values, seqlen);
+	if (!dataseq) {
+		free(types);
+		free(values);
+		return -ENOMEM;
+	}
+
 	memset(&buf, 0, sizeof(sdp_buf_t));
 	sdp_gen_buffer(&buf, dataseq);
 	buf.data = malloc(buf.buf_size);
 
-	if (!buf.data)
+	if (!buf.data) {
+		sdp_data_free(dataseq);
+		free(types);
+		free(values);
 		return -ENOMEM;
+	}
 
 	SDPDBG("Data Seq : 0x%p\n", seq);
 	seqlen = sdp_gen_pdu(&buf, dataseq);
@@ -3432,13 +3469,14 @@ sdp_record_t *sdp_service_attr_req(sdp_session_t *session, uint32_t handle,
 		return 0;
 	}
 
+	memset(&rsp_concat_buf, 0, sizeof(sdp_buf_t));
+
 	reqbuf = malloc(SDP_REQ_BUFFER_SIZE);
 	rspbuf = malloc(SDP_RSP_BUFFER_SIZE);
 	if (!reqbuf || !rspbuf) {
 		errno = ENOMEM;
 		goto end;
 	}
-	memset((char *) &rsp_concat_buf, 0, sizeof(sdp_buf_t));
 	reqhdr = (sdp_pdu_hdr_t *) reqbuf;
 	reqhdr->pdu_id = SDP_SVC_ATTR_REQ;
 
@@ -4251,6 +4289,9 @@ int sdp_service_search_attr_req(sdp_session_t *session, const sdp_list_t *search
 		errno = EINVAL;
 		return -1;
 	}
+
+	memset(&rsp_concat_buf, 0, sizeof(sdp_buf_t));
+
 	reqbuf = malloc(SDP_REQ_BUFFER_SIZE);
 	rspbuf = malloc(SDP_RSP_BUFFER_SIZE);
 	if (!reqbuf || !rspbuf) {
@@ -4259,7 +4300,6 @@ int sdp_service_search_attr_req(sdp_session_t *session, const sdp_list_t *search
 		goto end;
 	}
 
-	memset((char *)&rsp_concat_buf, 0, sizeof(sdp_buf_t));
 	reqhdr = (sdp_pdu_hdr_t *) reqbuf;
 	reqhdr->pdu_id = SDP_SVC_SEARCH_ATTR_REQ;
 

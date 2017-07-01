@@ -109,7 +109,7 @@ struct browse_req {
 struct btd_device {
 	bdaddr_t	bdaddr;
 	gchar		*path;
-	char		name[248];
+	char		name[MAX_NAME_LENGTH + 1];
 	struct btd_adapter	*adapter;
 	GSList		*uuids;
 	GSList		*drivers;		/* List of driver_data */
@@ -134,6 +134,7 @@ struct btd_device {
 
 	sdp_list_t	*tmp_records;
 
+	gboolean	paired;
 	gboolean	renewed_key;
 
 	gboolean	authorizing;
@@ -231,6 +232,10 @@ static void device_free(gpointer user_data)
 	g_slist_foreach(device->uuids, (GFunc) g_free, NULL);
 	g_slist_free(device->uuids);
 
+	if (device->tmp_records)
+		sdp_list_free(device->tmp_records,
+					(sdp_free_func_t) sdp_record_free);
+
 	if (device->disconn_timer)
 		g_source_remove(device->disconn_timer);
 
@@ -243,23 +248,7 @@ static void device_free(gpointer user_data)
 
 gboolean device_is_paired(struct btd_device *device)
 {
-	struct btd_adapter *adapter = device->adapter;
-	char filename[PATH_MAX + 1], *str;
-	char srcaddr[18], dstaddr[18];
-	gboolean ret;
-	bdaddr_t src;
-
-	adapter_get_address(adapter, &src);
-	ba2str(&src, srcaddr);
-	ba2str(&device->bdaddr, dstaddr);
-
-	create_name(filename, PATH_MAX, STORAGEDIR,
-			srcaddr, "linkkeys");
-	str = textfile_caseget(filename, dstaddr);
-	ret = str ? TRUE : FALSE;
-	g_free(str);
-
-	return ret;
+	return device->paired;
 }
 
 static DBusMessage *get_properties(DBusConnection *conn,
@@ -271,7 +260,7 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	DBusMessageIter iter;
 	DBusMessageIter dict;
 	bdaddr_t src;
-	char name[248], srcaddr[18], dstaddr[18];
+	char name[MAX_NAME_LENGTH + 1], srcaddr[18], dstaddr[18];
 	char **uuids;
 	const char *ptr;
 	dbus_bool_t boolean;
@@ -302,22 +291,19 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	adapter_get_address(adapter, &src);
 	ba2str(&src, srcaddr);
 
-	if (device->name) {
-		ptr = device->name;
-		dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &ptr);
-	}
+	ptr = device->name;
+	dict_append_entry(&dict, "Name", DBUS_TYPE_STRING, &ptr);
 
 	/* Alias (fallback to name or address) */
 	if (read_device_alias(srcaddr, dstaddr, name, sizeof(name)) < 1) {
-		if (!ptr) {
+		if (strlen(ptr) == 0) {
 			g_strdelimit(dstaddr, ":", '-');
 			ptr = dstaddr;
 		}
 	} else
 		ptr = name;
 
-	if (ptr)
-		dict_append_entry(&dict, "Alias", DBUS_TYPE_STRING, &ptr);
+	dict_append_entry(&dict, "Alias", DBUS_TYPE_STRING, &ptr);
 
 	/* Class */
 	if (read_remote_class(&src, &device->bdaddr, &class) == 0) {
@@ -830,6 +816,11 @@ void device_remove_disconnect_watch(struct btd_device *device, guint id)
 	}
 }
 
+gboolean device_get_secmode3_conn(struct btd_device *device)
+{
+	return device->secmode3;
+}
+
 void device_set_secmode3_conn(struct btd_device *device, gboolean enable)
 {
 	device->secmode3 = enable;
@@ -871,20 +862,23 @@ struct btd_device *device_create(DBusConnection *conn,
 
 	device->auth = 0xff;
 
+	if (read_link_key(&src, &device->bdaddr, NULL, NULL) == 0)
+		device->paired = TRUE;
+
 	return btd_device_ref(device);
 }
 
 void device_set_name(struct btd_device *device, const char *name)
 {
 	DBusConnection *conn = get_dbus_connection();
-	char alias[248];
+	char alias[MAX_NAME_LENGTH + 1];
 	char srcaddr[18], dstaddr[18];
 	bdaddr_t src;
 
-	if (strncmp(name, device->name, 248) == 0)
+	if (strncmp(name, device->name, MAX_NAME_LENGTH) == 0)
 		return;
 
-	strncpy(device->name, name, 248);
+	strncpy(device->name, name, MAX_NAME_LENGTH);
 
 	emit_property_changed(conn, device->path,
 				DEVICE_INTERFACE, "Name",
@@ -902,14 +896,17 @@ void device_set_name(struct btd_device *device, const char *name)
 				DBUS_TYPE_STRING, &name);
 }
 
-static void device_remove_bonding(struct btd_device *device,
-							DBusConnection *conn)
+void device_get_name(struct btd_device *device, char *name, size_t len)
+{
+	strncpy(name, device->name, len);
+}
+
+static void device_remove_bonding(struct btd_device *device)
 {
 	char filename[PATH_MAX + 1];
-	char *str, srcaddr[18], dstaddr[18];
+	char srcaddr[18], dstaddr[18];
 	int dd, dev_id;
 	bdaddr_t bdaddr;
-	gboolean paired;
 
 	adapter_get_address(device->adapter, &bdaddr);
 	ba2str(&bdaddr, srcaddr);
@@ -918,13 +915,8 @@ static void device_remove_bonding(struct btd_device *device,
 	create_name(filename, PATH_MAX, STORAGEDIR, srcaddr,
 			"linkkeys");
 
-	/* textfile_del doesn't return an error when the key is not found */
-	str = textfile_caseget(filename, dstaddr);
-	paired = str ? TRUE : FALSE;
-	g_free(str);
-
-	if (!paired)
-		return;
+	/* Delete the link key from storage */
+	textfile_casedel(filename, dstaddr);
 
 	dev_id = adapter_get_dev_id(device->adapter);
 
@@ -932,34 +924,26 @@ static void device_remove_bonding(struct btd_device *device,
 	if (dd < 0)
 		return;
 
-	/* Delete the link key from storage */
-	textfile_casedel(filename, dstaddr);
-
 	/* Delete the link key from the Bluetooth chip */
 	hci_delete_stored_link_key(dd, &device->bdaddr, 0, HCI_REQ_TIMEOUT);
 
 	hci_close_dev(dd);
-
-	paired = FALSE;
-	emit_property_changed(conn, device->path, DEVICE_INTERFACE,
-				"Paired", DBUS_TYPE_BOOLEAN, &paired);
 }
 
-static void device_remove_stored(struct btd_device *device,
-					DBusConnection *conn)
+static void device_remove_stored(struct btd_device *device)
 {
 	bdaddr_t src;
 	char addr[18];
 
 	adapter_get_address(device->adapter, &src);
 	ba2str(&device->bdaddr, addr);
-	device_remove_bonding(device, conn);
+	if (device->paired)
+		device_remove_bonding(device);
 	delete_entry(&src, "profiles", addr);
 	delete_entry(&src, "trusts", addr);
 }
 
-void device_remove(struct btd_device *device, DBusConnection *conn,
-						gboolean remove_stored)
+void device_remove(struct btd_device *device, gboolean remove_stored)
 {
 	GSList *list;
 	struct btd_device_driver *driver;
@@ -976,7 +960,7 @@ void device_remove(struct btd_device *device, DBusConnection *conn,
 		do_disconnect(device);
 
 	if (remove_stored)
-		device_remove_stored(device, conn);
+		device_remove_stored(device);
 
 	for (list = device->drivers; list; list = list->next) {
 		struct btd_driver_data *driver_data = list->data;
@@ -1232,6 +1216,12 @@ static void update_services(struct browse_req *req, sdp_list_t *recs)
 
 		if (sdp_get_service_classes(rec, &svcclass) < 0)
 			continue;
+
+		/* Check for empty service classes list */
+		if (svcclass == NULL) {
+			debug("Skipping record with no service classes");
+			continue;
+		}
 
 		/* Extract the first element and skip the remainning */
 		profile_uuid = bt_uuid2string(svcclass->data);
@@ -1662,13 +1652,19 @@ static void bonding_request_free(struct bonding_req *bonding)
 	if (!device->agent)
 		return;
 
+	agent_cancel(device->agent);
 	agent_destroy(device->agent, FALSE);
 	device->agent = NULL;
 }
 
-static void device_set_paired(struct btd_device *device, gboolean value)
+void device_set_paired(struct btd_device *device, gboolean value)
 {
 	DBusConnection *conn = get_dbus_connection();
+
+	if (device->paired == value)
+		return;
+
+	device->paired = value;
 
 	emit_property_changed(conn, device->path, DEVICE_INTERFACE, "Paired",
 				DBUS_TYPE_BOOLEAN, &value);

@@ -351,6 +351,9 @@ int hcid_dbus_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 			(type == 0xff || !(type & 0x01) || remcap == 0x03)) {
 		int dd;
 
+		/* Wait 5 milliseconds before doing auto-accept */
+		usleep(5000);
+
 		dd = hci_open_dev(dev_id);
 		if (dd < 0) {
 			error("Unable to open hci%d", dev_id);
@@ -432,191 +435,6 @@ void hcid_dbus_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
 		return;
 
 	device_simple_pairing_complete(device, status);
-}
-
-void hcid_dbus_inquiry_start(bdaddr_t *local)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("Unable to find matching adapter");
-		return;
-	}
-
-	state = adapter_get_state(adapter);
-	state |= STD_INQUIRY;
-	adapter_set_state(adapter, state);
-	/*
-	 * Cancel pending remote name request and clean the device list
-	 * when inquiry is supported in periodic inquiry idle state.
-	 */
-	if (adapter_get_state(adapter) & PERIODIC_INQUIRY) {
-		pending_remote_name_cancel(adapter);
-
-		clear_found_devices_list(adapter);
-	}
-
-	/* Disable name resolution for non D-Bus clients */
-	if (!adapter_has_discov_sessions(adapter)) {
-		state = adapter_get_state(adapter);
-		state &= ~RESOLVE_NAME;
-		adapter_set_state(adapter, state);
-	}
-}
-
-static int found_device_req_name(struct btd_adapter *adapter)
-{
-	struct hci_request rq;
-	evt_cmd_status rp;
-	remote_name_req_cp cp;
-	struct remote_dev_info *dev, match;
-	int dd, req_sent = 0;
-	uint16_t dev_id = adapter_get_dev_id(adapter);
-
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, BDADDR_ANY);
-	match.name_status = NAME_REQUIRED;
-
-	dev = adapter_search_found_devices(adapter, &match);
-	if (!dev)
-		return -ENODATA;
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0)
-		return -errno;
-
-	memset(&rq, 0, sizeof(rq));
-	rq.ogf    = OGF_LINK_CTL;
-	rq.ocf    = OCF_REMOTE_NAME_REQ;
-	rq.cparam = &cp;
-	rq.clen   = REMOTE_NAME_REQ_CP_SIZE;
-	rq.rparam = &rp;
-	rq.rlen   = EVT_CMD_STATUS_SIZE;
-	rq.event  = EVT_CMD_STATUS;
-
-	/* send at least one request or return failed if the list is empty */
-	do {
-		/* flag to indicate the current remote name requested */
-		dev->name_status = NAME_REQUESTED;
-
-		memset(&rp, 0, sizeof(rp));
-		memset(&cp, 0, sizeof(cp));
-		bacpy(&cp.bdaddr, &dev->bdaddr);
-		cp.pscan_rep_mode = 0x02;
-
-		if (hci_send_req(dd, &rq, HCI_REQ_TIMEOUT) < 0)
-			error("Unable to send HCI remote name req: %s (%d)",
-						strerror(errno), errno);
-
-		if (!rp.status) {
-			req_sent = 1;
-			break;
-		}
-
-		error("Remote name request failed with status 0x%02x",
-								rp.status);
-
-		/* if failed, request the next element */
-		/* remove the element from the list */
-		adapter_remove_found_device(adapter, &dev->bdaddr);
-
-		/* get the next element */
-		dev = adapter_search_found_devices(adapter, &match);
-	} while (dev);
-
-	hci_close_dev(dd);
-
-	if (!req_sent)
-		return -ENODATA;
-
-	return 0;
-}
-
-void hcid_dbus_inquiry_complete(bdaddr_t *local)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("Unable to find matching adapter");
-		return;
-	}
-
-	/*
-	 * The following scenarios can happen:
-	 * 1. standard inquiry: always send discovery completed signal
-	 * 2. standard inquiry + name resolving: send discovery completed
-	 *    after name resolving
-	 * 3. periodic inquiry: skip discovery completed signal
-	 * 4. periodic inquiry + standard inquiry: always send discovery
-	 *    completed signal
-	 *
-	 * Keep in mind that non D-Bus requests can arrive.
-	 */
-	if (found_device_req_name(adapter) == 0)
-		return;
-
-	state = adapter_get_state(adapter);
-
-	/*
-	 * workaround to identify situation when there is no devices around
-	 * but periodic inquiry is active.
-	 */
-	if (!(state & STD_INQUIRY) && !(state & PERIODIC_INQUIRY)) {
-		state |= PERIODIC_INQUIRY;
-		adapter_set_state(adapter, state);
-	}
-
-	/* reset the discover type to be able to handle D-Bus and non D-Bus
-	 * requests */
-	state &= ~STD_INQUIRY;
-	state &= ~PERIODIC_INQUIRY;
-	adapter_set_state(adapter, state);
-}
-
-void hcid_dbus_periodic_inquiry_start(bdaddr_t *local, uint8_t status)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	/* Don't send the signal if the cmd failed */
-	if (status)
-		return;
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	state = adapter_get_state(adapter);
-	state |= PERIODIC_INQUIRY;
-	adapter_set_state(adapter, state);
-}
-
-void hcid_dbus_periodic_inquiry_exit(bdaddr_t *local, uint8_t status)
-{
-	struct btd_adapter *adapter;
-	int state;
-
-	/* Don't send the signal if the cmd failed */
-	if (status)
-		return;
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	/* reset the discover type to be able to handle D-Bus and non D-Bus
-	 * requests */
-	state = adapter_get_state(adapter);
-	state &= ~PERIODIC_INQUIRY;
-	adapter_set_state(adapter, state);
 }
 
 static char *extract_eir_name(uint8_t *data, uint8_t *type)
@@ -731,6 +549,27 @@ void hcid_dbus_inquiry_result(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	g_free(alias);
 }
 
+void hcid_dbus_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
+							gboolean legacy)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+	struct remote_dev_info *dev, match;
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE)) {
+		error("No matching adapter found");
+		return;
+	}
+
+	memset(&match, 0, sizeof(struct remote_dev_info));
+	bacpy(&match.bdaddr, peer);
+	match.name_status = NAME_ANY;
+
+	dev = adapter_search_found_devices(adapter, &match);
+	if (dev)
+		dev->legacy = legacy;
+}
+
 void hcid_dbus_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class)
 {
 	uint32_t old_class = 0;
@@ -791,7 +630,7 @@ proceed:
 	adapter_remove_found_device(adapter, peer);
 
 	/* check if there is more devices to request names */
-	if (found_device_req_name(adapter) == 0)
+	if (adapter_resolve_names(adapter) == 0)
 		return;
 
 	state = adapter_get_state(adapter);
@@ -807,7 +646,7 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 	struct btd_device *device;
 	struct btd_adapter *adapter;
 	uint8_t local_auth = 0xff, remote_auth, new_key_type;
-	gboolean bonding;
+	gboolean bonding, stored;
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
 		return -ENODEV;
@@ -847,7 +686,10 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 			error("write_link_key: %s (%d)", strerror(-err), -err);
 			return err;
 		}
-	}
+
+		stored = TRUE;
+	} else
+		stored = FALSE;
 
 	/* If this is not the first link key set a flag so a subsequent auth
 	 * complete event doesn't trigger SDP */
@@ -858,6 +700,9 @@ int hcid_dbus_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
 		device_set_secmode3_conn(device, TRUE);
 	else if (!bonding && old_key_type == 0xff)
 		hcid_dbus_bonding_process_complete(local, peer, 0);
+
+	if (!stored)
+		device_set_temporary(device, TRUE);
 
 	return 0;
 }
@@ -872,11 +717,15 @@ void hcid_dbus_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 		return;
 
 	if (status) {
+		gboolean secmode3 = device_get_secmode3_conn(device);
+
 		device_set_secmode3_conn(device, FALSE);
+
 		if (device_is_bonding(device, NULL))
 			device_bonding_complete(device, status);
 		if (device_is_temporary(device))
-			adapter_remove_device(connection, adapter, device);
+			adapter_remove_device(connection, adapter, device,
+								secmode3);
 		return;
 	}
 
@@ -903,102 +752,14 @@ void hcid_dbus_disconn_complete(bdaddr_t *local, uint8_t status,
 
 	device = adapter_find_connection(adapter, handle);
 	if (!device) {
-		error("No matching connection found for handle %u", handle);
+		debug("No matching connection found for handle %u", handle);
 		return;
 	}
 
 	adapter_remove_connection(adapter, device, handle);
 }
 
-int set_service_classes(int dd, const uint8_t *cls, uint8_t value)
-{
-	uint32_t dev_class;
-
-	if (cls[2] == value)
-		return 0; /* Already set */
-
-	dev_class = (value << 16) | (cls[1] << 8) | cls[0];
-
-	debug("Changing service classes to 0x%06x", dev_class);
-
-	if (hci_write_class_of_dev(dd, dev_class, HCI_REQ_TIMEOUT) < 0) {
-		int err = -errno;
-		error("Can't write class of device: %s (%d)",
-						strerror(errno), errno);
-		return err;
-	}
-
-	return 0;
-}
-
-int set_major_and_minor_class(int dd, const uint8_t *cls,
-						uint8_t major, uint8_t minor)
-{
-	uint32_t dev_class;
-
-	dev_class = (cls[2] << 16) | ((cls[1] & 0x20) << 8) |
-						((major & 0xdf) << 8) | minor;
-
-	debug("Changing major/minor class to 0x%06x", dev_class);
-
-	if (hci_write_class_of_dev(dd, dev_class, HCI_REQ_TIMEOUT) < 0) {
-		int err = -errno;
-		error("Can't write class of device: %s (%d)",
-						strerror(errno), errno);
-		return err;
-	}
-
-	return 0;
-}
-
 /* Section reserved to device HCI callbacks */
-
-void hcid_dbus_setname_complete(bdaddr_t *local)
-{
-	struct btd_adapter *adapter;
-	int id, dd = -1;
-	read_local_name_rp rp;
-	struct hci_request rq;
-	const char *pname = (char *) rp.name;
-	char name[249];
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	id = adapter_get_dev_id(adapter);
-	dd = hci_open_dev(id);
-	if (dd < 0) {
-		error("HCI device open failed: hci%d", id);
-		memset(&rp, 0, sizeof(rp));
-	} else {
-		memset(&rq, 0, sizeof(rq));
-		rq.ogf    = OGF_HOST_CTL;
-		rq.ocf    = OCF_READ_LOCAL_NAME;
-		rq.rparam = &rp;
-		rq.rlen   = READ_LOCAL_NAME_RP_SIZE;
-		rq.event  = EVT_CMD_COMPLETE;
-
-		if (hci_send_req(dd, &rq, HCI_REQ_TIMEOUT) < 0) {
-			error("Sending getting name command failed: %s (%d)",
-						strerror(errno), errno);
-			rp.name[0] = '\0';
-		} else if (rp.status) {
-			error("Getting name failed with status 0x%02x",
-					rp.status);
-			rp.name[0] = '\0';
-		}
-		hci_close_dev(dd);
-	}
-
-	strncpy(name, pname, sizeof(name) - 1);
-	name[248] = '\0';
-	pname = name;
-
-	adapter_name_changed(adapter, pname);
-}
 
 void hcid_dbus_setscan_enable_complete(bdaddr_t *local)
 {
@@ -1051,39 +812,6 @@ failed:
 		hci_close_dev(dd);
 }
 
-void hcid_dbus_write_class_complete(bdaddr_t *local)
-{
-	struct btd_adapter *adapter;
-	int dd;
-	uint8_t cls[3];
-	uint16_t dev_id;
-
-	adapter = manager_find_adapter(local);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	dev_id = adapter_get_dev_id(adapter);
-
-	dd = hci_open_dev(dev_id);
-	if (dd < 0) {
-		error("HCI device open failed: hci%d", dev_id);
-		return;
-	}
-
-	if (hci_read_class_of_dev(dd, cls, HCI_REQ_TIMEOUT) < 0) {
-		error("Can't read class of device on hci%d: %s (%d)",
-			dev_id, strerror(errno), errno);
-		hci_close_dev(dd);
-		return;
-	}
-
-	hci_close_dev(dd);
-
-	adapter_set_class(adapter, cls);
-}
-
 void hcid_dbus_write_simple_pairing_mode_complete(bdaddr_t *local)
 {
 	struct btd_adapter *adapter;
@@ -1115,9 +843,20 @@ void hcid_dbus_write_simple_pairing_mode_complete(bdaddr_t *local)
 		return;
 	}
 
-	adapter_update_ssp_mode(adapter, dd, mode);
-
 	hci_close_dev(dd);
+
+	adapter_update_ssp_mode(adapter, mode);
+}
+
+void hcid_dbus_returned_link_key(bdaddr_t *local, bdaddr_t *peer)
+{
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
+		return;
+
+	device_set_paired(device, TRUE);
 }
 
 int hcid_dbus_get_io_cap(bdaddr_t *local, bdaddr_t *remote,

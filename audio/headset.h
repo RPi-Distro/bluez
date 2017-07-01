@@ -29,7 +29,7 @@
 
 typedef enum {
 	HEADSET_STATE_DISCONNECTED,
-	HEADSET_STATE_CONNECT_IN_PROGRESS,
+	HEADSET_STATE_CONNECTING,
 	HEADSET_STATE_CONNECTED,
 	HEADSET_STATE_PLAY_IN_PROGRESS,
 	HEADSET_STATE_PLAYING
@@ -99,3 +99,4 @@ gboolean headset_lock(struct audio_device *dev, headset_lock_t lock);
 gboolean headset_unlock(struct audio_device *dev, headset_lock_t lock);
 gboolean headset_suspend(struct audio_device *dev, void *data);
 gboolean headset_play(struct audio_device *dev, void *data);
+void headset_shutdown(struct audio_device *dev);

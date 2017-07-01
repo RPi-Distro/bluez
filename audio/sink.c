@@ -165,7 +165,7 @@ static void pending_request_free(struct audio_device *dev,
 	if (pending->msg)
 		dbus_message_unref(pending->msg);
 	if (pending->id)
-		a2dp_source_cancel(dev, pending->id);
+		a2dp_cancel(dev, pending->id);
 
 	g_free(pending);
 }
@@ -475,6 +475,12 @@ static gboolean select_capabilities(struct avdtp *session,
 
 	*caps = g_slist_append(*caps, media_codec);
 
+	if (avdtp_get_delay_reporting(rsep)) {
+		struct avdtp_service_capability *delay_reporting;
+		delay_reporting = avdtp_service_cap_new(AVDTP_DELAY_REPORTING,
+								NULL, 0);
+		*caps = g_slist_append(*caps, delay_reporting);
+	}
 
 	return TRUE;
 }
@@ -520,14 +526,13 @@ static void discovery_complete(struct avdtp *session, GSList *seps, struct avdtp
 		goto failed;
 	}
 
-	sep = a2dp_source_get(session, rsep);
+	sep = a2dp_get(session, rsep);
 	if (!sep) {
 		error("Unable to get a local source SEP");
 		goto failed;
 	}
 
-	id = a2dp_source_config(sink->session, sep, stream_setup_complete,
-				caps, sink);
+	id = a2dp_config(sink->session, sep, stream_setup_complete, caps, sink);
 	if (id == 0)
 		goto failed;
 

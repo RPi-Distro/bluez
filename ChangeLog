@@ -1,3 +1,115 @@
+ver 4.56:
+	Add missing values from Bluetooth 3.0 specification.
+	Add proper tracking of device paired status.
+	Fix tracking of devices without permanently stored link key.
+	Fix issue with link key removal after connection failures.
+	Fix legacy pairing information based on remote host features.
+	Fix off-by-one issue with AVDTP capability parsing.
+	Fix AVRCP, AVCTP, AVDTP, A2DP and HFP version numbers.
+	Fix agent canceling before calling agent_destroy.
+	Fix service record parsing with an empty UUID list.
+	Fix various SDP related memory leaks.
+
+ver 4.55:
+	Add support for POSIX capabilities dropping.
+	Add special quirk for the Nokia CK-20W car kit.
+	Fix error code handling for AVDTP SetConfiguration response.
+	Fix updating out of range list when RSSI hasn't changed.
+	Fix various memory leaks and unnecessary error checks.
+
+ver 4.54:
+	Add introspection interface to output of introspection calls.
+	Fix stream handling when media transport disconnects prematurely.
+	Fix command timeout handling when there's no stream.
+	Fix headset_suspend_stream behavior for invalid states
+	Fix issue with AVDTP ABORTING state transition.
+	Fix issue with AVDTP suspend while closing.
+
+ver 4.53:
+	Fix issue with telephony connection state notifications.
+	Fix AVDTP stream leak for invalid media transport config.
+	Fix audio connection authorization handling with timeouts.
+	Fix race condition in authorizing audio connections.
+	Fix device authorized setting for AVRCP-only connections.
+	Fix duplicate attempts from device to connect signal channel.
+
+ver 4.52:
+	Add AVCTP support to test utility.
+	Fix AVDTP Abort when transport closes before response.
+	Fix authorization when the audio profiles are slow to connect.
+	Fix potential AVDTP reference leaks.
+
+ver 4.51:
+	Add utility for basic AVDTP testing.
+	Add support for configuring L2CAP FCS option.
+	Fix discovery mode for CUPS 1.4.x and later.
+	Fix global state tracking of audio service.
+	Fix last issues with the new build system.
+
+ver 4.50:
+	Fix issue with missing manual pages in distribution.
+	Fix issue with the configuration and state directories.
+	Fix issue with creating include directory.
+	Fix dependencies of include file generation.
+
+ver 4.49:
+	Add simple test program for basic GAP testing.
+	Add support for confirmation requests to agent example.
+	Add support for full non-recursive build.
+	Add five millisecond delay for Simple Pairing auto-accept.
+	Fix Class of Device setting when InitiallyPowered=false.
+
+ver 4.48:
+	Add library function for comparing UUID values.
+	Add support for creating all plugins as builtins.
+	Add support for async handling of service class changes.
+	Add support for source interface to audio IPC.
+	Fix device name settings when device is off or down.
+	Fix issue with enabled SCO server when not necessary.
+	Fix missing D-Bus access policy for CUPS backend.
+	Fix discovery results of CUPS backend.
+	Fix initialization handling of Maemo telephony.
+
+ver 4.47:
+	Add support for RFKILL unblock handling.
+	Add support for serial proxy configurations.
+	Add support for caching service class updates.
+	Fix issues with updating SDP service records.
+	Fix usage of limited discoverable mode.
+	Remove deprecated methods and signals for AudioSource.
+
+ver 4.46:
+	Add support for A2DP sink role.
+	Fix clearing svc_cache before the adapter is up.
+	Fix various pointer after free usages.
+	Fix various memory leaks.
+
+ver 4.45:
+	Fix UDEV_DATADIR fallback if pkg-config fails.
+	Fix adapter cleanup and setup prototypes.
+	Fix double-free with out-of-range devices.
+	Fix inband ring setting to be per-headset.
+	Fix handling of Maemo CSD startup.
+
+ver 4.44:
+	Add some missing manual pages.
+	Fix missing number prefix when installing udev rules.
+	Fix program prefix used in Bluetooth udev rules.
+	Fix three-way calling indicator order.
+	Fix downgrade/upgrade of callheld indicator.
+	Fix +CIEV sending when indicator value changes.
+	Fix signal handling for Maemo telephony driver.
+	Fix parsing issues with messages from Maemo CSD.
+	Fix issue with duplicate active calls.
+
+ver 4.43:
+	Add support for udev based on-demand startup.
+	Fix verbose error reporting of CUPS backend.
+	Fix various string length issues.
+	Fix issues with Maemo telephony driver.
+	Fix another device setup and temporary flag issue.
+	Fix and update example agent implementation.
+
 ver 4.42:
 	Add TI WL1271 to Texas Instruments chip list.
 	Add special udev mode to bluetoothd.

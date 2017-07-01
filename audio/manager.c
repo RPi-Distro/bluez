@@ -65,6 +65,7 @@
 #include "headset.h"
 #include "gateway.h"
 #include "sink.h"
+#include "source.h"
 #include "control.h"
 #include "manager.h"
 #include "sdpd.h"
@@ -142,6 +143,8 @@ gboolean server_is_enabled(bdaddr_t *src, uint16_t svc)
 		return enabled.gateway;
 	case AUDIO_SINK_SVCLASS_ID:
 		return enabled.sink;
+	case AUDIO_SOURCE_SVCLASS_ID:
+		return enabled.source;
 	case AV_REMOTE_TARGET_SVCLASS_ID:
 	case AV_REMOTE_SVCLASS_ID:
 		return enabled.control;
@@ -205,6 +208,8 @@ static void handle_uuid(const char *uuidstr, struct audio_device *device)
 		break;
 	case AUDIO_SOURCE_SVCLASS_ID:
 		debug("Found Audio Source");
+		if (device->source == NULL)
+			device->source = source_init(device);
 		break;
 	case AV_REMOTE_SVCLASS_ID:
 	case AV_REMOTE_TARGET_SVCLASS_ID:
@@ -304,7 +309,7 @@ static sdp_record_t *hfp_hs_record(uint8_t ch)
 	sdp_set_service_classes(record, svclass_id);
 
 	sdp_uuid16_create(&profile.uuid, HANDSFREE_PROFILE_ID);
-	profile.version = 0x0100;
+	profile.version = 0x0105;
 	pfseq = sdp_list_append(0, &profile);
 	sdp_set_profile_descs(record, pfseq);
 
@@ -406,6 +411,11 @@ static void headset_auth_cb(DBusError *derr, void *user_data)
 	GError *err = NULL;
 	GIOChannel *io;
 
+	if (device->hs_preauth_id) {
+		g_source_remove(device->hs_preauth_id);
+		device->hs_preauth_id = 0;
+	}
+
 	if (derr && dbus_error_is_set(derr)) {
 		error("Access denied: %s", derr->message);
 		headset_set_state(device, HEADSET_STATE_DISCONNECTED);
@@ -420,6 +430,22 @@ static void headset_auth_cb(DBusError *derr, void *user_data)
 		headset_set_state(device, HEADSET_STATE_DISCONNECTED);
 		return;
 	}
+}
+
+static gboolean hs_preauth_cb(GIOChannel *chan, GIOCondition cond,
+							gpointer user_data)
+{
+	struct audio_device *device = user_data;
+
+	debug("Headset disconnected during authorization");
+
+	audio_device_cancel_authorization(device, headset_auth_cb, device);
+
+	headset_set_state(device, HEADSET_STATE_DISCONNECTED);
+
+	device->hs_preauth_id = 0;
+
+	return FALSE;
 }
 
 static void ag_confirm(GIOChannel *chan, gpointer data)
@@ -480,7 +506,7 @@ static void ag_confirm(GIOChannel *chan, gpointer data)
 		goto drop;
 	}
 
-	headset_set_state(device, HEADSET_STATE_CONNECT_IN_PROGRESS);
+	headset_set_state(device, HEADSET_STATE_CONNECTING);
 
 	perr = audio_device_request_authorization(device, server_uuid,
 						headset_auth_cb, device);
@@ -489,6 +515,10 @@ static void ag_confirm(GIOChannel *chan, gpointer data)
 		headset_set_state(device, HEADSET_STATE_DISCONNECTED);
 		return;
 	}
+
+	device->hs_preauth_id = g_io_add_watch(chan,
+					G_IO_NVAL | G_IO_HUP | G_IO_ERR,
+					hs_preauth_cb, device);
 
 	device->auto_connect = auto_connect;
 
@@ -571,7 +601,7 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 	return;
 
 drop:
-	g_io_channel_close(chan);
+	g_io_channel_shutdown(chan, TRUE, NULL);
 	g_io_channel_unref(chan);
 	return;
 }
@@ -1025,7 +1055,8 @@ static struct btd_adapter_driver avrcp_server_driver = {
 	.remove	= avrcp_server_remove,
 };
 
-int audio_manager_init(DBusConnection *conn, GKeyFile *conf)
+int audio_manager_init(DBusConnection *conn, GKeyFile *conf,
+							gboolean *enable_sco)
 {
 	char **list;
 	int i;
@@ -1111,6 +1142,8 @@ proceed:
 
 	btd_register_device_driver(&audio_driver);
 
+	*enable_sco = (enabled.gateway || enabled.headset);
+
 	return 0;
 }
 
@@ -1185,7 +1218,7 @@ struct audio_device *manager_find_device(const char *path,
 				&& !dev->control)
 			continue;
 
-		if (connected && !audio_device_is_connected(dev, interface))
+		if (connected && !audio_device_is_active(dev, interface))
 			continue;
 
 		return dev;

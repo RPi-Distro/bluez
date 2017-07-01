@@ -70,6 +70,9 @@ static unsigned char *buf;
 static int imtu = 672;
 static int omtu = 0;
 
+/* Default FCS option */
+static int fcs = 0x01;
+
 /* Default data size */
 static long data_size = -1;
 static long buffer_size = 2048;
@@ -219,6 +222,8 @@ static int do_connect(char *svr)
 	opts.imtu = imtu;
 	if (rfcmode > 0)
 		opts.mode = rfcmode;
+
+	opts.fcs = fcs;
 
 	if (setsockopt(sk, SOL_L2CAP, L2CAP_OPTIONS, &opts, sizeof(opts)) < 0) {
 		syslog(LOG_ERR, "Can't set L2CAP options: %s (%d)",
@@ -379,6 +384,8 @@ static void do_listen(void (*handler)(int sk))
 	opts.imtu = imtu;
 	if (rfcmode > 0)
 		opts.mode = rfcmode;
+
+	opts.fcs = fcs;
 
 	if (setsockopt(sk, SOL_L2CAP, L2CAP_OPTIONS, &opts, sizeof(opts)) < 0) {
 		syslog(LOG_ERR, "Can't set L2CAP options: %s (%d)",
@@ -873,8 +880,8 @@ static void info_request(char *svr)
 
 	switch (btohs(rsp->result)) {
 	case 0x0000:
-		mtu = btohs(bt_get_unaligned((uint16_t *) rsp->data));
-		printf("Connectionless MTU size is %d\n", mtu);
+		memcpy(&mtu, rsp->data, sizeof(mtu));
+		printf("Connectionless MTU size is %d\n", btohs(mtu));
 		break;
 	case 0x0001:
 		printf("Connectionless MTU is not supported\n");
@@ -900,8 +907,8 @@ static void info_request(char *svr)
 
 	switch (btohs(rsp->result)) {
 	case 0x0000:
-		mask = btohl(bt_get_unaligned((uint32_t *) rsp->data));
-		printf("Extended feature mask is 0x%04x\n", mask);
+		memcpy(&mask, rsp->data, sizeof(mask));
+		printf("Extended feature mask is 0x%04x\n", btohl(mask));
 		if (mask & 0x01)
 			printf("  Flow control mode\n");
 		if (mask & 0x02)
@@ -950,8 +957,9 @@ static void info_request(char *svr)
 
 	switch (btohs(rsp->result)) {
 	case 0x0000:
-		channels = btohl(bt_get_unaligned((uint32_t *) rsp->data));
-		printf("Fixed channels list is 0x%04x\n", channels);
+		memcpy(&channels, rsp->data, sizeof(channels));
+		printf("Fixed channels list is 0x%04x\n", btohl(channels));
+		break;
 	case 0x0001:
 		printf("Fixed channels list is not supported\n");
 		break;
@@ -1029,12 +1037,13 @@ static void usage(void)
 		"\t[-b bytes] [-i device] [-P psm]\n"
 		"\t[-I imtu] [-O omtu]\n"
 		"\t[-L seconds] enable SO_LINGER\n"
-		"\t[-F seconds] enable deferred setup\n"
+		"\t[-W seconds] enable deferred setup\n"
 		"\t[-B filename] use data packets from file\n"
 		"\t[-N num] send num frames (default = infinite)\n"
 		"\t[-C num] send num frames before delay (default = 1)\n"
 		"\t[-D milliseconds] delay after sending num frames (default = 0)\n"
 		"\t[-X mode] select retransmission/flow-control mode\n"
+		"\t[-F fcs] use CRC16 check (default = 1)\n"
 		"\t[-R] reliable mode\n"
 		"\t[-G] use connectionless channel (datagram)\n"
 		"\t[-A] request authentication\n"
@@ -1051,7 +1060,7 @@ int main(int argc, char *argv[])
 
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt=getopt(argc,argv,"rdscuwmnxyzpb:i:P:I:O:B:N:L:F:C:D:X:RGAESMT")) != EOF) {
+	while ((opt=getopt(argc,argv,"rdscuwmnxyzpb:i:P:I:O:B:N:L:W:C:D:X:F:RGAESMT")) != EOF) {
 		switch(opt) {
 		case 'r':
 			mode = RECV;
@@ -1135,7 +1144,7 @@ int main(int argc, char *argv[])
 			linger = atoi(optarg);
 			break;
 
-		case 'F':
+		case 'W':
 			defer_setup = atoi(optarg);
 			break;
 
@@ -1160,6 +1169,10 @@ int main(int argc, char *argv[])
 				rfcmode = L2CAP_MODE_ERTM;
 			else
 				rfcmode = atoi(optarg);
+			break;
+
+		case 'F':
+			fcs = atoi(optarg);
 			break;
 
 		case 'R':
