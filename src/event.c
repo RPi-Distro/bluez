@@ -93,7 +93,7 @@ static void pincode_cb(struct agent *agent, DBusError *derr,
 	bdaddr_t dba;
 	int err;
 
-	device_get_address(device, &dba);
+	device_get_address(device, &dba, NULL);
 
 	if (derr) {
 		err = btd_adapter_pincode_reply(adapter, &dba, NULL, 0);
@@ -139,7 +139,7 @@ static int confirm_reply(struct btd_adapter *adapter,
 {
 	bdaddr_t bdaddr;
 
-	device_get_address(device, &bdaddr);
+	device_get_address(device, &bdaddr, NULL);
 
 	return btd_adapter_confirm_reply(adapter, &bdaddr, success);
 }
@@ -160,7 +160,7 @@ static void passkey_cb(struct agent *agent, DBusError *err, uint32_t passkey,
 	struct btd_adapter *adapter = device_get_adapter(device);
 	bdaddr_t bdaddr;
 
-	device_get_address(device, &bdaddr);
+	device_get_address(device, &bdaddr, NULL);
 
 	if (err)
 		passkey = INVALID_PASSKEY;
@@ -202,24 +202,6 @@ int btd_event_user_notify(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey)
 
 	return device_request_authentication(device, AUTH_TYPE_NOTIFY, passkey,
 								FALSE, NULL);
-}
-
-void btd_event_bonding_complete(bdaddr_t *local, bdaddr_t *peer,
-							uint8_t status)
-{
-	struct btd_adapter *adapter;
-	struct btd_device *device;
-	gboolean create;
-
-	DBG("status 0x%02x", status);
-
-	create = status ? FALSE : TRUE;
-
-	if (!get_adapter_and_device(local, peer, &adapter, &device, create))
-		return;
-
-	if (device)
-		device_bonding_complete(device, status);
 }
 
 void btd_event_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
@@ -264,9 +246,10 @@ static void update_lastused(bdaddr_t *sba, bdaddr_t *dba)
 	write_lastused_info(sba, dba, tm);
 }
 
-void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
-					int8_t rssi, uint8_t confirm_name,
-					uint8_t *data, uint8_t data_len)
+void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, addr_type_t type,
+					uint32_t class, int8_t rssi,
+					uint8_t confirm_name, uint8_t *data,
+					uint8_t data_len)
 {
 	struct btd_adapter *adapter;
 
@@ -282,7 +265,7 @@ void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 	if (data)
 		write_remote_eir(local, peer, data);
 
-	adapter_update_found_devices(adapter, peer, class, rssi,
+	adapter_update_found_devices(adapter, peer, type, class, rssi,
 						confirm_name, data, data_len);
 }
 
@@ -290,7 +273,7 @@ void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
 							gboolean legacy)
 {
 	struct btd_adapter *adapter;
-	struct remote_dev_info *dev, match;
+	struct remote_dev_info *dev;
 
 	adapter = manager_find_adapter(local);
 	if (!adapter) {
@@ -298,11 +281,7 @@ void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer,
 		return;
 	}
 
-	memset(&match, 0, sizeof(struct remote_dev_info));
-	bacpy(&match.bdaddr, peer);
-	match.name_status = NAME_ANY;
-
-	dev = adapter_search_found_devices(adapter, &match);
+	dev = adapter_search_found_devices(adapter, peer);
 	if (dev)
 		dev->legacy = legacy;
 }
@@ -329,44 +308,33 @@ void btd_event_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class)
 	device_set_class(device, class);
 }
 
-void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
-				char *name)
+void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, char *name)
 {
 	struct btd_adapter *adapter;
-	char srcaddr[18], dstaddr[18];
+	char srcaddr[18];
 	struct btd_device *device;
-	struct remote_dev_info match, *dev_info;
+	struct remote_dev_info *dev_info;
 
-	if (status == 0) {
-		if (!g_utf8_validate(name, -1, NULL)) {
-			int i;
+	if (!g_utf8_validate(name, -1, NULL)) {
+		int i;
 
-			/* Assume ASCII, and replace all non-ASCII with
-			 * spaces */
-			for (i = 0; name[i] != '\0'; i++) {
-				if (!isascii(name[i]))
-					name[i] = ' ';
-			}
-			/* Remove leading and trailing whitespace characters */
-			g_strstrip(name);
+		/* Assume ASCII, and replace all non-ASCII with spaces */
+		for (i = 0; name[i] != '\0'; i++) {
+			if (!isascii(name[i]))
+				name[i] = ' ';
 		}
-
-		write_device_name(local, peer, name);
+		/* Remove leading and trailing whitespace characters */
+		g_strstrip(name);
 	}
+
+	write_device_name(local, peer, name);
 
 	if (!get_adapter_and_device(local, peer, &adapter, &device, FALSE))
 		return;
 
 	ba2str(local, srcaddr);
-	ba2str(peer, dstaddr);
 
-	if (status != 0)
-		goto proceed;
-
-	bacpy(&match.bdaddr, peer);
-	match.name_status = NAME_ANY;
-
-	dev_info = adapter_search_found_devices(adapter, &match);
+	dev_info = adapter_search_found_devices(adapter, peer);
 	if (dev_info) {
 		g_free(dev_info->name);
 		dev_info->name = g_strdup(name);
@@ -375,16 +343,6 @@ void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status,
 
 	if (device)
 		device_set_name(device, name);
-
-proceed:
-	/* remove from remote name request list */
-	adapter_remove_found_device(adapter, peer);
-
-	/* check if there is more devices to request names */
-	if (adapter_resolve_names(adapter) == 0)
-		return;
-
-	adapter_set_state(adapter, STATE_IDLE);
 }
 
 int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,

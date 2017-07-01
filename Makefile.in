@@ -45,7 +45,7 @@ bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3) \
 sbin_PROGRAMS = src/bluetoothd$(EXEEXT) $(am__EXEEXT_14) \
 	$(am__EXEEXT_15) $(am__EXEEXT_16) $(am__EXEEXT_17)
 noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
-	$(am__EXEEXT_11) $(am__EXEEXT_12) $(am__EXEEXT_13)
+	$(am__EXEEXT_11) $(am__EXEEXT_13)
 @SBC_TRUE@am__append_1 = sbc/libsbc.la
 @SBC_TRUE@am__append_2 = sbc/sbcinfo sbc/sbcdec sbc/sbcenc
 @SBC_TRUE@@SNDFILE_TRUE@am__append_3 = sbc/sbctester
@@ -55,10 +55,8 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 
 @PNATPLUGIN_TRUE@am__append_5 = pnat
 @PNATPLUGIN_TRUE@am__append_6 = plugins/pnat.c
-@ECHOPLUGIN_TRUE@am__append_7 = echo
-@ECHOPLUGIN_TRUE@am__append_8 = plugins/echo.c
-@AUDIOPLUGIN_TRUE@am__append_9 = audio
-@AUDIOPLUGIN_TRUE@am__append_10 = audio/main.c \
+@AUDIOPLUGIN_TRUE@am__append_7 = audio
+@AUDIOPLUGIN_TRUE@am__append_8 = audio/main.c \
 @AUDIOPLUGIN_TRUE@			audio/manager.h audio/manager.c \
 @AUDIOPLUGIN_TRUE@			audio/gateway.h audio/gateway.c \
 @AUDIOPLUGIN_TRUE@			audio/headset.h audio/headset.c \
@@ -76,76 +74,76 @@ noinst_PROGRAMS = $(am__EXEEXT_8) $(am__EXEEXT_9) $(am__EXEEXT_10) \
 @AUDIOPLUGIN_TRUE@			audio/transport.h audio/transport.c \
 @AUDIOPLUGIN_TRUE@			audio/telephony.h audio/a2dp-codecs.h
 
-@AUDIOPLUGIN_TRUE@am__append_11 = audio/telephony.c
-@AUDIOPLUGIN_TRUE@am__append_12 = audio/libtelephony.a
-@SAPPLUGIN_TRUE@am__append_13 = sap
-@SAPPLUGIN_TRUE@am__append_14 = sap/main.c \
+@AUDIOPLUGIN_TRUE@am__append_9 = audio/telephony.c
+@AUDIOPLUGIN_TRUE@am__append_10 = audio/libtelephony.a
+@SAPPLUGIN_TRUE@am__append_11 = sap
+@SAPPLUGIN_TRUE@am__append_12 = sap/main.c \
 @SAPPLUGIN_TRUE@			sap/manager.h sap/manager.c \
 @SAPPLUGIN_TRUE@			sap/server.h sap/server.c \
 @SAPPLUGIN_TRUE@			sap/sap.h
 
-@SAPPLUGIN_TRUE@am__append_15 = sap/sap.c
-@SAPPLUGIN_TRUE@am__append_16 = sap/libsap.a
-@INPUTPLUGIN_TRUE@am__append_17 = input
-@INPUTPLUGIN_TRUE@am__append_18 = input/main.c \
+@SAPPLUGIN_TRUE@am__append_13 = sap/sap.c
+@SAPPLUGIN_TRUE@am__append_14 = sap/libsap.a
+@INPUTPLUGIN_TRUE@am__append_15 = input
+@INPUTPLUGIN_TRUE@am__append_16 = input/main.c \
 @INPUTPLUGIN_TRUE@			input/manager.h input/manager.c \
 @INPUTPLUGIN_TRUE@			input/server.h input/server.c \
 @INPUTPLUGIN_TRUE@			input/device.h input/device.c \
 @INPUTPLUGIN_TRUE@			input/fakehid.c input/fakehid.h
 
-@SERIALPLUGIN_TRUE@am__append_19 = serial
-@SERIALPLUGIN_TRUE@am__append_20 = serial/main.c \
+@SERIALPLUGIN_TRUE@am__append_17 = serial
+@SERIALPLUGIN_TRUE@am__append_18 = serial/main.c \
 @SERIALPLUGIN_TRUE@			serial/manager.h serial/manager.c \
 @SERIALPLUGIN_TRUE@			serial/proxy.h serial/proxy.c \
 @SERIALPLUGIN_TRUE@			serial/port.h serial/port.c
 
-@NETWORKPLUGIN_TRUE@am__append_21 = network
-@NETWORKPLUGIN_TRUE@am__append_22 = network/main.c \
+@NETWORKPLUGIN_TRUE@am__append_19 = network
+@NETWORKPLUGIN_TRUE@am__append_20 = network/main.c \
 @NETWORKPLUGIN_TRUE@			network/manager.h network/manager.c \
 @NETWORKPLUGIN_TRUE@			network/common.h network/common.c \
 @NETWORKPLUGIN_TRUE@			network/server.h network/server.c \
 @NETWORKPLUGIN_TRUE@			network/connection.h network/connection.c
 
-@PROXIMITYPLUGIN_TRUE@am__append_23 = proximity
-@PROXIMITYPLUGIN_TRUE@am__append_24 = proximity/main.c \
+@PROXIMITYPLUGIN_TRUE@am__append_21 = proximity
+@PROXIMITYPLUGIN_TRUE@am__append_22 = proximity/main.c \
 @PROXIMITYPLUGIN_TRUE@			proximity/manager.h proximity/manager.c \
 @PROXIMITYPLUGIN_TRUE@			proximity/monitor.h proximity/monitor.c \
 @PROXIMITYPLUGIN_TRUE@			proximity/reporter.h proximity/reporter.c
 
-@SERVICEPLUGIN_TRUE@am__append_25 = service
-@SERVICEPLUGIN_TRUE@am__append_26 = plugins/service.c
-@GATT_EXAMPLE_PLUGIN_TRUE@am__append_27 = gatt_example
-@GATT_EXAMPLE_PLUGIN_TRUE@am__append_28 = plugins/gatt-example.c
-@TIMEPLUGIN_TRUE@am__append_29 = time
-@TIMEPLUGIN_TRUE@am__append_30 = time/main.c \
+@SERVICEPLUGIN_TRUE@am__append_23 = service
+@SERVICEPLUGIN_TRUE@am__append_24 = plugins/service.c
+@GATT_EXAMPLE_PLUGIN_TRUE@am__append_25 = gatt_example
+@GATT_EXAMPLE_PLUGIN_TRUE@am__append_26 = plugins/gatt-example.c
+@TIMEPLUGIN_TRUE@am__append_27 = time
+@TIMEPLUGIN_TRUE@am__append_28 = time/main.c \
 @TIMEPLUGIN_TRUE@		   time/server.h time/server.c
 
-@ALERTPLUGIN_TRUE@am__append_31 = alert
-@ALERTPLUGIN_TRUE@am__append_32 = alert/main.c \
+@ALERTPLUGIN_TRUE@am__append_29 = alert
+@ALERTPLUGIN_TRUE@am__append_30 = alert/main.c \
 @ALERTPLUGIN_TRUE@		   alert/server.h alert/server.c
 
-@HEALTHPLUGIN_TRUE@am__append_33 = health
-@HEALTHPLUGIN_TRUE@am__append_34 = health/hdp_main.c health/hdp_types.h \
+@HEALTHPLUGIN_TRUE@am__append_31 = health
+@HEALTHPLUGIN_TRUE@am__append_32 = health/hdp_main.c health/hdp_types.h \
 @HEALTHPLUGIN_TRUE@			health/hdp_manager.h health/hdp_manager.c \
 @HEALTHPLUGIN_TRUE@			health/hdp.h health/hdp.c \
 @HEALTHPLUGIN_TRUE@			health/hdp_util.h health/hdp_util.c
 
-@THERMOMETERPLUGIN_TRUE@am__append_35 = thermometer
-@THERMOMETERPLUGIN_TRUE@am__append_36 = thermometer/main.c \
+@THERMOMETERPLUGIN_TRUE@am__append_33 = thermometer
+@THERMOMETERPLUGIN_TRUE@am__append_34 = thermometer/main.c \
 @THERMOMETERPLUGIN_TRUE@			thermometer/manager.h thermometer/manager.c \
 @THERMOMETERPLUGIN_TRUE@			thermometer/thermometer.h thermometer/thermometer.c
 
-@HAL_TRUE@am__append_37 = hal
-@HAL_TRUE@am__append_38 = plugins/hal.c
-@HAL_FALSE@am__append_39 = formfactor
-@HAL_FALSE@am__append_40 = plugins/formfactor.c
-@WIIMOTEPLUGIN_TRUE@am__append_41 = wiimote
-@WIIMOTEPLUGIN_TRUE@am__append_42 = plugins/wiimote.c
-@MAEMO6PLUGIN_TRUE@am__append_43 = maemo6
-@MAEMO6PLUGIN_TRUE@am__append_44 = plugins/maemo6.c
-@DBUSOOBPLUGIN_TRUE@am__append_45 = dbusoob
-@DBUSOOBPLUGIN_TRUE@am__append_46 = plugins/dbusoob.c
-@MAINTAINER_MODE_TRUE@am__append_47 = plugins/external-dummy.la
+@HAL_TRUE@am__append_35 = hal
+@HAL_TRUE@am__append_36 = plugins/hal.c
+@HAL_FALSE@am__append_37 = formfactor
+@HAL_FALSE@am__append_38 = plugins/formfactor.c
+@WIIMOTEPLUGIN_TRUE@am__append_39 = wiimote
+@WIIMOTEPLUGIN_TRUE@am__append_40 = plugins/wiimote.c
+@MAEMO6PLUGIN_TRUE@am__append_41 = maemo6
+@MAEMO6PLUGIN_TRUE@am__append_42 = plugins/maemo6.c
+@DBUSOOBPLUGIN_TRUE@am__append_43 = dbusoob
+@DBUSOOBPLUGIN_TRUE@am__append_44 = plugins/dbusoob.c
+@MAINTAINER_MODE_TRUE@am__append_45 = plugins/external-dummy.la
 DIST_COMMON = README $(am__configure_deps) \
 	$(am__dist_udev_SCRIPTS_DIST) $(dist_man_MANS) \
 	$(include_HEADERS) $(srcdir)/Makefile.am $(srcdir)/Makefile.in \
@@ -158,60 +156,60 @@ DIST_COMMON = README $(am__configure_deps) \
 	ChangeLog INSTALL NEWS TODO compile config.guess config.sub \
 	depcomp install-sh ltmain.sh missing tools/lexer.c \
 	tools/parser.c tools/parser.h ylwrap
-@DATAFILES_TRUE@@TOOLS_TRUE@am__append_48 = tools/rfcomm.conf
-@TOOLS_TRUE@am__append_49 = tools/rfcomm tools/l2ping \
+@DATAFILES_TRUE@@TOOLS_TRUE@am__append_46 = tools/rfcomm.conf
+@TOOLS_TRUE@am__append_47 = tools/rfcomm tools/l2ping \
 @TOOLS_TRUE@				tools/hcitool tools/sdptool tools/ciptool
 
-@TOOLS_TRUE@am__append_50 = tools/hciattach tools/hciconfig
-@TOOLS_TRUE@am__append_51 = tools/avinfo tools/ppporc \
+@TOOLS_TRUE@am__append_48 = tools/hciattach tools/hciconfig
+@TOOLS_TRUE@am__append_49 = tools/avinfo tools/ppporc \
 @TOOLS_TRUE@	tools/hcieventmask tools/hcisecfilter mgmt/btmgmt
-@READLINE_TRUE@@TOOLS_TRUE@am__append_52 = attrib/gatttool
-@TOOLS_TRUE@am__append_53 = tools/rfcomm.1 tools/l2ping.8 \
+@READLINE_TRUE@@TOOLS_TRUE@am__append_50 = attrib/gatttool
+@TOOLS_TRUE@am__append_51 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_TRUE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_TRUE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TOOLS_FALSE@am__append_54 = tools/rfcomm.1 tools/l2ping.8 \
+@TOOLS_FALSE@am__append_52 = tools/rfcomm.1 tools/l2ping.8 \
 @TOOLS_FALSE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_FALSE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@TRACER_TRUE@am__append_55 = tracer/hcitrace
-@BCCMD_TRUE@am__append_56 = tools/bccmd
-@BCCMD_TRUE@@USB_TRUE@am__append_57 = tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__append_58 = @USB_LIBS@
-@BCCMD_TRUE@am__append_59 = tools/bccmd.8
-@BCCMD_FALSE@am__append_60 = tools/bccmd.8
+@TRACER_TRUE@am__append_53 = tracer/hcitrace
+@BCCMD_TRUE@am__append_54 = tools/bccmd
+@BCCMD_TRUE@@USB_TRUE@am__append_55 = tools/csr_usb.c
+@BCCMD_TRUE@@USB_TRUE@am__append_56 = @USB_LIBS@
+@BCCMD_TRUE@am__append_57 = tools/bccmd.8
+@BCCMD_FALSE@am__append_58 = tools/bccmd.8
 @HID2HCI_TRUE@udev_PROGRAMS = tools/hid2hci$(EXEEXT)
-@HID2HCI_TRUE@am__append_61 = tools/hid2hci.8
-@HID2HCI_FALSE@am__append_62 = tools/hid2hci.8
-@DFUTOOL_TRUE@am__append_63 = tools/dfutool
-@DFUTOOL_TRUE@am__append_64 = tools/dfutool.1
-@DFUTOOL_FALSE@am__append_65 = tools/dfutool.1
-@USB_TRUE@am__append_66 = tools/dfubabel tools/avctrl
+@HID2HCI_TRUE@am__append_59 = tools/hid2hci.8
+@HID2HCI_FALSE@am__append_60 = tools/hid2hci.8
+@DFUTOOL_TRUE@am__append_61 = tools/dfutool
+@DFUTOOL_TRUE@am__append_62 = tools/dfutool.1
+@DFUTOOL_FALSE@am__append_63 = tools/dfutool.1
+@USB_TRUE@am__append_64 = tools/dfubabel tools/avctrl
 @CUPS_TRUE@cups_PROGRAMS = cups/bluetooth$(EXEEXT)
-@TEST_TRUE@am__append_67 = test/hciemu
-@TEST_TRUE@am__append_68 = test/l2test test/rctest
-@TEST_TRUE@am__append_69 = test/gaptest test/sdptest test/scotest \
-@TEST_TRUE@			test/attest test/hstest test/avtest test/ipctest \
-@TEST_TRUE@					test/lmptest test/bdaddr test/agent \
-@TEST_TRUE@					test/btiotest test/test-textfile \
-@TEST_TRUE@					test/uuidtest test/mpris-player
-
-@TEST_TRUE@am__append_70 = test/rctest.1 test/hciemu.1
-@TEST_TRUE@am__append_71 = test/bdaddr.8
-@TEST_FALSE@am__append_72 = test/rctest.1 test/hciemu.1 test/bdaddr.8
-@HIDD_TRUE@am__append_73 = compat/hidd
-@HIDD_TRUE@am__append_74 = compat/hidd.1
-@HIDD_FALSE@am__append_75 = compat/hidd.1
-@PAND_TRUE@am__append_76 = compat/pand
-@PAND_TRUE@am__append_77 = compat/pand.1
-@PAND_FALSE@am__append_78 = compat/pand.1
-@DUND_TRUE@am__append_79 = compat/dund
-@DUND_TRUE@am__append_80 = compat/dund.1
-@DUND_FALSE@am__append_81 = compat/dund.1
-@DATAFILES_TRUE@@HID2HCI_TRUE@am__append_82 = scripts/bluetooth-hid2hci.rules
-@DATAFILES_TRUE@@PCMCIA_TRUE@am__append_83 = scripts/bluetooth-serial.rules
-@MCAP_TRUE@am__append_84 = -I$(builddir)/health
-TESTS = $(am__EXEEXT_13)
+@TEST_TRUE@am__append_65 = test/hciemu
+@TEST_TRUE@am__append_66 = test/l2test test/rctest
+@TEST_TRUE@am__append_67 = test/gaptest test/sdptest test/scotest \
+@TEST_TRUE@	test/attest test/hstest test/avtest test/ipctest \
+@TEST_TRUE@	test/lmptest test/bdaddr test/agent test/btiotest \
+@TEST_TRUE@	test/test-textfile test/uuidtest test/mpris-player \
+@TEST_TRUE@	$(unit_tests)
+@TEST_TRUE@am__append_68 = test/rctest.1 test/hciemu.1
+@TEST_TRUE@am__append_69 = test/bdaddr.8
+@TEST_FALSE@am__append_70 = test/rctest.1 test/hciemu.1 test/bdaddr.8
+@HIDD_TRUE@am__append_71 = compat/hidd
+@HIDD_TRUE@am__append_72 = compat/hidd.1
+@HIDD_FALSE@am__append_73 = compat/hidd.1
+@PAND_TRUE@am__append_74 = compat/pand
+@PAND_TRUE@am__append_75 = compat/pand.1
+@PAND_FALSE@am__append_76 = compat/pand.1
+@DUND_TRUE@am__append_77 = compat/dund
+@DUND_TRUE@am__append_78 = compat/dund.1
+@DUND_FALSE@am__append_79 = compat/dund.1
+@DATAFILES_TRUE@@HID2HCI_TRUE@am__append_80 = scripts/bluetooth-hid2hci.rules
+@DATAFILES_TRUE@@PCMCIA_TRUE@am__append_81 = scripts/bluetooth-serial.rules
+@MCAP_TRUE@am__append_82 = -I$(builddir)/health
+@TEST_TRUE@am__append_83 = $(unit_test_eir_OBJECTS)
+TESTS = $(am__EXEEXT_12)
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
@@ -406,14 +404,15 @@ sbc_libsbc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @TOOLS_TRUE@	tools/hcisecfilter$(EXEEXT) mgmt/btmgmt$(EXEEXT)
 @USB_TRUE@am__EXEEXT_11 = tools/dfubabel$(EXEEXT) \
 @USB_TRUE@	tools/avctrl$(EXEEXT)
-@TEST_TRUE@am__EXEEXT_12 = test/gaptest$(EXEEXT) test/sdptest$(EXEEXT) \
+@TEST_TRUE@am__EXEEXT_12 = unit/test-eir$(EXEEXT)
+@TEST_TRUE@am__EXEEXT_13 = test/gaptest$(EXEEXT) test/sdptest$(EXEEXT) \
 @TEST_TRUE@	test/scotest$(EXEEXT) test/attest$(EXEEXT) \
 @TEST_TRUE@	test/hstest$(EXEEXT) test/avtest$(EXEEXT) \
 @TEST_TRUE@	test/ipctest$(EXEEXT) test/lmptest$(EXEEXT) \
 @TEST_TRUE@	test/bdaddr$(EXEEXT) test/agent$(EXEEXT) \
 @TEST_TRUE@	test/btiotest$(EXEEXT) test/test-textfile$(EXEEXT) \
-@TEST_TRUE@	test/uuidtest$(EXEEXT) test/mpris-player$(EXEEXT)
-am__EXEEXT_13 = unit/test-eir$(EXEEXT)
+@TEST_TRUE@	test/uuidtest$(EXEEXT) test/mpris-player$(EXEEXT) \
+@TEST_TRUE@	$(am__EXEEXT_12)
 @TOOLS_TRUE@am__EXEEXT_14 = tools/hciattach$(EXEEXT) \
 @TOOLS_TRUE@	tools/hciconfig$(EXEEXT)
 @TRACER_TRUE@am__EXEEXT_15 = tracer/hcitrace$(EXEEXT)
@@ -489,14 +488,14 @@ sbc_sbctester_OBJECTS = sbc/sbctester.$(OBJEXT)
 sbc_sbctester_DEPENDENCIES =
 am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 	gdbus/watch.c gdbus/object.c gdbus/polkit.c plugins/pnat.c \
-	plugins/echo.c audio/main.c audio/manager.h audio/manager.c \
-	audio/gateway.h audio/gateway.c audio/headset.h \
-	audio/headset.c audio/control.h audio/control.c audio/avctp.h \
-	audio/avctp.c audio/avrcp.h audio/avrcp.c audio/device.h \
-	audio/device.c audio/source.h audio/source.c audio/sink.h \
-	audio/sink.c audio/a2dp.h audio/a2dp.c audio/avdtp.h \
-	audio/avdtp.c audio/ipc.h audio/ipc.c audio/unix.h \
-	audio/unix.c audio/media.h audio/media.c audio/transport.h \
+	audio/main.c audio/manager.h audio/manager.c audio/gateway.h \
+	audio/gateway.c audio/headset.h audio/headset.c \
+	audio/control.h audio/control.c audio/avctp.h audio/avctp.c \
+	audio/avrcp.h audio/avrcp.c audio/device.h audio/device.c \
+	audio/source.h audio/source.c audio/sink.h audio/sink.c \
+	audio/a2dp.h audio/a2dp.c audio/avdtp.h audio/avdtp.c \
+	audio/ipc.h audio/ipc.c audio/unix.h audio/unix.c \
+	audio/media.h audio/media.c audio/transport.h \
 	audio/transport.c audio/telephony.h audio/a2dp-codecs.h \
 	sap/main.c sap/manager.h sap/manager.c sap/server.h \
 	sap/server.c sap/sap.h input/main.c input/manager.h \
@@ -542,8 +541,7 @@ am__objects_4 = gdbus/bluetoothd-mainloop.$(OBJEXT) \
 	gdbus/bluetoothd-object.$(OBJEXT) \
 	gdbus/bluetoothd-polkit.$(OBJEXT)
 @PNATPLUGIN_TRUE@am__objects_5 = plugins/bluetoothd-pnat.$(OBJEXT)
-@ECHOPLUGIN_TRUE@am__objects_6 = plugins/bluetoothd-echo.$(OBJEXT)
-@AUDIOPLUGIN_TRUE@am__objects_7 = audio/bluetoothd-main.$(OBJEXT) \
+@AUDIOPLUGIN_TRUE@am__objects_6 = audio/bluetoothd-main.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-manager.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-gateway.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-headset.$(OBJEXT) \
@@ -559,74 +557,73 @@ am__objects_4 = gdbus/bluetoothd-mainloop.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-unix.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-media.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-transport.$(OBJEXT)
-@SAPPLUGIN_TRUE@am__objects_8 = sap/bluetoothd-main.$(OBJEXT) \
+@SAPPLUGIN_TRUE@am__objects_7 = sap/bluetoothd-main.$(OBJEXT) \
 @SAPPLUGIN_TRUE@	sap/bluetoothd-manager.$(OBJEXT) \
 @SAPPLUGIN_TRUE@	sap/bluetoothd-server.$(OBJEXT)
-@INPUTPLUGIN_TRUE@am__objects_9 = input/bluetoothd-main.$(OBJEXT) \
+@INPUTPLUGIN_TRUE@am__objects_8 = input/bluetoothd-main.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/bluetoothd-manager.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/bluetoothd-server.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/bluetoothd-device.$(OBJEXT) \
 @INPUTPLUGIN_TRUE@	input/bluetoothd-fakehid.$(OBJEXT)
-@SERIALPLUGIN_TRUE@am__objects_10 = serial/bluetoothd-main.$(OBJEXT) \
+@SERIALPLUGIN_TRUE@am__objects_9 = serial/bluetoothd-main.$(OBJEXT) \
 @SERIALPLUGIN_TRUE@	serial/bluetoothd-manager.$(OBJEXT) \
 @SERIALPLUGIN_TRUE@	serial/bluetoothd-proxy.$(OBJEXT) \
 @SERIALPLUGIN_TRUE@	serial/bluetoothd-port.$(OBJEXT)
-@NETWORKPLUGIN_TRUE@am__objects_11 =  \
+@NETWORKPLUGIN_TRUE@am__objects_10 =  \
 @NETWORKPLUGIN_TRUE@	network/bluetoothd-main.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/bluetoothd-manager.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/bluetoothd-common.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/bluetoothd-server.$(OBJEXT) \
 @NETWORKPLUGIN_TRUE@	network/bluetoothd-connection.$(OBJEXT)
-@PROXIMITYPLUGIN_TRUE@am__objects_12 =  \
+@PROXIMITYPLUGIN_TRUE@am__objects_11 =  \
 @PROXIMITYPLUGIN_TRUE@	proximity/bluetoothd-main.$(OBJEXT) \
 @PROXIMITYPLUGIN_TRUE@	proximity/bluetoothd-manager.$(OBJEXT) \
 @PROXIMITYPLUGIN_TRUE@	proximity/bluetoothd-monitor.$(OBJEXT) \
 @PROXIMITYPLUGIN_TRUE@	proximity/bluetoothd-reporter.$(OBJEXT)
-@SERVICEPLUGIN_TRUE@am__objects_13 =  \
+@SERVICEPLUGIN_TRUE@am__objects_12 =  \
 @SERVICEPLUGIN_TRUE@	plugins/bluetoothd-service.$(OBJEXT)
-@GATT_EXAMPLE_PLUGIN_TRUE@am__objects_14 = plugins/bluetoothd-gatt-example.$(OBJEXT)
-@TIMEPLUGIN_TRUE@am__objects_15 = time/bluetoothd-main.$(OBJEXT) \
+@GATT_EXAMPLE_PLUGIN_TRUE@am__objects_13 = plugins/bluetoothd-gatt-example.$(OBJEXT)
+@TIMEPLUGIN_TRUE@am__objects_14 = time/bluetoothd-main.$(OBJEXT) \
 @TIMEPLUGIN_TRUE@	time/bluetoothd-server.$(OBJEXT)
-@ALERTPLUGIN_TRUE@am__objects_16 = alert/bluetoothd-main.$(OBJEXT) \
+@ALERTPLUGIN_TRUE@am__objects_15 = alert/bluetoothd-main.$(OBJEXT) \
 @ALERTPLUGIN_TRUE@	alert/bluetoothd-server.$(OBJEXT)
-@HEALTHPLUGIN_TRUE@am__objects_17 =  \
+@HEALTHPLUGIN_TRUE@am__objects_16 =  \
 @HEALTHPLUGIN_TRUE@	health/bluetoothd-hdp_main.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/bluetoothd-hdp_manager.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/bluetoothd-hdp.$(OBJEXT) \
 @HEALTHPLUGIN_TRUE@	health/bluetoothd-hdp_util.$(OBJEXT)
-@THERMOMETERPLUGIN_TRUE@am__objects_18 =  \
+@THERMOMETERPLUGIN_TRUE@am__objects_17 =  \
 @THERMOMETERPLUGIN_TRUE@	thermometer/bluetoothd-main.$(OBJEXT) \
 @THERMOMETERPLUGIN_TRUE@	thermometer/bluetoothd-manager.$(OBJEXT) \
 @THERMOMETERPLUGIN_TRUE@	thermometer/bluetoothd-thermometer.$(OBJEXT)
-@HAL_TRUE@am__objects_19 = plugins/bluetoothd-hal.$(OBJEXT)
-@HAL_FALSE@am__objects_20 = plugins/bluetoothd-formfactor.$(OBJEXT)
-@WIIMOTEPLUGIN_TRUE@am__objects_21 =  \
+@HAL_TRUE@am__objects_18 = plugins/bluetoothd-hal.$(OBJEXT)
+@HAL_FALSE@am__objects_19 = plugins/bluetoothd-formfactor.$(OBJEXT)
+@WIIMOTEPLUGIN_TRUE@am__objects_20 =  \
 @WIIMOTEPLUGIN_TRUE@	plugins/bluetoothd-wiimote.$(OBJEXT)
-@MAEMO6PLUGIN_TRUE@am__objects_22 =  \
+@MAEMO6PLUGIN_TRUE@am__objects_21 =  \
 @MAEMO6PLUGIN_TRUE@	plugins/bluetoothd-maemo6.$(OBJEXT)
-@DBUSOOBPLUGIN_TRUE@am__objects_23 =  \
+@DBUSOOBPLUGIN_TRUE@am__objects_22 =  \
 @DBUSOOBPLUGIN_TRUE@	plugins/bluetoothd-dbusoob.$(OBJEXT)
-am__objects_24 = $(am__objects_5) $(am__objects_6) $(am__objects_7) \
+am__objects_23 = $(am__objects_5) $(am__objects_6) $(am__objects_7) \
 	$(am__objects_8) $(am__objects_9) $(am__objects_10) \
 	$(am__objects_11) $(am__objects_12) $(am__objects_13) \
 	$(am__objects_14) $(am__objects_15) $(am__objects_16) \
-	$(am__objects_17) $(am__objects_18) \
-	plugins/bluetoothd-hciops.$(OBJEXT) \
-	plugins/bluetoothd-mgmtops.$(OBJEXT) $(am__objects_19) \
-	$(am__objects_20) plugins/bluetoothd-storage.$(OBJEXT) \
-	plugins/bluetoothd-adaptername.$(OBJEXT) $(am__objects_21) \
-	$(am__objects_22) $(am__objects_23)
-am__objects_25 = attrib/bluetoothd-att.$(OBJEXT) \
+	$(am__objects_17) plugins/bluetoothd-hciops.$(OBJEXT) \
+	plugins/bluetoothd-mgmtops.$(OBJEXT) $(am__objects_18) \
+	$(am__objects_19) plugins/bluetoothd-storage.$(OBJEXT) \
+	plugins/bluetoothd-adaptername.$(OBJEXT) $(am__objects_20) \
+	$(am__objects_21) $(am__objects_22)
+am__objects_24 = attrib/bluetoothd-att.$(OBJEXT) \
 	attrib/bluetoothd-gatt.$(OBJEXT) \
 	attrib/bluetoothd-gattrib.$(OBJEXT) \
 	attrib/bluetoothd-client.$(OBJEXT) \
 	attrib/bluetoothd-gatt-service.$(OBJEXT)
-am__objects_26 = btio/bluetoothd-btio.$(OBJEXT)
-@MCAP_TRUE@am__objects_27 = health/bluetoothd-mcap.$(OBJEXT) \
+am__objects_25 = btio/bluetoothd-btio.$(OBJEXT)
+@MCAP_TRUE@am__objects_26 = health/bluetoothd-mcap.$(OBJEXT) \
 @MCAP_TRUE@	health/bluetoothd-mcap_sync.$(OBJEXT)
-am__objects_28 = $(am__objects_27)
-am_src_bluetoothd_OBJECTS = $(am__objects_4) $(am__objects_24) \
-	$(am__objects_25) $(am__objects_26) $(am__objects_28) \
+am__objects_27 = $(am__objects_26)
+am_src_bluetoothd_OBJECTS = $(am__objects_4) $(am__objects_23) \
+	$(am__objects_24) $(am__objects_25) $(am__objects_27) \
 	src/bluetoothd-main.$(OBJEXT) src/bluetoothd-log.$(OBJEXT) \
 	src/bluetoothd-rfkill.$(OBJEXT) \
 	src/bluetoothd-sdpd-server.$(OBJEXT) \
@@ -647,12 +644,12 @@ am_src_bluetoothd_OBJECTS = $(am__objects_4) $(am__objects_24) \
 	src/bluetoothd-dbus-common.$(OBJEXT) \
 	src/bluetoothd-event.$(OBJEXT) src/bluetoothd-oob.$(OBJEXT) \
 	src/bluetoothd-eir.$(OBJEXT)
-@AUDIOPLUGIN_TRUE@am__objects_29 =  \
+@AUDIOPLUGIN_TRUE@am__objects_28 =  \
 @AUDIOPLUGIN_TRUE@	audio/bluetoothd-telephony.$(OBJEXT)
-@SAPPLUGIN_TRUE@am__objects_30 = sap/bluetoothd-sap.$(OBJEXT)
-am__objects_31 = $(am__objects_29) $(am__objects_30)
-am__objects_32 = $(am__objects_31)
-nodist_src_bluetoothd_OBJECTS = $(am__objects_32)
+@SAPPLUGIN_TRUE@am__objects_29 = sap/bluetoothd-sap.$(OBJEXT)
+am__objects_30 = $(am__objects_28) $(am__objects_29)
+am__objects_31 = $(am__objects_30)
+nodist_src_bluetoothd_OBJECTS = $(am__objects_31)
 src_bluetoothd_OBJECTS = $(am_src_bluetoothd_OBJECTS) \
 	$(nodist_src_bluetoothd_OBJECTS)
 src_bluetoothd_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
@@ -730,12 +727,12 @@ tools_avinfo_OBJECTS = tools/avinfo.$(OBJEXT)
 am__tools_bccmd_SOURCES_DIST = tools/bccmd.c tools/csr.h tools/csr.c \
 	tools/csr_hci.c tools/csr_h4.c tools/csr_3wire.c \
 	tools/csr_bcsp.c tools/ubcsp.h tools/ubcsp.c tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__objects_33 = tools/csr_usb.$(OBJEXT)
+@BCCMD_TRUE@@USB_TRUE@am__objects_32 = tools/csr_usb.$(OBJEXT)
 @BCCMD_TRUE@am_tools_bccmd_OBJECTS = tools/bccmd.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr.$(OBJEXT) tools/csr_hci.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_h4.$(OBJEXT) tools/csr_3wire.$(OBJEXT) \
 @BCCMD_TRUE@	tools/csr_bcsp.$(OBJEXT) tools/ubcsp.$(OBJEXT) \
-@BCCMD_TRUE@	$(am__objects_33)
+@BCCMD_TRUE@	$(am__objects_32)
 tools_bccmd_OBJECTS = $(am_tools_bccmd_OBJECTS)
 am__DEPENDENCIES_1 =
 @BCCMD_TRUE@tools_bccmd_DEPENDENCIES = lib/libbluetooth-private.la \
@@ -812,10 +809,14 @@ tools_sdptool_OBJECTS = $(am_tools_sdptool_OBJECTS)
 am__tracer_hcitrace_SOURCES_DIST = tracer/main.c
 @TRACER_TRUE@am_tracer_hcitrace_OBJECTS = tracer/main.$(OBJEXT)
 tracer_hcitrace_OBJECTS = $(am_tracer_hcitrace_OBJECTS)
-am_unit_test_eir_OBJECTS = unit/unit-test-eir.$(OBJEXT) \
-	src/unit-eir.$(OBJEXT) src/unit-glib-helper.$(OBJEXT)
+am__unit_test_eir_SOURCES_DIST = unit/test-eir.c src/eir.c \
+	src/glib-helper.c
+@TEST_TRUE@am_unit_test_eir_OBJECTS =  \
+@TEST_TRUE@	unit/unit_test_eir-test-eir.$(OBJEXT) \
+@TEST_TRUE@	src/unit_test_eir-eir.$(OBJEXT) \
+@TEST_TRUE@	src/unit_test_eir-glib-helper.$(OBJEXT)
 unit_test_eir_OBJECTS = $(am_unit_test_eir_OBJECTS)
-unit_test_eir_DEPENDENCIES = lib/libbluetooth-private.la
+@TEST_TRUE@unit_test_eir_DEPENDENCIES = lib/libbluetooth-private.la
 unit_test_eir_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(unit_test_eir_CFLAGS) \
 	$(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o $@
@@ -918,7 +919,8 @@ DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__tools_rfcomm_SOURCES_DIST) \
 	$(am__EXTRA_tools_rfcomm_SOURCES_DIST) \
 	$(am__tools_sdptool_SOURCES_DIST) \
-	$(am__tracer_hcitrace_SOURCES_DIST) $(unit_test_eir_SOURCES)
+	$(am__tracer_hcitrace_SOURCES_DIST) \
+	$(am__unit_test_eir_SOURCES_DIST)
 man1dir = $(mandir)/man1
 man8dir = $(mandir)/man8
 NROFF = nroff
@@ -1100,11 +1102,11 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AM_MAKEFLAGS = --no-print-directory
 lib_LTLIBRARIES = lib/libbluetooth.la
-noinst_LIBRARIES = $(am__append_12) $(am__append_16)
+noinst_LIBRARIES = $(am__append_10) $(am__append_14)
 noinst_LTLIBRARIES = lib/libbluetooth-private.la $(am__append_1)
-dist_man_MANS = $(am__append_53) $(am__append_59) $(am__append_61) \
-	$(am__append_64) $(am__append_70) $(am__append_74) \
-	$(am__append_77) $(am__append_80)
+dist_man_MANS = $(am__append_51) $(am__append_57) $(am__append_59) \
+	$(am__append_62) $(am__append_68) $(am__append_72) \
+	$(am__append_75) $(am__append_78)
 dist_noinst_MANS = 
 CLEANFILES = $(builtin_files) tools/lexer.c tools/parser.c \
 	tools/parser.h $(rules_DATA)
@@ -1114,10 +1116,10 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	audio/telephony-dummy.c audio/telephony-maemo5.c \
 	audio/telephony-ofono.c audio/telephony-maemo6.c \
 	sap/sap-dummy.c sap/sap-u8500.c proximity/proximity.conf \
-	audio/bluetooth.conf $(am__append_54) tools/rfcomm.conf \
-	$(am__append_60) $(am__append_62) $(am__append_65) \
-	tools/dfubabel.1 tools/avctrl.8 $(am__append_71) \
-	$(am__append_72) test/apitest test/sap-client test/hsplay \
+	audio/bluetooth.conf $(am__append_52) tools/rfcomm.conf \
+	$(am__append_58) $(am__append_60) $(am__append_63) \
+	tools/dfubabel.1 tools/avctrl.8 $(am__append_69) \
+	$(am__append_70) test/apitest test/sap-client test/hsplay \
 	test/hsmicro test/dbusdef.py test/monitor-bluetooth \
 	test/list-devices test/test-discovery test/test-manager \
 	test/test-adapter test/test-device test/test-service \
@@ -1128,8 +1130,8 @@ EXTRA_DIST = plugins/hal.c plugins/formfactor.c src/genbuiltin \
 	test/test-serial-proxy test/test-thermometer test/test-health \
 	test/test-health-sink test/service-record.dtd \
 	test/service-did.xml test/service-spp.xml test/service-opp.xml \
-	test/service-ftp.xml $(am__append_75) $(am__append_78) \
-	$(am__append_81) scripts/bluetooth.rules \
+	test/service-ftp.xml $(am__append_73) $(am__append_76) \
+	$(am__append_79) scripts/bluetooth.rules \
 	scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules \
 	doc/manager-api.txt doc/adapter-api.txt doc/device-api.txt \
 	doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
@@ -1141,7 +1143,7 @@ include_HEADERS = $(lib_headers)
 @DATAFILES_TRUE@dbusdir = $(sysconfdir)/dbus-1/system.d
 @DATAFILES_TRUE@dbus_DATA = src/bluetooth.conf
 @DATAFILES_TRUE@confdir = $(sysconfdir)/bluetooth
-@DATAFILES_TRUE@conf_DATA = src/main.conf $(am__append_48)
+@DATAFILES_TRUE@conf_DATA = src/main.conf $(am__append_46)
 @DATAFILES_TRUE@statedir = $(localstatedir)/lib/bluetooth
 @DATAFILES_TRUE@state_DATA = 
 @DATAFILES_TRUE@@SYSTEMD_TRUE@systemdunitdir = @SYSTEMD_UNITDIR@
@@ -1149,7 +1151,7 @@ include_HEADERS = $(lib_headers)
 plugindir = $(libdir)/bluetooth/plugins
 @MAINTAINER_MODE_FALSE@build_plugindir = $(plugindir)
 @MAINTAINER_MODE_TRUE@build_plugindir = $(abs_top_srcdir)/plugins/.libs
-plugin_LTLIBRARIES = $(am__append_47)
+plugin_LTLIBRARIES = $(am__append_45)
 lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
 		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h lib/uuid.h \
 		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
@@ -1186,22 +1188,22 @@ gdbus_sources = gdbus/gdbus.h gdbus/mainloop.c gdbus/watch.c \
 					gdbus/object.c gdbus/polkit.c
 
 btio_sources = btio/btio.h btio/btio.c
-builtin_modules = $(am__append_5) $(am__append_7) $(am__append_9) \
-	$(am__append_13) $(am__append_17) $(am__append_19) \
+builtin_modules = $(am__append_5) $(am__append_7) $(am__append_11) \
+	$(am__append_15) $(am__append_17) $(am__append_19) \
 	$(am__append_21) $(am__append_23) $(am__append_25) \
 	$(am__append_27) $(am__append_29) $(am__append_31) \
-	$(am__append_33) $(am__append_35) hciops mgmtops \
-	$(am__append_37) $(am__append_39) storage adaptername \
-	$(am__append_41) $(am__append_43) $(am__append_45)
-builtin_sources = $(am__append_6) $(am__append_8) $(am__append_10) \
-	$(am__append_14) $(am__append_18) $(am__append_20) \
+	$(am__append_33) hciops mgmtops $(am__append_35) \
+	$(am__append_37) storage adaptername $(am__append_39) \
+	$(am__append_41) $(am__append_43)
+builtin_sources = $(am__append_6) $(am__append_8) $(am__append_12) \
+	$(am__append_16) $(am__append_18) $(am__append_20) \
 	$(am__append_22) $(am__append_24) $(am__append_26) \
 	$(am__append_28) $(am__append_30) $(am__append_32) \
-	$(am__append_34) $(am__append_36) plugins/hciops.c \
-	plugins/mgmtops.c $(am__append_38) $(am__append_40) \
-	plugins/storage.c plugins/adaptername.c $(am__append_42) \
-	$(am__append_44) $(am__append_46)
-builtin_nodist = $(am__append_11) $(am__append_15)
+	$(am__append_34) plugins/hciops.c plugins/mgmtops.c \
+	$(am__append_36) $(am__append_38) plugins/storage.c \
+	plugins/adaptername.c $(am__append_40) $(am__append_42) \
+	$(am__append_44)
+builtin_nodist = $(am__append_9) $(am__append_13)
 mcap_sources = $(am__append_4)
 @AUDIOPLUGIN_TRUE@audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
 @AUDIOPLUGIN_TRUE@				audio/telephony-maemo5.c audio/telephony-ofono.c \
@@ -1337,9 +1339,9 @@ man_MANS = src/bluetoothd.8
 @BCCMD_TRUE@tools_bccmd_SOURCES = tools/bccmd.c tools/csr.h \
 @BCCMD_TRUE@	tools/csr.c tools/csr_hci.c tools/csr_h4.c \
 @BCCMD_TRUE@	tools/csr_3wire.c tools/csr_bcsp.c tools/ubcsp.h \
-@BCCMD_TRUE@	tools/ubcsp.c $(am__append_57)
+@BCCMD_TRUE@	tools/ubcsp.c $(am__append_55)
 @BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth-private.la \
-@BCCMD_TRUE@	$(am__append_58)
+@BCCMD_TRUE@	$(am__append_56)
 @DATAFILES_TRUE@@PCMCIA_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@ @UDEV_LIBS@
@@ -1389,21 +1391,22 @@ man_MANS = src/bluetoothd.8
 
 @DUND_TRUE@compat_dund_LDADD = lib/libbluetooth-private.la
 @DATAFILES_TRUE@rulesdir = @UDEV_DIR@/rules.d
-@DATAFILES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_82) \
-@DATAFILES_TRUE@	$(am__append_83)
+@DATAFILES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_80) \
+@DATAFILES_TRUE@	$(am__append_81)
 @DATAFILES_TRUE@@PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
 @DATAFILES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
 AM_YFLAGS = -d
 AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 	-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
-	-I$(srcdir)/attrib -I$(srcdir)/btio $(am__append_84)
-unit_objects = $(unit_test_eir_OBJECTS)
-unit_tests = unit/test-eir
-unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/glib-helper.c
-unit_test_eir_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @CHECK_LIBS@
-unit_test_eir_CFLAGS = $(AM_CFLAGS) @CHECK_CFLAGS@
-unit_test_eir_SHORTNAME = unit
+	-I$(srcdir)/attrib -I$(srcdir)/btio -I$(srcdir)/tools \
+	-I$(builddir)/tools $(am__append_82)
+unit_objects = $(am__append_83)
+@TEST_FALSE@unit_tests = 
+@TEST_TRUE@unit_tests = unit/test-eir
+@TEST_TRUE@unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/glib-helper.c
+@TEST_TRUE@unit_test_eir_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @CHECK_LIBS@
+@TEST_TRUE@unit_test_eir_CFLAGS = $(AM_CFLAGS) @CHECK_CFLAGS@
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = bluez.pc
 DISTCHECK_CONFIGURE_FLAGS = --disable-datafiles
@@ -2043,8 +2046,6 @@ gdbus/bluetoothd-polkit.$(OBJEXT): gdbus/$(am__dirstamp) \
 	gdbus/$(DEPDIR)/$(am__dirstamp)
 plugins/bluetoothd-pnat.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
-plugins/bluetoothd-echo.$(OBJEXT): plugins/$(am__dirstamp) \
-	plugins/$(DEPDIR)/$(am__dirstamp)
 audio/bluetoothd-main.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 audio/bluetoothd-manager.$(OBJEXT): audio/$(am__dirstamp) \
@@ -2519,11 +2520,11 @@ unit/$(am__dirstamp):
 unit/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) unit/$(DEPDIR)
 	@: > unit/$(DEPDIR)/$(am__dirstamp)
-unit/unit-test-eir.$(OBJEXT): unit/$(am__dirstamp) \
+unit/unit_test_eir-test-eir.$(OBJEXT): unit/$(am__dirstamp) \
 	unit/$(DEPDIR)/$(am__dirstamp)
-src/unit-eir.$(OBJEXT): src/$(am__dirstamp) \
+src/unit_test_eir-eir.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
-src/unit-glib-helper.$(OBJEXT): src/$(am__dirstamp) \
+src/unit_test_eir-glib-helper.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 unit/test-eir$(EXEEXT): $(unit_test_eir_OBJECTS) $(unit_test_eir_DEPENDENCIES) unit/$(am__dirstamp)
 	@rm -f unit/test-eir$(EXEEXT)
@@ -2675,7 +2676,6 @@ mostlyclean-compile:
 	-rm -f network/bluetoothd-server.$(OBJEXT)
 	-rm -f plugins/bluetoothd-adaptername.$(OBJEXT)
 	-rm -f plugins/bluetoothd-dbusoob.$(OBJEXT)
-	-rm -f plugins/bluetoothd-echo.$(OBJEXT)
 	-rm -f plugins/bluetoothd-formfactor.$(OBJEXT)
 	-rm -f plugins/bluetoothd-gatt-example.$(OBJEXT)
 	-rm -f plugins/bluetoothd-hal.$(OBJEXT)
@@ -2745,8 +2745,8 @@ mostlyclean-compile:
 	-rm -f src/oui.$(OBJEXT)
 	-rm -f src/sdp-xml.$(OBJEXT)
 	-rm -f src/textfile.$(OBJEXT)
-	-rm -f src/unit-eir.$(OBJEXT)
-	-rm -f src/unit-glib-helper.$(OBJEXT)
+	-rm -f src/unit_test_eir-eir.$(OBJEXT)
+	-rm -f src/unit_test_eir-glib-helper.$(OBJEXT)
 	-rm -f test/agent.$(OBJEXT)
 	-rm -f test/attest.$(OBJEXT)
 	-rm -f test/avtest.$(OBJEXT)
@@ -2802,7 +2802,7 @@ mostlyclean-compile:
 	-rm -f tools/sdptool.$(OBJEXT)
 	-rm -f tools/ubcsp.$(OBJEXT)
 	-rm -f tracer/main.$(OBJEXT)
-	-rm -f unit/unit-test-eir.$(OBJEXT)
+	-rm -f unit/unit_test_eir-test-eir.$(OBJEXT)
 
 distclean-compile:
 	-rm -f *.tab.c
@@ -2900,7 +2900,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@network/$(DEPDIR)/bluetoothd-server.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-adaptername.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-dbusoob.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-echo.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-formfactor.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-gatt-example.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@plugins/$(DEPDIR)/bluetoothd-hal.Po@am__quote@
@@ -2963,8 +2962,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/oui.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/sdp-xml.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/textfile.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/unit-eir.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/unit-glib-helper.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/unit_test_eir-eir.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/unit_test_eir-glib-helper.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/agent.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/attest.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@test/$(DEPDIR)/avtest.Po@am__quote@
@@ -3020,7 +3019,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/sdptool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/ubcsp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tracer/$(DEPDIR)/main.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@unit/$(DEPDIR)/unit-test-eir.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@unit/$(DEPDIR)/unit_test_eir-test-eir.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
@@ -3288,22 +3287,6 @@ plugins/bluetoothd-pnat.obj: plugins/pnat.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='plugins/pnat.c' object='plugins/bluetoothd-pnat.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o plugins/bluetoothd-pnat.obj `if test -f 'plugins/pnat.c'; then $(CYGPATH_W) 'plugins/pnat.c'; else $(CYGPATH_W) '$(srcdir)/plugins/pnat.c'; fi`
-
-plugins/bluetoothd-echo.o: plugins/echo.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -MT plugins/bluetoothd-echo.o -MD -MP -MF plugins/$(DEPDIR)/bluetoothd-echo.Tpo -c -o plugins/bluetoothd-echo.o `test -f 'plugins/echo.c' || echo '$(srcdir)/'`plugins/echo.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) plugins/$(DEPDIR)/bluetoothd-echo.Tpo plugins/$(DEPDIR)/bluetoothd-echo.Po
-@am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='plugins/echo.c' object='plugins/bluetoothd-echo.o' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o plugins/bluetoothd-echo.o `test -f 'plugins/echo.c' || echo '$(srcdir)/'`plugins/echo.c
-
-plugins/bluetoothd-echo.obj: plugins/echo.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -MT plugins/bluetoothd-echo.obj -MD -MP -MF plugins/$(DEPDIR)/bluetoothd-echo.Tpo -c -o plugins/bluetoothd-echo.obj `if test -f 'plugins/echo.c'; then $(CYGPATH_W) 'plugins/echo.c'; else $(CYGPATH_W) '$(srcdir)/plugins/echo.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) plugins/$(DEPDIR)/bluetoothd-echo.Tpo plugins/$(DEPDIR)/bluetoothd-echo.Po
-@am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='plugins/echo.c' object='plugins/bluetoothd-echo.obj' libtool=no @AMDEPBACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o plugins/bluetoothd-echo.obj `if test -f 'plugins/echo.c'; then $(CYGPATH_W) 'plugins/echo.c'; else $(CYGPATH_W) '$(srcdir)/plugins/echo.c'; fi`
 
 audio/bluetoothd-main.o: audio/main.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -MT audio/bluetoothd-main.o -MD -MP -MF audio/$(DEPDIR)/bluetoothd-main.Tpo -c -o audio/bluetoothd-main.o `test -f 'audio/main.c' || echo '$(srcdir)/'`audio/main.c
@@ -4793,53 +4776,53 @@ sap/bluetoothd-sap.obj: sap/sap.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o sap/bluetoothd-sap.obj `if test -f 'sap/sap.c'; then $(CYGPATH_W) 'sap/sap.c'; else $(CYGPATH_W) '$(srcdir)/sap/sap.c'; fi`
 
-unit/unit-test-eir.o: unit/test-eir.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT unit/unit-test-eir.o -MD -MP -MF unit/$(DEPDIR)/unit-test-eir.Tpo -c -o unit/unit-test-eir.o `test -f 'unit/test-eir.c' || echo '$(srcdir)/'`unit/test-eir.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) unit/$(DEPDIR)/unit-test-eir.Tpo unit/$(DEPDIR)/unit-test-eir.Po
+unit/unit_test_eir-test-eir.o: unit/test-eir.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT unit/unit_test_eir-test-eir.o -MD -MP -MF unit/$(DEPDIR)/unit_test_eir-test-eir.Tpo -c -o unit/unit_test_eir-test-eir.o `test -f 'unit/test-eir.c' || echo '$(srcdir)/'`unit/test-eir.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) unit/$(DEPDIR)/unit_test_eir-test-eir.Tpo unit/$(DEPDIR)/unit_test_eir-test-eir.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='unit/test-eir.c' object='unit/unit-test-eir.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='unit/test-eir.c' object='unit/unit_test_eir-test-eir.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o unit/unit-test-eir.o `test -f 'unit/test-eir.c' || echo '$(srcdir)/'`unit/test-eir.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o unit/unit_test_eir-test-eir.o `test -f 'unit/test-eir.c' || echo '$(srcdir)/'`unit/test-eir.c
 
-unit/unit-test-eir.obj: unit/test-eir.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT unit/unit-test-eir.obj -MD -MP -MF unit/$(DEPDIR)/unit-test-eir.Tpo -c -o unit/unit-test-eir.obj `if test -f 'unit/test-eir.c'; then $(CYGPATH_W) 'unit/test-eir.c'; else $(CYGPATH_W) '$(srcdir)/unit/test-eir.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) unit/$(DEPDIR)/unit-test-eir.Tpo unit/$(DEPDIR)/unit-test-eir.Po
+unit/unit_test_eir-test-eir.obj: unit/test-eir.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT unit/unit_test_eir-test-eir.obj -MD -MP -MF unit/$(DEPDIR)/unit_test_eir-test-eir.Tpo -c -o unit/unit_test_eir-test-eir.obj `if test -f 'unit/test-eir.c'; then $(CYGPATH_W) 'unit/test-eir.c'; else $(CYGPATH_W) '$(srcdir)/unit/test-eir.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) unit/$(DEPDIR)/unit_test_eir-test-eir.Tpo unit/$(DEPDIR)/unit_test_eir-test-eir.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='unit/test-eir.c' object='unit/unit-test-eir.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='unit/test-eir.c' object='unit/unit_test_eir-test-eir.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o unit/unit-test-eir.obj `if test -f 'unit/test-eir.c'; then $(CYGPATH_W) 'unit/test-eir.c'; else $(CYGPATH_W) '$(srcdir)/unit/test-eir.c'; fi`
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o unit/unit_test_eir-test-eir.obj `if test -f 'unit/test-eir.c'; then $(CYGPATH_W) 'unit/test-eir.c'; else $(CYGPATH_W) '$(srcdir)/unit/test-eir.c'; fi`
 
-src/unit-eir.o: src/eir.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit-eir.o -MD -MP -MF src/$(DEPDIR)/unit-eir.Tpo -c -o src/unit-eir.o `test -f 'src/eir.c' || echo '$(srcdir)/'`src/eir.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit-eir.Tpo src/$(DEPDIR)/unit-eir.Po
+src/unit_test_eir-eir.o: src/eir.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit_test_eir-eir.o -MD -MP -MF src/$(DEPDIR)/unit_test_eir-eir.Tpo -c -o src/unit_test_eir-eir.o `test -f 'src/eir.c' || echo '$(srcdir)/'`src/eir.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit_test_eir-eir.Tpo src/$(DEPDIR)/unit_test_eir-eir.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/eir.c' object='src/unit-eir.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/eir.c' object='src/unit_test_eir-eir.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit-eir.o `test -f 'src/eir.c' || echo '$(srcdir)/'`src/eir.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit_test_eir-eir.o `test -f 'src/eir.c' || echo '$(srcdir)/'`src/eir.c
 
-src/unit-eir.obj: src/eir.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit-eir.obj -MD -MP -MF src/$(DEPDIR)/unit-eir.Tpo -c -o src/unit-eir.obj `if test -f 'src/eir.c'; then $(CYGPATH_W) 'src/eir.c'; else $(CYGPATH_W) '$(srcdir)/src/eir.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit-eir.Tpo src/$(DEPDIR)/unit-eir.Po
+src/unit_test_eir-eir.obj: src/eir.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit_test_eir-eir.obj -MD -MP -MF src/$(DEPDIR)/unit_test_eir-eir.Tpo -c -o src/unit_test_eir-eir.obj `if test -f 'src/eir.c'; then $(CYGPATH_W) 'src/eir.c'; else $(CYGPATH_W) '$(srcdir)/src/eir.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit_test_eir-eir.Tpo src/$(DEPDIR)/unit_test_eir-eir.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/eir.c' object='src/unit-eir.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/eir.c' object='src/unit_test_eir-eir.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit-eir.obj `if test -f 'src/eir.c'; then $(CYGPATH_W) 'src/eir.c'; else $(CYGPATH_W) '$(srcdir)/src/eir.c'; fi`
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit_test_eir-eir.obj `if test -f 'src/eir.c'; then $(CYGPATH_W) 'src/eir.c'; else $(CYGPATH_W) '$(srcdir)/src/eir.c'; fi`
 
-src/unit-glib-helper.o: src/glib-helper.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit-glib-helper.o -MD -MP -MF src/$(DEPDIR)/unit-glib-helper.Tpo -c -o src/unit-glib-helper.o `test -f 'src/glib-helper.c' || echo '$(srcdir)/'`src/glib-helper.c
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit-glib-helper.Tpo src/$(DEPDIR)/unit-glib-helper.Po
+src/unit_test_eir-glib-helper.o: src/glib-helper.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit_test_eir-glib-helper.o -MD -MP -MF src/$(DEPDIR)/unit_test_eir-glib-helper.Tpo -c -o src/unit_test_eir-glib-helper.o `test -f 'src/glib-helper.c' || echo '$(srcdir)/'`src/glib-helper.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit_test_eir-glib-helper.Tpo src/$(DEPDIR)/unit_test_eir-glib-helper.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/glib-helper.c' object='src/unit-glib-helper.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/glib-helper.c' object='src/unit_test_eir-glib-helper.o' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit-glib-helper.o `test -f 'src/glib-helper.c' || echo '$(srcdir)/'`src/glib-helper.c
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit_test_eir-glib-helper.o `test -f 'src/glib-helper.c' || echo '$(srcdir)/'`src/glib-helper.c
 
-src/unit-glib-helper.obj: src/glib-helper.c
-@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit-glib-helper.obj -MD -MP -MF src/$(DEPDIR)/unit-glib-helper.Tpo -c -o src/unit-glib-helper.obj `if test -f 'src/glib-helper.c'; then $(CYGPATH_W) 'src/glib-helper.c'; else $(CYGPATH_W) '$(srcdir)/src/glib-helper.c'; fi`
-@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit-glib-helper.Tpo src/$(DEPDIR)/unit-glib-helper.Po
+src/unit_test_eir-glib-helper.obj: src/glib-helper.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -MT src/unit_test_eir-glib-helper.obj -MD -MP -MF src/$(DEPDIR)/unit_test_eir-glib-helper.Tpo -c -o src/unit_test_eir-glib-helper.obj `if test -f 'src/glib-helper.c'; then $(CYGPATH_W) 'src/glib-helper.c'; else $(CYGPATH_W) '$(srcdir)/src/glib-helper.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/unit_test_eir-glib-helper.Tpo src/$(DEPDIR)/unit_test_eir-glib-helper.Po
 @am__fastdepCC_FALSE@	$(AM_V_CC) @AM_BACKSLASH@
-@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/glib-helper.c' object='src/unit-glib-helper.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='src/glib-helper.c' object='src/unit_test_eir-glib-helper.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
-@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit-glib-helper.obj `if test -f 'src/glib-helper.c'; then $(CYGPATH_W) 'src/glib-helper.c'; else $(CYGPATH_W) '$(srcdir)/src/glib-helper.c'; fi`
+@am__fastdepCC_FALSE@	$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(unit_test_eir_CFLAGS) $(CFLAGS) -c -o src/unit_test_eir-glib-helper.obj `if test -f 'src/glib-helper.c'; then $(CYGPATH_W) 'src/glib-helper.c'; else $(CYGPATH_W) '$(srcdir)/src/glib-helper.c'; fi`
 
 .l.c:
 	$(AM_V_LEX)$(am__skiplex) $(SHELL) $(YLWRAP) $< $(LEX_OUTPUT_ROOT).c $@ -- $(LEXCOMPILE)
@@ -5642,7 +5625,7 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
 audio/telephony.c: audio/@TELEPHONY_DRIVER@
-	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
+	$(AM_V_GEN)$(LN_S) $(abs_top_builddir)/$< $@
 
 sap/sap.c: sap/@SAP_DRIVER@
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
@@ -5654,7 +5637,7 @@ $(lib_libbluetooth_la_OBJECTS): $(local_headers)
 
 lib/bluetooth/%.h: lib/%.h
 	$(AM_V_at)$(MKDIR_P) lib/bluetooth
-	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
+	$(AM_V_GEN)$(LN_S) $(abs_top_builddir)/$< $@
 
 clean-local:
 	$(RM) -r lib/bluetooth

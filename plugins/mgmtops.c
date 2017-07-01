@@ -350,6 +350,16 @@ static void mgmt_new_settings(int sk, uint16_t index, void *buf, size_t len)
 	info->current_settings = settings;
 }
 
+static void bonding_complete(struct controller_info *info, bdaddr_t *bdaddr,
+								uint8_t status)
+{
+	struct btd_adapter *adapter;
+
+	adapter = manager_find_adapter(&info->bdaddr);
+	if (adapter != NULL)
+		adapter_bonding_complete(adapter, bdaddr, status);
+}
+
 static void mgmt_new_link_key(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_new_link_key *ev = buf;
@@ -382,7 +392,7 @@ static void mgmt_new_link_key(int sk, uint16_t index, void *buf, size_t len)
 						ev->key.val, ev->key.type,
 						ev->key.pin_len);
 
-	btd_event_bonding_complete(&info->bdaddr, &ev->key.bdaddr, 0);
+	bonding_complete(info, &ev->key.bdaddr, 0);
 }
 
 static void mgmt_device_connected(int sk, uint16_t index, void *buf, size_t len)
@@ -461,8 +471,7 @@ static void mgmt_connect_failed(int sk, uint16_t index, void *buf, size_t len)
 	btd_event_conn_failed(&info->bdaddr, &ev->addr.bdaddr, ev->status);
 
 	/* In the case of security mode 3 devices */
-	btd_event_bonding_complete(&info->bdaddr, &ev->addr.bdaddr,
-								ev->status);
+	bonding_complete(info, &ev->addr.bdaddr, ev->status);
 }
 
 static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin,
@@ -909,8 +918,7 @@ static void disconnect_complete(int sk, uint16_t index, void *buf, size_t len)
 
 	btd_event_disconn_complete(&info->bdaddr, &rp->bdaddr);
 
-	btd_event_bonding_complete(&info->bdaddr, &rp->bdaddr,
-						HCI_CONNECTION_TERMINATED);
+	bonding_complete(info, &rp->bdaddr, HCI_CONNECTION_TERMINATED);
 }
 
 static void pair_device_complete(int sk, uint16_t index, void *buf, size_t len)
@@ -935,8 +943,7 @@ static void pair_device_complete(int sk, uint16_t index, void *buf, size_t len)
 
 	info = &controllers[index];
 
-	btd_event_bonding_complete(&info->bdaddr, &rp->addr.bdaddr,
-								rp->status);
+	bonding_complete(info, &rp->addr.bdaddr, rp->status);
 }
 
 static void get_connections_complete(int sk, uint16_t index, void *buf,
@@ -1208,7 +1215,7 @@ static void mgmt_auth_failed(int sk, uint16_t index, void *buf, size_t len)
 
 	info = &controllers[index];
 
-	btd_event_bonding_complete(&info->bdaddr, &ev->bdaddr, ev->status);
+	bonding_complete(info, &ev->bdaddr, ev->status);
 }
 
 static void mgmt_local_name_changed(int sk, uint16_t index, void *buf, size_t len)
@@ -1234,6 +1241,20 @@ static void mgmt_local_name_changed(int sk, uint16_t index, void *buf, size_t le
 	adapter = manager_find_adapter(&info->bdaddr);
 	if (adapter)
 		adapter_name_changed(adapter, (char *) ev->name);
+}
+
+static inline addr_type_t mgmt_addr_type(uint8_t mgmt_addr_type)
+{
+	switch (mgmt_addr_type) {
+	case MGMT_ADDR_BREDR:
+		return ADDR_TYPE_BREDR;
+	case MGMT_ADDR_LE_PUBLIC:
+		return ADDR_TYPE_LE_PUBLIC;
+	case MGMT_ADDR_LE_RANDOM:
+		return ADDR_TYPE_LE_RANDOM;
+	default:
+		return ADDR_TYPE_BREDR;
+	}
 }
 
 static void mgmt_device_found(int sk, uint16_t index, void *buf, size_t len)
@@ -1266,12 +1287,14 @@ static void mgmt_device_found(int sk, uint16_t index, void *buf, size_t len)
 		eir = ev->eir;
 
 	ba2str(&ev->addr.bdaddr, addr);
-	DBG("hci%u addr %s, class %u rssi %d %s", index, addr, cls,
-						ev->rssi, eir ? "eir" : "");
-
-	btd_event_device_found(&info->bdaddr, &ev->addr.bdaddr, cls,
+	DBG("hci%u addr %s, class %u rssi %d cfm_name %u %s", index, addr, cls,
 						ev->rssi, ev->confirm_name,
-						eir, HCI_MAX_EIR_LENGTH);
+						eir ? "eir" : "");
+
+	btd_event_device_found(&info->bdaddr, &ev->addr.bdaddr,
+					mgmt_addr_type(ev->addr.type), cls,
+					ev->rssi, ev->confirm_name,
+					eir, HCI_MAX_EIR_LENGTH);
 }
 
 static void mgmt_remote_name(int sk, uint16_t index, void *buf, size_t len)
@@ -1295,7 +1318,7 @@ static void mgmt_remote_name(int sk, uint16_t index, void *buf, size_t len)
 	ba2str(&ev->bdaddr, addr);
 	DBG("hci%u addr %s, name %s", index, addr, ev->name);
 
-	btd_event_remote_name(&info->bdaddr, &ev->bdaddr, 0, (char *) ev->name);
+	btd_event_remote_name(&info->bdaddr, &ev->bdaddr, (char *) ev->name);
 }
 
 static void mgmt_discovering(int sk, uint16_t index, void *buf, size_t len)
@@ -1303,7 +1326,6 @@ static void mgmt_discovering(int sk, uint16_t index, void *buf, size_t len)
 	struct mgmt_mode *ev = buf;
 	struct controller_info *info;
 	struct btd_adapter *adapter;
-	int state;
 
 	if (len < sizeof(*ev)) {
 		error("Too small discovering event");
@@ -1323,12 +1345,7 @@ static void mgmt_discovering(int sk, uint16_t index, void *buf, size_t len)
 	if (!adapter)
 		return;
 
-	if (ev->val)
-		state = STATE_DISCOV;
-	else
-		state = STATE_IDLE;
-
-	adapter_set_state(adapter, state);
+	adapter_set_discovering(adapter, ev->val);
 }
 
 static void mgmt_device_blocked(int sk, uint16_t index, void *buf, size_t len)
@@ -1621,16 +1638,6 @@ static int mgmt_stop_discovery(int index)
 	return 0;
 }
 
-static int mgmt_resolve_name(int index, bdaddr_t *bdaddr)
-{
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("index %d addr %s", index, addr);
-
-	return -ENOSYS;
-}
-
 static int mgmt_set_name(int index, const char *name)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_set_local_name)];
@@ -1650,16 +1657,6 @@ static int mgmt_set_name(int index, const char *name)
 		return -errno;
 
 	return 0;
-}
-
-static int mgmt_cancel_resolve_name(int index, bdaddr_t *bdaddr)
-{
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("index %d addr %s", index, addr);
-
-	return -ENOSYS;
 }
 
 static int mgmt_set_fast_connectable(int index, gboolean enable)
@@ -2065,8 +2062,6 @@ static struct btd_adapter_ops mgmt_ops = {
 	.set_limited_discoverable = mgmt_set_limited_discoverable,
 	.start_discovery = mgmt_start_discovery,
 	.stop_discovery = mgmt_stop_discovery,
-	.resolve_name = mgmt_resolve_name,
-	.cancel_resolve_name = mgmt_cancel_resolve_name,
 	.set_name = mgmt_set_name,
 	.set_dev_class = mgmt_set_dev_class,
 	.set_fast_connectable = mgmt_set_fast_connectable,

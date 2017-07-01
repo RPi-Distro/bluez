@@ -131,11 +131,6 @@ builtin_modules += pnat
 builtin_sources += plugins/pnat.c
 endif
 
-if ECHOPLUGIN
-builtin_modules += echo
-builtin_sources += plugins/echo.c
-endif
-
 if AUDIOPLUGIN
 builtin_modules += audio
 builtin_sources += audio/main.c \
@@ -441,7 +436,8 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @CAPNG_CFLAGS@
 
 INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 			-I$(srcdir)/audio -I$(srcdir)/sbc -I$(srcdir)/gdbus \
-			-I$(srcdir)/attrib -I$(srcdir)/btio
+			-I$(srcdir)/attrib -I$(srcdir)/btio -I$(srcdir)/tools \
+			-I$(builddir)/tools
 
 if MCAP
 INCLUDES += -I$(builddir)/health
@@ -449,6 +445,7 @@ endif
 
 unit_objects =
 
+if TEST
 unit_tests = unit/test-eir
 
 noinst_PROGRAMS += $(unit_tests)
@@ -456,8 +453,10 @@ noinst_PROGRAMS += $(unit_tests)
 unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/glib-helper.c
 unit_test_eir_LDADD = lib/libbluetooth-private.la @GLIB_LIBS@ @CHECK_LIBS@
 unit_test_eir_CFLAGS = $(AM_CFLAGS) @CHECK_CFLAGS@
-unit_test_eir_SHORTNAME = unit
 unit_objects += $(unit_test_eir_OBJECTS)
+else
+unit_tests =
+endif
 
 TESTS = $(unit_tests)
 
@@ -477,7 +476,7 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
 audio/telephony.c: audio/@TELEPHONY_DRIVER@
-	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
+	$(AM_V_GEN)$(LN_S) $(abs_top_builddir)/$< $@
 
 sap/sap.c: sap/@SAP_DRIVER@
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
@@ -489,7 +488,7 @@ $(lib_libbluetooth_la_OBJECTS): $(local_headers)
 
 lib/bluetooth/%.h: lib/%.h
 	$(AM_V_at)$(MKDIR_P) lib/bluetooth
-	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
+	$(AM_V_GEN)$(LN_S) $(abs_top_builddir)/$< $@
 
 clean-local:
 	$(RM) -r lib/bluetooth

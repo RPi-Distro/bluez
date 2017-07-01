@@ -32,8 +32,6 @@
 #include <glib.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
 #include <bluetooth/uuid.h>
 
 #include "glib-compat.h"
@@ -151,7 +149,7 @@ static void gatt_get_address(struct gatt_service *gatt,
 
 	adapter = device_get_adapter(device);
 	adapter_get_address(adapter, sba);
-	device_get_address(device, dba);
+	device_get_address(device, dba, NULL);
 }
 
 static int characteristic_handle_cmp(gconstpointer a, gconstpointer b)
@@ -320,7 +318,7 @@ static void attio_connected(GAttrib *attrib, gpointer user_data)
 {
 	struct gatt_service *gatt = user_data;
 
-	gatt->attrib = attrib;
+	gatt->attrib = g_attrib_ref(attrib);
 
 	g_attrib_register(gatt->attrib, ATT_OP_HANDLE_NOTIFY,
 					events_handler, gatt, NULL);
@@ -334,7 +332,10 @@ static void attio_disconnected(gpointer user_data)
 {
 	struct gatt_service *gatt = user_data;
 
-	gatt->attrib = NULL;
+	if (gatt->attrib) {
+		g_attrib_unref(gatt->attrib);
+		gatt->attrib = NULL;
+	}
 }
 
 static DBusMessage *register_watcher(DBusConnection *conn,
@@ -419,15 +420,17 @@ static DBusMessage *set_value(DBusConnection *conn, DBusMessage *msg,
 
 	characteristic_set_value(chr, value, len);
 
-	if (gatt->attioid == 0) {
+	if (gatt->attioid == 0)
 		gatt->attioid = btd_device_add_attio_callback(gatt->dev,
 							attio_connected,
 							attio_disconnected,
 							gatt);
-		gatt->offline_chars = g_slist_append(gatt->offline_chars, chr);
-	} else
+
+	if (gatt->attrib)
 		gatt_write_cmd(gatt->attrib, chr->handle, value, len,
 								NULL, NULL);
+	else
+		gatt->offline_chars = g_slist_append(gatt->offline_chars, chr);
 
 	return dbus_message_new_method_return(msg);
 }
@@ -894,7 +897,7 @@ static void send_discover(GAttrib *attrib, gpointer user_data)
 	struct gatt_service *gatt = qchr->gatt;
 	struct att_primary *prim = gatt->prim;
 
-	gatt->attrib = attrib;
+	gatt->attrib = g_attrib_ref(attrib);
 
 	gatt_discover_char(gatt->attrib, prim->start, prim->end, NULL,
 						char_discovered_cb, qchr);
@@ -905,6 +908,7 @@ static void cancel_discover(gpointer user_data)
 	struct query_data *qchr = user_data;
 	struct gatt_service *gatt = qchr->gatt;
 
+	g_attrib_unref(gatt->attrib);
 	gatt->attrib = NULL;
 }
 

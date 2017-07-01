@@ -52,7 +52,19 @@
 
 #include "attrib-server.h"
 
-static GSList *database = NULL;
+static GSList *servers = NULL;
+
+struct gatt_server {
+	struct btd_adapter *adapter;
+	GIOChannel *l2cap_io;
+	GIOChannel *le_io;
+	uint32_t gatt_sdp_handle;
+	uint32_t gap_sdp_handle;
+	GSList *database;
+	GSList *clients;
+	uint16_t name_handle;
+	uint16_t appearance_handle;
+};
 
 struct gatt_channel {
 	bdaddr_t src;
@@ -62,6 +74,7 @@ struct gatt_channel {
 	gboolean le;
 	guint id;
 	gboolean encrypted;
+	struct gatt_server *server;
 };
 
 struct group_elem {
@@ -70,16 +83,6 @@ struct group_elem {
 	uint8_t *data;
 	uint16_t len;
 };
-
-static GIOChannel *l2cap_io = NULL;
-static GIOChannel *le_io = NULL;
-static GSList *clients = NULL;
-static uint32_t gatt_sdp_handle = 0;
-static uint32_t gap_sdp_handle = 0;
-
-/* GAP attribute handles */
-static uint16_t name_handle = 0x0000;
-static uint16_t appearance_handle = 0x0000;
 
 static bt_uuid_t prim_uuid = {
 			.type = BT_UUID16,
@@ -93,6 +96,87 @@ static bt_uuid_t ccc_uuid = {
 			.type = BT_UUID16,
 			.value.u16 = GATT_CLIENT_CHARAC_CFG_UUID
 };
+
+static void attrib_free(void *data)
+{
+	struct attribute *a = data;
+
+	g_free(a->data);
+	g_free(a);
+}
+
+static void channel_free(struct gatt_channel *channel)
+{
+	g_attrib_unref(channel->attrib);
+
+	g_free(channel);
+}
+
+static void gatt_server_free(struct gatt_server *server)
+{
+	g_slist_free_full(server->database, attrib_free);
+
+	if (server->l2cap_io != NULL) {
+		g_io_channel_unref(server->l2cap_io);
+		g_io_channel_shutdown(server->l2cap_io, FALSE, NULL);
+	}
+
+	if (server->le_io != NULL) {
+		g_io_channel_unref(server->le_io);
+		g_io_channel_shutdown(server->le_io, FALSE, NULL);
+	}
+
+	g_slist_free_full(server->clients, (GDestroyNotify) channel_free);
+
+	if (server->gatt_sdp_handle > 0)
+		remove_record_from_server(server->gatt_sdp_handle);
+
+	if (server->gap_sdp_handle > 0)
+		remove_record_from_server(server->gap_sdp_handle);
+
+	if (server->adapter != NULL)
+		btd_adapter_unref(server->adapter);
+
+	g_free(server);
+}
+
+static gint adapter_cmp_addr(gconstpointer a, gconstpointer b)
+{
+	const struct gatt_server *server = a;
+	const bdaddr_t *bdaddr = b;
+	bdaddr_t src;
+
+	adapter_get_address(server->adapter, &src);
+
+	return bacmp(&src, bdaddr);
+}
+
+static gint adapter_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct gatt_server *server = a;
+	const struct btd_adapter *adapter = b;
+
+	if (server->adapter == adapter)
+		return 0;
+
+	return -1;
+}
+
+static struct gatt_server *find_gatt_server(const bdaddr_t *bdaddr)
+{
+	GSList *l;
+
+	l = g_slist_find_custom(servers, bdaddr, adapter_cmp_addr);
+	if (l == NULL) {
+		char addr[18];
+
+		ba2str(bdaddr, addr);
+		error("Not GATT adapter found for address %s", addr);
+		return NULL;
+	}
+
+	return l->data;
+}
 
 static sdp_record_t *server_record_new(uuid_t *uuid, uint16_t start, uint16_t end)
 {
@@ -165,6 +249,111 @@ static int attribute_cmp(gconstpointer a1, gconstpointer a2)
 	return attrib1->handle - attrib2->handle;
 }
 
+static struct attribute *find_primary_range(struct gatt_server *server,
+						uint16_t start, uint16_t *end)
+{
+	struct attribute *attrib;
+	guint h = start;
+	GSList *l;
+
+	if (end == NULL)
+		return NULL;
+
+	l = g_slist_find_custom(server->database, GUINT_TO_POINTER(h),
+								handle_cmp);
+	if (!l)
+		return NULL;
+
+	attrib = l->data;
+
+	if (bt_uuid_cmp(&attrib->uuid, &prim_uuid) != 0)
+		return NULL;
+
+	*end = start;
+
+	for (l = l->next; l; l = l->next) {
+		struct attribute *a = l->data;
+
+		if (bt_uuid_cmp(&a->uuid, &prim_uuid) == 0 ||
+				bt_uuid_cmp(&a->uuid, &snd_uuid) == 0)
+			break;
+
+		*end = a->handle;
+	}
+
+	return attrib;
+}
+
+static uint32_t attrib_create_sdp_new(struct gatt_server *server,
+					uint16_t handle, const char *name)
+{
+	sdp_record_t *record;
+	struct attribute *a;
+	uint16_t end = 0;
+	uuid_t svc, gap_uuid;
+	bdaddr_t addr;
+
+	a = find_primary_range(server, handle, &end);
+
+	if (a == NULL)
+		return 0;
+
+	if (a->len == 2)
+		sdp_uuid16_create(&svc, att_get_u16(a->data));
+	else if (a->len == 16)
+		sdp_uuid128_create(&svc, a->data);
+	else
+		return 0;
+
+	record = server_record_new(&svc, handle, end);
+	if (record == NULL)
+		return 0;
+
+	if (name != NULL)
+		sdp_set_info_attr(record, name, "BlueZ", NULL);
+
+	sdp_uuid16_create(&gap_uuid, GENERIC_ACCESS_PROFILE_ID);
+	if (sdp_uuid_cmp(&svc, &gap_uuid) == 0) {
+		sdp_set_url_attr(record, "http://www.bluez.org/",
+				"http://www.bluez.org/",
+				"http://www.bluez.org/");
+	}
+
+	adapter_get_address(server->adapter, &addr);
+	if (add_record_to_server(&addr, record) == 0)
+		return record->handle;
+
+	sdp_record_free(record);
+	return 0;
+}
+
+static struct attribute *attrib_db_add_new(struct gatt_server *server,
+				uint16_t handle, bt_uuid_t *uuid, int read_reqs,
+				int write_reqs, const uint8_t *value, int len)
+{
+	struct attribute *a;
+	guint h = handle;
+
+	DBG("handle=0x%04x", handle);
+
+	if (g_slist_find_custom(server->database, GUINT_TO_POINTER(h),
+								handle_cmp))
+		return NULL;
+
+	a = g_new0(struct attribute, 1);
+	a->len = len;
+	a->data = g_memdup(value, len);
+	a->handle = handle;
+	a->uuid = *uuid;
+	a->read_reqs = read_reqs;
+	a->write_reqs = write_reqs;
+
+	server->database = g_slist_insert_sorted(server->database, a,
+								attribute_cmp);
+
+	return a;
+}
+
 static uint8_t att_check_reqs(struct gatt_channel *channel, uint8_t opcode,
 								int reqs)
 {
@@ -206,7 +395,7 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 	struct att_data_list *adl;
 	struct attribute *a;
 	struct group_elem *cur, *old = NULL;
-	GSList *l, *groups;
+	GSList *l, *groups, *database;
 	uint16_t length, last_handle, last_size = 0;
 	uint8_t status;
 	int i;
@@ -226,6 +415,7 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 					ATT_ECODE_UNSUPP_GRP_TYPE, pdu, len);
 
 	last_handle = end;
+	database = channel->server->database;
 	for (l = database, groups = NULL, cur = NULL; l; l = l->next) {
 
 		a = l->data;
@@ -317,7 +507,7 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 						uint8_t *pdu, int len)
 {
 	struct att_data_list *adl;
-	GSList *l, *types;
+	GSList *l, *types, *database;
 	struct attribute *a;
 	uint16_t num, length;
 	uint8_t status;
@@ -327,6 +517,7 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 		return enc_error_resp(ATT_OP_READ_BY_TYPE_REQ, start,
 					ATT_ECODE_INVALID_HANDLE, pdu, len);
 
+	database = channel->server->database;
 	for (l = database, length = 0, types = NULL; l; l = l->next) {
 
 		a = l->data;
@@ -393,11 +584,12 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 	return length;
 }
 
-static int find_info(uint16_t start, uint16_t end, uint8_t *pdu, int len)
+static int find_info(struct gatt_channel *channel, uint16_t start, uint16_t end,
+							uint8_t *pdu, int len)
 {
 	struct attribute *a;
 	struct att_data_list *adl;
-	GSList *l, *info;
+	GSList *l, *info, *database;
 	uint8_t format, last_type = BT_UUID_UNSPEC;
 	uint16_t length, num;
 	int i;
@@ -406,6 +598,7 @@ static int find_info(uint16_t start, uint16_t end, uint8_t *pdu, int len)
 		return enc_error_resp(ATT_OP_FIND_INFO_REQ, start,
 					ATT_ECODE_INVALID_HANDLE, pdu, len);
 
+	database = channel->server->database;
 	for (l = database, info = NULL, num = 0; l; l = l->next) {
 		a = l->data;
 
@@ -465,12 +658,13 @@ static int find_info(uint16_t start, uint16_t end, uint8_t *pdu, int len)
 	return length;
 }
 
-static int find_by_type(uint16_t start, uint16_t end, bt_uuid_t *uuid,
-			const uint8_t *value, int vlen, uint8_t *opdu, int mtu)
+static int find_by_type(struct gatt_channel *channel, uint16_t start,
+			uint16_t end, bt_uuid_t *uuid, const uint8_t *value,
+					int vlen, uint8_t *opdu, int mtu)
 {
 	struct attribute *a;
 	struct att_range *range;
-	GSList *l, *matches;
+	GSList *l, *matches, *database;
 	int len;
 
 	if (start > end || start == 0x0000)
@@ -478,6 +672,7 @@ static int find_by_type(uint16_t start, uint16_t end, bt_uuid_t *uuid,
 					ATT_ECODE_INVALID_HANDLE, opdu, mtu);
 
 	/* Searching first requested handle number */
+	database = channel->server->database;
 	for (l = database, matches = NULL, range = NULL; l; l = l->next) {
 		a = l->data;
 
@@ -521,39 +716,6 @@ static int find_by_type(uint16_t start, uint16_t end, bt_uuid_t *uuid,
 	return len;
 }
 
-static struct attribute *find_primary_range(uint16_t start, uint16_t *end)
-{
-	struct attribute *attrib;
-	guint h = start;
-	GSList *l;
-
-	if (end == NULL)
-		return NULL;
-
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
-	if (!l)
-		return NULL;
-
-	attrib = l->data;
-
-	if (bt_uuid_cmp(&attrib->uuid, &prim_uuid) != 0)
-		return NULL;
-
-	*end = start;
-
-	for (l = l->next; l; l = l->next) {
-		struct attribute *a = l->data;
-
-		if (bt_uuid_cmp(&a->uuid, &prim_uuid) == 0 ||
-				bt_uuid_cmp(&a->uuid, &snd_uuid) == 0)
-			break;
-
-		*end = a->handle;
-	}
-
-	return attrib;
-}
-
 static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 							uint8_t *pdu, int len)
 {
@@ -563,7 +725,8 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 	uint16_t cccval;
 	guint h = handle;
 
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	l = g_slist_find_custom(channel->server->database,
+					GUINT_TO_POINTER(h), handle_cmp);
 	if (!l)
 		return enc_error_resp(ATT_OP_READ_REQ, handle,
 					ATT_ECODE_INVALID_HANDLE, pdu, len);
@@ -600,7 +763,8 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 	uint16_t cccval;
 	guint h = handle;
 
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	l = g_slist_find_custom(channel->server->database,
+					GUINT_TO_POINTER(h), handle_cmp);
 	if (!l)
 		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
 					ATT_ECODE_INVALID_HANDLE, pdu, len);
@@ -642,7 +806,8 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 	GSList *l;
 	guint h = handle;
 
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	l = g_slist_find_custom(channel->server->database,
+					GUINT_TO_POINTER(h), handle_cmp);
 	if (!l)
 		return enc_error_resp(ATT_OP_WRITE_REQ, handle,
 				ATT_ECODE_INVALID_HANDLE, pdu, len);
@@ -656,7 +821,8 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 
 	if (bt_uuid_cmp(&ccc_uuid, &a->uuid) != 0) {
 
-		attrib_db_update(handle, NULL, value, vlen, NULL);
+		attrib_db_update(channel->server->adapter, handle, NULL,
+							value, vlen, NULL);
 
 		if (a->write_cb) {
 			status = a->write_cb(a, a->cb_user_data);
@@ -682,33 +848,19 @@ static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
 	else
 		channel->mtu = MIN(mtu, channel->mtu);
 
-	bt_io_set(le_io, BT_IO_L2CAP, NULL,
+	bt_io_set(channel->server->le_io, BT_IO_L2CAP, NULL,
 			BT_IO_OPT_OMTU, channel->mtu,
 			BT_IO_OPT_INVALID);
 
 	return enc_mtu_resp(old_mtu, pdu, len);
 }
 
-static void attrib_free(void *data)
-{
-	struct attribute *a = data;
-
-	g_free(a->data);
-	g_free(a);
-}
-
-static void channel_free(struct gatt_channel *channel)
-{
-	g_attrib_unref(channel->attrib);
-
-	g_free(channel);
-}
-
 static void channel_disconnect(void *user_data)
 {
 	struct gatt_channel *channel = user_data;
 
-	clients = g_slist_remove(clients, channel);
+	channel->server->clients = g_slist_remove(channel->server->clients,
+								channel);
 	channel_free(channel);
 }
 
@@ -784,7 +936,7 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		length = find_info(start, end, opdu, channel->mtu);
+		length = find_info(channel, start, end, opdu, channel->mtu);
 		break;
 	case ATT_OP_WRITE_REQ:
 		length = dec_write_req(ipdu, len, &start, value, &vlen);
@@ -810,7 +962,7 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		length = find_by_type(start, end, &uuid, value, vlen,
+		length = find_by_type(channel, start, end, &uuid, value, vlen,
 							opdu, channel->mtu);
 		break;
 	case ATT_OP_HANDLE_CNF:
@@ -838,7 +990,7 @@ done:
 
 guint attrib_channel_attach(GAttrib *attrib, gboolean out)
 {
-	struct btd_adapter *adapter;
+	struct gatt_server *server;
 	struct btd_device *device;
 	struct gatt_channel *channel;
 	GIOChannel *io;
@@ -863,10 +1015,14 @@ guint attrib_channel_attach(GAttrib *attrib, gboolean out)
 		return 0;
 	}
 
-	adapter = manager_find_adapter(&channel->src);
+	server = find_gatt_server(&channel->src);
+	if (server == NULL)
+		return 0;
+
+	channel->server = server;
 
 	ba2str(&channel->dst, addr);
-	device = adapter_find_device(adapter, addr);
+	device = adapter_find_device(server->adapter, addr);
 
 	if (device_is_bonded(device) == FALSE)
 		delete_device_ccc(&channel->src, &channel->dst);
@@ -888,7 +1044,7 @@ guint attrib_channel_attach(GAttrib *attrib, gboolean out)
 		g_attrib_set_disconnect_function(channel->attrib,
 						channel_disconnect, channel);
 
-	clients = g_slist_append(clients, channel);
+	server->clients = g_slist_append(server->clients, channel);
 
 	return channel->id;
 }
@@ -901,13 +1057,32 @@ static gint channel_id_cmp(gconstpointer data, gconstpointer user_data)
 	return channel->id - id;
 }
 
-gboolean attrib_channel_detach(guint id)
+gboolean attrib_channel_detach(GAttrib *attrib, guint id)
 {
+	struct gatt_server *server;
 	struct gatt_channel *channel;
+	GError *gerr = NULL;
+	GIOChannel *io;
+	bdaddr_t src;
 	GSList *l;
 
-	l = g_slist_find_custom(clients, GUINT_TO_POINTER(id),
-						channel_id_cmp);
+	io = g_attrib_get_channel(attrib);
+
+	bt_io_get(io, BT_IO_L2CAP, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src,
+							BT_IO_OPT_INVALID);
+
+	if (gerr != NULL) {
+		error("bt_io_get: %s", gerr->message);
+		g_error_free(gerr);
+		return FALSE;
+	}
+
+	server = find_gatt_server(&src);
+	if (server == NULL)
+		return FALSE;
+
+	l = g_slist_find_custom(server->clients, GUINT_TO_POINTER(id),
+								channel_id_cmp);
 	if (!l)
 		return FALSE;
 
@@ -948,7 +1123,7 @@ static void confirm_event(GIOChannel *io, void *user_data)
 	return;
 }
 
-static gboolean register_core_services(void)
+static gboolean register_core_services(struct gatt_server *server)
 {
 	uint8_t atval[256];
 	bt_uuid_t uuid;
@@ -957,170 +1132,137 @@ static gboolean register_core_services(void)
 	/* GAP service: primary service definition */
 	bt_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
 	att_put_u16(GENERIC_ACCESS_PROFILE_ID, &atval[0]);
-	attrib_db_add(0x0001, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 2);
+	attrib_db_add_new(server, 0x0001, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+								atval, 2);
 
 	/* GAP service: device name characteristic */
-	name_handle = 0x0006;
+	server->name_handle = 0x0006;
 	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
 	atval[0] = ATT_CHAR_PROPER_READ;
-	att_put_u16(name_handle, &atval[1]);
+	att_put_u16(server->name_handle, &atval[1]);
 	att_put_u16(GATT_CHARAC_DEVICE_NAME, &atval[3]);
-	attrib_db_add(0x0004, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 5);
+	attrib_db_add_new(server, 0x0004, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+								atval, 5);
 
 	/* GAP service: device name attribute */
 	bt_uuid16_create(&uuid, GATT_CHARAC_DEVICE_NAME);
-	attrib_db_add(name_handle, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
-								NULL, 0);
+	attrib_db_add_new(server, server->name_handle, &uuid, ATT_NONE,
+						ATT_NOT_PERMITTED, NULL, 0);
 
 	/* GAP service: device appearance characteristic */
-	appearance_handle = 0x0008;
+	server->appearance_handle = 0x0008;
 	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
 	atval[0] = ATT_CHAR_PROPER_READ;
-	att_put_u16(appearance_handle, &atval[1]);
+	att_put_u16(server->appearance_handle, &atval[1]);
 	att_put_u16(GATT_CHARAC_APPEARANCE, &atval[3]);
-	attrib_db_add(0x0007, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 5);
+	attrib_db_add_new(server, 0x0007, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+								atval, 5);
 
 	/* GAP service: device appearance attribute */
 	bt_uuid16_create(&uuid, GATT_CHARAC_APPEARANCE);
 	att_put_u16(appearance, &atval[0]);
-	attrib_db_add(appearance_handle, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
-								atval, 2);
-	gap_sdp_handle = attrib_create_sdp(0x0001, "Generic Access Profile");
-	if (gap_sdp_handle == 0) {
+	attrib_db_add_new(server, server->appearance_handle, &uuid, ATT_NONE,
+						ATT_NOT_PERMITTED, atval, 2);
+	server->gap_sdp_handle = attrib_create_sdp_new(server, 0x0001,
+						"Generic Access Profile");
+	if (server->gap_sdp_handle == 0) {
 		error("Failed to register GAP service record");
-		goto failed;
+		return FALSE;
 	}
 
 	/* GATT service: primary service definition */
 	bt_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
 	att_put_u16(GENERIC_ATTRIB_PROFILE_ID, &atval[0]);
-	attrib_db_add(0x0010, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 2);
+	attrib_db_add_new(server, 0x0010, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+								atval, 2);
 
-	gatt_sdp_handle = attrib_create_sdp(0x0010,
+	server->gatt_sdp_handle = attrib_create_sdp_new(server, 0x0010,
 						"Generic Attribute Profile");
-	if (gatt_sdp_handle == 0) {
+	if (server->gatt_sdp_handle == 0) {
 		error("Failed to register GATT service record");
-		goto failed;
+		return FALSE;
 	}
 
 	return TRUE;
-
-failed:
-	if (gap_sdp_handle)
-		remove_record_from_server(gap_sdp_handle);
-
-	return FALSE;
 }
 
-int attrib_server_init(void)
+int btd_adapter_gatt_server_start(struct btd_adapter *adapter)
 {
+	struct gatt_server *server;
 	GError *gerr = NULL;
+	bdaddr_t addr;
+
+	DBG("Start GATT server in hci%d", adapter_get_dev_id(adapter));
+
+	server = g_new0(struct gatt_server, 1);
+	server->adapter = btd_adapter_ref(adapter);
+
+	adapter_get_address(server->adapter, &addr);
 
 	/* BR/EDR socket */
-	l2cap_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
+	server->l2cap_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
 					NULL, NULL, &gerr,
-					BT_IO_OPT_SOURCE_BDADDR, BDADDR_ANY,
+					BT_IO_OPT_SOURCE_BDADDR, &addr,
 					BT_IO_OPT_PSM, ATT_PSM,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
-	if (l2cap_io == NULL) {
+
+	if (server->l2cap_io == NULL) {
 		error("%s", gerr->message);
 		g_error_free(gerr);
+		gatt_server_free(server);
 		return -1;
 	}
 
-	if (!register_core_services())
-		goto failed;
+	if (!register_core_services(server)) {
+		gatt_server_free(server);
+		return -1;
+	}
 
 	/* LE socket */
-	le_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
-					&le_io, NULL, &gerr,
-					BT_IO_OPT_SOURCE_BDADDR, BDADDR_ANY,
+	server->le_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
+					&server->le_io, NULL, &gerr,
+					BT_IO_OPT_SOURCE_BDADDR, &addr,
 					BT_IO_OPT_CID, ATT_CID,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
-	if (le_io == NULL) {
+
+	if (server->le_io == NULL) {
 		error("%s", gerr->message);
 		g_error_free(gerr);
 		/* Doesn't have LE support, continue */
 	}
 
+	servers = g_slist_prepend(servers, server);
 	return 0;
-
-failed:
-	g_io_channel_unref(l2cap_io);
-	l2cap_io = NULL;
-
-	if (le_io) {
-		g_io_channel_unref(le_io);
-		le_io = NULL;
-	}
-
-	return -1;
 }
 
-void attrib_server_exit(void)
+void btd_adapter_gatt_server_stop(struct btd_adapter *adapter)
 {
-	g_slist_free_full(database, attrib_free);
+	struct gatt_server *server;
+	GSList *l;
 
-	if (l2cap_io) {
-		g_io_channel_unref(l2cap_io);
-		g_io_channel_shutdown(l2cap_io, FALSE, NULL);
-	}
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
+		return;
 
-	if (le_io) {
-		g_io_channel_unref(le_io);
-		g_io_channel_shutdown(le_io, FALSE, NULL);
-	}
+	DBG("Stop GATT server in hci%d", adapter_get_dev_id(adapter));
 
-	g_slist_free_full(clients, (GDestroyNotify) channel_free);
-
-	if (gatt_sdp_handle)
-		remove_record_from_server(gatt_sdp_handle);
-
-	if (gap_sdp_handle)
-		remove_record_from_server(gap_sdp_handle);
+	server = l->data;
+	servers = g_slist_remove(servers, server);
+	gatt_server_free(server);
 }
 
-uint32_t attrib_create_sdp(uint16_t handle, const char *name)
+uint32_t attrib_create_sdp(struct btd_adapter *adapter, uint16_t handle,
+							const char *name)
 {
-	sdp_record_t *record;
-	struct attribute *a;
-	uint16_t end = 0;
-	uuid_t svc, gap_uuid;
+	GSList *l;
 
-	a = find_primary_range(handle, &end);
-
-	if (a == NULL)
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
 		return 0;
 
-	if (a->len == 2)
-		sdp_uuid16_create(&svc, att_get_u16(a->data));
-	else if (a->len == 16)
-		sdp_uuid128_create(&svc, a->data);
-	else
-		return 0;
-
-	record = server_record_new(&svc, handle, end);
-	if (record == NULL)
-		return 0;
-
-	if (name)
-		sdp_set_info_attr(record, name, "BlueZ", NULL);
-
-	sdp_uuid16_create(&gap_uuid, GENERIC_ACCESS_PROFILE_ID);
-	if (sdp_uuid_cmp(&svc, &gap_uuid) == 0) {
-		sdp_set_url_attr(record, "http://www.bluez.org/",
-				"http://www.bluez.org/",
-				"http://www.bluez.org/");
-	}
-
-	if (add_record_to_server(BDADDR_ANY, record) < 0)
-		sdp_record_free(record);
-	else
-		return record->handle;
-
-	return 0;
+	return attrib_create_sdp_new(l->data, handle, name);
 }
 
 void attrib_free_sdp(uint32_t sdp_handle)
@@ -1128,14 +1270,21 @@ void attrib_free_sdp(uint32_t sdp_handle)
 	remove_record_from_server(sdp_handle);
 }
 
-uint16_t attrib_db_find_avail(uint16_t nitems)
+uint16_t attrib_db_find_avail(struct btd_adapter *adapter, uint16_t nitems)
 {
+	struct gatt_server *server;
 	uint16_t handle;
 	GSList *l;
 
 	g_assert(nitems > 0);
 
-	for (l = database, handle = 0; l; l = l->next) {
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
+		return 0;
+
+	server = l->data;
+
+	for (l = server->database, handle = 0; l; l = l->next) {
 		struct attribute *a = l->data;
 
 		if (handle && (bt_uuid_cmp(&a->uuid, &prim_uuid) == 0 ||
@@ -1156,40 +1305,39 @@ uint16_t attrib_db_find_avail(uint16_t nitems)
 	return 0;
 }
 
-struct attribute *attrib_db_add(uint16_t handle, bt_uuid_t *uuid, int read_reqs,
-				int write_reqs, const uint8_t *value, int len)
+struct attribute *attrib_db_add(struct btd_adapter *adapter, uint16_t handle,
+				bt_uuid_t *uuid, int read_reqs, int write_reqs,
+						const uint8_t *value, int len)
 {
-	struct attribute *a;
-	guint h = handle;
+	GSList *l;
 
-	DBG("handle=0x%04x", handle);
-
-	if (g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp))
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
 		return NULL;
 
-	a = g_new0(struct attribute, 1);
-	a->len = len;
-	a->data = g_memdup(value, len);
-	a->handle = handle;
-	a->uuid = *uuid;
-	a->read_reqs = read_reqs;
-	a->write_reqs = write_reqs;
-
-	database = g_slist_insert_sorted(database, a, attribute_cmp);
-
-	return a;
+	return attrib_db_add_new(l->data, handle, uuid, read_reqs, write_reqs,
+								value, len);
 }
 
-int attrib_db_update(uint16_t handle, bt_uuid_t *uuid, const uint8_t *value,
+int attrib_db_update(struct btd_adapter *adapter, uint16_t handle,
+					bt_uuid_t *uuid, const uint8_t *value,
 					int len, struct attribute **attr)
 {
+	struct gatt_server *server;
 	struct attribute *a;
 	GSList *l;
 	guint h = handle;
 
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
+		return -ENOENT;
+
+	server = l->data;
+
 	DBG("handle=0x%04x", handle);
 
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	l = g_slist_find_custom(server->database, GUINT_TO_POINTER(h),
+								handle_cmp);
 	if (!l)
 		return -ENOENT;
 
@@ -1211,42 +1359,59 @@ int attrib_db_update(uint16_t handle, bt_uuid_t *uuid, const uint8_t *value,
 	return 0;
 }
 
-int attrib_db_del(uint16_t handle)
+int attrib_db_del(struct btd_adapter *adapter, uint16_t handle)
 {
+	struct gatt_server *server;
 	struct attribute *a;
 	GSList *l;
 	guint h = handle;
 
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
+		return -ENOENT;
+
+	server = l->data;
+
 	DBG("handle=0x%04x", handle);
 
-	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	l = g_slist_find_custom(server->database, GUINT_TO_POINTER(h),
+								handle_cmp);
 	if (!l)
 		return -ENOENT;
 
 	a = l->data;
-	database = g_slist_remove(database, a);
+	server->database = g_slist_remove(server->database, a);
 	g_free(a->data);
 	g_free(a);
 
 	return 0;
 }
 
-int attrib_gap_set(uint16_t uuid, const uint8_t *value, int len)
+int attrib_gap_set(struct btd_adapter *adapter, uint16_t uuid,
+						const uint8_t *value, int len)
 {
+	struct gatt_server *server;
 	uint16_t handle;
+	GSList *l;
+
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (l == NULL)
+		return -ENOENT;
+
+	server = l->data;
 
 	/* FIXME: Missing Privacy and Reconnection Address */
 
 	switch (uuid) {
 	case GATT_CHARAC_DEVICE_NAME:
-		handle = name_handle;
+		handle = server->name_handle;
 		break;
 	case GATT_CHARAC_APPEARANCE:
-		handle = appearance_handle;
+		handle = server->appearance_handle;
 		break;
 	default:
 		return -ENOSYS;
 	}
 
-	return attrib_db_update(handle, NULL, value, len, NULL);
+	return attrib_db_update(adapter, handle, NULL, value, len, NULL);
 }
