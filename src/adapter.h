@@ -37,19 +37,10 @@
 #define MODE_UNKNOWN		0xff
 
 /* Discover states */
-#define STATE_IDLE		0x00
-#define STATE_LE_SCAN		0x01
-#define STATE_STDINQ		0x02
-#define STATE_PINQ		0x04
-#define STATE_RESOLVNAME	0x08
-#define STATE_SUSPENDED		0x10
-
-/* Supported host/controller discover type */
-#define DISC_LE			0x01
-#define DISC_STDINQ		0x02
-#define DISC_INTERLEAVE		0x04
-#define DISC_PINQ		0x08
-#define DISC_RESOLVNAME		0x10
+#define STATE_IDLE		0
+#define STATE_DISCOV		1
+#define STATE_RESOLVNAME	2
+#define STATE_SUSPENDED		3
 
 #define MAX_NAME_LENGTH		248
 
@@ -84,7 +75,6 @@ struct remote_dev_info {
 	char **uuids;
 	size_t uuid_count;
 	GSList *services;
-	uint8_t evt_type;
 	uint8_t bdaddr_type;
 	uint8_t flags;
 };
@@ -118,14 +108,9 @@ int adapter_get_state(struct btd_adapter *adapter);
 int adapter_get_discover_type(struct btd_adapter *adapter);
 struct remote_dev_info *adapter_search_found_devices(struct btd_adapter *adapter,
 						struct remote_dev_info *match);
-void adapter_update_device_from_info(struct btd_adapter *adapter,
-					bdaddr_t bdaddr, int8_t rssi,
-					uint8_t evt_type, const char *name,
-					GSList *services, int flags);
 void adapter_update_found_devices(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-				int8_t rssi, uint32_t class, const char *name,
-				const char *alias, gboolean legacy,
-				GSList *services, name_status_t name_status);
+						uint32_t class, int8_t rssi,
+						uint8_t *data);
 int adapter_remove_found_device(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 void adapter_emit_device_found(struct btd_adapter *adapter,
 						struct remote_dev_info *dev);
@@ -187,10 +172,8 @@ struct btd_adapter_ops {
 	int (*set_discoverable) (int index, gboolean discoverable);
 	int (*set_pairable) (int index, gboolean pairable);
 	int (*set_limited_discoverable) (int index, gboolean limited);
-	int (*start_inquiry) (int index, uint8_t length, gboolean periodic);
-	int (*stop_inquiry) (int index);
-	int (*start_scanning) (int index);
-	int (*stop_scanning) (int index);
+	int (*start_discovery) (int index);
+	int (*stop_discovery) (int index);
 
 	int (*resolve_name) (int index, bdaddr_t *bdaddr);
 	int (*cancel_resolve_name) (int index, bdaddr_t *bdaddr);
@@ -206,7 +189,8 @@ struct btd_adapter_ops {
 	int (*read_local_features) (int index, uint8_t *features);
 	int (*disconnect) (int index, bdaddr_t *bdaddr);
 	int (*remove_bonding) (int index, bdaddr_t *bdaddr);
-	int (*pincode_reply) (int index, bdaddr_t *bdaddr, const char *pin);
+	int (*pincode_reply) (int index, bdaddr_t *bdaddr, const char *pin,
+							size_t pin_len);
 	int (*confirm_reply) (int index, bdaddr_t *bdaddr, gboolean success);
 	int (*passkey_reply) (int index, bdaddr_t *bdaddr, uint32_t passkey);
 	int (*enable_le) (int index);
@@ -258,14 +242,11 @@ int btd_adapter_disconnect_device(struct btd_adapter *adapter,
 int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr);
 
 int btd_adapter_pincode_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-							const char *pin);
+					const char *pin, size_t pin_len);
 int btd_adapter_confirm_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 							gboolean success);
 int btd_adapter_passkey_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 							uint32_t passkey);
-
-void btd_adapter_update_local_ext_features(struct btd_adapter *adapter,
-						const uint8_t *features);
 
 int btd_adapter_encrypt_link(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 				bt_hci_result_t cb, gpointer user_data);

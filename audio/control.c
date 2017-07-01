@@ -80,6 +80,7 @@
 #define CTYPE_STABLE		0xC
 
 /* opcodes */
+#define OP_VENDORDEP		0x00
 #define OP_UNITINFO		0x30
 #define OP_SUBUNITINFO		0x31
 #define OP_PASSTHROUGH		0x7c
@@ -127,6 +128,16 @@ struct avrcp_header {
 } __attribute__ ((packed));
 #define AVRCP_HEADER_LENGTH 3
 
+struct avrcp_spec_avc_pdu {
+	uint8_t company_id[3];
+	uint8_t pdu_id;
+	uint8_t packet_type:2;
+	uint8_t rsvd:6;
+	uint16_t params_len;
+	uint8_t params[0];
+} __attribute__ ((packed));
+#define AVRCP_SPECAVCPDU_HEADER_LENGTH 7
+
 #elif __BYTE_ORDER == __BIG_ENDIAN
 
 struct avctp_header {
@@ -146,6 +157,16 @@ struct avrcp_header {
 	uint8_t opcode;
 } __attribute__ ((packed));
 #define AVRCP_HEADER_LENGTH 3
+
+struct avrcp_spec_avc_pdu {
+	uint8_t company_id[3];
+	uint8_t pdu_id;
+	uint8_t rsvd:6;
+	uint8_t packet_type:2;
+	uint16_t params_len;
+	uint8_t params[0];
+} __attribute__ ((packed));
+#define AVRCP_SPECAVCPDU_HEADER_LENGTH 7
 
 #else
 #error "Unknown byte order"
@@ -200,7 +221,7 @@ static GSList *avctp_callbacks = NULL;
 
 static void auth_cb(DBusError *derr, void *user_data);
 
-static sdp_record_t *avrcp_ct_record()
+static sdp_record_t *avrcp_ct_record(void)
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
 	uuid_t root_uuid, l2cap, avctp, avrct;
@@ -264,7 +285,7 @@ static sdp_record_t *avrcp_ct_record()
 	return record;
 }
 
-static sdp_record_t *avrcp_tg_record()
+static sdp_record_t *avrcp_tg_record(void)
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
 	uuid_t root_uuid, l2cap, avctp, avrtg;
@@ -569,11 +590,30 @@ static gboolean control_cb(GIOChannel *chan, GIOCondition cond,
 			operands[1] = SUBUNIT_PANEL << 3;
 		DBG("reply to %s", avrcp->opcode == OP_UNITINFO ?
 				"OP_UNITINFO" : "OP_SUBUNITINFO");
+	} else if (avrcp->opcode == OP_VENDORDEP) {
+		/* Reply with REJECT msg with error code 0x0
+		 * (Invalid Command) as defined in AVRCP spec (6.15.1) */
+		struct avrcp_spec_avc_pdu *pdu = (void *) operands;
+
+		avctp->cr = AVCTP_RESPONSE;
+		avrcp->code = CTYPE_REJECTED;
+
+		pdu->packet_type = 0;
+		pdu->rsvd = 0;
+		pdu->params[0] = 0; /* invalid command */
+		pdu->params_len = htons(1);
+
+		packet_size =  sizeof(struct avctp_header)
+					+ sizeof(struct avrcp_header)
+					+ sizeof(struct avrcp_spec_avc_pdu)
+					+ 1;
 	} else {
 		avctp->cr = AVCTP_RESPONSE;
 		avrcp->code = CTYPE_REJECTED;
 	}
 	ret = write(sock, buf, packet_size);
+	if (ret != packet_size)
+		goto failed;
 
 	return TRUE;
 
@@ -910,10 +950,8 @@ int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 
 static struct avctp_server *find_server(GSList *list, const bdaddr_t *src)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct avctp_server *server = l->data;
+	for (; list; list = list->next) {
+		struct avctp_server *server = list->data;
 
 		if (bacmp(&server->src, src) == 0)
 			return server;

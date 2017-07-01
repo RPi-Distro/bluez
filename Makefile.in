@@ -474,7 +474,7 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 	src/error.h src/error.c src/manager.h src/manager.c \
 	src/adapter.h src/adapter.c src/device.h src/device.c \
 	src/dbus-common.c src/dbus-common.h src/event.h src/event.c \
-	src/oob.h src/oob.c
+	src/oob.h src/oob.c src/eir.h src/eir.c
 @PNATPLUGIN_TRUE@am__objects_3 = plugins/pnat.$(OBJEXT)
 @ECHOPLUGIN_TRUE@am__objects_4 = plugins/echo.$(OBJEXT)
 @AUDIOPLUGIN_TRUE@am__objects_5 = audio/main.$(OBJEXT) \
@@ -538,7 +538,7 @@ am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_17) \
 	src/agent.$(OBJEXT) src/error.$(OBJEXT) src/manager.$(OBJEXT) \
 	src/adapter.$(OBJEXT) src/device.$(OBJEXT) \
 	src/dbus-common.$(OBJEXT) src/event.$(OBJEXT) \
-	src/oob.$(OBJEXT)
+	src/oob.$(OBJEXT) src/eir.$(OBJEXT)
 @AUDIOPLUGIN_TRUE@am__objects_22 = audio/telephony.$(OBJEXT)
 @SAPPLUGIN_TRUE@am__objects_23 = sap/sap.$(OBJEXT)
 am__objects_24 = $(am__objects_22) $(am__objects_23)
@@ -1004,7 +1004,7 @@ local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 14:1:11
+lib_libbluetooth_la_LDFLAGS = -version-info 14:2:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 @SBC_TRUE@			sbc/sbc_primitives.h sbc/sbc_primitives.c \
@@ -1071,7 +1071,7 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/device.h src/device.c \
 			src/dbus-common.c src/dbus-common.h \
 			src/event.h src/event.c \
-			src/oob.h src/oob.c
+			src/oob.h src/oob.c src/eir.h src/eir.c
 
 src_bluetoothd_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @DBUS_LIBS@ \
 							@CAPNG_LIBS@ -ldl -lrt
@@ -1169,7 +1169,7 @@ man_MANS = src/bluetoothd.8
 @BCCMD_TRUE@	tools/ubcsp.c $(am__append_44)
 @BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_45)
 @HID2HCI_TRUE@udevdir = @UDEV_DIR@
-@PCMCIA_TRUE@udevdir = $(libexecdir)/udev
+@PCMCIA_TRUE@udevdir = @UDEV_DIR@
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@ @UDEV_LIBS@
 @DFUTOOL_TRUE@tools_dfutool_SOURCES = tools/dfutool.c tools/dfu.h tools/dfu.c
 @DFUTOOL_TRUE@tools_dfutool_LDADD = @USB_LIBS@
@@ -1991,6 +1991,7 @@ src/dbus-common.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/event.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 src/oob.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
+src/eir.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 audio/telephony.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 sap/sap.$(OBJEXT): sap/$(am__dirstamp) sap/$(DEPDIR)/$(am__dirstamp)
@@ -2388,6 +2389,7 @@ mostlyclean-compile:
 	-rm -f src/attrib-server.$(OBJEXT)
 	-rm -f src/dbus-common.$(OBJEXT)
 	-rm -f src/device.$(OBJEXT)
+	-rm -f src/eir.$(OBJEXT)
 	-rm -f src/error.$(OBJEXT)
 	-rm -f src/event.$(OBJEXT)
 	-rm -f src/glib-helper.$(OBJEXT)
@@ -2569,6 +2571,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/attrib-server.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/dbus-common.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/device.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/eir.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/error.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/event.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/glib-helper.Po@am__quote@

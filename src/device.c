@@ -127,9 +127,6 @@ struct btd_device {
 
 	gboolean	connected;
 
-	/* Whether were creating a security mode 3 connection */
-	gboolean	secmode3;
-
 	sdp_list_t	*tmp_records;
 
 	gboolean	trusted;
@@ -1567,7 +1564,7 @@ static void store_services(struct btd_device *device)
 {
 	struct btd_adapter *adapter = device->adapter;
 	bdaddr_t dba, sba;
-	char *str = primary_list_to_string(device->services);
+	char *str = primary_list_to_string(device->primaries);
 
 	adapter_get_address(adapter, &sba);
 	device_get_address(device, &dba);
@@ -2436,4 +2433,12 @@ void btd_device_unref(struct btd_device *device)
 	g_dbus_unregister_interface(conn, path, DEVICE_INTERFACE);
 
 	g_free(path);
+}
+
+void device_set_class(struct btd_device *device, uint32_t value)
+{
+	DBusConnection *conn = get_dbus_connection();
+
+	emit_property_changed(conn, device->path, DEVICE_INTERFACE, "Class",
+				DBUS_TYPE_UINT32, &value);
 }

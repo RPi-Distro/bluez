@@ -260,7 +260,7 @@ static gint cmp_chan_mdl(gconstpointer a, gconstpointer mdl)
 	return -1;
 }
 
-static uint8_t get_app_id()
+static uint8_t get_app_id(void)
 {
 	uint8_t id = next_app_id;
 
@@ -587,7 +587,6 @@ static void device_reconnect_mdl_cb(struct mcap_mdl *mdl, GError *err,
 	g_dbus_send_message(dc_data->conn, reply);
 	hdp_tmp_dc_data_unref(dc_data);
 	g_error_free(gerr);
-	gerr = NULL;
 
 	/* Send abort request because remote side is now in PENDING state */
 	if (!mcap_mdl_abort(mdl, abort_mdl_cb, NULL, NULL, &gerr)) {
@@ -1288,7 +1287,7 @@ static void mcl_uncached(struct mcap_mcl *mcl, gpointer data)
 	DBG("Mcl uncached %s", path);
 }
 
-static void check_devices_mcl()
+static void check_devices_mcl(void)
 {
 	struct hdp_device *dev;
 	GSList *l, *to_delete = NULL;
@@ -1471,7 +1470,7 @@ static void destroy_create_dc_data(gpointer data)
 	hdp_create_data_unref(dc_data);
 }
 
-static void *generate_echo_packet()
+static void *generate_echo_packet(void)
 {
 	uint8_t *buf;
 	int i;
@@ -1736,7 +1735,6 @@ static void device_create_mdl_cb(struct mcap_mdl *mdl, uint8_t conf,
 
 	error("%s", gerr->message);
 	g_error_free(gerr);
-	gerr = NULL;
 
 	reply = g_dbus_create_reply(hdp_conn->msg,
 					DBUS_TYPE_OBJECT_PATH, &hdp_chan->path,
@@ -1758,7 +1756,6 @@ fail:
 						"%s", gerr->message);
 	g_dbus_send_message(user_data->conn, reply);
 	g_error_free(gerr);
-	gerr = NULL;
 
 	/* Send abort request because remote side is now in PENDING */
 	/* state. Then we have to delete it because we couldn't */
@@ -2193,7 +2190,7 @@ int hdp_manager_start(DBusConnection *conn)
 	return 0;
 }
 
-void hdp_manager_stop()
+void hdp_manager_stop(void)
 {
 	g_dbus_unregister_interface(connection, MANAGER_PATH, HEALTH_MANAGER);
 

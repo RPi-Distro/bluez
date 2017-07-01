@@ -61,6 +61,10 @@
 
 #define MAX_SEID 0x3E
 
+#ifndef MAX
+# define MAX(x, y) ((x) > (y) ? (x) : (y))
+#endif
+
 #define AVDTP_DISCOVER				0x01
 #define AVDTP_GET_CAPABILITIES			0x02
 #define AVDTP_SET_CONFIGURATION			0x03
@@ -453,10 +457,8 @@ static void auth_cb(DBusError *derr, void *user_data);
 
 static struct avdtp_server *find_server(GSList *list, const bdaddr_t *src)
 {
-	GSList *l;
-
-	for (l = list; l; l = l->next) {
-		struct avdtp_server *server = l->data;
+	for (; list; list = list->next) {
+		struct avdtp_server *server = list->data;
 
 		if (bacmp(&server->src, src) == 0)
 			return server;
@@ -2217,10 +2219,8 @@ failed:
 
 static struct avdtp *find_session(GSList *list, const bdaddr_t *dst)
 {
-	GSList *l;
-
-	for (l = list; l != NULL; l = g_slist_next(l)) {
-		struct avdtp *s = l->data;
+	for (; list != NULL; list = g_slist_next(list)) {
+		struct avdtp *s = list->data;
 
 		if (bacmp(dst, &s->dst))
 			continue;
@@ -2352,7 +2352,7 @@ static void avdtp_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	if (session->state == AVDTP_SESSION_STATE_CONNECTING) {
 		DBG("AVDTP imtu=%u, omtu=%u", session->imtu, session->omtu);
 
-		session->buf = g_malloc0(session->imtu);
+		session->buf = g_malloc0(MAX(session->imtu, session->omtu));
 		avdtp_set_state(session, AVDTP_SESSION_STATE_CONNECTED);
 
 		if (session->io_id)
@@ -2656,8 +2656,10 @@ static int send_req(struct avdtp *session, gboolean priority,
 
 	if (session->state == AVDTP_SESSION_STATE_DISCONNECTED) {
 		session->io = l2cap_connect(session);
-		if (!session->io)
+		if (!session->io) {
+			err = -EIO;
 			goto failed;
+		}
 		avdtp_set_state(session, AVDTP_SESSION_STATE_CONNECTING);
 	}
 
@@ -3189,10 +3191,8 @@ gboolean avdtp_stream_has_capability(struct avdtp_stream *stream,
 gboolean avdtp_stream_has_capabilities(struct avdtp_stream *stream,
 					GSList *caps)
 {
-	GSList *l;
-
-	for (l = caps; l; l = g_slist_next(l)) {
-		struct avdtp_service_capability *cap = l->data;
+	for (; caps; caps = g_slist_next(caps)) {
+		struct avdtp_service_capability *cap = caps->data;
 
 		if (!avdtp_stream_has_capability(stream, cap))
 			return FALSE;
@@ -3861,9 +3861,15 @@ void avdtp_exit(const bdaddr_t *src)
 	if (!server)
 		return;
 
-	for (l = server->sessions; l; l = l->next) {
+	l = server->sessions;
+	while (l) {
 		struct avdtp *session = l->data;
 
+		l = l->next;
+		/* value of l pointer should be updated before invoking
+		 * connection_lost since it internally uses avdtp_unref
+		 * which operates on server->session list as well
+		 */
 		connection_lost(session, -ECONNABORTED);
 	}
 

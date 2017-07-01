@@ -40,6 +40,10 @@
 
 #include "btio.h"
 
+#ifndef BT_FLUSHABLE
+#define BT_FLUSHABLE	8
+#endif
+
 #define ERROR_FAILED(gerr, str, err) \
 		g_set_error(gerr, BT_IO_ERROR, BT_IO_ERROR_FAILED, \
 				str ": %s (%d)", strerror(err), err)
@@ -800,7 +804,7 @@ static gboolean l2cap_get(int sock, GError **err, BtIOOption opt1,
 	uint8_t dev_class[3];
 	uint16_t handle;
 	socklen_t len;
-	gboolean flushable;
+	gboolean flushable = FALSE;
 
 	len = sizeof(l2o);
 	memset(&l2o, 0, len);
@@ -1133,8 +1137,10 @@ gboolean bt_io_accept(GIOChannel *io, BtIOConnect connect, gpointer user_data,
 	}
 
 	if (!(pfd.revents & POLLOUT)) {
-		int ret;
-		ret = read(sock, &c, 1);
+		if (read(sock, &c, 1) < 0) {
+			ERROR_FAILED(err, "read", errno);
+			return FALSE;
+		}
 	}
 
 	accept_add(io, connect, user_data, destroy);

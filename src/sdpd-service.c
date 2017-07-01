@@ -65,7 +65,7 @@ static const int sdpServerVnumEntries = 1;
  * seconds. Used for updating the service db state
  * attribute of the service record of the SDP server
  */
-uint32_t sdp_get_time()
+uint32_t sdp_get_time(void)
 {
 	/*
 	 * To handle failure in gettimeofday, so an old
@@ -411,7 +411,7 @@ int service_register_req(sdp_req_t *req, sdp_buf_t *rsp)
 		bufsize -= sizeof(bdaddr_t);
 	}
 
-	// save image of PDU: we need it when clients request this attribute
+	/* save image of PDU: we need it when clients request this attribute */
 	rec = extract_pdu_server(&req->device, p, bufsize, 0xffffffff, &scanned);
 	if (!rec)
 		goto invalid;
@@ -515,7 +515,6 @@ int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp)
 	int status = 0;
 
 	/* extract service record handle */
-	p += sizeof(uint32_t);
 
 	rec = sdp_record_find(handle);
 	if (rec) {
