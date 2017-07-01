@@ -34,7 +34,7 @@ extern "C" {
 
 #define HCI_MAX_DEV	16
 
-#define HCI_MAX_ACL_SIZE	1024
+#define HCI_MAX_ACL_SIZE	(1492 + 4)
 #define HCI_MAX_SCO_SIZE	255
 #define HCI_MAX_EVENT_SIZE	260
 #define HCI_MAX_FRAME_SIZE	(HCI_MAX_ACL_SIZE + 4)
@@ -1326,6 +1326,14 @@ typedef struct {
 } __attribute__ ((packed)) read_bd_addr_rp;
 #define READ_BD_ADDR_RP_SIZE 7
 
+#define OCF_READ_DATA_BLOCK_SIZE	0x000A
+typedef struct {
+	uint8_t		status;
+	uint16_t	max_acl_len;
+	uint16_t	data_block_len;
+	uint16_t	num_blocks;
+} __attribute__ ((packed)) read_data_block_size_rp;
+
 /* Status params */
 #define OGF_STATUS_PARAM	0x05
 
@@ -1402,22 +1410,23 @@ typedef struct {
 #define OCF_READ_LOCAL_AMP_ASSOC	0x000A
 typedef struct {
 	uint8_t		handle;
-	uint16_t	len_so_far;
-	uint16_t	max_len;
+	uint16_t	length_so_far;
+	uint16_t	assoc_length;
 } __attribute__ ((packed)) read_local_amp_assoc_cp;
-
+#define READ_LOCAL_AMP_ASSOC_CP_SIZE 5
 typedef struct {
 	uint8_t		status;
 	uint8_t		handle;
-	uint16_t	rem_len;
-	uint8_t		frag[0];
+	uint16_t	length;
+	uint8_t		fragment[HCI_MAX_NAME_LENGTH];
 } __attribute__ ((packed)) read_local_amp_assoc_rp;
+#define READ_LOCAL_AMP_ASSOC_RP_SIZE 252
 
 #define OCF_WRITE_REMOTE_AMP_ASSOC	0x000B
 typedef struct {
 	uint8_t		handle;
 	uint16_t	length_so_far;
-	uint16_t	assoc_length;
+	uint16_t	remaining_length;
 	uint8_t		fragment[HCI_MAX_NAME_LENGTH];
 } __attribute__ ((packed)) write_remote_amp_assoc_cp;
 #define WRITE_REMOTE_AMP_ASSOC_CP_SIZE 253
@@ -1492,7 +1501,7 @@ typedef struct {
 #define OCF_LE_READ_ADVERTISING_CHANNEL_TX_POWER	0x0007
 typedef struct {
 	uint8_t		status;
-	uint8_t		level;
+	int8_t		level;
 } __attribute__ ((packed)) le_read_advertising_channel_tx_power_rp;
 #define LE_READ_ADVERTISING_CHANNEL_TX_POWER_RP_SIZE 2
 
@@ -1716,7 +1725,7 @@ typedef struct {
 	uint8_t		link_type;
 	uint8_t		encr_mode;
 } __attribute__ ((packed)) evt_conn_complete;
-#define EVT_CONN_COMPLETE_SIZE 13
+#define EVT_CONN_COMPLETE_SIZE 11
 
 #define EVT_CONN_REQUEST		0x04
 typedef struct {
@@ -2198,6 +2207,16 @@ typedef struct {
 #define EVT_FLOW_SPEC_MODIFY_COMPLETE_SIZE 3
 
 #define EVT_NUMBER_COMPLETED_BLOCKS		0x48
+typedef struct {
+	uint16_t		handle;
+	uint16_t		num_cmplt_pkts;
+	uint16_t		num_cmplt_blks;
+} __attribute__ ((packed)) cmplt_handle;
+typedef struct {
+	uint16_t		total_num_blocks;
+	uint8_t			num_handles;
+	cmplt_handle		handles[0];
+}  __attribute__ ((packed)) evt_num_completed_blocks;
 
 #define EVT_AMP_STATUS_CHANGE			0x4D
 typedef struct {

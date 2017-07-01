@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 
+void control_reader(const char *path);
+void control_server(const char *path);
 int control_tracing(void);
 
 void control_message(uint16_t opcode, const void *data, uint16_t size);

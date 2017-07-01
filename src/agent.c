@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 
@@ -37,35 +38,45 @@
 
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus.h>
+#include <gdbus/gdbus.h>
 
 #include "log.h"
-
+#include "error.h"
+#include "dbus-common.h"
 #include "adapter.h"
 #include "device.h"
 #include "agent.h"
 
+#define IO_CAPABILITY_DISPLAYONLY	0x00
+#define IO_CAPABILITY_DISPLAYYESNO	0x01
+#define IO_CAPABILITY_KEYBOARDONLY	0x02
+#define IO_CAPABILITY_NOINPUTNOOUTPUT	0x03
+#define IO_CAPABILITY_KEYBOARDDISPLAY	0x04
+#define IO_CAPABILITY_INVALID		0xFF
+
 #define REQUEST_TIMEOUT (60 * 1000)		/* 60 seconds */
+#define AGENT_INTERFACE "org.bluez.Agent1"
+
+static GHashTable *agent_list;
+static struct agent *default_agent = NULL;
 
 typedef enum {
 	AGENT_REQUEST_PASSKEY,
 	AGENT_REQUEST_CONFIRMATION,
+	AGENT_REQUEST_AUTHORIZATION,
 	AGENT_REQUEST_PINCODE,
-	AGENT_REQUEST_AUTHORIZE,
+	AGENT_REQUEST_AUTHORIZE_SERVICE,
 	AGENT_REQUEST_CONFIRM_MODE,
 	AGENT_REQUEST_DISPLAY_PINCODE,
 } agent_request_type_t;
 
 struct agent {
-	struct btd_adapter *adapter;
-	char *name;
+	int ref;
+	char *owner;
 	char *path;
 	uint8_t capability;
 	struct agent_request *request;
-	int exited;
-	agent_remove_cb remove_cb;
-	void *remove_cb_data;
-	guint listener_id;
+	guint watch;
 };
 
 struct agent_request {
@@ -78,42 +89,40 @@ struct agent_request {
 	GDestroyNotify destroy;
 };
 
-static DBusConnection *connection = NULL;
-
 static void agent_release(struct agent *agent)
 {
 	DBusMessage *message;
 
-	DBG("Releasing agent %s, %s", agent->name, agent->path);
+	DBG("Releasing agent %s, %s", agent->owner, agent->path);
 
 	if (agent->request)
 		agent_cancel(agent);
 
-	message = dbus_message_new_method_call(agent->name, agent->path,
-			"org.bluez.Agent", "Release");
+	message = dbus_message_new_method_call(agent->owner, agent->path,
+						AGENT_INTERFACE, "Release");
 	if (message == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return;
 	}
 
-	g_dbus_send_message(connection, message);
+	g_dbus_send_message(btd_get_dbus_connection(), message);
 }
 
 static int send_cancel_request(struct agent_request *req)
 {
 	DBusMessage *message;
 
-	DBG("Sending Cancel request to %s, %s", req->agent->name,
+	DBG("Sending Cancel request to %s, %s", req->agent->owner,
 							req->agent->path);
 
-	message = dbus_message_new_method_call(req->agent->name, req->agent->path,
-						"org.bluez.Agent", "Cancel");
+	message = dbus_message_new_method_call(req->agent->owner, req->agent->path,
+						AGENT_INTERFACE, "Cancel");
 	if (message == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
 	}
 
-	g_dbus_send_message(connection, message);
+	g_dbus_send_message(btd_get_dbus_connection(), message);
 
 	return 0;
 }
@@ -131,24 +140,63 @@ static void agent_request_free(struct agent_request *req, gboolean destroy)
 	g_free(req);
 }
 
-static void agent_exited(DBusConnection *conn, void *user_data)
+static void set_io_cap(struct btd_adapter *adapter, gpointer user_data)
+{
+	struct agent *agent = user_data;
+	uint8_t io_cap;
+
+	if (agent)
+		io_cap = agent->capability;
+	else
+		io_cap = IO_CAPABILITY_NOINPUTNOOUTPUT;
+
+	adapter_set_io_capability(adapter, io_cap);
+}
+
+static void set_default_agent(struct agent *agent)
+{
+	if (default_agent == agent)
+		return;
+
+	default_agent = agent;
+
+	adapter_foreach(set_io_cap, agent);
+}
+
+static void agent_disconnect(DBusConnection *conn, void *user_data)
 {
 	struct agent *agent = user_data;
 
-	DBG("Agent exited without calling Unregister");
+	DBG("Agent %s disconnected", agent->owner);
 
-	agent->exited = TRUE;
+	if (agent->watch > 0) {
+		g_dbus_remove_watch(conn, agent->watch);
+		agent->watch = 0;
+	}
 
-	agent_free(agent);
+	if (agent == default_agent)
+		set_default_agent(NULL);
+
+	g_hash_table_remove(agent_list, agent->owner);
 }
 
-void agent_free(struct agent *agent)
+struct agent *agent_ref(struct agent *agent)
 {
-	if (!agent)
-		return;
+	agent->ref++;
 
-	if (agent->remove_cb)
-		agent->remove_cb(agent, agent->remove_cb_data);
+	DBG("%p: ref=%d", agent, agent->ref);
+
+	return agent;
+}
+
+void agent_unref(struct agent *agent)
+{
+	agent->ref--;
+
+	DBG("%p: ref=%d", agent, agent->ref);
+
+	if (agent->ref > 0)
+		return;
 
 	if (agent->request) {
 		DBusError err;
@@ -157,7 +205,8 @@ void agent_free(struct agent *agent)
 		agent_cb cb;
 
 		dbus_error_init(&err);
-		dbus_set_error_const(&err, "org.bluez.Error.Failed", "Canceled");
+		dbus_set_error_const(&err, ERROR_INTERFACE ".Failed",
+								"Canceled");
 
 		switch (agent->request->type) {
 		case AGENT_REQUEST_PINCODE:
@@ -178,37 +227,44 @@ void agent_free(struct agent *agent)
 		agent_cancel(agent);
 	}
 
-	if (!agent->exited) {
-		g_dbus_remove_watch(connection, agent->listener_id);
-		agent_release(agent);
-	}
-
-	g_free(agent->name);
+	g_free(agent->owner);
 	g_free(agent->path);
 
 	g_free(agent);
 }
 
-struct agent *agent_create(struct btd_adapter *adapter, const char *name,
-				const char *path, uint8_t capability,
-				agent_remove_cb cb, void *remove_cb_data)
+struct agent *agent_get(const char *owner)
+{
+	struct agent *agent;
+
+	if (owner) {
+		agent = g_hash_table_lookup(agent_list, owner);
+		if (agent)
+			return agent_ref(agent);
+	}
+
+	if (default_agent)
+		return agent_ref(default_agent);
+
+	return NULL;
+}
+
+static struct agent *agent_create( const char *name, const char *path,
+							uint8_t capability)
 {
 	struct agent *agent;
 
 	agent = g_new0(struct agent, 1);
 
-	agent->adapter = adapter;
-	agent->name = g_strdup(name);
+	agent->owner = g_strdup(name);
 	agent->path = g_strdup(path);
 	agent->capability = capability;
-	agent->remove_cb = cb;
-	agent->remove_cb_data = remove_cb_data;
 
-	agent->listener_id = g_dbus_add_disconnect_watch(connection, name,
-							agent_exited, agent,
-							NULL);
+	agent->watch = g_dbus_add_disconnect_watch(btd_get_dbus_connection(),
+							name, agent_disconnect,
+							agent, NULL);
 
-	return agent;
+	return agent_ref(agent);
 }
 
 static struct agent_request *agent_request_new(struct agent *agent,
@@ -235,11 +291,10 @@ int agent_cancel(struct agent *agent)
 	if (!agent->request)
 		return -EINVAL;
 
-	if (agent->request->call)
+	if (agent->request->call) {
 		dbus_pending_call_cancel(agent->request->call);
-
-	if (!agent->exited)
 		send_cancel_request(agent->request);
+	}
 
 	agent_request_free(agent->request, TRUE);
 	agent->request = NULL;
@@ -261,12 +316,12 @@ static void simple_agent_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
-		error("Agent replied with an error: %s, %s",
-				err.name, err.message);
+		DBG("agent error reply: %s, %s", err.name, err.message);
 
 		cb(agent, &err, req->user_data);
 
 		if (dbus_error_has_name(&err, DBUS_ERROR_NO_REPLY)) {
+			error("Timed out waiting for reply from agent");
 			agent_cancel(agent);
 			dbus_message_unref(message);
 			dbus_error_free(&err);
@@ -292,14 +347,14 @@ done:
 	agent_request_free(req, TRUE);
 }
 
-static int agent_call_authorize(struct agent_request *req,
-				const char *device_path,
-				const char *uuid)
+static int agent_call_authorize_service(struct agent_request *req,
+						const char *device_path,
+						const char *uuid)
 {
 	struct agent *agent = req->agent;
 
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-				"org.bluez.Agent", "Authorize");
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+					AGENT_INTERFACE, "AuthorizeService");
 	if (!req->msg) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
@@ -310,8 +365,9 @@ static int agent_call_authorize(struct agent_request *req,
 				DBUS_TYPE_STRING, &uuid,
 				DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(connection, req->msg,
-					&req->call, REQUEST_TIMEOUT) == FALSE) {
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(),
+						req->msg, &req->call,
+						REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
 	}
@@ -320,12 +376,9 @@ static int agent_call_authorize(struct agent_request *req,
 	return 0;
 }
 
-int agent_authorize(struct agent *agent,
-			const char *path,
-			const char *uuid,
-			agent_cb cb,
-			void *user_data,
-			GDestroyNotify destroy)
+int agent_authorize_service(struct agent *agent, const char *path,
+				const char *uuid, agent_cb cb,
+				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
 	int err;
@@ -333,10 +386,10 @@ int agent_authorize(struct agent *agent,
 	if (agent->request)
 		return -EBUSY;
 
-	req = agent_request_new(agent, AGENT_REQUEST_AUTHORIZE, cb,
+	req = agent_request_new(agent, AGENT_REQUEST_AUTHORIZE_SERVICE, cb,
 							user_data, destroy);
 
-	err = agent_call_authorize(req, path, uuid);
+	err = agent_call_authorize_service(req, path, uuid);
 	if (err < 0) {
 		agent_request_free(req, FALSE);
 		return -ENOMEM;
@@ -344,7 +397,7 @@ int agent_authorize(struct agent *agent,
 
 	agent->request = req;
 
-	DBG("authorize request was sent for %s", path);
+	DBG("authorize service request was sent for %s", path);
 
 	return 0;
 }
@@ -353,15 +406,11 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 {
 	struct agent_request *req = user_data;
 	struct agent *agent = req->agent;
-	struct btd_adapter *adapter = agent->adapter;
 	agent_pincode_cb cb = req->cb;
 	DBusMessage *message;
 	DBusError err;
-	bdaddr_t sba;
 	size_t len;
 	char *pin;
-
-	adapter_get_address(adapter, &sba);
 
 	/* steal_reply will always return non-NULL since the callback
 	 * is only called after a reply has been received */
@@ -390,7 +439,7 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 
 	if (len > 16 || len < 1) {
 		error("Invalid PIN length (%zu) from agent", len);
-		dbus_set_error_const(&err, "org.bluez.Error.InvalidArgs",
+		dbus_set_error_const(&err, ERROR_INTERFACE ".InvalidArgs",
 					"Invalid passkey length");
 		cb(agent, &err, NULL, req->user_data);
 		dbus_error_free(&err);
@@ -416,8 +465,8 @@ static int pincode_request_new(struct agent_request *req, const char *device_pat
 	/* TODO: Add a new method or a new param to Agent interface to request
 		secure pin. */
 
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-					"org.bluez.Agent", "RequestPinCode");
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+					AGENT_INTERFACE, "RequestPinCode");
 	if (req->msg == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
@@ -426,7 +475,7 @@ static int pincode_request_new(struct agent_request *req, const char *device_pat
 	dbus_message_append_args(req->msg, DBUS_TYPE_OBJECT_PATH, &device_path,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(connection, req->msg,
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
 					&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -441,7 +490,7 @@ int agent_request_pincode(struct agent *agent, struct btd_device *device,
 				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
-	const gchar *dev_path = device_get_path(device);
+	const char *dev_path = device_get_path(device);
 	int err;
 
 	if (agent->request)
@@ -451,61 +500,6 @@ int agent_request_pincode(struct agent *agent, struct btd_device *device,
 							user_data, destroy);
 
 	err = pincode_request_new(req, dev_path, secure);
-	if (err < 0)
-		goto failed;
-
-	agent->request = req;
-
-	return 0;
-
-failed:
-	agent_request_free(req, FALSE);
-	return err;
-}
-
-static int confirm_mode_change_request_new(struct agent_request *req,
-						const char *mode)
-{
-	struct agent *agent = req->agent;
-
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-				"org.bluez.Agent", "ConfirmModeChange");
-	if (req->msg == NULL) {
-		error("Couldn't allocate D-Bus message");
-		return -ENOMEM;
-	}
-
-	dbus_message_append_args(req->msg,
-				DBUS_TYPE_STRING, &mode,
-				DBUS_TYPE_INVALID);
-
-	if (dbus_connection_send_with_reply(connection, req->msg,
-					&req->call, REQUEST_TIMEOUT) == FALSE) {
-		error("D-Bus send failed");
-		return -EIO;
-	}
-
-	dbus_pending_call_set_notify(req->call, simple_agent_reply, req, NULL);
-	return 0;
-}
-
-int agent_confirm_mode_change(struct agent *agent, const char *new_mode,
-				agent_cb cb, void *user_data,
-				GDestroyNotify destroy)
-{
-	struct agent_request *req;
-	int err;
-
-	if (agent->request)
-		return -EBUSY;
-
-	DBG("Calling Agent.ConfirmModeChange: name=%s, path=%s, mode=%s",
-			agent->name, agent->path, new_mode);
-
-	req = agent_request_new(agent, AGENT_REQUEST_CONFIRM_MODE,
-				cb, user_data, destroy);
-
-	err = confirm_mode_change_request_new(req, new_mode);
 	if (err < 0)
 		goto failed;
 
@@ -565,8 +559,8 @@ static int passkey_request_new(struct agent_request *req,
 {
 	struct agent *agent = req->agent;
 
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-					"org.bluez.Agent", "RequestPasskey");
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+					AGENT_INTERFACE, "RequestPasskey");
 	if (req->msg == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
@@ -575,7 +569,7 @@ static int passkey_request_new(struct agent_request *req,
 	dbus_message_append_args(req->msg, DBUS_TYPE_OBJECT_PATH, &device_path,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(connection, req->msg,
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
 					&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -590,14 +584,14 @@ int agent_request_passkey(struct agent *agent, struct btd_device *device,
 				GDestroyNotify destroy)
 {
 	struct agent_request *req;
-	const gchar *dev_path = device_get_path(device);
+	const char *dev_path = device_get_path(device);
 	int err;
 
 	if (agent->request)
 		return -EBUSY;
 
 	DBG("Calling Agent.RequestPasskey: name=%s, path=%s",
-			agent->name, agent->path);
+			agent->owner, agent->path);
 
 	req = agent_request_new(agent, AGENT_REQUEST_PASSKEY, cb,
 							user_data, destroy);
@@ -621,8 +615,8 @@ static int confirmation_request_new(struct agent_request *req,
 {
 	struct agent *agent = req->agent;
 
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-				"org.bluez.Agent", "RequestConfirmation");
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+				AGENT_INTERFACE, "RequestConfirmation");
 	if (req->msg == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
@@ -633,7 +627,7 @@ static int confirmation_request_new(struct agent_request *req,
 				DBUS_TYPE_UINT32, &passkey,
 				DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(connection, req->msg,
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
 				&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -649,14 +643,14 @@ int agent_request_confirmation(struct agent *agent, struct btd_device *device,
 				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
-	const gchar *dev_path = device_get_path(device);
+	const char *dev_path = device_get_path(device);
 	int err;
 
 	if (agent->request)
 		return -EBUSY;
 
 	DBG("Calling Agent.RequestConfirmation: name=%s, path=%s, passkey=%06u",
-			agent->name, agent->path, passkey);
+			agent->owner, agent->path, passkey);
 
 	req = agent_request_new(agent, AGENT_REQUEST_CONFIRMATION, cb,
 				user_data, destroy);
@@ -674,14 +668,71 @@ failed:
 	return err;
 }
 
+static int authorization_request_new(struct agent_request *req,
+						const char *device_path)
+{
+	struct agent *agent = req->agent;
+
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+				AGENT_INTERFACE, "RequestAuthorization");
+	if (req->msg == NULL) {
+		error("Couldn't allocate D-Bus message");
+		return -ENOMEM;
+	}
+
+	dbus_message_append_args(req->msg,
+				DBUS_TYPE_OBJECT_PATH, &device_path,
+				DBUS_TYPE_INVALID);
+
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+				&req->call, REQUEST_TIMEOUT) == FALSE) {
+		error("D-Bus send failed");
+		return -EIO;
+	}
+
+	dbus_pending_call_set_notify(req->call, simple_agent_reply, req, NULL);
+
+	return 0;
+}
+
+int agent_request_authorization(struct agent *agent, struct btd_device *device,
+						agent_cb cb, void *user_data,
+						GDestroyNotify destroy)
+{
+	struct agent_request *req;
+	const char *dev_path = device_get_path(device);
+	int err;
+
+	if (agent->request)
+		return -EBUSY;
+
+	DBG("Calling Agent.RequestAuthorization: name=%s, path=%s",
+						agent->owner, agent->path);
+
+	req = agent_request_new(agent, AGENT_REQUEST_AUTHORIZATION, cb,
+				user_data, destroy);
+
+	err = authorization_request_new(req, dev_path);
+	if (err < 0)
+		goto failed;
+
+	agent->request = req;
+
+	return 0;
+
+failed:
+	agent_request_free(req, FALSE);
+	return err;
+}
+
 int agent_display_passkey(struct agent *agent, struct btd_device *device,
-				uint32_t passkey)
+				uint32_t passkey, uint16_t entered)
 {
 	DBusMessage *message;
-	const gchar *dev_path = device_get_path(device);
+	const char *dev_path = device_get_path(device);
 
-	message = dbus_message_new_method_call(agent->name, agent->path,
-				"org.bluez.Agent", "DisplayPasskey");
+	message = dbus_message_new_method_call(agent->owner, agent->path,
+					AGENT_INTERFACE, "DisplayPasskey");
 	if (!message) {
 		error("Couldn't allocate D-Bus message");
 		return -1;
@@ -690,9 +741,10 @@ int agent_display_passkey(struct agent *agent, struct btd_device *device,
 	dbus_message_append_args(message,
 				DBUS_TYPE_OBJECT_PATH, &dev_path,
 				DBUS_TYPE_UINT32, &passkey,
+				DBUS_TYPE_UINT16, &entered,
 				DBUS_TYPE_INVALID);
 
-	if (!g_dbus_send_message(connection, message)) {
+	if (!g_dbus_send_message(btd_get_dbus_connection(), message)) {
 		error("D-Bus send failed");
 		return -1;
 	}
@@ -754,8 +806,8 @@ static int display_pincode_request_new(struct agent_request *req,
 {
 	struct agent *agent = req->agent;
 
-	req->msg = dbus_message_new_method_call(agent->name, agent->path,
-					"org.bluez.Agent", "DisplayPinCode");
+	req->msg = dbus_message_new_method_call(agent->owner, agent->path,
+					AGENT_INTERFACE, "DisplayPinCode");
 	if (req->msg == NULL) {
 		error("Couldn't allocate D-Bus message");
 		return -ENOMEM;
@@ -766,7 +818,7 @@ static int display_pincode_request_new(struct agent_request *req,
 					DBUS_TYPE_STRING, &pincode,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(connection, req->msg,
+	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
 				&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -783,14 +835,14 @@ int agent_display_pincode(struct agent *agent, struct btd_device *device,
 				void *user_data, GDestroyNotify destroy)
 {
 	struct agent_request *req;
-	const gchar *dev_path = device_get_path(device);
+	const char *dev_path = device_get_path(device);
 	int err;
 
 	if (agent->request)
 		return -EBUSY;
 
 	DBG("Calling Agent.DisplayPinCode: name=%s, path=%s, pincode=%s",
-					agent->name, agent->path, pincode);
+					agent->owner, agent->path, pincode);
 
 	req = agent_request_new(agent, AGENT_REQUEST_DISPLAY_PINCODE, cb,
 							user_data, destroy);
@@ -813,32 +865,147 @@ uint8_t agent_get_io_capability(struct agent *agent)
 	return agent->capability;
 }
 
-gboolean agent_matches(struct agent *agent, const char *name, const char *path)
+static void agent_destroy(gpointer data)
 {
-	if (g_str_equal(agent->name, name) && g_str_equal(agent->path, path))
-		return TRUE;
+	struct agent *agent = data;
 
-	return FALSE;
+	DBG("agent %s", agent->owner);
+
+	if (agent->watch > 0) {
+		g_dbus_remove_watch(btd_get_dbus_connection(), agent->watch);
+		agent->watch = 0;
+		agent_release(agent);
+	}
+
+	agent_unref(agent);
 }
 
-gboolean agent_is_busy(struct agent *agent, void *user_data)
+static uint8_t parse_io_capability(const char *capability)
 {
-	if (!agent->request)
-		return FALSE;
-
-	if (user_data && user_data != agent->request->user_data)
-		return FALSE;
-
-	return TRUE;
+	if (g_str_equal(capability, ""))
+		return IO_CAPABILITY_DISPLAYYESNO;
+	if (g_str_equal(capability, "DisplayOnly"))
+		return IO_CAPABILITY_DISPLAYONLY;
+	if (g_str_equal(capability, "DisplayYesNo"))
+		return IO_CAPABILITY_DISPLAYYESNO;
+	if (g_str_equal(capability, "KeyboardOnly"))
+		return IO_CAPABILITY_KEYBOARDONLY;
+	if (g_str_equal(capability, "NoInputNoOutput"))
+		return IO_CAPABILITY_NOINPUTNOOUTPUT;
+	if (g_str_equal(capability, "KeyboardDisplay"))
+		return IO_CAPABILITY_KEYBOARDDISPLAY;
+	return IO_CAPABILITY_INVALID;
 }
 
-void agent_exit(void)
+static DBusMessage *register_agent(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
 {
-	dbus_connection_unref(connection);
-	connection = NULL;
+	struct agent *agent;
+	const char *sender, *path, *capability;
+	uint8_t cap;
+
+	sender = dbus_message_get_sender(msg);
+
+	agent = g_hash_table_lookup(agent_list, sender);
+	if (agent)
+		return btd_error_already_exists(msg);
+
+	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_OBJECT_PATH, &path,
+						DBUS_TYPE_STRING, &capability,
+						DBUS_TYPE_INVALID) == FALSE)
+		return btd_error_invalid_args(msg);
+
+	cap = parse_io_capability(capability);
+	if (cap == IO_CAPABILITY_INVALID)
+		return btd_error_invalid_args(msg);
+
+	agent = agent_create(sender, path, cap);
+	if (!agent)
+		return btd_error_invalid_args(msg);
+
+	DBG("agent %s", agent->owner);
+
+	g_hash_table_replace(agent_list, agent->owner, agent);
+
+	return dbus_message_new_method_return(msg);
 }
 
-void agent_init(void)
+static DBusMessage *unregister_agent(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
 {
-	connection = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
+	struct agent *agent;
+	const char *sender, *path;
+
+	sender = dbus_message_get_sender(msg);
+
+	agent = g_hash_table_lookup(agent_list, sender);
+	if (!agent)
+		return btd_error_does_not_exist(msg);
+
+	DBG("agent %s", agent->owner);
+
+	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_OBJECT_PATH, &path,
+						DBUS_TYPE_INVALID) == FALSE)
+		return btd_error_invalid_args(msg);
+
+	if (g_str_equal(path, agent->path) == FALSE)
+		return btd_error_does_not_exist(msg);
+
+	agent_disconnect(conn, agent);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *request_default(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct agent *agent;
+	const char *sender, *path;
+
+	sender = dbus_message_get_sender(msg);
+
+	agent = g_hash_table_lookup(agent_list, sender);
+	if (!agent)
+		return btd_error_does_not_exist(msg);
+
+	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_OBJECT_PATH, &path,
+						DBUS_TYPE_INVALID) == FALSE)
+		return btd_error_invalid_args(msg);
+
+	if (g_str_equal(path, agent->path) == FALSE)
+		return btd_error_does_not_exist(msg);
+
+	set_default_agent(agent);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static const GDBusMethodTable methods[] = {
+	{ GDBUS_METHOD("RegisterAgent",
+			GDBUS_ARGS({ "agent", "o"}, { "capability", "s" }),
+			NULL, register_agent) },
+	{ GDBUS_METHOD("UnregisterAgent", GDBUS_ARGS({ "agent", "o" }),
+			NULL, unregister_agent) },
+	{ GDBUS_METHOD("RequestDefaultAgent", GDBUS_ARGS({ "agent", "o" }),
+			NULL, request_default ) },
+	{ }
+};
+
+void btd_agent_init(void)
+{
+	agent_list = g_hash_table_new_full(g_str_hash, g_str_equal,
+						NULL, agent_destroy);
+
+	g_dbus_register_interface(btd_get_dbus_connection(),
+				"/org/bluez", "org.bluez.AgentManager1",
+				methods, NULL, NULL, NULL, NULL);
+}
+
+void btd_agent_cleanup(void)
+{
+	g_dbus_unregister_interface(btd_get_dbus_connection(),
+				"/org/bluez", "org.bluez.AgentManager1");
+
+	set_default_agent(NULL);
+	g_hash_table_destroy(agent_list);
 }

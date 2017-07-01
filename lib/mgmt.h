@@ -79,7 +79,7 @@ struct mgmt_rp_read_index_list {
 
 /* Reserve one extra byte for names in management messages so that they
  * are always guaranteed to be nul-terminated */
-#define MGMT_MAX_NAME_LENGTH		(HCI_MAX_NAME_LENGTH + 1)
+#define MGMT_MAX_NAME_LENGTH		(248 + 1)
 #define MGMT_MAX_SHORT_NAME_LENGTH	(10 + 1)
 
 #define MGMT_SETTING_POWERED		0x00000001
@@ -107,6 +107,10 @@ struct mgmt_rp_read_info {
 
 struct mgmt_mode {
 	uint8_t val;
+} __packed;
+
+struct mgmt_cod {
+	uint8_t val[3];
 } __packed;
 
 #define MGMT_OP_SET_POWERED		0x0005
@@ -369,9 +373,15 @@ struct mgmt_ev_device_connected {
 	uint8_t eir[0];
 } __packed;
 
+#define MGMT_DEV_DISCONN_UNKNOWN	0x00
+#define MGMT_DEV_DISCONN_TIMEOUT	0x01
+#define MGMT_DEV_DISCONN_LOCAL_HOST	0x02
+#define MGMT_DEV_DISCONN_REMOTE		0x03
+
 #define MGMT_EV_DEVICE_DISCONNECTED	0x000C
 struct mgmt_ev_device_disconnected {
 	struct mgmt_addr_info addr;
+	uint8_t reason;
 } __packed;
 
 #define MGMT_EV_CONNECT_FAILED		0x000D
@@ -435,6 +445,13 @@ struct mgmt_ev_device_unblocked {
 #define MGMT_EV_DEVICE_UNPAIRED		0x0016
 struct mgmt_ev_device_unpaired {
 	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_EV_PASSKEY_NOTIFY		0x0017
+struct mgmt_ev_passkey_notify {
+	struct mgmt_addr_info addr;
+	uint32_t passkey;
+	uint8_t entered;
 } __packed;
 
 static const char *mgmt_op[] = {
@@ -505,6 +522,7 @@ static const char *mgmt_ev[] = {
 	"Device Blocked",
 	"Device Unblocked",
 	"Device Unpaired",
+	"Passkey Notify",
 };
 
 static const char *mgmt_status[] = {

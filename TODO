@@ -24,11 +24,35 @@ General
   Priority: high
   Complexity: C4
 
-- Rename glib-helper file to a more convenient name. The ideia is try to keep
+- Rename glib-helper file to a more convenient name. The idea is try to keep
   only sdp helpers functions. bt_* prefix shall be also changed.
 
   Priority: Low
   Complexity: C1
+
+- Function in src/adapter.c to convert old storage files to new ini-file format
+  should be removed 6-8 months after first BlueZ 5 release.
+
+  Priority: Low
+  Complexity: C1
+
+- Remove usage of symlinks for drivers, such as profiles/input/suspend.c and
+  profiles/sap/sap.c. Instead, select drivers at runtime by using config
+  options or probing for running D-Bus services (using e.g.
+  g_dbus_add_service_watch()). Idea first mentioned on
+  http://thread.gmane.org/gmane.linux.bluez.kernel/30175/focus=30190.
+
+- Reuse connection handling code of src/profile.c also for built-in profiles
+  so plugins would only need to register their btd_profile and the core takes
+  care of the rest including listen to the right channel and manages the sdp
+  record. Once btd_profile manages the connection it can also notify about
+  their state, this probably remove the need of having callbacks to
+  .connect/.disconnect since their state can be tracked, it also enables any
+  plugin to track any profile state change which can be useful for e.g.
+  a connection policy plugin in case one is needed.
+
+  Priority: Low
+  Complexity: C2
 
 Low Energy
 ==========
@@ -86,7 +110,7 @@ Low Energy
   Complexity: C1
 
 - Static random address setup and storage. Once this address is written
-  in the a given remote, the address can not be changed anymore.
+  in a given remote, the address can not be changed anymore.
 
   Priority: Low
   Complexity: C1
@@ -101,7 +125,7 @@ Low Energy
 
 - Device Name Characteristic is a GAP characteristic for Low Energy. This
   characteristic shall be integrated/used in the discovery procedure. The
-  ideia is to report the value of this characteristic using DeviceFound signals.
+  idea is to report the value of this characteristic using DeviceFound signals.
   Discussion with the community is needed before to start this task. Other GAP
   characteristics for LE needs to follow a similar approach. It is not clear
   if all GAP characteristics can be exposed using properties instead of a primary
@@ -191,7 +215,7 @@ ATT/GATT
   Priority: Low
   Complecity: C1
 
-- Add sdp discovery support to gattool with BR (--sdp, default is 0x1f)
+- Add sdp discovery support to gatttool with BR (--sdp, default is 0x1f)
 
   Priority: Low
   Complexity: C1

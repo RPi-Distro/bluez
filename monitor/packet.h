@@ -22,16 +22,22 @@
  *
  */
 
+#include <stdint.h>
 #include <stdbool.h>
 #include <sys/time.h>
 
 #define PACKET_FILTER_SHOW_INDEX	(1 << 0)
 #define PACKET_FILTER_SHOW_DATE		(1 << 1)
 #define PACKET_FILTER_SHOW_TIME		(1 << 2)
-#define PACKET_FILTER_SHOW_ACL_DATA	(1 << 3)
-#define PACKET_FILTER_SHOW_SCO_DATA	(1 << 4)
+#define PACKET_FILTER_SHOW_TIME_OFFSET	(1 << 3)
+#define PACKET_FILTER_SHOW_ACL_DATA	(1 << 4)
+#define PACKET_FILTER_SHOW_SCO_DATA	(1 << 5)
 
 void packet_set_filter(unsigned long filter);
+void packet_add_filter(unsigned long filter);
+void packet_del_filter(unsigned long filter);
+
+void packet_select_index(uint16_t index);
 
 void packet_hexdump(const unsigned char *buf, uint16_t len);
 
@@ -39,6 +45,9 @@ void packet_control(struct timeval *tv, uint16_t index, uint16_t opcode,
 					const void *data, uint16_t size);
 void packet_monitor(struct timeval *tv, uint16_t index, uint16_t opcode,
 					const void *data, uint16_t size);
+
+uint32_t packet_get_flags(uint16_t opcode);
+uint16_t packet_get_opcode(uint8_t type, uint32_t flags);
 
 void packet_new_index(struct timeval *tv, uint16_t index, const char *label,
 				uint8_t type, uint8_t bus, const char *name);

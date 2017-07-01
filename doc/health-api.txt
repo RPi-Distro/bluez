@@ -1,166 +1,152 @@
 BlueZ D-Bus Health API description
 **********************************
 
-	Santiago Carot-Nemesio <sancane@gmail.com>
-	José Antonio Santos-Cadenas <santoscadenas@gmail.com>
-	Elvis Pfützenreuter <epx@signove.com>
 
-Health Device Profile hierarchy
-===============================
+HealthManager hierarchy
+=======================
 
 Service		org.bluez
-Interface	org.bluez.HealthManager
+Interface	org.bluez.HealthManager1
 Object path	/org/bluez/
 
-Methods:
+Methods		object CreateApplication(dict config)
 
-	object	CreateApplication(dict config)
+			Returns the path of the new registered application.
+			Application will be closed by the call or implicitly
+			when the programs leaves the bus.
 
-		Returns the path of the new registered application.
+			config:
+				uint16 DataType:
 
-		Dict is defined as below:
-		{
-			"DataType": uint16, (mandatory)
-			"Role" : ("Source" or "Sink"), (mandatory)
-			"Description" : string, (optional)
-			"ChannelType" : ("Reliable" or "Streaming")
-						(just for Sources, optional)
-		}
+					Mandatory
 
-		Application will be closed by the call or implicitly when the
-		programs leaves the bus.
+				string Role:
 
-		Possible errors: org.bluez.Error.InvalidArguments
+					Mandatory. Possible values: "source",
+									"sink"
 
-	void	DestroyApplication(object application)
+				string Description:
 
-		Closes the HDP application identified by the object path. Also
-		application will be closed if the process that started it leaves
-		the bus. Only the creator of the application will be able to
-		destroy it.
+					Optional
 
-		Possible errors: org.bluez.Error.InvalidArguments
-				org.bluez.Error.NotFound
-				org.bluez.Error.NotAllowed
+				ChannelType:
 
---------------------------------------------------------------------------------
+					Optional, just for sources. Possible
+					values: "reliable", "streaming"
+
+			Possible Errors: org.bluez.Error.InvalidArguments
+
+		void DestroyApplication(object application)
+
+			Closes the HDP application identified by the object
+			path. Also application will be closed if the process
+			that started it leaves the bus. Only the creator of the
+			application will be able to destroy it.
+
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.NotFound
+					 org.bluez.Error.NotAllowed
+
+
+HealthDevice hierarchy
+======================
 
 Service		org.bluez
-Interface	org.bluez.HealthDevice
+Interface	org.bluez.HealthDevice1
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
 
-Methods:
+Methods		boolean Echo()
 
-	dict GetProperties()
+			Sends an echo petition to the remote service. Returns
+			True if response matches with the buffer sent. If some
+			error is detected False value is returned.
 
-		Returns all properties for the interface. See the properties
-		section for available properties.
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.OutOfRange
 
-		Posible errors: org.bluez.Error.NotAllowed
+		object CreateChannel(object application, string configuration)
 
-	Boolean Echo()
+			Creates a new data channel.  The configuration should
+			indicate the channel quality of service using one of
+			this values "reliable", "streaming", "any".
 
-		Sends an echo petition to the remote service. Returns True if
-		response matches with the buffer sent. If some error is detected
-		False value is returned.
+			Returns the object path that identifies the data
+			channel that is already connected.
 
-		Possible errors: org.bluez.Error.InvalidArguments
-				org.bluez.Error.OutOfRange
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.HealthError
 
-	object CreateChannel(object application, string configuration)
+		void DestroyChannel(object channel)
 
-		Creates a new data channel.
-		The configuration should indicate the channel quality of
-		service using one of this values "Reliable", "Streaming", "Any".
+			Destroys the data channel object. Only the creator of
+			the channel or the creator of the HealthApplication
+			that received the data channel will be able to destroy
+			it.
 
-		Returns the object path that identifies the data channel that
-		is already connected.
+			Possible errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.NotFound
+				         org.bluez.Error.NotAllowed
 
-		Possible errors: org.bluez.Error.InvalidArguments
-				org.bluez.Error.HealthError
+Signals		void ChannelConnected(object channel)
 
-	void DestroyChannel(object channel)
+			This signal is launched when a new data channel is
+			created or when a known data channel is reconnected.
 
-		Destroys the data channel object. Only the creator of the
-		channel or the creator of the HealthApplication that received
-		the data channel will be able to destroy it.
+		void ChannelDeleted(object channel)
 
-		Possible errors: org.bluez.Error.InvalidArguments
-				org.bluez.Error.NotFound
-				org.bluez.Error.NotAllowed
+			This signal is launched when a data channel is deleted.
 
-Signals:
+			After this signal the data channel path will not be
+			valid and its path can be reused for future data
+			channels.
 
-	void ChannelConnected(object channel)
+Properties	object MainChannel [readonly]
 
-		This signal is launched when a new data channel is created or
-		when a known data channel is reconnected.
+			The first reliable channel opened. It is needed by
+			upper applications in order to send specific protocol
+			data units. The first reliable can change after a
+			reconnection.
 
-	void ChannelDeleted(object channel)
 
-		This signal is launched when a data channel is deleted.
-
-		After this signal the data channel path will not be valid and
-		its path can be reused for future data channels.
-
-	void PropertyChanged(string name, variant value)
-
-		This signal indicates a changed value of the given property.
-
-Properties:
-
-	object MainChannel [readonly]
-
-		The first reliable channel opened. It is needed by upper
-		applications in order to send specific protocol data units. The
-		first reliable can change after a reconnection.
-
---------------------------------------------------------------------------------
+HealthChannel hierarchy
+=======================
 
 Service		org.bluez
-Interface	org.bluez.HealthChannel
+Interface	org.bluez.HealthChannel1
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX/chanZZZ
 
 Only the process that created the data channel or the creator of the
-HealthApplication that received it will be able to call this methods.
+HealthApplication that received it will be able to call these methods.
 
-Methods:
+Methods		fd Acquire()
 
-	dict GetProperties()
+			Returns the file descriptor for this data channel. If
+			the data channel is not connected it will also
+			reconnect.
 
-		Returns all properties for the interface. See the properties
-		section for available properties.
+			Possible Errors: org.bluez.Error.NotConnected
+					 org.bluez.Error.NotAllowed
 
-		Possible errors: org.bluez.Error.NotAllowed
+		void Release()
 
-	fd Acquire()
+			Releases the fd. Application should also need to
+			close() it.
 
-		Returns the file descriptor for this data channel. If the data
-		channel is not connected it will also reconnect.
+			Possible Errors: org.bluez.Error.NotAcquired
+					 org.bluez.Error.NotAllowed
 
-		Possible errors: org.bluez.Error.NotConnected
-				org.bluez.Error.NotAllowed
+Properties	string Type [readonly]
 
-	void Release()
+			The quality of service of the data channel. ("reliable"
+			or "streaming")
 
-		Releases the fd. Application should also need to close() it.
+		object Device [readonly]
 
-		Possible errors: org.bluez.Error.NotAcquired
-				org.bluez.Error.NotAllowed
+			Identifies the Remote Device that is connected with.
+			Maps with a HealthDevice object.
 
-Properties:
+		object Application [readonly]
 
-	string Type [readonly]
-
-		The quality of service of the data channel. ("Reliable" or
-		"Streaming")
-
-	object Device [readonly]
-
-		Identifies the Remote Device that is connected with. Maps with
-		a HealthDevice object.
-
-	object Application [readonly]
-
-		Identifies the HealthApplication to which this channel is
-		related to (which indirectly defines its role and data type).
+			Identifies the HealthApplication to which this channel
+			is related to (which indirectly defines its role and
+			data type).

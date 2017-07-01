@@ -40,6 +40,8 @@
 #include <sys/socket.h>
 #include <signal.h>
 
+#include <glib.h>
+
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
@@ -409,13 +411,32 @@ static char *major_classes[] = {
 
 static char *get_device_name(const bdaddr_t *local, const bdaddr_t *peer)
 {
-	char filename[PATH_MAX + 1], addr[18];
+	char filename[PATH_MAX + 1];
+	char local_addr[18], peer_addr[18];
+	GKeyFile *key_file;
+	char *str = NULL;
+	int len;
 
-	ba2str(local, addr);
-	create_name(filename, PATH_MAX, STORAGEDIR, addr, "names");
+	ba2str(local, local_addr);
+	ba2str(peer, peer_addr);
 
-	ba2str(peer, addr);
-	return textfile_get(filename, addr);
+	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s", local_addr,
+			peer_addr);
+	filename[PATH_MAX] = '\0';
+	key_file = g_key_file_new();
+
+	if (g_key_file_load_from_file(key_file, filename, 0, NULL)) {
+		str = g_key_file_get_string(key_file, "General", "Name", NULL);
+		if (str) {
+			len = strlen(str);
+			if (len > HCI_MAX_NAME_LENGTH)
+				str[HCI_MAX_NAME_LENGTH] = '\0';
+		}
+	}
+
+	g_key_file_free(key_file);
+
+	return str;
 }
 
 /* Display local devices */
@@ -560,7 +581,7 @@ static void cmd_scan(int dev_id, int argc, char **argv)
 	uint8_t lap[3] = { 0x33, 0x8b, 0x9e };
 	int num_rsp, length, flags;
 	uint8_t cls[3], features[8];
-	char addr[18], name[249], oui[9], *comp, *tmp;
+	char addr[18], name[249], *comp, *tmp;
 	struct hci_version version;
 	struct hci_dev_info di;
 	struct hci_conn_info_req *cr;
@@ -705,9 +726,10 @@ static void cmd_scan(int dev_id, int argc, char **argv)
 			(info+i)->pscan_rep_mode, btohs((info+i)->clock_offset));
 
 		if (extoui) {
-			ba2oui(&(info+i)->bdaddr, oui);
-			comp = ouitocomp(oui);
+			comp = batocomp(&(info+i)->bdaddr);
 			if (comp) {
+				char oui[9];
+				ba2oui(&(info+i)->bdaddr, oui);
 				printf("OUI company:\t%s (%s)\n", comp, oui);
 				free(comp);
 			}
@@ -877,7 +899,7 @@ static void cmd_info(int dev_id, int argc, char **argv)
 	bdaddr_t bdaddr;
 	uint16_t handle;
 	uint8_t features[8], max_page = 0;
-	char name[249], oui[9], *comp, *tmp;
+	char name[249], *comp, *tmp;
 	struct hci_version version;
 	struct hci_dev_info di;
 	struct hci_conn_info_req *cr;
@@ -942,9 +964,10 @@ static void cmd_info(int dev_id, int argc, char **argv)
 
 	printf("\tBD Address:  %s\n", argv[0]);
 
-	ba2oui(&bdaddr, oui);
-	comp = ouitocomp(oui);
+	comp = batocomp(&bdaddr);
 	if (comp) {
+		char oui[9];
+		ba2oui(&bdaddr, oui);
 		printf("\tOUI Company: %s (%s)\n", comp, oui);
 		free(comp);
 	}
@@ -2487,6 +2510,7 @@ static struct option lescan_options[] = {
 	{ "help",	0, 0, 'h' },
 	{ "privacy",	0, 0, 'p' },
 	{ "passive",	0, 0, 'P' },
+	{ "whitelist",	0, 0, 'w' },
 	{ "discovery",	1, 0, 'd' },
 	{ "duplicates",	0, 0, 'D' },
 	{ 0, 0, 0, 0 }
@@ -2496,6 +2520,7 @@ static const char *lescan_help =
 	"Usage:\n"
 	"\tlescan [--privacy] enable privacy\n"
 	"\tlescan [--passive] set scan type passive (default active)\n"
+	"\tlescan [--whitelist] scan for address in the whitelist only\n"
 	"\tlescan [--discovery=g|l] enable general or limited discovery"
 		"procedure\n"
 	"\tlescan [--duplicates] don't filter duplicates\n";
@@ -2506,6 +2531,7 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 	uint8_t own_type = 0x00;
 	uint8_t scan_type = 0x01;
 	uint8_t filter_type = 0;
+	uint8_t filter_policy = 0x00;
 	uint16_t interval = htobs(0x0010);
 	uint16_t window = htobs(0x0010);
 	uint8_t filter_dup = 1;
@@ -2517,6 +2543,9 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 			break;
 		case 'P':
 			scan_type = 0x00; /* Passive */
+			break;
+		case 'w':
+			filter_policy = 0x01; /* Whitelist */
 			break;
 		case 'd':
 			filter_type = optarg[0];
@@ -2548,7 +2577,7 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 	}
 
 	err = hci_le_set_scan_parameters(dd, scan_type, interval, window,
-							own_type, 0x00, 1000);
+						own_type, filter_policy, 1000);
 	if (err < 0) {
 		perror("Set scan parameters failed");
 		exit(1);

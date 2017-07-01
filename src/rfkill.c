@@ -37,7 +37,6 @@
 
 #include "log.h"
 #include "adapter.h"
-#include "manager.h"
 #include "hcid.h"
 
 enum rfkill_type {
@@ -114,7 +113,7 @@ static gboolean rfkill_event(GIOChannel *chan,
 
 	memset(sysname, 0, sizeof(sysname));
 
-	if (read(fd, sysname, sizeof(sysname)) < 4) {
+	if (read(fd, sysname, sizeof(sysname) - 1) < 4) {
 		close(fd);
 		return TRUE;
 	}
@@ -128,7 +127,7 @@ static gboolean rfkill_event(GIOChannel *chan,
 	if (id < 0)
 		return TRUE;
 
-	adapter = manager_find_adapter_by_id(id);
+	adapter = adapter_find_by_id(id);
 	if (!adapter)
 		return TRUE;
 
@@ -139,14 +138,12 @@ static gboolean rfkill_event(GIOChannel *chan,
 	return TRUE;
 }
 
-static GIOChannel *channel = NULL;
+static guint watch = 0;
 
 void rfkill_init(void)
 {
 	int fd;
-
-	if (!main_opts.remember_powered)
-		return;
+	GIOChannel *channel;
 
 	fd = open("/dev/rfkill", O_RDWR);
 	if (fd < 0) {
@@ -157,17 +154,18 @@ void rfkill_init(void)
 	channel = g_io_channel_unix_new(fd);
 	g_io_channel_set_close_on_unref(channel, TRUE);
 
-	g_io_add_watch(channel, G_IO_IN | G_IO_NVAL | G_IO_HUP | G_IO_ERR,
-							rfkill_event, NULL);
+	watch = g_io_add_watch(channel,
+				G_IO_IN | G_IO_NVAL | G_IO_HUP | G_IO_ERR,
+				rfkill_event, NULL);
+
+	g_io_channel_unref(channel);
 }
 
 void rfkill_exit(void)
 {
-	if (!channel)
+	if (watch == 0)
 		return;
 
-	g_io_channel_shutdown(channel, TRUE, NULL);
-	g_io_channel_unref(channel);
-
-	channel = NULL;
+	g_source_remove(watch);
+	watch = 0;
 }

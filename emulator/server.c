@@ -36,15 +36,20 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 
-#include "mainloop.h"
+#include "monitor/mainloop.h"
 #include "btdev.h"
 #include "server.h"
 
+#define uninitialized_var(x) x = x
+
 struct server {
+	enum server_type type;
 	uint16_t id;
 	int fd;
 };
@@ -98,8 +103,10 @@ static void client_read_callback(int fd, uint32_t events, void *user_data)
 	ssize_t len;
 	uint16_t count;
 
-	if (events & (EPOLLERR | EPOLLHUP))
+	if (events & (EPOLLERR | EPOLLHUP)) {
+		mainloop_remove_fd(client->fd);
 		return;
+	}
 
 again:
 	len = recv(fd, buf + client->pkt_offset,
@@ -109,6 +116,9 @@ again:
 			goto again;
 		return;
 	}
+
+	if (!client->btdev)
+		return;
 
 	count = client->pkt_offset + len;
 
@@ -187,9 +197,12 @@ static void server_accept_callback(int fd, uint32_t events, void *user_data)
 {
 	struct server *server = user_data;
 	struct client *client;
+	enum btdev_type uninitialized_var(type);
 
-	if (events & (EPOLLERR | EPOLLHUP))
+	if (events & (EPOLLERR | EPOLLHUP)) {
+		mainloop_remove_fd(server->fd);
 		return;
+	}
 
 	client = malloc(sizeof(*client));
 	if (!client)
@@ -203,7 +216,24 @@ static void server_accept_callback(int fd, uint32_t events, void *user_data)
 		return;
 	}
 
-	client->btdev = btdev_create(server->id);
+	switch (server->type) {
+	case SERVER_TYPE_BREDRLE:
+		type = BTDEV_TYPE_BREDRLE;
+		break;
+	case SERVER_TYPE_BREDR:
+		type = BTDEV_TYPE_BREDR;
+		break;
+	case SERVER_TYPE_LE:
+		type = BTDEV_TYPE_LE;
+		break;
+	case SERVER_TYPE_AMP:
+		type = BTDEV_TYPE_AMP;
+		break;
+	case SERVER_TYPE_MONITOR:
+		goto done;
+	}
+
+	client->btdev = btdev_create(type, server->id);
 	if (!client->btdev) {
 		close(client->fd);
 		free(client);
@@ -212,6 +242,7 @@ static void server_accept_callback(int fd, uint32_t events, void *user_data)
 
 	btdev_set_send_handler(client->btdev, client_write_callback, client);
 
+done:
 	if (mainloop_add_fd(client->fd, EPOLLIN, client_read_callback,
 						client, client_destroy) < 0) {
 		btdev_destroy(client->btdev);
@@ -220,7 +251,7 @@ static void server_accept_callback(int fd, uint32_t events, void *user_data)
 	}
 }
 
-static int open_server(const char *path)
+static int open_unix(const char *path)
 {
 	struct sockaddr_un addr;
 	int fd;
@@ -252,7 +283,7 @@ static int open_server(const char *path)
 	return fd;
 }
 
-struct server *server_open_unix(const char *path, uint16_t id)
+struct server *server_open_unix(enum server_type type, const char *path)
 {
 	struct server *server;
 
@@ -261,9 +292,72 @@ struct server *server_open_unix(const char *path, uint16_t id)
 		return NULL;
 
 	memset(server, 0, sizeof(*server));
-	server->id = id;
+	server->type = type;
+	server->id = 0x42;
 
-	server->fd = open_server(path);
+	server->fd = open_unix(path);
+	if (server->fd < 0) {
+		free(server);
+		return NULL;
+	}
+
+	if (mainloop_add_fd(server->fd, EPOLLIN, server_accept_callback,
+						server, server_destroy) < 0) {
+		close(server->fd);
+		free(server);
+		return NULL;
+	}
+
+	return server;
+}
+
+static int open_tcp(void)
+{
+	struct sockaddr_in addr;
+	int fd, opt = 1;
+
+	fd = socket(PF_INET, SOCK_STREAM, 0);
+	if (fd < 0) {
+		perror("Failed to open server socket");
+		return -1;
+	}
+
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = INADDR_ANY;
+	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	addr.sin_port = htons(45550);
+
+	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+		perror("Failed to bind server socket");
+		close(fd);
+		return -1;
+	}
+
+	if (listen(fd, 5) < 0) {
+		perror("Failed to listen server socket");
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
+struct server *server_open_tcp(enum server_type type)
+{
+	struct server *server;
+
+	server = malloc(sizeof(*server));
+	if (!server)
+		return server;
+
+	memset(server, 0, sizeof(*server));
+	server->type = type;
+	server->id = 0x43;
+
+	server->fd = open_tcp();
 	if (server->fd < 0) {
 		free(server);
 		return NULL;

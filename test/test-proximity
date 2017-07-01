@@ -12,19 +12,22 @@ import sys
 import dbus
 import dbus.mainloop.glib
 from optparse import OptionParser, make_option
+import bluezutils
 
-def property_changed(name, value):
+BUS_NAME = 'org.bluez'
+PROXIMITY_MONITOR_INTERFACE = 'org.bluez.ProxymityMonitor1'
 
-	print("PropertyChanged('%s', '%s')" % (name, value))
-	mainloop.quit()
+def properties_changed(interface, changed, invalidated):
+	if interface != PROXIMITY_MONITOR_INTERFACE:
+		return
+
+	for name, value in changed.iteritems():
+		print("Property %s changed:  %s" % (name, str(value)))
 
 if __name__ == "__main__":
 	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 
 	bus = dbus.SystemBus()
-
-	manager = dbus.Interface(bus.get_object("org.bluez", "/"),
-					"org.bluez.Manager")
 
 	option_list = [
 		make_option("-i", "--adapter", action="store",
@@ -37,14 +40,6 @@ if __name__ == "__main__":
 
 	(options, args) = parser.parse_args()
 
-	if options.dev_id:
-		adapter_path = manager.FindAdapter(options.dev_id)
-	else:
-		adapter_path = manager.DefaultAdapter()
-
-	adapter = dbus.Interface(bus.get_object("org.bluez", adapter_path),
-							"org.bluez.Adapter")
-
 	if (len(args) < 1):
 		print("Usage: %s <command>" % (sys.argv[0]))
 		print("")
@@ -52,17 +47,22 @@ if __name__ == "__main__":
 		print("  -b MAC ImmediateAlertLevel <none|mild|high>")
 		sys.exit(1)
 
-	device_path = adapter.FindDevice(options.address)
+	device = bluezutils.find_device(options.address, options.dev_id)
+	device_path = device.object_path
 
-	bus.add_signal_receiver(property_changed, bus_name="org.bluez",
-				dbus_interface="org.bluez.ProximityMonitor",
-				signal_name="PropertyChanged")
+	bus.add_signal_receiver(properties_changed, bus_name=BUS_NAME,
+			path=device_path,
+			dbus_interface="org.freedesktop.DBus.Properties",
+			signal_name="PropertiesChanged")
 
-	proximity = dbus.Interface(bus.get_object("org.bluez",
-					device_path), "org.bluez.ProximityMonitor")
+	proximity = dbus.Interface(bus.get_object(BUS_NAME, device_path),
+						PROXIMITY_MONITOR_INTERFACE)
+
+	device_prop = dbus.Interface(bus.get_object(BUS_NAME, device_path),
+					"org.freedesktop.DBus.Properties")
 
 	print("Proximity SetProperty('%s', '%s')" % (args[0], args[1]))
-	proximity.SetProperty(args[0], args[1])
+	device_prop.Set(PROXIMITY_MONITOR_INTERFACE, args[0], args[1])
 
 	mainloop = gobject.MainLoop()
 	mainloop.run()

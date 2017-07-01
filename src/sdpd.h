@@ -45,7 +45,10 @@ typedef struct request {
 	int      len;
 } sdp_req_t;
 
+void handle_internal_request(int sk, int mtu, void *data, int len);
 void handle_request(int sk, uint8_t *data, int len);
+
+void set_fixed_db_timestamp(uint32_t dbts);
 
 int service_register_req(sdp_req_t *req, sdp_buf_t *rsp);
 int service_update_req(sdp_req_t *req, sdp_buf_t *rsp);
@@ -53,7 +56,8 @@ int service_remove_req(sdp_req_t *req, sdp_buf_t *rsp);
 
 void register_public_browse_group(void);
 void register_server_service(void);
-void register_device_id(void);
+void register_device_id(uint16_t source, uint16_t vendor,
+					uint16_t product, uint16_t version);
 
 int record_sort(const void *r1, const void *r2);
 void sdp_svcdb_reset(void);
@@ -64,7 +68,6 @@ sdp_record_t *sdp_record_find(uint32_t handle);
 void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec);
 int sdp_record_remove(uint32_t handle);
 sdp_list_t *sdp_get_record_list(void);
-sdp_list_t *sdp_get_access_list(void);
 int sdp_check_access(uint32_t handle, bdaddr_t *device);
 uint32_t sdp_next_handle(void);
 

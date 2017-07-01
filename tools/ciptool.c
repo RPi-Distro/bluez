@@ -25,7 +25,6 @@
 #include <config.h>
 #endif
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -44,10 +43,6 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 #include <bluetooth/cmtp.h>
-
-#ifdef NEED_PPOLL
-#include "ppoll.h"
-#endif
 
 static volatile sig_atomic_t __io_canceled = 0;
 

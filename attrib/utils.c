@@ -21,36 +21,36 @@
  *
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include <stdlib.h>
 #include <glib.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
-#include <bluetooth/uuid.h>
 #include <bluetooth/sdp.h>
 
+#include "lib/uuid.h"
+#include <btio/btio.h>
 #include "att.h"
 #include "gattrib.h"
 #include "gatt.h"
-#include "btio.h"
 #include "gatttool.h"
 
-GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
-				const gchar *dst_type, const gchar *sec_level,
-				int psm, int mtu, BtIOConnect connect_cb)
+GIOChannel *gatt_connect(const char *src, const char *dst,
+				const char *dst_type, const char *sec_level,
+				int psm, int mtu, BtIOConnect connect_cb,
+				GError **gerr)
 {
 	GIOChannel *chan;
 	bdaddr_t sba, dba;
 	uint8_t dest_type;
-	GError *err = NULL;
+	GError *tmp_err = NULL;
 	BtIOSecLevel sec;
 
-	/* Remote device */
-	if (dst == NULL) {
-		g_printerr("Remote Bluetooth address required\n");
-		return NULL;
-	}
 	str2ba(dst, &dba);
 
 	/* Local adapter */
@@ -76,7 +76,7 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 		sec = BT_IO_SEC_LOW;
 
 	if (psm == 0)
-		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
+		chan = bt_io_connect(connect_cb, NULL, NULL, &tmp_err,
 				BT_IO_OPT_SOURCE_BDADDR, &sba,
 				BT_IO_OPT_DEST_BDADDR, &dba,
 				BT_IO_OPT_DEST_TYPE, dest_type,
@@ -84,7 +84,7 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 				BT_IO_OPT_SEC_LEVEL, sec,
 				BT_IO_OPT_INVALID);
 	else
-		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
+		chan = bt_io_connect(connect_cb, NULL, NULL, &tmp_err,
 				BT_IO_OPT_SOURCE_BDADDR, &sba,
 				BT_IO_OPT_DEST_BDADDR, &dba,
 				BT_IO_OPT_PSM, psm,
@@ -92,9 +92,8 @@ GIOChannel *gatt_connect(const gchar *src, const gchar *dst,
 				BT_IO_OPT_SEC_LEVEL, sec,
 				BT_IO_OPT_INVALID);
 
-	if (err) {
-		g_printerr("%s\n", err->message);
-		g_error_free(err);
+	if (tmp_err) {
+		g_propagate_error(gerr, tmp_err);
 		return NULL;
 	}
 

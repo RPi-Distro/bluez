@@ -28,27 +28,28 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <glib.h>
+#include <sys/file.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/uuid.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
+#include "lib/uuid.h"
+#include <gdbus/gdbus.h>
 #include "log.h"
-#include "gdbus.h"
-#include "btio.h"
+#include <btio/btio.h>
 #include "sdpd.h"
 #include "hcid.h"
 #include "adapter.h"
 #include "device.h"
-#include "manager.h"
-#include "gattrib.h"
-#include "att.h"
-#include "gatt.h"
-#include "att-database.h"
+#include "attrib/gattrib.h"
+#include "attrib/att.h"
+#include "attrib/gatt.h"
+#include "attrib/att-database.h"
 #include "storage.h"
 
 #include "attrib-server.h"
@@ -126,13 +127,13 @@ static void gatt_server_free(struct gatt_server *server)
 	g_list_free_full(server->database, attrib_free);
 
 	if (server->l2cap_io != NULL) {
-		g_io_channel_unref(server->l2cap_io);
 		g_io_channel_shutdown(server->l2cap_io, FALSE, NULL);
+		g_io_channel_unref(server->l2cap_io);
 	}
 
 	if (server->le_io != NULL) {
-		g_io_channel_unref(server->le_io);
 		g_io_channel_shutdown(server->le_io, FALSE, NULL);
+		g_io_channel_unref(server->le_io);
 	}
 
 	g_slist_free_full(server->clients, (GDestroyNotify) channel_free);
@@ -149,18 +150,15 @@ static void gatt_server_free(struct gatt_server *server)
 	g_free(server);
 }
 
-static gint adapter_cmp_addr(gconstpointer a, gconstpointer b)
+static int adapter_cmp_addr(gconstpointer a, gconstpointer b)
 {
 	const struct gatt_server *server = a;
 	const bdaddr_t *bdaddr = b;
-	bdaddr_t src;
 
-	adapter_get_address(server->adapter, &src);
-
-	return bacmp(&src, bdaddr);
+	return bacmp(adapter_get_address(server->adapter), bdaddr);
 }
 
-static gint adapter_cmp(gconstpointer a, gconstpointer b)
+static int adapter_cmp(gconstpointer a, gconstpointer b)
 {
 	const struct gatt_server *server = a;
 	const struct btd_adapter *adapter = b;
@@ -301,7 +299,6 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 	struct attribute *a;
 	uint16_t end = 0;
 	uuid_t svc, gap_uuid;
-	bdaddr_t addr;
 
 	a = find_svc_range(server, handle, &end);
 
@@ -329,8 +326,8 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 				"http://www.bluez.org/");
 	}
 
-	adapter_get_address(server->adapter, &addr);
-	if (add_record_to_server(&addr, record) == 0)
+	if (add_record_to_server(adapter_get_address(server->adapter), record)
+			== 0)
 		return record->handle;
 
 	sdp_record_free(record);
@@ -338,8 +335,9 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 }
 
 static struct attribute *attrib_db_add_new(struct gatt_server *server,
-				uint16_t handle, bt_uuid_t *uuid, int read_reqs,
-				int write_reqs, const uint8_t *value, int len)
+				uint16_t handle, bt_uuid_t *uuid,
+				int read_req, int write_req,
+				const uint8_t *value, size_t len)
 {
 	struct attribute *a;
 	guint h = handle;
@@ -355,8 +353,8 @@ static struct attribute *attrib_db_add_new(struct gatt_server *server,
 	a->data = g_memdup(value, len);
 	a->handle = handle;
 	a->uuid = *uuid;
-	a->read_reqs = read_reqs;
-	a->write_reqs = write_reqs;
+	a->read_req = read_req;
+	a->write_req = write_req;
 
 	server->database = g_list_insert_sorted(server->database, a,
 								attribute_cmp);
@@ -400,7 +398,7 @@ static uint8_t att_check_reqs(struct gatt_channel *channel, uint8_t opcode,
 
 static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 						uint16_t end, bt_uuid_t *uuid,
-						uint8_t *pdu, int len)
+						uint8_t *pdu, size_t len)
 {
 	struct att_data_list *adl;
 	struct attribute *a;
@@ -455,7 +453,7 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 			break;
 
 		status = att_check_reqs(channel, ATT_OP_READ_BY_GROUP_REQ,
-								a->read_reqs);
+								a->read_req);
 
 		if (status == 0x00 && a->read_cb)
 			status = a->read_cb(a, channel->device,
@@ -492,6 +490,11 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 	length = g_slist_length(groups);
 
 	adl = att_data_list_alloc(length, last_size + 4);
+	if (adl == NULL) {
+		g_slist_free_full(groups, g_free);
+		return enc_error_resp(ATT_OP_READ_BY_GROUP_REQ, start,
+					ATT_ECODE_UNLIKELY, pdu, len);
+	}
 
 	for (i = 0, l = groups; l; l = l->next, i++) {
 		uint8_t *value;
@@ -516,7 +519,7 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 
 static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 						uint16_t end, bt_uuid_t *uuid,
-						uint8_t *pdu, int len)
+						uint8_t *pdu, size_t len)
 {
 	struct att_data_list *adl;
 	GSList *l, *types;
@@ -545,7 +548,7 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 			continue;
 
 		status = att_check_reqs(channel, ATT_OP_READ_BY_TYPE_REQ,
-								a->read_reqs);
+								a->read_req);
 
 		if (status == 0x00 && a->read_cb)
 			status = a->read_cb(a, channel->device,
@@ -576,6 +579,11 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 	length += 2;
 
 	adl = att_data_list_alloc(num, length);
+	if (adl == NULL) {
+		g_slist_free(types);
+		return enc_error_resp(ATT_OP_READ_BY_TYPE_REQ, start,
+					ATT_ECODE_UNLIKELY, pdu, len);
+	}
 
 	for (i = 0, l = types; l; i++, l = l->next) {
 		uint8_t *value;
@@ -598,8 +606,8 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 	return length;
 }
 
-static int find_info(struct gatt_channel *channel, uint16_t start, uint16_t end,
-							uint8_t *pdu, int len)
+static uint16_t find_info(struct gatt_channel *channel, uint16_t start,
+				uint16_t end, uint8_t *pdu, size_t len)
 {
 	struct attribute *a;
 	struct att_data_list *adl;
@@ -651,6 +659,11 @@ static int find_info(struct gatt_channel *channel, uint16_t start, uint16_t end,
 	}
 
 	adl = att_data_list_alloc(num, length + 2);
+	if (adl == NULL) {
+		g_slist_free(info);
+		return enc_error_resp(ATT_OP_FIND_INFO_REQ, start,
+					ATT_ECODE_UNLIKELY, pdu, len);
+	}
 
 	for (i = 0, l = info; l; i++, l = l->next) {
 		uint8_t *value;
@@ -673,15 +686,16 @@ static int find_info(struct gatt_channel *channel, uint16_t start, uint16_t end,
 	return length;
 }
 
-static int find_by_type(struct gatt_channel *channel, uint16_t start,
-			uint16_t end, bt_uuid_t *uuid, const uint8_t *value,
-					int vlen, uint8_t *opdu, int mtu)
+static uint16_t find_by_type(struct gatt_channel *channel, uint16_t start,
+				uint16_t end, bt_uuid_t *uuid,
+				const uint8_t *value, size_t vlen,
+				uint8_t *opdu, size_t mtu)
 {
 	struct attribute *a;
 	struct att_range *range;
 	GSList *matches;
 	GList *dl, *database;
-	int len;
+	uint16_t len;
 
 	if (start > end || start == 0x0000)
 		return enc_error_resp(ATT_OP_FIND_BY_TYPE_REQ, start,
@@ -732,14 +746,47 @@ static int find_by_type(struct gatt_channel *channel, uint16_t start,
 	return len;
 }
 
+static int read_device_ccc(struct btd_device *device, uint16_t handle,
+				uint16_t *value)
+{
+	char *filename;
+	GKeyFile *key_file;
+	char group[6];
+	char *str;
+	unsigned int config;
+	int err = 0;
+
+	filename = btd_device_get_storage_path(device, "ccc");
+	if (!filename) {
+		warn("Unable to get ccc storage path for device");
+		return -ENOENT;
+	}
+
+	key_file = g_key_file_new();
+	g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+	sprintf(group, "%hu", handle);
+
+	str = g_key_file_get_string(key_file, group, "Value", NULL);
+	if (!str || sscanf(str, "%04X", &config) != 1)
+		err = -ENOENT;
+	else
+		*value = config;
+
+	g_free(str);
+	g_free(filename);
+	g_key_file_free(key_file);
+
+	return err;
+}
+
 static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
-							uint8_t *pdu, int len)
+						uint8_t *pdu, size_t len)
 {
 	struct attribute *a;
 	uint8_t status;
 	GList *l;
 	uint16_t cccval;
-	uint8_t bdaddr_type;
 	guint h = handle;
 
 	l = g_list_find_custom(channel->server->database,
@@ -750,18 +797,15 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 
 	a = l->data;
 
-	bdaddr_type = device_get_addr_type(channel->device);
-
 	if (bt_uuid_cmp(&ccc_uuid, &a->uuid) == 0 &&
-		read_device_ccc(&channel->src, &channel->dst, bdaddr_type,
-							handle, &cccval) == 0) {
+		read_device_ccc(channel->device, handle, &cccval) == 0) {
 		uint8_t config[2];
 
 		att_put_u16(cccval, config);
 		return enc_read_resp(config, sizeof(config), pdu, len);
 	}
 
-	status = att_check_reqs(channel, ATT_OP_READ_REQ, a->read_reqs);
+	status = att_check_reqs(channel, ATT_OP_READ_REQ, a->read_req);
 
 	if (status == 0x00 && a->read_cb)
 		status = a->read_cb(a, channel->device, a->cb_user_data);
@@ -774,13 +818,12 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 }
 
 static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
-					uint16_t offset, uint8_t *pdu, int len)
+				uint16_t offset, uint8_t *pdu, size_t len)
 {
 	struct attribute *a;
 	uint8_t status;
 	GList *l;
 	uint16_t cccval;
-	uint8_t bdaddr_type;
 	guint h = handle;
 
 	l = g_list_find_custom(channel->server->database,
@@ -795,11 +838,8 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
 					ATT_ECODE_INVALID_OFFSET, pdu, len);
 
-	bdaddr_type = device_get_addr_type(channel->device);
-
 	if (bt_uuid_cmp(&ccc_uuid, &a->uuid) == 0 &&
-		read_device_ccc(&channel->src, &channel->dst, bdaddr_type,
-							handle, &cccval) == 0) {
+		read_device_ccc(channel->device, handle, &cccval) == 0) {
 		uint8_t config[2];
 
 		att_put_u16(cccval, config);
@@ -807,7 +847,7 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 								pdu, len);
 	}
 
-	status = att_check_reqs(channel, ATT_OP_READ_BLOB_REQ, a->read_reqs);
+	status = att_check_reqs(channel, ATT_OP_READ_BLOB_REQ, a->read_req);
 
 	if (status == 0x00 && a->read_cb)
 		status = a->read_cb(a, channel->device, a->cb_user_data);
@@ -820,8 +860,8 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 }
 
 static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
-						const uint8_t *value, int vlen,
-						uint8_t *pdu, int len)
+					const uint8_t *value, size_t vlen,
+					uint8_t *pdu, size_t len)
 {
 	struct attribute *a;
 	uint8_t status;
@@ -836,7 +876,7 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 
 	a = l->data;
 
-	status = att_check_reqs(channel, ATT_OP_WRITE_REQ, a->write_reqs);
+	status = att_check_reqs(channel, ATT_OP_WRITE_REQ, a->write_req);
 	if (status)
 		return enc_error_resp(ATT_OP_WRITE_REQ, handle, status, pdu,
 									len);
@@ -855,17 +895,43 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 		}
 	} else {
 		uint16_t cccval = att_get_u16(value);
-		uint8_t bdaddr_type = device_get_addr_type(channel->device);
+		char *filename;
+		GKeyFile *key_file;
+		char group[6], value[5];
+		char *data;
+		gsize length = 0;
 
-		write_device_ccc(&channel->src, &channel->dst, bdaddr_type,
-								handle, cccval);
+		filename = btd_device_get_storage_path(channel->device, "ccc");
+		if (!filename) {
+			warn("Unable to get ccc storage path for device");
+			return enc_error_resp(ATT_OP_WRITE_REQ, handle,
+						ATT_ECODE_WRITE_NOT_PERM,
+						pdu, len);
+		}
+
+		key_file = g_key_file_new();
+		g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+		sprintf(group, "%hu", handle);
+		sprintf(value, "%hhX", cccval);
+		g_key_file_set_string(key_file, group, "Value", value);
+
+		data = g_key_file_to_data(key_file, &length, NULL);
+		if (length > 0) {
+			create_file(filename, S_IRUSR | S_IWUSR);
+			g_file_set_contents(filename, data, length, NULL);
+		}
+
+		g_free(data);
+		g_free(filename);
+		g_key_file_free(key_file);
 	}
 
 	return enc_write_resp(pdu, len);
 }
 
 static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
-		uint8_t *pdu, int len)
+						uint8_t *pdu, size_t len)
 {
 	GError *gerr = NULL;
 	GIOChannel *io;
@@ -877,9 +943,7 @@ static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
 
 	io = g_attrib_get_channel(channel->attrib);
 
-	bt_io_get(io, BT_IO_L2CAP, &gerr,
-			BT_IO_OPT_IMTU, &imtu,
-			BT_IO_OPT_INVALID);
+	bt_io_get(io, &gerr, BT_IO_OPT_IMTU, &imtu, BT_IO_OPT_INVALID);
 
 	if (gerr)
 		return enc_error_resp(ATT_OP_MTU_REQ, 0,
@@ -910,11 +974,12 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 							gpointer user_data)
 {
 	struct gatt_channel *channel = user_data;
-	uint8_t opdu[ATT_MAX_MTU], value[ATT_MAX_MTU];
+	uint8_t opdu[channel->mtu];
 	uint16_t length, start, end, mtu, offset;
 	bt_uuid_t uuid;
 	uint8_t status = 0;
-	int vlen;
+	size_t vlen;
+	uint8_t *value = g_attrib_get_buffer(channel->attrib, &vlen);
 
 	DBG("op 0x%02x", ipdu[0]);
 
@@ -1030,8 +1095,7 @@ done:
 		length = enc_error_resp(ipdu[0], 0x0000, status, opdu,
 								channel->mtu);
 
-	g_attrib_send(channel->attrib, 0, opdu[0], opdu, length,
-							NULL, NULL, NULL);
+	g_attrib_send(channel->attrib, 0, opdu, length, NULL, NULL, NULL);
 }
 
 guint attrib_channel_attach(GAttrib *attrib)
@@ -1041,7 +1105,6 @@ guint attrib_channel_attach(GAttrib *attrib)
 	struct gatt_channel *channel;
 	GIOChannel *io;
 	GError *gerr = NULL;
-	char addr[18];
 	uint16_t cid;
 	guint mtu = 0;
 
@@ -1049,7 +1112,7 @@ guint attrib_channel_attach(GAttrib *attrib)
 
 	channel = g_new0(struct gatt_channel, 1);
 
-	bt_io_get(io, BT_IO_L2CAP, &gerr,
+	bt_io_get(io, &gerr,
 			BT_IO_OPT_SOURCE_BDADDR, &channel->src,
 			BT_IO_OPT_DEST_BDADDR, &channel->dst,
 			BT_IO_OPT_CID, &cid,
@@ -1074,11 +1137,22 @@ guint attrib_channel_attach(GAttrib *attrib)
 
 	channel->server = server;
 
-	ba2str(&channel->dst, addr);
+	device = adapter_find_device(server->adapter, &channel->dst);
+	if (device == NULL) {
+		error("Device object not found for attrib server");
+		g_free(channel);
+		return 0;
+	}
 
-	device = adapter_find_device(server->adapter, addr);
-	if (device == NULL || device_is_bonded(device) == FALSE)
-		delete_device_ccc(&channel->src, &channel->dst);
+	if (device_is_bonded(device) == FALSE) {
+		char *filename;
+
+		filename = btd_device_get_storage_path(device, "ccc");
+		if (filename) {
+			unlink(filename);
+			g_free(filename);
+		}
+	}
 
 	if (cid != ATT_CID) {
 		channel->le = FALSE;
@@ -1090,7 +1164,7 @@ guint attrib_channel_attach(GAttrib *attrib)
 
 	channel->attrib = g_attrib_ref(attrib);
 	channel->id = g_attrib_register(channel->attrib, GATTRIB_ALL_REQS,
-					channel_handler, channel, NULL);
+			GATTRIB_ALL_HANDLES, channel_handler, channel, NULL);
 
 	channel->cleanup_id = g_io_add_watch(io, G_IO_HUP, channel_watch_cb,
 								channel);
@@ -1102,7 +1176,7 @@ guint attrib_channel_attach(GAttrib *attrib)
 	return channel->id;
 }
 
-static gint channel_id_cmp(gconstpointer data, gconstpointer user_data)
+static int channel_id_cmp(gconstpointer data, gconstpointer user_data)
 {
 	const struct gatt_channel *channel = data;
 	guint id = GPOINTER_TO_UINT(user_data);
@@ -1121,8 +1195,7 @@ gboolean attrib_channel_detach(GAttrib *attrib, guint id)
 
 	io = g_attrib_get_channel(attrib);
 
-	bt_io_get(io, BT_IO_L2CAP, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src,
-							BT_IO_OPT_INVALID);
+	bt_io_get(io, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src, BT_IO_OPT_INVALID);
 
 	if (gerr != NULL) {
 		error("bt_io_get: %s", gerr->message);
@@ -1151,6 +1224,8 @@ static void connect_event(GIOChannel *io, GError *gerr, void *user_data)
 {
 	GAttrib *attrib;
 
+	DBG("");
+
 	if (gerr) {
 		error("%s", gerr->message);
 		return;
@@ -1159,19 +1234,6 @@ static void connect_event(GIOChannel *io, GError *gerr, void *user_data)
 	attrib = g_attrib_new(io);
 	attrib_channel_attach(attrib);
 	g_attrib_unref(attrib);
-}
-
-static void confirm_event(GIOChannel *io, void *user_data)
-{
-	GError *gerr = NULL;
-
-	if (bt_io_accept(io, connect_event, user_data, NULL, &gerr) == FALSE) {
-		error("bt_io_accept: %s", gerr->message);
-		g_error_free(gerr);
-		g_io_channel_unref(io);
-	}
-
-	return;
 }
 
 static gboolean register_core_services(struct gatt_server *server)
@@ -1241,19 +1303,18 @@ int btd_adapter_gatt_server_start(struct btd_adapter *adapter)
 {
 	struct gatt_server *server;
 	GError *gerr = NULL;
-	bdaddr_t addr;
+	const bdaddr_t *addr;
 
-	DBG("Start GATT server in hci%d", adapter_get_dev_id(adapter));
+	DBG("Start GATT server in hci%d", btd_adapter_get_index(adapter));
 
 	server = g_new0(struct gatt_server, 1);
 	server->adapter = btd_adapter_ref(adapter);
 
-	adapter_get_address(server->adapter, &addr);
+	addr = adapter_get_address(server->adapter);
 
 	/* BR/EDR socket */
-	server->l2cap_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
-					NULL, NULL, &gerr,
-					BT_IO_OPT_SOURCE_BDADDR, &addr,
+	server->l2cap_io = bt_io_listen(connect_event, NULL, NULL, NULL, &gerr,
+					BT_IO_OPT_SOURCE_BDADDR, addr,
 					BT_IO_OPT_PSM, ATT_PSM,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
@@ -1271,9 +1332,9 @@ int btd_adapter_gatt_server_start(struct btd_adapter *adapter)
 	}
 
 	/* LE socket */
-	server->le_io = bt_io_listen(BT_IO_L2CAP, NULL, confirm_event,
+	server->le_io = bt_io_listen(connect_event, NULL,
 					&server->le_io, NULL, &gerr,
-					BT_IO_OPT_SOURCE_BDADDR, &addr,
+					BT_IO_OPT_SOURCE_BDADDR, addr,
 					BT_IO_OPT_CID, ATT_CID,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
@@ -1297,7 +1358,7 @@ void btd_adapter_gatt_server_stop(struct btd_adapter *adapter)
 	if (l == NULL)
 		return;
 
-	DBG("Stop GATT server in hci%d", adapter_get_dev_id(adapter));
+	DBG("Stop GATT server in hci%d", btd_adapter_get_index(adapter));
 
 	server = l->data;
 	servers = g_slist_remove(servers, server);
@@ -1429,8 +1490,9 @@ uint16_t attrib_db_find_avail(struct btd_adapter *adapter, bt_uuid_t *svc_uuid,
 }
 
 struct attribute *attrib_db_add(struct btd_adapter *adapter, uint16_t handle,
-				bt_uuid_t *uuid, int read_reqs, int write_reqs,
-						const uint8_t *value, int len)
+					bt_uuid_t *uuid, int read_req,
+					int write_req, const uint8_t *value,
+					size_t len)
 {
 	GSList *l;
 
@@ -1438,13 +1500,13 @@ struct attribute *attrib_db_add(struct btd_adapter *adapter, uint16_t handle,
 	if (l == NULL)
 		return NULL;
 
-	return attrib_db_add_new(l->data, handle, uuid, read_reqs, write_reqs,
+	return attrib_db_add_new(l->data, handle, uuid, read_req, write_req,
 								value, len);
 }
 
 int attrib_db_update(struct btd_adapter *adapter, uint16_t handle,
 					bt_uuid_t *uuid, const uint8_t *value,
-					int len, struct attribute **attr)
+					size_t len, struct attribute **attr)
 {
 	struct gatt_server *server;
 	struct attribute *a;
@@ -1513,7 +1575,7 @@ int attrib_db_del(struct btd_adapter *adapter, uint16_t handle)
 }
 
 int attrib_gap_set(struct btd_adapter *adapter, uint16_t uuid,
-						const uint8_t *value, int len)
+					const uint8_t *value, size_t len)
 {
 	struct gatt_server *server;
 	uint16_t handle;

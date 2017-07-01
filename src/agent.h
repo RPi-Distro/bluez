@@ -33,25 +33,18 @@ typedef void (*agent_pincode_cb) (struct agent *agent, DBusError *err,
 typedef void (*agent_passkey_cb) (struct agent *agent, DBusError *err,
 					uint32_t passkey, void *user_data);
 
-typedef void (*agent_remove_cb) (struct agent *agent, void *user_data);
+struct agent *agent_ref(struct agent *agent);
+void agent_unref(struct agent *agent);
 
-struct agent *agent_create(struct btd_adapter *adapter, const char *name,
-				const char *path, uint8_t capability,
-				agent_remove_cb cb, void *remove_cb_data);
+struct agent *agent_get(const char *owner);
 
-void agent_free(struct agent *agent);
-
-int agent_authorize(struct agent *agent, const char *path,
-			const char *uuid, agent_cb cb, void *user_data,
-			GDestroyNotify destroy);
+int agent_authorize_service(struct agent *agent, const char *path,
+				const char *uuid, agent_cb cb,
+				void *user_data, GDestroyNotify destroy);
 
 int agent_request_pincode(struct agent *agent, struct btd_device *device,
 				agent_pincode_cb cb, gboolean secure,
 				void *user_data, GDestroyNotify destroy);
-
-int agent_confirm_mode_change(struct agent *agent, const char *new_mode,
-				agent_cb cb, void *user_data,
-				GDestroyNotify destroy);
 
 int agent_request_passkey(struct agent *agent, struct btd_device *device,
 				agent_passkey_cb cb, void *user_data,
@@ -61,8 +54,12 @@ int agent_request_confirmation(struct agent *agent, struct btd_device *device,
 				uint32_t passkey, agent_cb cb,
 				void *user_data, GDestroyNotify destroy);
 
+int agent_request_authorization(struct agent *agent, struct btd_device *device,
+						agent_cb cb, void *user_data,
+						GDestroyNotify destroy);
+
 int agent_display_passkey(struct agent *agent, struct btd_device *device,
-				uint32_t passkey);
+				uint32_t passkey, uint16_t entered);
 
 int agent_display_pincode(struct agent *agent, struct btd_device *device,
 				const char *pincode, agent_cb cb,
@@ -70,11 +67,7 @@ int agent_display_pincode(struct agent *agent, struct btd_device *device,
 
 int agent_cancel(struct agent *agent);
 
-gboolean agent_is_busy(struct agent *agent, void *user_data);
-
 uint8_t agent_get_io_capability(struct agent *agent);
 
-gboolean agent_matches(struct agent *agent, const char *name, const char *path);
-
-void agent_init(void);
-void agent_exit(void);
+void btd_agent_init(void);
+void btd_agent_cleanup(void);

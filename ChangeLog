@@ -1,3 +1,69 @@
+ver 5.5:
+	Fix issue with race condition between SDP and properties.
+	Fix issue with handling storage of private device addresses.
+	Fix issue with NFC out-of-band pairing and power states.
+	Fix issue with short name during device update handling.
+	Fix issue with handling AVRCP without A2DP being present.
+	Add support for handling AVRCP pass-through operations.
+	Add support for automatically reconnecting HID devices.
+	Add support for automatically pairing of devices.
+
+ver 5.4:
+	Fix issue with invalid memory access and SDP service search.
+	Add support for available player changed event for controller.
+	Add support for UIDs changed event for AVRCP controller.
+	Add support for mandatory AVRCP pass-through operations.
+	Add support for Message Notification Service (MNS) server.
+	Add support for agent methods within command line client.
+
+ver 5.3:
+	Fix issue with registering invalid profiles.
+	Fix issue with inconsistent A2DP transport state.
+	Fix issue with A2DP resume while in configured state.
+	Fix issue with buffer overflow when processing SDP response.
+	Fix issue with missing range check for SDP attribute response.
+	Fix issue with missing validation of SDP data elements.
+	Fix issue with missing fallback to static hostname.
+	Fix issue with default adapter assignment.
+
+ver 5.2:
+	Fix issue with connection handling for Low Energy.
+	Fix issue with broken device discovery handling.
+	Fix issue with invalid memory access within A2DP.
+	Fix issue with handling empty path name of SetPath.
+	Fix issue with handling Message Access Profile filters.
+	Fix issue with handling network service unregistration.
+	Fix issue with not handling bogus device pairing results.
+	Fix issue with initial service discovery and profile manager.
+	Add support for AVRCP volume notifications.
+	Add support for AVRCP browsing commands.
+
+ver 5.1:
+	Fix issue with crash when removing OBEX session.
+	Fix issue with HID device disconnected from kernel.
+	Fix issue with buffer overflow when parsing HID SDP record.
+	Fix issue with SDP_TEXT_STR16 and SDP_URL_STR16 parsing.
+	Add support for integration with systemd's hostname daemon.
+	Add support for separate adapter alias property.
+	Add support for adapter and device modalias properties.
+	Add support for official BlueZ device information.
+	Add support for asynchronous management interface handling.
+	Add tool for testing management interface compliance.
+	Add tool for testing SDP qualification requirements.
+	Add tool for testing various EIR and AD data records.
+
+ver 5.0:
+	Introduce D-Bus Properties and ObjectManager interfaces.
+	Add support for generic profile interface.
+	Add support for global agent interface.
+	Add support for integrated OBEX daemon.
+	Add support for integrated hcidump utility.
+	Add support for Bluetooth tracing and monitor utility.
+	Add support for Bluetooth command line client utility.
+	Remove support for Handsfree gateway handling.
+	Remove support for GStreamer A2DP and SBC elements.
+	Disable default installation of Bluetooth library.
+
 ver 4.101:
 	Fix issue with missing BlueZ service file.
 	Fix issue with aborting A2DP setup during AVDTP start.

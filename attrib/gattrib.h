@@ -30,6 +30,7 @@ extern "C" {
 
 #define GATTRIB_ALL_EVENTS 0xFF
 #define GATTRIB_ALL_REQS 0xFE
+#define GATTRIB_ALL_HANDLES 0x0000
 
 struct _GAttrib;
 typedef struct _GAttrib GAttrib;
@@ -50,9 +51,9 @@ GIOChannel *g_attrib_get_channel(GAttrib *attrib);
 gboolean g_attrib_set_destroy_function(GAttrib *attrib,
 		GDestroyNotify destroy, gpointer user_data);
 
-guint g_attrib_send(GAttrib *attrib, guint id, guint8 opcode,
-			const guint8 *pdu, guint16 len, GAttribResultFunc func,
-			gpointer user_data, GDestroyNotify notify);
+guint g_attrib_send(GAttrib *attrib, guint id, const guint8 *pdu, guint16 len,
+			GAttribResultFunc func, gpointer user_data,
+			GDestroyNotify notify);
 
 gboolean g_attrib_cancel(GAttrib *attrib, guint id);
 gboolean g_attrib_cancel_all(GAttrib *attrib);
@@ -60,13 +61,13 @@ gboolean g_attrib_cancel_all(GAttrib *attrib);
 gboolean g_attrib_set_debug(GAttrib *attrib,
 		GAttribDebugFunc func, gpointer user_data);
 
-guint g_attrib_register(GAttrib *attrib, guint8 opcode,
-		GAttribNotifyFunc func, gpointer user_data,
-					GDestroyNotify notify);
+guint g_attrib_register(GAttrib *attrib, guint8 opcode, guint16 handle,
+				GAttribNotifyFunc func, gpointer user_data,
+				GDestroyNotify notify);
 
 gboolean g_attrib_is_encrypted(GAttrib *attrib);
 
-uint8_t *g_attrib_get_buffer(GAttrib *attrib, int *len);
+uint8_t *g_attrib_get_buffer(GAttrib *attrib, size_t *len);
 gboolean g_attrib_set_mtu(GAttrib *attrib, int mtu);
 
 gboolean g_attrib_unregister(GAttrib *attrib, guint id);

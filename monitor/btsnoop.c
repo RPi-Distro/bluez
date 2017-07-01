@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #include <arpa/inet.h>
 
+#include "packet.h"
 #include "btsnoop.h"
 
 static inline uint64_t ntoh64(uint64_t n)
@@ -71,25 +72,43 @@ static const uint8_t btsnoop_id[] = { 0x62, 0x74, 0x73, 0x6e,
 				      0x6f, 0x6f, 0x70, 0x00 };
 
 static const uint32_t btsnoop_version = 1;
-static const uint32_t btsnoop_type = 1001;
+static uint32_t btsnoop_type = 0;
 
 static int btsnoop_fd = -1;
 static uint16_t btsnoop_index = 0xffff;
 
-void btsnoop_open(const char *path)
+void btsnoop_create(const char *path)
 {
+	struct btsnoop_hdr hdr;
+	ssize_t written;
+
 	if (btsnoop_fd >= 0)
 		return;
 
-	btsnoop_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC,
+	btsnoop_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
 				S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (btsnoop_fd < 0)
+		return;
+
+	btsnoop_type = 2001;
+
+	memcpy(hdr.id, btsnoop_id, sizeof(btsnoop_id));
+	hdr.version = htonl(btsnoop_version);
+	hdr.type = htonl(btsnoop_type);
+
+	written = write(btsnoop_fd, &hdr, BTSNOOP_HDR_SIZE);
+	if (written < 0) {
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return;
+	}
 }
 
-void btsnoop_write(struct timeval *tv, uint16_t index, uint32_t flags,
+void btsnoop_write(struct timeval *tv, uint16_t index, uint16_t opcode,
 					const void *data, uint16_t size)
 {
-	struct btsnoop_hdr hdr;
 	struct btsnoop_pkt pkt;
+	uint32_t flags;
 	uint64_t ts;
 	ssize_t written;
 
@@ -99,20 +118,26 @@ void btsnoop_write(struct timeval *tv, uint16_t index, uint32_t flags,
 	if (btsnoop_fd < 0)
 		return;
 
-	if (btsnoop_index == 0xffff) {
-		memcpy(hdr.id, btsnoop_id, sizeof(btsnoop_id));
-		hdr.version = htonl(btsnoop_version);
-		hdr.type = htonl(btsnoop_type);
+	switch (btsnoop_type) {
+	case 1001:
+		if (btsnoop_index == 0xffff)
+			btsnoop_index = index;
 
-		written = write(btsnoop_fd, &hdr, BTSNOOP_HDR_SIZE);
-		if (written < 0)
+		if (index != btsnoop_index)
 			return;
 
-		btsnoop_index = index;
-	}
+		flags = packet_get_flags(opcode);
+		if (flags == 0xff)
+			return;
+		break;
 
-	if (index != btsnoop_index)
+	case 2001:
+		flags = (index << 16) | opcode;
+		break;
+
+	default:
 		return;
+	}
 
 	ts = (tv->tv_sec - 946684800ll) * 1000000ll + tv->tv_usec;
 
@@ -131,6 +156,135 @@ void btsnoop_write(struct timeval *tv, uint16_t index, uint32_t flags,
 		if (written < 0)
 			return;
 	}
+}
+
+int btsnoop_open(const char *path)
+{
+	struct btsnoop_hdr hdr;
+	ssize_t len;
+
+	if (btsnoop_fd >= 0) {
+		fprintf(stderr, "Too many open files\n");
+		return -1;
+	}
+
+	btsnoop_fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (btsnoop_fd < 0) {
+		perror("Failed to open file");
+		return -1;
+	}
+
+	len = read(btsnoop_fd, &hdr, BTSNOOP_HDR_SIZE);
+	if (len < 0 || len != BTSNOOP_HDR_SIZE) {
+		perror("Failed to read header");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	if (memcmp(hdr.id, btsnoop_id, sizeof(btsnoop_id))) {
+		fprintf(stderr, "Invalid btsnoop header\n");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	if (ntohl(hdr.version) != btsnoop_version) {
+		fprintf(stderr, "Invalid btsnoop version\n");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	btsnoop_type = ntohl(hdr.type);
+
+	switch (btsnoop_type) {
+	case 1001:
+	case 1002:
+		packet_del_filter(PACKET_FILTER_SHOW_INDEX);
+		break;
+
+	case 2001:
+		packet_add_filter(PACKET_FILTER_SHOW_INDEX);
+		break;
+	}
+
+	return 0;
+}
+
+int btsnoop_read(struct timeval *tv, uint16_t *index, uint16_t *opcode,
+						void *data, uint16_t *size)
+{
+	struct btsnoop_pkt pkt;
+	uint32_t toread, flags;
+	uint64_t ts;
+	uint8_t pkt_type;
+	ssize_t len;
+
+	if (btsnoop_fd < 0)
+		return -1;
+
+	len = read(btsnoop_fd, &pkt, BTSNOOP_PKT_SIZE);
+	if (len == 0)
+		return -1;
+
+	if (len < 0 || len != BTSNOOP_PKT_SIZE) {
+		perror("Failed to read packet");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	toread = ntohl(pkt.size);
+	flags = ntohl(pkt.flags);
+
+	ts = ntoh64(pkt.ts) - 0x00E03AB44A676000ll;
+	tv->tv_sec = (ts / 1000000ll) + 946684800ll;
+	tv->tv_usec = ts % 1000000ll;
+
+	switch (btsnoop_type) {
+	case 1001:
+		*index = 0;
+		*opcode = packet_get_opcode(0xff, flags);
+		break;
+
+	case 1002:
+		len = read(btsnoop_fd, &pkt_type, 1);
+		if (len < 0) {
+			perror("Failed to read packet type");
+			close(btsnoop_fd);
+			btsnoop_fd = -1;
+			return -1;
+		}
+		toread--;
+
+		*index = 0;
+		*opcode = packet_get_opcode(pkt_type, flags);
+		break;
+
+	case 2001:
+		*index = flags >> 16;
+		*opcode = flags & 0xffff;
+		break;
+
+	default:
+		fprintf(stderr, "Unknown packet type\n");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	len = read(btsnoop_fd, data, toread);
+	if (len < 0) {
+		perror("Failed to read data");
+		close(btsnoop_fd);
+		btsnoop_fd = -1;
+		return -1;
+	}
+
+	*size = toread;
+
+	return 0;
 }
 
 void btsnoop_close(void)

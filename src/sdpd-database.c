@@ -41,7 +41,6 @@
 #include "sdpd.h"
 #include "log.h"
 #include "adapter.h"
-#include "manager.h"
 
 static sdp_list_t *service_db;
 static sdp_list_t *access_db;
@@ -93,7 +92,10 @@ static void access_free(void *p)
 void sdp_svcdb_reset(void)
 {
 	sdp_list_free(service_db, (sdp_free_func_t) sdp_record_free);
+	service_db = NULL;
+
 	sdp_list_free(access_db, access_free);
+	access_db = NULL;
 }
 
 typedef struct _indexed {
@@ -188,11 +190,11 @@ void sdp_record_add(const bdaddr_t *device, sdp_record_t *rec)
 	access_db = sdp_list_insert_sorted(access_db, dev, access_sort);
 
 	if (bacmp(device, BDADDR_ANY) == 0) {
-		manager_foreach_adapter(adapter_service_insert, rec);
+		adapter_foreach(adapter_service_insert, rec);
 		return;
 	}
 
-	adapter = manager_find_adapter(device);
+	adapter = adapter_find(device);
 	if (adapter)
 		adapter_service_insert(adapter, rec);
 }
@@ -267,11 +269,11 @@ int sdp_record_remove(uint32_t handle)
 	a = p->data;
 
 	if (bacmp(&a->device, BDADDR_ANY) != 0) {
-		struct btd_adapter *adapter = manager_find_adapter(&a->device);
+		struct btd_adapter *adapter = adapter_find(&a->device);
 		if (adapter)
 			adapter_service_remove(adapter, r);
 	} else
-		manager_foreach_adapter(adapter_service_remove, r);
+		adapter_foreach(adapter_service_remove, r);
 
 	access_db = sdp_list_remove(access_db, a);
 	access_free(a);
@@ -285,11 +287,6 @@ int sdp_record_remove(uint32_t handle)
 sdp_list_t *sdp_get_record_list(void)
 {
 	return service_db;
-}
-
-sdp_list_t *sdp_get_access_list(void)
-{
-	return access_db;
 }
 
 int sdp_check_access(uint32_t handle, bdaddr_t *device)
@@ -341,6 +338,6 @@ void sdp_init_services_list(bdaddr_t *device)
 
 		SDPDBG("adding record with handle %x", access->handle);
 
-		manager_foreach_adapter(adapter_service_insert, rec);
+		adapter_foreach(adapter_service_insert, rec);
 	}
 }

@@ -1,163 +1,137 @@
 BlueZ D-Bus Device API description
 **********************************
 
-Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
-Copyright (C) 2005-2006  Johan Hedberg <johan.hedberg@nokia.com>
-Copyright (C) 2005-2006  Claudio Takahasi <claudio.takahasi@indt.org.br>
-Copyright (C) 2006-2007  Luiz von Dentz <luiz.dentz@indt.org.br>
-
 
 Device hierarchy
 ================
 
 Service		org.bluez
-Interface	org.bluez.Device
+Interface	org.bluez.Device1
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX
 
-Methods		dict GetProperties()
+Methods		void Connect()
 
-			Returns all properties for the device. See the
-			properties section for available properties.
+			This is a generic method to connect any profiles
+			the remote device supports that can be connected
+			to and have been flagged as auto-connectable on
+			our side. If only subset of profiles is already
+			connected it will try to connect currently disconnected
+			ones.
 
-			Possible Errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.InvalidArguments
-
-		void SetProperty(string name, variant value)
-
-			Changes the value of the specified property. Only
-			properties that are listed a read-write are changeable.
-			On success this will emit a PropertyChanged signal.
-
-			Possible Errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.InvalidArguments
-
-		dict DiscoverServices(string pattern)
-
-			This method starts the service discovery to retrieve
-			remote service records. The pattern parameter can
-			be used to specify specific UUIDs. And empty string
-			will look for the public browse group.
-
-			The return value is a dictionary with the record
-			handles as keys and the service record in XML format
-			as values. The key is uint32 and the value a string
-			for this dictionary.
+			If at least one profile was connected successfully this
+			method will indicate success.
 
 			Possible errors: org.bluez.Error.NotReady
 					 org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
-
-		void CancelDiscovery()
-
-			This method will cancel any previous DiscoverServices
-			transaction.
-
-			Possible errors: org.bluez.Error.NotReady
-					 org.bluez.Error.Failed
-					 org.bluez.Error.NotAuthorized
+					 org.bluez.Error.AlreadyConnected
 
 		void Disconnect()
 
-			This method disconnects a specific remote device by
-			terminating the low-level ACL connection. The use of
-			this method should be restricted to administrator
-			use.
+			This method gracefully disconnects all connected
+			profiles and then terminates low-level ACL connection.
 
-			A DisconnectRequested signal will be sent and the
-			actual disconnection will only happen 2 seconds later.
-			This enables upper-level applications to terminate
-			their connections gracefully before the ACL connection
-			is terminated.
+			ACL connection will be terminated even if some profiles
+			were not disconnected properly e.g. due to misbehaving
+			device.
+
+			This method can be also used to cancel a preceding
+			Connect call before a reply to it has been received.
 
 			Possible errors: org.bluez.Error.NotConnected
 
-		array{object} ListNodes()
+		void ConnectProfile(string uuid)
 
-			Returns list of device node object paths.
+			This method connects a specific profile of this
+			device. The UUID provided is the remote service
+			UUID for the profile.
+
+			Possible errors: org.bluez.Error.DoesNotExist
+					 org.bluez.Error.AlreadyConnected
+					 org.bluez.Error.ConnectFailed
+
+		void DisconnectProfile(string uuid)
+
+			This method disconnects a specific profile of
+			this device. The profile needs to be registered
+			client profile.
+
+			There is no connection tracking for a profile, so
+			as long as the profile is registered this will always
+			succeed.
+
+			Possible errors: org.bluez.Error.DoesNotExist
+					 org.bluez.Error.Failed
+					 org.bluez.Error.NotConnected
+					 org.bluez.Error.NotSupported
+
+		void Pair()
+
+			This method will connect to the remote device,
+			initiate pairing and then retrieve all SDP records
+			(or GATT primary services).
+
+			If the application has registered its own agent,
+			then that specific agent will be used. Otherwise
+			it will use the default agent.
+
+			Only for applications like a pairing wizard it
+			would make sense to have its own agent. In almost
+			all other cases the default agent will handle
+			this just fine.
+
+			In case there is no application agent and also
+			no default agent present, this method will fail.
 
 			Possible errors: org.bluez.Error.InvalidArguments
 					 org.bluez.Error.Failed
-					 org.bluez.Error.OutOfMemory
+					 org.bluez.Error.AuthenticationCanceled
+					 org.bluez.Error.AuthenticationFailed
+					 org.bluez.Error.AuthenticationRejected
+					 org.bluez.Error.AuthenticationTimeout
+					 org.bluez.Error.ConnectionAttemptFailed
 
-		object CreateNode(string uuid)
+		void CancelPairing()
 
-			Creates a persistent device node binding with a
-			remote device. The actual support for the specified
-			UUID depends if the device driver has support for
-			persistent binding. At the moment only RFCOMM TTY
-			nodes are supported.
+			This method can be used to cancel a pairing
+			operation initiated by the Pair method.
 
-			Possible errors: org.bluez.Error.InvalidArguments
-					 org.bluez.Error.NotSupported
-
-		void RemoveNode(object node)
-
-			Removes a persistent device node binding.
-
-			Possible errors: org.bluez.Error.InvalidArguments
-					 org.bluez.Error.DoesNotExist
-
-Signals		PropertyChanged(string name, variant value)
-
-			This signal indicates a changed value of the given
-			property.
-
-		DisconnectRequested()
-
-			This signal will be sent when a low level
-			disconnection to a remote device has been requested.
-			The actual disconnection will happen 2 seconds later.
-
-		NodeCreated(object node)
-
-			Parameter is object path of created device node.
-
-		NodeRemoved(object node)
-
-			Parameter is object path of removed device node.
+			Possible errors: org.bluez.Error.DoesNotExist
+					 org.bluez.Error.Failed
 
 Properties	string Address [readonly]
 
 			The Bluetooth device address of the remote device.
 
-		string Name [readonly]
+		string Name [readonly, optional]
 
 			The Bluetooth remote name. This value can not be
 			changed. Use the Alias property instead.
 
-		uint16 Vendor [readonly]
+			This value is only present for completeness. It is
+			better to always use the Alias property when
+			displaying the devices name.
 
-			Vendor unique numeric identifier.
+			If the Alias property is unset, it will reflect
+			this value which makes it more convenient.
 
-		uint16 VendorSource [readonly]
-
-			Vendor source numeric identifier.
-
-		uint16 Product [readonly]
-
-			Product unique numeric identifier.
-
-		uint16 Version [readonly]
-
-			Version unique numeric identifier.
-
-		string Icon [readonly]
+		string Icon [readonly, optional]
 
 			Proposed icon name according to the freedesktop.org
 			icon naming specification.
 
-		uint32 Class [readonly]
+		uint32 Class [readonly, optional]
 
 			The Bluetooth class of device of the remote device.
 
-		array{string} UUIDs [readonly]
+		uint16 Appearance [readonly, optional]
+
+			External appearance of device, as found on GAP service.
+
+		array{string} UUIDs [readonly, optional]
 
 			List of 128-bit UUIDs that represents the available
 			remote services.
-
-		array{object} Services [readonly]
-
-			List of characteristics based services.
 
 		boolean Paired [readonly]
 
@@ -166,7 +140,7 @@ Properties	string Address [readonly]
 		boolean Connected [readonly]
 
 			Indicates if the remote device is currently connected.
-			A PropertyChanged signal indicate changes to this
+			A PropertiesChanged signal indicate changes to this
 			status.
 
 		boolean Trusted [readwrite]
@@ -192,12 +166,7 @@ Properties	string Address [readonly]
 			convert it back to the remote device name.
 
 			When resetting the alias with an empty string, the
-			emitted PropertyChanged signal will show the remote
-			name again.
-
-		array{object} Nodes [readonly]
-
-			List of device node object paths.
+			property will default back to the remote name.
 
 		object Adapter [readonly]
 
@@ -213,3 +182,13 @@ Properties	string Address [readonly]
 			Note that this property can exhibit false-positives
 			in the case of Bluetooth 2.1 (or newer) devices that
 			have disabled Extended Inquiry Response support.
+
+		string Modalias [readonly, optional]
+
+			Remote Device ID information in modalias format
+			used by the kernel and udev.
+
+		int16 RSSI [readonly, optional]
+
+			Received Signal Strength Indicator of the remote
+			device.

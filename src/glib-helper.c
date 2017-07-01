@@ -34,12 +34,26 @@
 
 #include <glib.h>
 
-#include "btio.h"
 #include "glib-helper.h"
+
+char *bt_modalias(uint16_t source, uint16_t vendor,
+					uint16_t product, uint16_t version)
+{
+	switch (source) {
+	case 0x0001:
+		return g_strdup_printf("%s:v%04Xp%04Xd%04X",
+					"bluetooth", vendor, product, version);
+	case 0x0002:
+		return g_strdup_printf("%s:v%04Xp%04Xd%04X",
+					"usb", vendor, product, version);
+	}
+
+	return NULL;
+}
 
 char *bt_uuid2string(uuid_t *uuid)
 {
-	gchar *str;
+	char *str;
 	uuid_t uuid128;
 	unsigned int data0;
 	unsigned short data1;
@@ -101,7 +115,18 @@ static struct {
 	{ "fax",	FAX_SVCLASS_ID			},
 	{ "spp",	SERIAL_PORT_SVCLASS_ID		},
 	{ "hsp",	HEADSET_SVCLASS_ID		},
+	{ "hsp-hs",	HEADSET_SVCLASS_ID		},
+	{ "hsp-ag",	HEADSET_AGW_SVCLASS_ID		},
 	{ "hfp",	HANDSFREE_SVCLASS_ID		},
+	{ "hfp-hf",	HANDSFREE_SVCLASS_ID		},
+	{ "hfp-ag",	HANDSFREE_AGW_SVCLASS_ID	},
+	{ "pbap-pce",	PBAP_PCE_SVCLASS_ID		},
+	{ "pbap-pse",	PBAP_PSE_SVCLASS_ID		},
+	{ "map-mse",	MAP_MSE_SVCLASS_ID		},
+	{ "map-mas",	MAP_MSE_SVCLASS_ID		},
+	{ "map-mce",	MAP_MCE_SVCLASS_ID		},
+	{ "map-mns",	MAP_MCE_SVCLASS_ID		},
+	{ "gnss",	GNSS_SERVER_SVCLASS_ID		},
 	{ }
 };
 
@@ -210,47 +235,4 @@ int bt_string2uuid(uuid_t *uuid, const char *string)
 
 		return string2uuid16(uuid, string);
 	}
-}
-
-gchar *bt_list2string(GSList *list)
-{
-	GSList *l;
-	gchar *str, *tmp;
-
-	if (!list)
-		return NULL;
-
-	str = g_strdup((const gchar *) list->data);
-
-	for (l = list->next; l; l = l->next) {
-		tmp = g_strconcat(str, " " , (const gchar *) l->data, NULL);
-		g_free(str);
-		str = tmp;
-	}
-
-	return str;
-}
-
-GSList *bt_string2list(const gchar *str)
-{
-	GSList *l = NULL;
-	gchar **uuids;
-	int i = 0;
-
-	if (!str)
-		return NULL;
-
-	/* FIXME: eglib doesn't support g_strsplit */
-	uuids = g_strsplit(str, " ", 0);
-	if (!uuids)
-		return NULL;
-
-	while (uuids[i]) {
-		l = g_slist_append(l, uuids[i]);
-		i++;
-	}
-
-	g_free(uuids);
-
-	return l;
 }

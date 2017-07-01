@@ -21,8 +21,8 @@
  *
  */
 
-gchar *bt_uuid2string(uuid_t *uuid);
+char *bt_modalias(uint16_t source, uint16_t vendor,
+					uint16_t product, uint16_t version);
+char *bt_uuid2string(uuid_t *uuid);
 char *bt_name2string(const char *string);
 int bt_string2uuid(uuid_t *uuid, const char *string);
-gchar *bt_list2string(GSList *list);
-GSList *bt_string2list(const gchar *str);
