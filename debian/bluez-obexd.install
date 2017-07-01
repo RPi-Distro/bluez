@@ -1,3 +1,0 @@
-usr/lib/bluetooth/obexd
-usr/share/dbus-1/services/org.bluez.obex.service
-usr/lib/systemd/user/obex.service
