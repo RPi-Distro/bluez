@@ -35,20 +35,19 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include <bluetooth/bluetooth.h>
-
 #include <glib.h>
 
-#include "src/log.h"
-
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
+#include "src/log.h"
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/profile.h"
 #include "src/service.h"
 #include "src/shared/util.h"
 #include "src/shared/uhid.h"
-
 #include "src/plugin.h"
 
 #include "suspend.h"
@@ -84,17 +83,23 @@ struct hog_device {
 	struct gatt_primary	*hog_primary;
 	GSList			*reports;
 	struct bt_uhid		*uhid;
+	gboolean		uhid_created;
 	gboolean		has_report_id;
 	uint16_t		bcdhid;
 	uint8_t			bcountrycode;
 	uint16_t		proto_mode_handle;
 	uint16_t		ctrlpt_handle;
 	uint8_t			flags;
+	guint			getrep_att;
+	uint16_t		getrep_id;
+	guint			setrep_att;
+	uint16_t		setrep_id;
 };
 
 struct report {
 	uint8_t			id;
 	uint8_t			type;
+	uint16_t		ccc_handle;
 	guint			notifyid;
 	struct gatt_char	*decl;
 	struct hog_device	*hogdev;
@@ -147,30 +152,42 @@ static void report_ccc_written_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data)
 {
 	struct report *report = user_data;
-	struct hog_device *hogdev = report->hogdev;
 
 	if (status != 0) {
-		error("Write report characteristic descriptor failed: %s",
-							att_ecode2str(status));
+		error("Report 0x%04x CCC write failed: %s",
+				report->decl->handle, att_ecode2str(status));
 		return;
 	}
 
+	DBG("Report 0x%04x CCC written: notifications enabled",
+							report->decl->handle);
+}
+
+static void enable_report_notifications(struct report *report,
+							bool enable_on_device)
+{
+	struct hog_device *hogdev = report->hogdev;
+	uint8_t value[2];
+
+	if (!hogdev->uhid_created)
+		return;
+
+	if (!report->ccc_handle)
+		return;
+
+	/* Register callback for HoG report notifications */
 	report->notifyid = g_attrib_register(hogdev->attrib,
 					ATT_OP_HANDLE_NOTIFY,
 					report->decl->value_handle,
 					report_value_cb, report, NULL);
 
-	DBG("Report characteristic descriptor written: notifications enabled");
-}
+	if (!enable_on_device)
+		return;
 
-static void write_ccc(uint16_t handle, gpointer user_data)
-{
-	struct report *report = user_data;
-	struct hog_device *hogdev = report->hogdev;
-	uint8_t value[] = { 0x01, 0x00 };
-
-	gatt_write_char(hogdev->attrib, handle, value, sizeof(value),
-					report_ccc_written_cb, report);
+	/* Enable HoG report notifications on the HoG device */
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+	gatt_write_char(hogdev->attrib, report->ccc_handle, value,
+				sizeof(value), report_ccc_written_cb, report);
 }
 
 static void report_reference_cb(guint8 status, const guint8 *pdu,
@@ -217,8 +234,8 @@ static void discover_descriptor_cb(uint8_t status, GSList *descs,
 		switch (desc->uuid16) {
 		case GATT_CLIENT_CHARAC_CFG_UUID:
 			report = user_data;
-			attrib = report->hogdev->attrib;
-			write_ccc(desc->handle, report);
+			report->ccc_handle = desc->handle;
+			enable_report_notifications(report, true);
 			break;
 		case GATT_REPORT_REFERENCE:
 			report = user_data;
@@ -302,7 +319,7 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 	DBG("External report reference read, external report characteristic "
 						"UUID: 0x%04x", uuid16);
 	bt_uuid16_create(&uuid, uuid16);
-	gatt_discover_char(hogdev->attrib, 0x00, 0xff, &uuid,
+	gatt_discover_char(hogdev->attrib, 0x0001, 0xffff, &uuid,
 					external_service_char_cb, hogdev);
 }
 
@@ -327,15 +344,12 @@ static void output_written_cb(guint8 status, const guint8 *pdu,
 	}
 }
 
-static void forward_report(struct uhid_event *ev, void *user_data)
+static struct report *find_report(struct hog_device *hogdev, uint8_t type, uint8_t id)
 {
-	struct hog_device *hogdev = user_data;
-	struct report *report, cmp;
+	struct report cmp;
 	GSList *l;
-	uint8_t *data;
-	int size;
 
-	switch (ev->u.output.rtype) {
+	switch (type) {
 	case UHID_FEATURE_REPORT:
 		cmp.type = HOG_REPORT_TYPE_FEATURE;
 		break;
@@ -346,25 +360,36 @@ static void forward_report(struct uhid_event *ev, void *user_data)
 		cmp.type = HOG_REPORT_TYPE_INPUT;
 		break;
 	default:
-		return;
+		return NULL;
 	}
 
-	cmp.id = 0;
+	cmp.id = hogdev->has_report_id ? id : 0;
+
+	l = g_slist_find_custom(hogdev->reports, &cmp, report_cmp);
+
+	return l ? l->data : NULL;
+}
+
+static void forward_report(struct uhid_event *ev, void *user_data)
+{
+	struct hog_device *hogdev = user_data;
+	struct report *report;
+	void *data;
+	int size;
+
+	report = find_report(hogdev, ev->u.output.rtype, ev->u.output.data[0]);
+	if (!report)
+		return;
+
 	data = ev->u.output.data;
 	size = ev->u.output.size;
 	if (hogdev->has_report_id && size > 0) {
-		cmp.id = *data++;
+		data++;
 		--size;
 	}
 
-	l = g_slist_find_custom(hogdev->reports, &cmp, report_cmp);
-	if (!l)
-		return;
-
-	report = l->data;
-
-	DBG("Sending report type %d ID %d to device 0x%04X handle 0x%X",
-		cmp.type, cmp.id, hogdev->id, report->decl->value_handle);
+	DBG("Sending report type %d ID %d to handle 0x%X", report->type,
+				report->id, report->decl->value_handle);
 
 	if (hogdev->attrib == NULL)
 		return;
@@ -375,6 +400,162 @@ static void forward_report(struct uhid_event *ev, void *user_data)
 	else if (report->decl->properties & GATT_CHR_PROP_WRITE_WITHOUT_RESP)
 		gatt_write_cmd(hogdev->attrib, report->decl->value_handle,
 						data, size, NULL, NULL);
+}
+
+static void set_report_cb(guint8 status, const guint8 *pdu,
+					guint16 plen, gpointer user_data)
+{
+	struct hog_device *hogdev = user_data;
+	struct uhid_event rsp;
+	int err;
+
+	hogdev->setrep_att = 0;
+
+	memset(&rsp, 0, sizeof(rsp));
+	rsp.type = UHID_SET_REPORT_REPLY;
+	rsp.u.set_report_reply.id = hogdev->setrep_id;
+	rsp.u.set_report_reply.err = status;
+
+	if (status != 0)
+		error("Error setting Report value: %s", att_ecode2str(status));
+
+	err = bt_uhid_send(hogdev->uhid, &rsp);
+	if (err < 0)
+		error("bt_uhid_send: %s", strerror(-err));
+}
+
+static void set_report(struct uhid_event *ev, void *user_data)
+{
+	struct hog_device *hogdev = user_data;
+	struct report *report;
+	void *data;
+	int size;
+	int err;
+
+	/* uhid never sends reqs in parallel; if there's a req, it timed out */
+	if (hogdev->setrep_att) {
+		g_attrib_cancel(hogdev->attrib, hogdev->setrep_att);
+		hogdev->setrep_att = 0;
+	}
+
+	hogdev->setrep_id = ev->u.set_report.id;
+
+	report = find_report(hogdev, ev->u.set_report.rtype,
+							ev->u.set_report.rnum);
+	if (!report) {
+		err = ENOTSUP;
+		goto fail;
+	}
+
+	data = ev->u.set_report.data;
+	size = ev->u.set_report.size;
+	if (hogdev->has_report_id && size > 0) {
+		data++;
+		--size;
+	}
+
+	DBG("Sending report type %d ID %d to handle 0x%X", report->type,
+				report->id, report->decl->value_handle);
+
+	if (hogdev->attrib == NULL)
+		return;
+
+	hogdev->setrep_att = gatt_write_char(hogdev->attrib,
+						report->decl->value_handle,
+						data, size, set_report_cb,
+						hogdev);
+	if (!hogdev->setrep_att) {
+		err = ENOMEM;
+		goto fail;
+	}
+
+	return;
+fail:
+	/* cancel the request on failure */
+	set_report_cb(err, NULL, 0, hogdev);
+}
+
+static void get_report_cb(guint8 status, const guint8 *pdu, guint16 len,
+							gpointer user_data)
+{
+	struct hog_device *hogdev = user_data;
+	struct uhid_event rsp;
+	int err;
+
+	hogdev->getrep_att = 0;
+
+	memset(&rsp, 0, sizeof(rsp));
+	rsp.type = UHID_GET_REPORT_REPLY;
+	rsp.u.get_report_reply.id = hogdev->getrep_id;
+
+	if (status != 0) {
+		error("Error reading Report value: %s", att_ecode2str(status));
+		goto exit;
+	}
+
+	if (len == 0) {
+		error("Error reading Report, length %d", len);
+		status = EIO;
+		goto exit;
+	}
+
+	if (pdu[0] != 0x0b) {
+		error("Error reading Report, invalid response: %02x", pdu[0]);
+		status = EPROTO;
+		goto exit;
+	}
+
+	--len;
+	++pdu;
+	if (hogdev->has_report_id && len > 0) {
+		--len;
+		++pdu;
+	}
+
+	rsp.u.get_report_reply.size = len;
+	memcpy(rsp.u.get_report_reply.data, pdu, len);
+
+exit:
+	rsp.u.get_report_reply.err = status;
+	err = bt_uhid_send(hogdev->uhid, &rsp);
+	if (err < 0)
+		error("bt_uhid_send: %s", strerror(-err));
+}
+
+static void get_report(struct uhid_event *ev, void *user_data)
+{
+	struct hog_device *hogdev = user_data;
+	struct report *report;
+	guint8 err;
+
+	/* uhid never sends reqs in parallel; if there's a req, it timed out */
+	if (hogdev->getrep_att) {
+		g_attrib_cancel(hogdev->attrib, hogdev->getrep_att);
+		hogdev->getrep_att = 0;
+	}
+
+	hogdev->getrep_id = ev->u.get_report.id;
+
+	report = find_report(hogdev, ev->u.get_report.rtype,
+							ev->u.get_report.rnum);
+	if (!report) {
+		err = ENOTSUP;
+		goto fail;
+	}
+
+	hogdev->getrep_att = gatt_read_char(hogdev->attrib,
+						report->decl->value_handle,
+						get_report_cb, hogdev);
+	if (!hogdev->getrep_att) {
+		err = ENOMEM;
+		goto fail;
+	}
+
+	return;
+
+fail:
+	/* cancel the request on failure */
+	get_report_cb(err, NULL, 0, hogdev);
 }
 
 static bool get_descriptor_item_info(uint8_t *buf, ssize_t blen, ssize_t *len,
@@ -450,6 +631,7 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	ssize_t vlen;
 	char itemstr[20]; /* 5x3 (data) + 4 (continuation) + 1 (null) */
 	int i, err;
+	GSList *l;
 
 	if (status != 0) {
 		error("Report Map read failed: %s", att_ecode2str(status));
@@ -517,6 +699,16 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 	bt_uhid_register(hogdev->uhid, UHID_OUTPUT, forward_report, hogdev);
+	bt_uhid_register(hogdev->uhid, UHID_SET_REPORT, set_report, hogdev);
+	bt_uhid_register(hogdev->uhid, UHID_GET_REPORT, get_report, hogdev);
+
+	hogdev->uhid_created = TRUE;
+
+	for (l = hogdev->reports; l; l = l->next) {
+		struct report *r = l->data;
+
+		enable_report_notifications(r, true);
+	}
 }
 
 static void info_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -666,10 +858,7 @@ static void attio_connected_cb(GAttrib *attrib, gpointer user_data)
 	for (l = hogdev->reports; l; l = l->next) {
 		struct report *r = l->data;
 
-		r->notifyid = g_attrib_register(hogdev->attrib,
-					ATT_OP_HANDLE_NOTIFY,
-					r->decl->value_handle,
-					report_value_cb, r, NULL);
+		enable_report_notifications(r, false);
 	}
 }
 

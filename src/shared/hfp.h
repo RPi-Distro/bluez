@@ -32,6 +32,9 @@ enum hfp_result {
 	HFP_RESULT_NO_DIALTONE	= 6,
 	HFP_RESULT_BUSY		= 7,
 	HFP_RESULT_NO_ANSWER	= 8,
+	HFP_RESULT_DELAYED	= 9,
+	HFP_RESULT_BLACKLISTED	= 10,
+	HFP_RESULT_CME_ERROR	= 11,
 };
 
 enum hfp_error {
@@ -67,9 +70,9 @@ enum hfp_gw_cmd_type {
 	HFP_GW_CMD_TYPE_COMMAND
 };
 
-struct hfp_gw_result;
+struct hfp_context;
 
-typedef void (*hfp_result_func_t)(struct hfp_gw_result *result,
+typedef void (*hfp_result_func_t)(struct hfp_context *context,
 				enum hfp_gw_cmd_type type, void *user_data);
 
 typedef void (*hfp_destroy_func_t)(void *user_data);
@@ -113,14 +116,46 @@ bool hfp_gw_register(struct hfp_gw *hfp, hfp_result_func_t callback,
 						hfp_destroy_func_t destroy);
 bool hfp_gw_unregister(struct hfp_gw *hfp, const char *prefix);
 
-bool hfp_gw_result_get_number(struct hfp_gw_result *result, unsigned int *val);
-bool hfp_gw_result_get_number_default(struct hfp_gw_result *result,
+bool hfp_context_get_number(struct hfp_context *context,
+							unsigned int *val);
+bool hfp_context_get_number_default(struct hfp_context *context,
 						unsigned int *val,
 						unsigned int default_val);
-bool hfp_gw_result_open_container(struct hfp_gw_result *result);
-bool hfp_gw_result_close_container(struct hfp_gw_result *result);
-bool hfp_gw_result_get_string(struct hfp_gw_result *result, char *buf,
+bool hfp_context_open_container(struct hfp_context *context);
+bool hfp_context_close_container(struct hfp_context *context);
+bool hfp_context_get_string(struct hfp_context *context, char *buf,
 								uint8_t len);
-bool hfp_gw_result_get_unquoted_string(struct hfp_gw_result *result, char *buf,
-								uint8_t len);
-bool hfp_gw_result_has_next(struct hfp_gw_result *result);
+bool hfp_context_get_unquoted_string(struct hfp_context *context,
+						char *buf, uint8_t len);
+bool hfp_context_get_range(struct hfp_context *context, unsigned int *min,
+							unsigned int *max);
+bool hfp_context_has_next(struct hfp_context *context);
+void hfp_context_skip_field(struct hfp_context *context);
+
+typedef void (*hfp_hf_result_func_t)(struct hfp_context *context,
+							void *user_data);
+
+typedef void (*hfp_response_func_t)(enum hfp_result result,
+							enum hfp_error cme_err,
+							void *user_data);
+
+struct hfp_hf;
+
+struct hfp_hf *hfp_hf_new(int fd);
+
+struct hfp_hf *hfp_hf_ref(struct hfp_hf *hfp);
+void hfp_hf_unref(struct hfp_hf *hfp);
+bool hfp_hf_set_debug(struct hfp_hf *hfp, hfp_debug_func_t callback,
+				void *user_data, hfp_destroy_func_t destroy);
+bool hfp_hf_set_close_on_unref(struct hfp_hf *hfp, bool do_close);
+bool hfp_hf_set_disconnect_handler(struct hfp_hf *hfp,
+					hfp_disconnect_func_t callback,
+					void *user_data,
+					hfp_destroy_func_t destroy);
+bool hfp_hf_disconnect(struct hfp_hf *hfp);
+bool hfp_hf_register(struct hfp_hf *hfp, hfp_hf_result_func_t callback,
+					const char *prefix, void *user_data,
+					hfp_destroy_func_t destroy);
+bool hfp_hf_unregister(struct hfp_hf *hfp, const char *prefix);
+bool hfp_hf_send_command(struct hfp_hf *hfp, hfp_response_func_t resp_cb,
+				void *user_data, const char *format, ...);

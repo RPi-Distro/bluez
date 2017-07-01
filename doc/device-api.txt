@@ -46,9 +46,11 @@ Methods		void Connect()
 			device. The UUID provided is the remote service
 			UUID for the profile.
 
-			Possible errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.AlreadyConnected
-					 org.bluez.Error.ConnectFailed
+			Possible errors: org.bluez.Error.Failed
+					 org.bluez.Error.InProgress
+					 org.bluez.Error.InvalidArguments
+					 org.bluez.Error.NotAvailable
+					 org.bluez.Error.NotReady
 
 		void DisconnectProfile(string uuid)
 
@@ -60,9 +62,9 @@ Methods		void Connect()
 			as long as the profile is registered this will always
 			succeed.
 
-			Possible errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.Failed
-					 org.bluez.Error.NotConnected
+			Possible errors: org.bluez.Error.Failed
+					 org.bluez.Error.InProgress
+					 org.bluez.Error.InvalidArguments
 					 org.bluez.Error.NotSupported
 
 		void Pair()
@@ -193,3 +195,27 @@ Properties	string Address [readonly]
 
 			Received Signal Strength Indicator of the remote
 			device (inquiry or advertising).
+
+		int16 TxPower [readonly, optional, experimental]
+
+			Advertised transmitted power level (inquiry or
+			advertising).
+
+		dict ManufacturerData [readonly, optional]
+
+			Manufacturer specific advertisement data. Keys are
+			16 bits Manufacturer ID followed by its byte array
+			value.
+
+		dict ServiceData [readonly, optional]
+
+			Service advertisement data. Keys are the UUIDs in
+			string format followed by its byte array value.
+
+		array{object} GattServices [readonly, optional]
+
+			List of GATT service object paths. Each referenced
+			object exports the org.bluez.GattService1 interface and
+			represents a remote GATT service. This property will be
+			updated once all remote GATT services of this device
+			have been discovered and exported over D-Bus.

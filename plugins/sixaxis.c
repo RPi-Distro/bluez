@@ -39,7 +39,9 @@
 #include <libudev.h>
 
 #include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/plugin.h"
@@ -58,6 +60,13 @@ static const struct {
 		.source = 0x0002,
 		.vid = 0x054c,
 		.pid = 0x0268,
+		.version = 0x0000,
+	},
+	{
+		.name = "Navigation Controller",
+		.source = 0x0002,
+		.vid = 0x054c,
+		.pid = 0x042f,
 		.version = 0x0000,
 	},
 };
@@ -293,7 +302,7 @@ static bool setup_device(int fd, int index, struct btd_adapter *adapter)
 	btd_device_device_set_name(device, devices[index].name);
 	btd_device_set_pnpid(device, devices[index].source, devices[index].vid,
 				devices[index].pid, devices[index].version);
-	btd_device_set_temporary(device, FALSE);
+	btd_device_set_temporary(device, false);
 
 	return true;
 }

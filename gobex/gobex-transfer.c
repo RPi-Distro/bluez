@@ -27,8 +27,8 @@
 #include <string.h>
 #include <errno.h>
 
-#include "gobex.h"
-#include "gobex-debug.h"
+#include "gobex/gobex.h"
+#include "gobex/gobex-debug.h"
 
 #define FIRST_PACKET_TIMEOUT 60
 
@@ -424,7 +424,6 @@ guint g_obex_put_rsp(GObex *obex, GObexPacket *req,
 
 	transfer = transfer_new(obex, G_OBEX_OP_PUT, complete_func, user_data);
 	transfer->data_consumer = data_func;
-
 
 	va_start(args, first_hdr_id);
 	transfer_put_req_first(transfer, req, first_hdr_id, args);

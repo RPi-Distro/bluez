@@ -21,11 +21,6 @@
  *
  */
 
-enum bt_csrk_type {
-	LOCAL_CSRK,
-	REMOTE_CSRK,
-};
-
 typedef void (*bt_bluetooth_ready)(int err, const bdaddr_t *addr);
 bool bt_bluetooth_start(int index, bool mgmt_dbg, bt_bluetooth_ready cb);
 
@@ -40,10 +35,9 @@ void bt_bluetooth_unregister(void);
 int bt_adapter_add_record(sdp_record_t *rec, uint8_t svc_hint);
 void bt_adapter_remove_record(uint32_t handle);
 
-typedef void (*bt_le_device_found)(const bdaddr_t *addr, uint8_t addr_type,
-					int rssi, uint16_t eir_len,
-					const void *eir, bool discoverable,
-					bool bonded);
+typedef void (*bt_le_device_found)(const bdaddr_t *addr, int rssi,
+					uint16_t eir_len, const void *eir,
+					bool connectable, bool bonded);
 bool bt_le_register(bt_le_device_found cb);
 void bt_le_unregister(void);
 
@@ -69,10 +63,10 @@ typedef void (*bt_read_device_rssi_done)(uint8_t status, const bdaddr_t *addr,
 bool bt_read_device_rssi(const bdaddr_t *addr, bt_read_device_rssi_done cb,
 							void *user_data);
 
-bool bt_get_csrk(const bdaddr_t *addr, enum bt_csrk_type type,
-					uint8_t key[16], uint32_t *sign_cnt);
+bool bt_get_csrk(const bdaddr_t *addr, bool local, uint8_t key[16],
+				uint32_t *sign_cnt, bool *authenticated);
 
-void bt_update_sign_counter(const bdaddr_t *addr, enum bt_csrk_type type);
+void bt_update_sign_counter(const bdaddr_t *addr, bool local, uint32_t val);
 
 void bt_store_gatt_ccc(const bdaddr_t *addr, uint16_t value);
 
@@ -86,6 +80,11 @@ bool bt_auto_connect_add(const bdaddr_t *addr);
 
 void bt_auto_connect_remove(const bdaddr_t *addr);
 
-typedef void (*bt_unpaired_device_cb)(const bdaddr_t *addr, uint8_t type);
+typedef void (*bt_unpaired_device_cb)(const bdaddr_t *addr);
 bool bt_unpaired_register(bt_unpaired_device_cb cb);
 void bt_unpaired_unregister(bt_unpaired_device_cb cb);
+
+typedef void (*bt_paired_device_cb)(const bdaddr_t *addr);
+bool bt_paired_register(bt_paired_device_cb cb);
+void bt_paired_unregister(bt_paired_device_cb cb);
+bool bt_is_pairing(const bdaddr_t *addr);

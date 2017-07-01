@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "hal-utils.h"
 #include "hal-log.h"
 #include "hal.h"
 #include "hal-msg.h"
@@ -45,19 +46,25 @@ static void handle_ctrl_state(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_pan_ctrl_state *ev = buf;
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	if (cbs->control_state_cb)
+		cbs->control_state_cb(ev->state, ev->local_role, ev->status,
+							(char *)ev->name);
+#else
 	/*
-	 * FIXME: Callback declared in bt_pan.h is 'typedef void
+	 * Callback declared in bt_pan.h is 'typedef void
 	 * (*btpan_control_state_callback)(btpan_control_state_t state,
 	 * bt_status_t error, int local_role, const char* ifname);
 	 * But PanService.Java defined it wrong way.
 	 * private void onControlStateChanged(int local_role, int state,
 	 * int error, String ifname).
 	 * First and third parameters are misplaced, so sending data according
-	 * to PanService.Java, fix this if issue fixed in PanService.Java.
+	 * to PanService.Java.
 	 */
 	if (cbs->control_state_cb)
 		cbs->control_state_cb(ev->local_role, ev->state, ev->status,
 							(char *)ev->name);
+#endif
 }
 
 /*
@@ -155,6 +162,7 @@ static bt_status_t pan_init(const btpan_callbacks_t *callbacks)
 
 	cmd.service_id = HAL_SERVICE_ID_PAN;
 	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.max_clients = 1;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
@@ -176,14 +184,14 @@ static void pan_cleanup(void)
 	if (!interface_ready())
 		return;
 
-	cbs = NULL;
-
 	cmd.service_id = HAL_SERVICE_ID_PAN;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_PAN);
+
+	cbs = NULL;
 }
 
 static btpan_interface_t pan_if = {

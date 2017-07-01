@@ -48,6 +48,17 @@ static void handle_audio_state(void *buf, uint16_t len, int fd)
 		cbs->audio_state_cb(ev->state, (bt_bdaddr_t *)(ev->bdaddr));
 }
 
+static void handle_audio_config(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_a2dp_audio_config *ev = buf;
+
+	if (cbs->audio_config_cb)
+		cbs->audio_config_cb((bt_bdaddr_t *)(ev->bdaddr),
+					ev->sample_rate, ev->channel_count);
+#endif
+}
+
 /*
  * handlers will be called from notification thread context,
  * index in table equals to 'opcode - HAL_MINIMUM_EVENT'
@@ -57,6 +68,8 @@ static const struct hal_ipc_handler ev_handlers[] = {
 	{ handle_conn_state, false, sizeof(struct hal_ev_a2dp_conn_state) },
 	/* HAL_EV_A2DP_AUDIO_STATE */
 	{ handle_audio_state, false, sizeof(struct hal_ev_a2dp_audio_state) },
+	/* HAL_EV_A2DP_AUDIO_CONFIG */
+	{ handle_audio_config, false, sizeof(struct hal_ev_a2dp_audio_config) },
 };
 
 static bt_status_t a2dp_connect(bt_bdaddr_t *bd_addr)
@@ -106,6 +119,7 @@ static bt_status_t init(btav_callbacks_t *callbacks)
 
 	cmd.service_id = HAL_SERVICE_ID_A2DP;
 	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.max_clients = 1;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
@@ -127,14 +141,14 @@ static void cleanup(void)
 	if (!interface_ready())
 		return;
 
-	cbs = NULL;
-
 	cmd.service_id = HAL_SERVICE_ID_A2DP;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_A2DP);
+
+	cbs = NULL;
 }
 
 static btav_interface_t iface = {

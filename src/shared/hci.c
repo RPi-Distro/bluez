@@ -29,9 +29,10 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 
 #include "monitor/bt.h"
-#include "monitor/mainloop.h"
+#include "src/shared/mainloop.h"
 #include "src/shared/io.h"
 #include "src/shared/util.h"
 #include "src/shared/queue.h"
@@ -112,7 +113,7 @@ static void send_command(struct bt_hci *hci, uint16_t opcode,
 	uint8_t type = BT_H4_CMD_PKT;
 	struct bt_hci_cmd_hdr hdr;
 	struct iovec iov[3];
-	int fd, iovcnt;
+	int iovcnt;
 
 	if (hci->num_cmds < 1)
 		return;
@@ -132,11 +133,7 @@ static void send_command(struct bt_hci *hci, uint16_t opcode,
 	} else
 		iovcnt = 2;
 
-	fd = io_get_fd(hci->io);
-	if (fd < 0)
-		return;
-
-	if (writev(fd, iov, iovcnt) < 0)
+	if (io_send(hci->io, iov, iovcnt) < 0)
 		return;
 
 	hci->num_cmds--;

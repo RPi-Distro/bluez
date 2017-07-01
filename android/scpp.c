@@ -33,8 +33,12 @@
 
 #include "src/log.h"
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
 #include "src/shared/util.h"
+#include "src/shared/queue.h"
 
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
@@ -58,13 +62,62 @@ struct bt_scpp {
 	uint16_t iwhandle;
 	uint16_t refresh_handle;
 	guint refresh_cb_id;
+	struct queue *gatt_op;
 };
+
+static void discover_char(struct bt_scpp *scpp, GAttrib *attrib,
+						uint16_t start, uint16_t end,
+						bt_uuid_t *uuid, gatt_cb_t func,
+						gpointer user_data)
+{
+	unsigned int id;
+
+	id = gatt_discover_char(attrib, start, end, uuid, func, user_data);
+
+	if (queue_push_head(scpp->gatt_op, UINT_TO_PTR(id)))
+		return;
+
+	error("scpp: Could not discover characteristic");
+	g_attrib_cancel(attrib, id);
+}
+
+static void discover_desc(struct bt_scpp *scpp, GAttrib *attrib,
+				uint16_t start, uint16_t end, bt_uuid_t *uuid,
+				gatt_cb_t func, gpointer user_data)
+{
+	unsigned int id;
+
+	id = gatt_discover_desc(attrib, start, end, uuid, func, user_data);
+
+	if (queue_push_head(scpp->gatt_op, UINT_TO_PTR(id)))
+		return;
+
+	error("scpp: Could not discover descriptor");
+	g_attrib_cancel(attrib, id);
+}
+
+static void write_char(struct bt_scpp *scan, GAttrib *attrib, uint16_t handle,
+					const uint8_t *value, size_t vlen,
+					GAttribResultFunc func,
+					gpointer user_data)
+{
+	unsigned int id;
+
+	id = gatt_write_char(attrib, handle, value, vlen, func, user_data);
+
+	if (queue_push_head(scan->gatt_op, UINT_TO_PTR(id)))
+		return;
+
+	error("scpp: Could not read char");
+	g_attrib_cancel(attrib, id);
+}
 
 static void scpp_free(struct bt_scpp *scan)
 {
 	bt_scpp_detach(scan);
 
 	g_free(scan->primary);
+	queue_destroy(scan->gatt_op, NULL); /* cleared in bt_scpp_detach */
 	g_free(scan);
 }
 
@@ -78,6 +131,12 @@ struct bt_scpp *bt_scpp_new(void *primary)
 
 	scan->interval = SCAN_INTERVAL;
 	scan->window = SCAN_WINDOW;
+
+	scan->gatt_op = queue_new();
+	if (!scan->gatt_op) {
+		scpp_free(scan);
+		return NULL;
+	}
 
 	if (primary)
 		scan->primary = g_memdup(primary, sizeof(*scan->primary));
@@ -147,13 +206,14 @@ static void ccc_written_cb(guint8 status, const guint8 *pdu,
 				refresh_value_cb, scan, NULL);
 }
 
-static void write_ccc(GAttrib *attrib, uint16_t handle, void *user_data)
+static void write_ccc(struct bt_scpp *scan, GAttrib *attrib, uint16_t handle,
+								void *user_data)
 {
 	uint8_t value[2];
 
 	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
 
-	gatt_write_char(attrib, handle, value, sizeof(value), ccc_written_cb,
+	write_char(scan, attrib, handle, value, sizeof(value), ccc_written_cb,
 								user_data);
 }
 
@@ -163,7 +223,6 @@ static void discover_descriptor_cb(uint8_t status, GSList *descs,
 	struct bt_scpp *scan = user_data;
 	struct gatt_desc *desc;
 
-
 	if (status != 0) {
 		error("Discover descriptors failed: %s", att_ecode2str(status));
 		return;
@@ -172,7 +231,7 @@ static void discover_descriptor_cb(uint8_t status, GSList *descs,
 	/* There will be only one descriptor on list and it will be CCC */
 	desc = descs->data;
 
-	write_ccc(scan->attrib, desc->handle, scan);
+	write_ccc(scan, scan->attrib, desc->handle, scan);
 }
 
 static void refresh_discovered_cb(uint8_t status, GSList *chars,
@@ -207,7 +266,7 @@ static void refresh_discovered_cb(uint8_t status, GSList *chars,
 
 	bt_uuid16_create(&uuid, GATT_CLIENT_CHARAC_CFG_UUID);
 
-	gatt_discover_desc(scan->attrib, start, end, &uuid,
+	discover_desc(scan, scan->attrib, start, end, &uuid,
 					discover_descriptor_cb, user_data);
 }
 
@@ -245,7 +304,7 @@ bool bt_scpp_attach(struct bt_scpp *scan, void *attrib)
 								scan->window);
 	else {
 		bt_uuid16_create(&iwin_uuid, SCAN_INTERVAL_WIN_UUID);
-		gatt_discover_char(scan->attrib, scan->primary->range.start,
+		discover_char(scan, scan->attrib, scan->primary->range.start,
 					scan->primary->range.end, &iwin_uuid,
 					iwin_discovered_cb, scan);
 	}
@@ -256,12 +315,20 @@ bool bt_scpp_attach(struct bt_scpp *scan, void *attrib)
 				refresh_value_cb, scan, NULL);
 	else {
 		bt_uuid16_create(&refresh_uuid, SCAN_REFRESH_UUID);
-		gatt_discover_char(scan->attrib, scan->primary->range.start,
+		discover_char(scan, scan->attrib, scan->primary->range.start,
 					scan->primary->range.end, &refresh_uuid,
 					refresh_discovered_cb, scan);
 	}
 
 	return true;
+}
+
+static void cancel_gatt_req(void *data, void *user_data)
+{
+	unsigned int id = PTR_TO_UINT(data);
+	struct bt_scpp *scan = user_data;
+
+	g_attrib_cancel(scan->attrib, id);
 }
 
 void bt_scpp_detach(struct bt_scpp *scan)
@@ -274,6 +341,7 @@ void bt_scpp_detach(struct bt_scpp *scan)
 		scan->refresh_cb_id = 0;
 	}
 
+	queue_foreach(scan->gatt_op, cancel_gatt_req, scan);
 	g_attrib_unref(scan->attrib);
 	scan->attrib = NULL;
 }

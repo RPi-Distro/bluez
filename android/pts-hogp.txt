@@ -1,8 +1,8 @@
 PTS test results for HoG
 
-PTS version: 5.2
-Tested: 22-July-2014
-Android version: 4.4.4
+PTS version: 6.1
+Tested: 20-May-2015
+Android version: 5.1
 
 Results:
 PASS	test passed
@@ -83,11 +83,11 @@ TC_HGCF_RH_BV_02_I	PASS	haltest: hidhost connect <addr>
 				gattc get_characteristic 1 {1812,2,1}
 				gattc get_descriptor 1 {1812,2,1} {2a4d,5}
 				gattc write_descriptor 1 {1812,2,1} {2a4d,5}
-					{2902,0} 2 0x0000 0
+					{2902,1} 2 0x0000 0
 				gattc get_characteristic 1 {1812,5,1}
 				gattc get_descriptor 1 {1812,5,1} {2a4d,4}
 				gattc write_descriptor 1 {1812,5,1}
-					{2a4d,4} {2902,0} 2 0x0000 0
+					{2a4d,4} {2902,1} 2 0x0000 0
 				hidhost disconnect <addr>
 TC_HGCF_BH_BV_03_I	N/A
 TC_HGCF_BH_BV_04_I	N/A

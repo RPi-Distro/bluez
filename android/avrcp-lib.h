@@ -54,6 +54,7 @@
 #define AVRCP_EVENT_TRACK_REACHED_START		0x04
 #define AVRCP_EVENT_PLAYBACK_POS_CHANGED	0x05
 #define AVRCP_EVENT_SETTINGS_CHANGED		0x08
+#define AVRCP_EVENT_NOW_PLAYING_CONTENT_CHANGED	0x09
 #define AVRCP_EVENT_AVAILABLE_PLAYERS_CHANGED	0x0a
 #define AVRCP_EVENT_ADDRESSED_PLAYER_CHANGED	0x0b
 #define AVRCP_EVENT_UIDS_CHANGED		0x0c
@@ -66,6 +67,7 @@
 #define AVRCP_STATUS_PARAM_NOT_FOUND		0x02
 #define AVRCP_STATUS_INTERNAL_ERROR		0x03
 #define AVRCP_STATUS_SUCCESS			0x04
+#define AVRCP_STATUS_UID_CHANGED		0x05
 #define AVRCP_STATUS_NOT_DIRECTORY		0x08
 #define AVRCP_STATUS_DOES_NOT_EXIST		0x09
 #define AVRCP_STATUS_INVALID_SCOPE		0x0a
@@ -124,6 +126,16 @@
 #define AVRCP_MEDIA_SEARCH			0x02
 #define AVRCP_MEDIA_NOW_PLAYING			0x03
 
+/* SDP features */
+#define AVRCP_FEATURE_CATEGORY_1	0x0001
+#define AVRCP_FEATURE_CATEGORY_2	0x0002
+#define AVRCP_FEATURE_CATEGORY_3	0x0004
+#define AVRCP_FEATURE_CATEGORY_4	0x0008
+#define AVRCP_FEATURE_PLAYER_SETTINGS	0x0010
+#define AVRCP_FEATURE_GROUP_NAVIGATION	0x0020
+#define AVRCP_FEATURE_BROWSING		0x0040
+#define AVRCP_FEATURE_MULTIPLE_PLAYERS	0x0080
+
 /* Company IDs for vendor dependent commands */
 #define IEEEID_BTSIG		0x001958
 
@@ -147,7 +159,7 @@ struct avrcp_control_ind {
 					void *user_data);
 	int (*set_value) (struct avrcp *session, uint8_t transaction,
 					uint8_t number, uint8_t *attrs,
-					void *user_data);
+					uint8_t *values, void *user_data);
 	int (*get_play_status) (struct avrcp *session, uint8_t transaction,
 					void *user_data);
 	int (*get_element_attributes) (struct avrcp *session,
@@ -160,6 +172,8 @@ struct avrcp_control_ind {
 	int (*set_volume) (struct avrcp *session, uint8_t transaction,
 					uint8_t volume, void *user_data);
 	int (*set_addressed) (struct avrcp *session, uint8_t transaction,
+					uint16_t id, void *user_data);
+	int (*set_browsed) (struct avrcp *session, uint8_t transaction,
 					uint16_t id, void *user_data);
 	int (*get_folder_items) (struct avrcp *session, uint8_t transaction,
 					uint8_t scope, uint32_t start,
@@ -210,7 +224,7 @@ struct avrcp_control_cfm {
 					char **text, void *user_data);
 	bool (*register_notification) (struct avrcp *session, int err,
 					uint8_t code, uint8_t event,
-					uint8_t *params, void *user_data);
+					void *params, void *user_data);
 	void (*set_volume) (struct avrcp *session, int err, uint8_t volume,
 					void *user_data);
 	void (*set_addressed) (struct avrcp *session, int err,
@@ -313,24 +327,30 @@ int avrcp_set_player_value_rsp(struct avrcp *session, uint8_t transaction);
 int avrcp_get_element_attrs_rsp(struct avrcp *session, uint8_t transaction,
 					uint8_t *params, size_t params_len);
 int avrcp_register_notification_rsp(struct avrcp *session, uint8_t transaction,
-					uint8_t code, uint8_t *params,
-					size_t params_len);
+					uint8_t code, uint8_t event,
+					void *data, size_t len);
 int avrcp_set_volume_rsp(struct avrcp *session, uint8_t transaction,
 							uint8_t volume);
 int avrcp_set_addressed_player_rsp(struct avrcp *session, uint8_t transaction,
 							uint8_t status);
+int avrcp_set_browsed_player_rsp(struct avrcp *session, uint8_t transaction,
+					uint8_t status, uint16_t counter,
+					uint32_t items, uint8_t depth,
+					const char **folders);
 int avrcp_get_folder_items_rsp(struct avrcp *session, uint8_t transaction,
-					uint16_t counter, uint8_t number,
-					uint8_t *type, uint16_t *len,
-					uint8_t **params);
+					uint8_t status, uint16_t counter,
+					uint8_t number, uint8_t *type,
+					uint16_t *len, uint8_t **params);
 int avrcp_change_path_rsp(struct avrcp *session, uint8_t transaction,
-								uint32_t items);
+						uint8_t status, uint32_t items);
 int avrcp_get_item_attributes_rsp(struct avrcp *session, uint8_t transaction,
-					uint8_t number, uint32_t *attrs,
-					const char **text);
-int avrcp_play_item_rsp(struct avrcp *session, uint8_t transaction);
-int avrcp_search_rsp(struct avrcp *session, uint8_t transaction,
+					uint8_t status, uint8_t number,
+					uint32_t *attrs, const char **text);
+int avrcp_play_item_rsp(struct avrcp *session, uint8_t transaction,
+					uint8_t status);
+int avrcp_search_rsp(struct avrcp *session, uint8_t transaction, uint8_t status,
 					uint16_t counter, uint32_t items);
-int avrcp_add_to_now_playing_rsp(struct avrcp *session, uint8_t transaction);
+int avrcp_add_to_now_playing_rsp(struct avrcp *session, uint8_t transaction,
+								uint8_t status);
 
 int avrcp_send_passthrough(struct avrcp *session, uint32_t vendor, uint8_t op);

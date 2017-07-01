@@ -37,15 +37,15 @@
 #include <sys/statvfs.h>
 #include <sys/sendfile.h>
 #include <fcntl.h>
-#include <wait.h>
+#include <sys/wait.h>
 #include <inttypes.h>
 
 #include <glib.h>
 
-#include "obexd.h"
-#include "plugin.h"
-#include "log.h"
-#include "mimetype.h"
+#include "obexd/src/obexd.h"
+#include "obexd/src/plugin.h"
+#include "obexd/src/log.h"
+#include "obexd/src/mimetype.h"
 #include "filesystem.h"
 
 #define EOL_CHARS "\n"

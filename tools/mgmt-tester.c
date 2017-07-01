@@ -27,19 +27,22 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <sys/ioctl.h>
 
 #include <glib.h>
 
 #include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 #include "lib/mgmt.h"
 
 #include "monitor/bt.h"
 #include "emulator/bthost.h"
+#include "emulator/hciemu.h"
 
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
 #include "src/shared/mgmt.h"
-#include "src/shared/hciemu.h"
 
 struct test_data {
 	tester_data_func_t test_setup;
@@ -53,6 +56,7 @@ struct test_data {
 	unsigned int mgmt_settings_id;
 	unsigned int mgmt_alt_settings_id;
 	unsigned int mgmt_alt_ev_id;
+	unsigned int mgmt_discov_ev_id;
 	uint8_t mgmt_version;
 	uint16_t mgmt_revision;
 	uint16_t mgmt_index;
@@ -109,6 +113,7 @@ static void read_info_callback(uint8_t status, uint16_t length,
 	char addr[18];
 	uint16_t manufacturer;
 	uint32_t supported_settings, current_settings;
+	struct bthost *bthost;
 
 	tester_print("Read Info callback");
 	tester_print("  Status: 0x%02x", status);
@@ -164,7 +169,8 @@ static void read_info_callback(uint8_t status, uint16_t length,
 		return;
 	}
 
-	tester_pre_setup_complete();
+	bthost = hciemu_client_get_host(data->hciemu);
+	bthost_notify_ready(bthost, tester_pre_setup_complete);
 }
 
 static void index_added_callback(uint16_t index, uint16_t length,
@@ -294,7 +300,7 @@ static void test_condition_complete(struct test_data *data)
 	tester_test_passed();
 }
 
-#define test_bredrle(name, data, setup, func) \
+#define test_bredrle_full(name, data, setup, func, timeout) \
 	do { \
 		struct test_data *user; \
 		user = malloc(sizeof(struct test_data)); \
@@ -303,9 +309,31 @@ static void test_condition_complete(struct test_data *data)
 		user->hciemu_type = HCIEMU_TYPE_BREDRLE; \
 		user->test_setup = setup; \
 		user->test_data = data; \
-		user->expected_version = 0x06; \
+		user->expected_version = 0x08; \
 		user->expected_manufacturer = 0x003f; \
-		user->expected_supported_settings = 0x00003fff; \
+		user->expected_supported_settings = 0x0000bfff; \
+		user->initial_settings = 0x00000080; \
+		user->unmet_conditions = 0; \
+		tester_add_full(name, data, \
+				test_pre_setup, test_setup, func, NULL, \
+				test_post_teardown, timeout, user, free); \
+	} while (0)
+
+#define test_bredrle(name, data, setup, func) \
+	test_bredrle_full(name, data, setup, func, 2)
+
+#define test_bredr20(name, data, setup, func) \
+	do { \
+		struct test_data *user; \
+		user = malloc(sizeof(struct test_data)); \
+		if (!user) \
+			break; \
+		user->hciemu_type = HCIEMU_TYPE_LEGACY; \
+		user->test_setup = setup; \
+		user->test_data = data; \
+		user->expected_version = 0x03; \
+		user->expected_manufacturer = 0x003f; \
+		user->expected_supported_settings = 0x000010bf; \
 		user->initial_settings = 0x00000080; \
 		user->unmet_conditions = 0; \
 		tester_add_full(name, data, \
@@ -341,9 +369,9 @@ static void test_condition_complete(struct test_data *data)
 		user->hciemu_type = HCIEMU_TYPE_LE; \
 		user->test_setup = setup; \
 		user->test_data = data; \
-		user->expected_version = 0x06; \
+		user->expected_version = 0x08; \
 		user->expected_manufacturer = 0x003f; \
-		user->expected_supported_settings = 0x0000361b; \
+		user->expected_supported_settings = 0x0000be1b; \
 		user->initial_settings = 0x00000200; \
 		user->unmet_conditions = 0; \
 		tester_add_full(name, data, \
@@ -372,6 +400,7 @@ struct generic_data {
 	uint16_t send_len;
 	const void * (*send_func)(uint16_t *len);
 	uint8_t expect_status;
+	bool expect_ignore_param;
 	const void *expect_param;
 	uint16_t expect_len;
 	const void * (*expect_func)(uint16_t *len);
@@ -379,6 +408,7 @@ struct generic_data {
 	uint32_t expect_settings_unset;
 	uint16_t expect_alt_ev;
 	const void *expect_alt_ev_param;
+	bool (*verify_alt_ev_func)(const void *param, uint16_t length);
 	uint16_t expect_alt_ev_len;
 	uint16_t expect_hci_command;
 	const void *expect_hci_param;
@@ -393,10 +423,21 @@ struct generic_data {
 	uint8_t io_cap;
 	uint8_t client_io_cap;
 	uint8_t client_auth_req;
-	bool reject_ssp;
-	bool client_reject_ssp;
+	bool reject_confirm;
+	bool client_reject_confirm;
 	bool just_works;
+	bool client_enable_le;
+	bool client_enable_sc;
+	bool expect_sc_key;
+	bool force_power_off;
+	bool addr_type_avail;
+	uint8_t addr_type;
+	bool set_adv;
+	const uint8_t *adv_data;
+	uint8_t adv_data_len;
 };
+
+# define TESTER_NOOP_OPCODE 0x0000
 
 static const char dummy_data[] = { 0x00 };
 
@@ -461,6 +502,45 @@ static const struct generic_data read_info_invalid_param_test = {
 static const struct generic_data read_info_invalid_index_test = {
 	.send_index_none = true,
 	.send_opcode = MGMT_OP_READ_INFO,
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const struct generic_data read_unconf_index_list_invalid_param_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_UNCONF_INDEX_LIST,
+	.send_param = dummy_data,
+	.send_len = sizeof(dummy_data),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data read_unconf_index_list_invalid_index_test = {
+	.send_opcode = MGMT_OP_READ_UNCONF_INDEX_LIST,
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const struct generic_data read_config_info_invalid_param_test = {
+	.send_opcode = MGMT_OP_READ_CONFIG_INFO,
+	.send_param = dummy_data,
+	.send_len = sizeof(dummy_data),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data read_config_info_invalid_index_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_CONFIG_INFO,
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const struct generic_data read_ext_index_list_invalid_param_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_EXT_INDEX_LIST,
+	.send_param = dummy_data,
+	.send_len = sizeof(dummy_data),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data read_ext_index_list_invalid_index_test = {
+	.send_opcode = MGMT_OP_READ_EXT_INDEX_LIST,
 	.expect_status = MGMT_STATUS_INVALID_INDEX,
 };
 
@@ -784,6 +864,12 @@ static const struct generic_data set_connectable_off_le_test_2 = {
 	.expect_hci_len = sizeof(set_connectable_off_adv_param),
 };
 
+static uint16_t settings_powered_le_discoverable[] = {
+					MGMT_OP_SET_LE,
+					MGMT_OP_SET_CONNECTABLE,
+					MGMT_OP_SET_POWERED,
+					MGMT_OP_SET_DISCOVERABLE, 0 };
+
 static uint16_t settings_powered_le_discoverable_advertising[] = {
 					MGMT_OP_SET_LE,
 					MGMT_OP_SET_CONNECTABLE,
@@ -822,6 +908,8 @@ static const struct generic_data set_connectable_off_le_test_4 = {
 
 static const char set_fast_conn_on_param[] = { 0x01 };
 static const char set_fast_conn_on_settings_1[] = { 0x87, 0x00, 0x00, 0x00 };
+static const char set_fast_conn_on_settings_2[] = { 0x85, 0x00, 0x00, 0x00 };
+static const char set_fast_conn_on_settings_3[] = { 0x84, 0x00, 0x00, 0x00 };
 
 static const struct generic_data set_fast_conn_on_success_test_1 = {
 	.setup_settings = settings_powered_connectable,
@@ -834,12 +922,42 @@ static const struct generic_data set_fast_conn_on_success_test_1 = {
 	.expect_settings_set = MGMT_SETTING_FAST_CONNECTABLE,
 };
 
+static const struct generic_data set_fast_conn_on_success_test_2 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_SET_FAST_CONNECTABLE,
+	.send_param = set_fast_conn_on_param,
+	.send_len = sizeof(set_fast_conn_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_fast_conn_on_settings_2,
+	.expect_len = sizeof(set_fast_conn_on_settings_2),
+	.expect_settings_set = MGMT_SETTING_FAST_CONNECTABLE,
+};
+
+static const struct generic_data set_fast_conn_on_success_test_3 = {
+	.send_opcode = MGMT_OP_SET_FAST_CONNECTABLE,
+	.send_param = set_fast_conn_on_param,
+	.send_len = sizeof(set_fast_conn_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_fast_conn_on_settings_3,
+	.expect_len = sizeof(set_fast_conn_on_settings_3),
+	.expect_settings_set = MGMT_SETTING_FAST_CONNECTABLE,
+};
+
 static const struct generic_data set_fast_conn_on_not_supported_test_1 = {
 	.setup_settings = settings_powered_connectable,
 	.send_opcode = MGMT_OP_SET_FAST_CONNECTABLE,
 	.send_param = set_fast_conn_on_param,
 	.send_len = sizeof(set_fast_conn_on_param),
 	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+};
+
+static const char set_fast_conn_nval_param[] = { 0xff };
+
+static const struct generic_data set_fast_conn_nval_param_test_1 = {
+	.send_opcode = MGMT_OP_SET_FAST_CONNECTABLE,
+	.send_param = set_fast_conn_nval_param,
+	.send_len = sizeof(set_fast_conn_nval_param),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 };
 
 static const char set_bondable_on_param[] = { 0x01 };
@@ -1273,6 +1391,10 @@ static const struct generic_data set_ssp_on_invalid_index_test = {
 static uint16_t settings_powered_ssp[] = { MGMT_OP_SET_SSP,
 						MGMT_OP_SET_POWERED, 0 };
 
+static uint16_t settings_powered_sc[] = { MGMT_OP_SET_SSP,
+						MGMT_OP_SET_SECURE_CONN,
+						MGMT_OP_SET_POWERED, 0 };
+
 static const char set_sc_on_param[] = { 0x01 };
 static const char set_sc_only_on_param[] = { 0x02 };
 static const char set_sc_invalid_param[] = { 0x03 };
@@ -1428,6 +1550,7 @@ static const struct generic_data set_hs_on_invalid_index_test = {
 static uint16_t settings_le[] = { MGMT_OP_SET_LE, 0 };
 
 static const char set_le_on_param[] = { 0x01 };
+static const char set_le_off_param[] = { 0x00 };
 static const char set_le_invalid_param[] = { 0x02 };
 static const char set_le_garbage_param[] = { 0x01, 0x00 };
 static const char set_le_settings_param_1[] = { 0x80, 0x02, 0x00, 0x00 };
@@ -1506,6 +1629,7 @@ static const char set_adv_on_param[] = { 0x01 };
 static const char set_adv_settings_param_1[] = { 0x80, 0x06, 0x00, 0x00 };
 static const char set_adv_settings_param_2[] = { 0x81, 0x06, 0x00, 0x00 };
 static const char set_adv_on_set_adv_enable_param[] = { 0x01 };
+static const char set_adv_on_set_adv_disable_param[] = { 0x00 };
 
 static const struct generic_data set_adv_on_success_test_1 = {
 	.setup_settings = settings_le,
@@ -1678,6 +1802,8 @@ static const struct generic_data start_discovery_not_powered_test_1 = {
 	.send_param = start_discovery_bredr_param,
 	.send_len = sizeof(start_discovery_bredr_param),
 	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.expect_param = start_discovery_bredr_param,
+	.expect_len = sizeof(start_discovery_bredr_param),
 };
 
 static const struct generic_data start_discovery_invalid_param_test_1 = {
@@ -1686,6 +1812,8 @@ static const struct generic_data start_discovery_invalid_param_test_1 = {
 	.send_param = start_discovery_invalid_param,
 	.send_len = sizeof(start_discovery_invalid_param),
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = start_discovery_invalid_param,
+	.expect_len = sizeof(start_discovery_invalid_param),
 };
 
 static const struct generic_data start_discovery_not_supported_test_1 = {
@@ -1694,6 +1822,8 @@ static const struct generic_data start_discovery_not_supported_test_1 = {
 	.send_param = start_discovery_le_param,
 	.send_len = sizeof(start_discovery_le_param),
 	.expect_status = MGMT_STATUS_REJECTED,
+	.expect_param = start_discovery_le_param,
+	.expect_len = sizeof(start_discovery_le_param),
 };
 
 static const struct generic_data start_discovery_valid_param_test_1 = {
@@ -1728,13 +1858,23 @@ static const struct generic_data start_discovery_valid_param_test_2 = {
 	.expect_alt_ev_len = sizeof(start_discovery_le_evt),
 };
 
+static const struct generic_data start_discovery_valid_param_power_off_1 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_START_DISCOVERY,
+	.send_param = start_discovery_bredrle_param,
+	.send_len = sizeof(start_discovery_bredrle_param),
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.force_power_off = true,
+	.expect_param = start_discovery_bredrle_param,
+	.expect_len = sizeof(start_discovery_bredrle_param),
+};
+
 static const char stop_discovery_bredrle_param[] = { 0x07 };
 static const char stop_discovery_bredrle_invalid_param[] = { 0x06 };
 static const char stop_discovery_valid_hci[] = { 0x00, 0x00 };
 static const char stop_discovery_evt[] = { 0x07, 0x00 };
 static const char stop_discovery_bredr_param[] = { 0x01 };
 static const char stop_discovery_bredr_discovering[] = { 0x01, 0x00 };
-static const char stop_discovery_inq_param[] = { 0x33, 0x8b, 0x9e, 0x08, 0x00 };
 
 static const struct generic_data stop_discovery_success_test_1 = {
 	.setup_settings = settings_powered_le,
@@ -1793,6 +1933,83 @@ static const struct generic_data stop_discovery_invalid_param_test_1 = {
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 	.expect_param = stop_discovery_bredrle_invalid_param,
 	.expect_len = sizeof(stop_discovery_bredrle_invalid_param),
+};
+
+static const char start_service_discovery_invalid_param[] = { 0x00, 0x00, 0x00, 0x00 };
+static const char start_service_discovery_invalid_resp[] = { 0x00 };
+static const char start_service_discovery_bredr_param[] = { 0x01, 0x00, 0x00, 0x00};
+static const char start_service_discovery_bredr_resp[] = { 0x01 };
+static const char start_service_discovery_le_param[] = { 0x06, 0x00, 0x01, 0x00,
+			0xfa, 0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00,
+			0x80, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const char start_service_discovery_le_resp[] = { 0x06 };
+static const char start_service_discovery_bredrle_param[] = { 0x07, 0x00, 0x01, 0x00,
+			0xfa, 0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00,
+			0x80, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const char start_service_discovery_bredrle_resp[] = { 0x07 };
+static const char start_service_discovery_valid_hci[] = { 0x01, 0x01 };
+static const char start_service_discovery_evt[] = { 0x07, 0x01 };
+static const char start_service_discovery_le_evt[] = { 0x06, 0x01 };
+
+static const struct generic_data start_service_discovery_not_powered_test_1 = {
+	.send_opcode = MGMT_OP_START_SERVICE_DISCOVERY,
+	.send_param = start_service_discovery_bredr_param,
+	.send_len = sizeof(start_service_discovery_bredr_param),
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.expect_param = start_service_discovery_bredr_resp,
+	.expect_len = sizeof(start_service_discovery_bredr_resp),
+};
+
+static const struct generic_data start_service_discovery_invalid_param_test_1 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_START_SERVICE_DISCOVERY,
+	.send_param = start_service_discovery_invalid_param,
+	.send_len = sizeof(start_service_discovery_invalid_param),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+	.expect_param = start_service_discovery_invalid_resp,
+	.expect_len = sizeof(start_service_discovery_invalid_resp),
+};
+
+static const struct generic_data start_service_discovery_not_supported_test_1 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_START_SERVICE_DISCOVERY,
+	.send_param = start_service_discovery_le_param,
+	.send_len = sizeof(start_service_discovery_le_param),
+	.expect_status = MGMT_STATUS_REJECTED,
+	.expect_param = start_service_discovery_le_resp,
+	.expect_len = sizeof(start_service_discovery_le_resp),
+};
+
+static const struct generic_data start_service_discovery_valid_param_test_1 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_START_SERVICE_DISCOVERY,
+	.send_param = start_service_discovery_bredrle_param,
+	.send_len = sizeof(start_service_discovery_bredrle_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = start_service_discovery_bredrle_resp,
+	.expect_len = sizeof(start_service_discovery_bredrle_resp),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_ENABLE,
+	.expect_hci_param = start_service_discovery_valid_hci,
+	.expect_hci_len = sizeof(start_service_discovery_valid_hci),
+	.expect_alt_ev = MGMT_EV_DISCOVERING,
+	.expect_alt_ev_param = start_service_discovery_evt,
+	.expect_alt_ev_len = sizeof(start_service_discovery_evt),
+};
+
+static const struct generic_data start_service_discovery_valid_param_test_2 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_START_SERVICE_DISCOVERY,
+	.send_param = start_service_discovery_le_param,
+	.send_len = sizeof(start_service_discovery_le_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = start_service_discovery_le_resp,
+	.expect_len = sizeof(start_service_discovery_le_resp),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_ENABLE,
+	.expect_hci_param = start_service_discovery_valid_hci,
+	.expect_hci_len = sizeof(start_service_discovery_valid_hci),
+	.expect_alt_ev = MGMT_EV_DISCOVERING,
+	.expect_alt_ev_param = start_service_discovery_le_evt,
+	.expect_alt_ev_len = sizeof(start_service_discovery_le_evt),
 };
 
 static const char set_dev_class_valid_param[] = { 0x01, 0x0c };
@@ -2291,7 +2508,13 @@ static const void *pair_device_send_param_func(uint16_t *len)
 	static uint8_t param[8];
 
 	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
-	param[6] = 0x00; /* Address type */
+
+	if (test->addr_type_avail)
+		param[6] = test->addr_type;
+	else if (data->hciemu_type == HCIEMU_TYPE_LE)
+		param[6] = 0x01; /* Address type */
+	else
+		param[6] = 0x00; /* Address type */
 	param[7] = test->io_cap;
 
 	*len = sizeof(param);
@@ -2302,10 +2525,17 @@ static const void *pair_device_send_param_func(uint16_t *len)
 static const void *pair_device_expect_param_func(uint16_t *len)
 {
 	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
 	static uint8_t param[7];
 
 	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
-	param[6] = 0x00; /* Address type */
+
+	if (test->addr_type_avail)
+		param[6] = test->addr_type;
+	else if (data->hciemu_type == HCIEMU_TYPE_LE)
+		param[6] = 0x01; /* Address type */
+	else
+		param[6] = 0x00; /* Address type */
 
 	*len = sizeof(param);
 
@@ -2370,6 +2600,15 @@ static const struct generic_data pair_device_legacy_nonbondable_1 = {
 	.client_pin_len = sizeof(pair_device_pin),
 };
 
+static const struct generic_data pair_device_power_off_test_1 = {
+	.setup_settings = settings_powered_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.force_power_off = true,
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.expect_func = pair_device_expect_param_func,
+};
+
 static const void *client_bdaddr_param_func(uint8_t *len)
 {
 	struct test_data *data = tester_get_data();
@@ -2381,6 +2620,52 @@ static const void *client_bdaddr_param_func(uint8_t *len)
 
 	return bdaddr;
 }
+
+static const struct generic_data pair_device_not_supported_test_1 = {
+	.setup_settings = settings_powered_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+	.expect_func = pair_device_expect_param_func,
+	.addr_type_avail = true,
+	.addr_type = BDADDR_BREDR,
+};
+
+static const struct generic_data pair_device_not_supported_test_2 = {
+	.setup_settings = settings_powered_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+	.expect_func = pair_device_expect_param_func,
+	.addr_type_avail = true,
+	.addr_type = BDADDR_LE_PUBLIC,
+};
+
+static uint16_t settings_powered_bondable_le[] = { MGMT_OP_SET_LE,
+							MGMT_OP_SET_BONDABLE,
+							MGMT_OP_SET_POWERED,
+							0 };
+
+static const struct generic_data pair_device_reject_transport_not_enabled_1 = {
+	.setup_settings = settings_powered_bondable_le,
+	.setup_nobredr = true,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_REJECTED,
+	.expect_func = pair_device_expect_param_func,
+	.addr_type_avail = true,
+	.addr_type = BDADDR_BREDR,
+};
+
+static const struct generic_data pair_device_reject_transport_not_enabled_2 = {
+	.setup_settings = settings_powered_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_REJECTED,
+	.expect_func = pair_device_expect_param_func,
+	.addr_type_avail = true,
+	.addr_type = BDADDR_LE_PUBLIC,
+};
 
 static const struct generic_data pair_device_reject_test_1 = {
 	.setup_settings = settings_powered_bondable,
@@ -2570,7 +2855,7 @@ static const struct generic_data pair_device_ssp_reject_1 = {
 	.io_cap = 0x01, /* DisplayYesNo */
 	.client_io_cap = 0x01, /* DisplayYesNo */
 	.client_auth_req = 0x01, /* No Bonding - MITM */
-	.reject_ssp = true,
+	.reject_confirm = true,
 };
 
 static const struct generic_data pair_device_ssp_reject_2 = {
@@ -2586,7 +2871,7 @@ static const struct generic_data pair_device_ssp_reject_2 = {
 	.expect_hci_func = client_bdaddr_param_func,
 	.io_cap = 0x01, /* DisplayYesNo */
 	.client_io_cap = 0x01, /* DisplayYesNo */
-	.client_reject_ssp = true,
+	.client_reject_confirm = true,
 };
 
 static const struct generic_data pair_device_ssp_nonbondable_1 = {
@@ -2602,6 +2887,193 @@ static const struct generic_data pair_device_ssp_nonbondable_1 = {
 	.expect_hci_func = client_bdaddr_param_func,
 	.io_cap = 0x01, /* DisplayYesNo */
 	.client_io_cap = 0x01, /* DisplayYesNo */
+};
+
+static const struct generic_data pair_device_le_success_test_1 = {
+	.setup_settings = settings_powered_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.just_works = true,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+};
+
+static bool ltk_is_authenticated(const struct mgmt_ltk_info *ltk)
+{
+	switch (ltk->type) {
+	case 0x01:
+	case 0x03:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool ltk_is_sc(const struct mgmt_ltk_info *ltk)
+{
+	switch (ltk->type) {
+	case 0x02:
+	case 0x03:
+	case 0x04:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool verify_ltk(const void *param, uint16_t length)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	const struct mgmt_ev_new_long_term_key *ev = param;
+
+	if (length != sizeof(struct mgmt_ev_new_long_term_key)) {
+		tester_warn("Invalid new ltk length %u != %zu", length,
+				sizeof(struct mgmt_ev_new_long_term_key));
+		return false;
+	}
+
+	if (test->just_works && ltk_is_authenticated(&ev->key)) {
+		tester_warn("Authenticated key for just-works");
+		return false;
+	}
+
+	if (!test->just_works && !ltk_is_authenticated(&ev->key)) {
+		tester_warn("Unauthenticated key for MITM");
+		return false;
+	}
+
+	if (test->expect_sc_key && !ltk_is_sc(&ev->key)) {
+		tester_warn("Non-LE SC key for SC pairing");
+		return false;
+	}
+
+	if (!test->expect_sc_key && ltk_is_sc(&ev->key)) {
+		tester_warn("SC key for Non-SC pairing");
+		return false;
+	}
+
+	return true;
+}
+
+static const struct generic_data pair_device_le_success_test_2 = {
+	.setup_settings = settings_powered_bondable,
+	.io_cap = 0x02, /* KeyboardOnly */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static uint16_t settings_powered_sc_bondable_le_ssp[] = {
+						MGMT_OP_SET_BONDABLE,
+						MGMT_OP_SET_LE,
+						MGMT_OP_SET_SSP,
+						MGMT_OP_SET_SECURE_CONN,
+						MGMT_OP_SET_POWERED,
+						0 };
+
+static const struct generic_data pair_device_smp_bredr_test_1 = {
+	.setup_settings = settings_powered_sc_bondable_le_ssp,
+	.client_enable_ssp = true,
+	.client_enable_le = true,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.just_works = true,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+	.expect_hci_command = BT_HCI_CMD_USER_CONFIRM_REQUEST_REPLY,
+	.expect_hci_func = client_bdaddr_param_func,
+	.io_cap = 0x03, /* NoInputNoOutput */
+	.client_io_cap = 0x03, /* NoInputNoOutput */
+};
+
+static const struct generic_data pair_device_smp_bredr_test_2 = {
+	.setup_settings = settings_powered_sc_bondable_le_ssp,
+	.client_enable_ssp = true,
+	.client_enable_le = true,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+	.expect_hci_command = BT_HCI_CMD_USER_CONFIRM_REQUEST_REPLY,
+	.expect_hci_func = client_bdaddr_param_func,
+	.io_cap = 0x01, /* DisplayYesNo */
+	.client_io_cap = 0x01, /* DisplayYesNo */
+};
+
+static const struct generic_data pair_device_le_reject_test_1 = {
+	.setup_settings = settings_powered_bondable,
+	.io_cap = 0x02, /* KeyboardOnly */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.expect_status = MGMT_STATUS_AUTH_FAILED,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_AUTH_FAILED,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_auth_failed),
+	.reject_confirm = true,
+};
+
+static uint16_t settings_powered_sc_bondable[] = { MGMT_OP_SET_BONDABLE,
+						MGMT_OP_SET_SECURE_CONN,
+						MGMT_OP_SET_POWERED, 0 };
+
+static const struct generic_data pair_device_le_sc_legacy_test_1 = {
+	.setup_settings = settings_powered_sc_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.just_works = true,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static const struct generic_data pair_device_le_sc_success_test_1 = {
+	.setup_settings = settings_powered_sc_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.just_works = true,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static const struct generic_data pair_device_le_sc_success_test_2 = {
+	.setup_settings = settings_powered_sc_bondable,
+	.send_opcode = MGMT_OP_PAIR_DEVICE,
+	.send_func = pair_device_send_param_func,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.io_cap = 0x02, /* KeyboardOnly */
+	.client_io_cap = 0x02, /* KeyboardOnly */
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = pair_device_expect_param_func,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
 };
 
 static uint16_t settings_powered_connectable_bondable[] = {
@@ -2734,6 +3206,99 @@ static const struct generic_data pairing_acceptor_ssp_4 = {
 	.client_auth_req = 0x02, /* Dedicated Bonding - No MITM */
 };
 
+static uint16_t settings_powered_sc_bondable_connectable_le_ssp[] = {
+						MGMT_OP_SET_BONDABLE,
+						MGMT_OP_SET_CONNECTABLE,
+						MGMT_OP_SET_LE,
+						MGMT_OP_SET_SSP,
+						MGMT_OP_SET_SECURE_CONN,
+						MGMT_OP_SET_POWERED,
+						0 };
+
+static const struct generic_data pairing_acceptor_smp_bredr_1 = {
+	.setup_settings = settings_powered_sc_bondable_connectable_le_ssp,
+	.client_enable_ssp = true,
+	.client_enable_le = true,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+	.just_works = true,
+	.io_cap = 0x03, /* NoInputNoOutput */
+	.client_io_cap = 0x03, /* No InputNoOutput */
+	.client_auth_req = 0x00, /* No Bonding - No MITM */
+};
+
+static const struct generic_data pairing_acceptor_smp_bredr_2 = {
+	.setup_settings = settings_powered_sc_bondable_connectable_le_ssp,
+	.client_enable_ssp = true,
+	.client_enable_le = true,
+	.client_enable_sc = true,
+	.expect_sc_key = true,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+	.io_cap = 0x01, /* DisplayYesNo */
+	.client_io_cap = 0x01, /* DisplayYesNo */
+	.client_auth_req = 0x02, /* Dedicated Bonding - No MITM */
+};
+
+static uint16_t settings_powered_bondable_connectable_advertising[] = {
+					MGMT_OP_SET_BONDABLE,
+					MGMT_OP_SET_CONNECTABLE,
+					MGMT_OP_SET_ADVERTISING,
+					MGMT_OP_SET_POWERED, 0 };
+
+static const struct generic_data pairing_acceptor_le_1 = {
+	.setup_settings = settings_powered_bondable_connectable_advertising,
+	.io_cap = 0x03, /* NoInputNoOutput */
+	.client_io_cap = 0x03, /* NoInputNoOutput */
+	.just_works = true,
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static const struct generic_data pairing_acceptor_le_2 = {
+	.setup_settings = settings_powered_bondable_connectable_advertising,
+	.io_cap = 0x04, /* KeyboardDisplay */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.client_auth_req = 0x05, /* Bonding - MITM */
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static const struct generic_data pairing_acceptor_le_3 = {
+	.setup_settings = settings_powered_bondable_connectable_advertising,
+	.io_cap = 0x04, /* KeyboardDisplay */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.expect_alt_ev =  MGMT_EV_AUTH_FAILED,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_auth_failed),
+	.reject_confirm = true,
+};
+
+static const struct generic_data pairing_acceptor_le_4 = {
+	.setup_settings = settings_powered_bondable_connectable_advertising,
+	.io_cap = 0x02, /* KeyboardOnly */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.client_auth_req = 0x05, /* Bonding - MITM */
+	.expect_alt_ev =  MGMT_EV_NEW_LONG_TERM_KEY,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_new_long_term_key),
+	.verify_alt_ev_func = verify_ltk,
+};
+
+static const struct generic_data pairing_acceptor_le_5 = {
+	.setup_settings = settings_powered_bondable_connectable_advertising,
+	.io_cap = 0x02, /* KeyboardOnly */
+	.client_io_cap = 0x04, /* KeyboardDisplay */
+	.client_auth_req = 0x05, /* Bonding - MITM */
+	.reject_confirm = true,
+	.expect_alt_ev =  MGMT_EV_AUTH_FAILED,
+	.expect_alt_ev_len = sizeof(struct mgmt_ev_auth_failed),
+};
+
 static const char unpair_device_param[] = {
 			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x00, 0x00 };
 static const char unpair_device_rsp[] = {
@@ -2818,12 +3383,27 @@ static const struct generic_data unblock_device_invalid_param_test_1 = {
 
 static const char set_static_addr_valid_param[] = {
 			0x11, 0x22, 0x33, 0x44, 0x55, 0xc0 };
+static const char set_static_addr_settings[] = { 0x00, 0x82, 0x00, 0x00 };
 
 static const struct generic_data set_static_addr_success_test = {
 	.send_opcode = MGMT_OP_SET_STATIC_ADDRESS,
 	.send_param = set_static_addr_valid_param,
 	.send_len = sizeof(set_static_addr_valid_param),
 	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_static_addr_settings,
+	.expect_len = sizeof(set_static_addr_settings),
+	.expect_settings_set = MGMT_SETTING_STATIC_ADDRESS,
+};
+
+static const char set_static_addr_settings_dual[] = { 0x80, 0x00, 0x00, 0x00 };
+
+static const struct generic_data set_static_addr_success_test_2 = {
+	.send_opcode = MGMT_OP_SET_STATIC_ADDRESS,
+	.send_param = set_static_addr_valid_param,
+	.send_len = sizeof(set_static_addr_valid_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_static_addr_settings_dual,
+	.expect_len = sizeof(set_static_addr_settings_dual),
 };
 
 static const struct generic_data set_static_addr_failure_test = {
@@ -2832,6 +3412,14 @@ static const struct generic_data set_static_addr_failure_test = {
 	.send_param = set_static_addr_valid_param,
 	.send_len = sizeof(set_static_addr_valid_param),
 	.expect_status = MGMT_STATUS_REJECTED,
+};
+
+static const struct generic_data set_static_addr_failure_test_2 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_SET_STATIC_ADDRESS,
+	.send_param = set_static_addr_valid_param,
+	.send_len = sizeof(set_static_addr_valid_param),
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
 };
 
 static const char set_scan_params_valid_param[] = { 0x60, 0x00, 0x30, 0x00 };
@@ -2998,6 +3586,31 @@ static const struct generic_data get_conn_info_ncon_test = {
 	.expect_func = get_conn_info_error_expect_param_func,
 };
 
+static const void *get_conn_info_expect_param_power_off_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[10];
+
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+	param[7] = 127; /* RSSI */
+	param[8] = 127; /* TX power */
+	param[9] = 127; /* max TX power */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const struct generic_data get_conn_info_power_off_test = {
+	.setup_settings = settings_powered_connectable_bondable_ssp,
+	.send_opcode = MGMT_OP_GET_CONN_INFO,
+	.send_func = get_conn_info_send_param_func,
+	.force_power_off = true,
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.expect_func = get_conn_info_expect_param_power_off_func,
+};
+
 static const uint8_t load_conn_param_nval_1[16] = { 0x12, 0x11 };
 static const struct generic_data load_conn_params_fail_1 = {
 	.send_opcode = MGMT_OP_LOAD_CONN_PARAM,
@@ -3049,6 +3662,24 @@ static const struct generic_data add_device_fail_3 = {
 	.send_len = sizeof(add_device_nval_3),
 	.expect_param = add_device_rsp,
 	.expect_len = sizeof(add_device_rsp),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const uint8_t add_device_nval_4[] = {
+					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+					0x02,
+					0x02,
+};
+static const uint8_t add_device_rsp_4[] =  {
+					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+					0x02,
+};
+static const struct generic_data add_device_fail_4 = {
+	.send_opcode = MGMT_OP_ADD_DEVICE,
+	.send_param = add_device_nval_4,
+	.send_len = sizeof(add_device_nval_4),
+	.expect_param = add_device_rsp_4,
+	.expect_len = sizeof(add_device_rsp_4),
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 };
 
@@ -3166,6 +3797,19 @@ static const struct generic_data remove_device_fail_2 = {
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 };
 
+static const uint8_t remove_device_param_3[] = {
+					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+					0x02,
+};
+static const struct generic_data remove_device_fail_3 = {
+	.send_opcode = MGMT_OP_REMOVE_DEVICE,
+	.send_param = remove_device_param_3,
+	.send_len = sizeof(remove_device_param_3),
+	.expect_param = remove_device_param_3,
+	.expect_len = sizeof(remove_device_param_3),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
 static const struct generic_data remove_device_success_1 = {
 	.send_opcode = MGMT_OP_REMOVE_DEVICE,
 	.send_param = remove_device_param_1,
@@ -3179,6 +3823,21 @@ static const struct generic_data remove_device_success_1 = {
 };
 
 static const struct generic_data remove_device_success_2 = {
+	.send_opcode = MGMT_OP_REMOVE_DEVICE,
+	.send_param = remove_device_param_1,
+	.send_len = sizeof(remove_device_param_1),
+	.expect_param = remove_device_param_1,
+	.expect_len = sizeof(remove_device_param_1),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_DEVICE_REMOVED,
+	.expect_alt_ev_param = remove_device_param_1,
+	.expect_alt_ev_len = sizeof(remove_device_param_1),
+	.expect_hci_command = BT_HCI_CMD_WRITE_SCAN_ENABLE,
+	.expect_hci_param = set_connectable_off_scan_enable_param,
+	.expect_hci_len = sizeof(set_connectable_off_scan_enable_param),
+};
+
+static const struct generic_data remove_device_success_3 = {
 	.setup_settings = settings_powered,
 	.send_opcode = MGMT_OP_REMOVE_DEVICE,
 	.send_param = remove_device_param_1,
@@ -3199,7 +3858,7 @@ static const uint8_t remove_device_param_2[] =  {
 					0x01,
 };
 static const uint8_t set_le_scan_off[] = { 0x00, 0x00 };
-static const struct generic_data remove_device_success_3 = {
+static const struct generic_data remove_device_success_4 = {
 	.setup_settings = settings_powered,
 	.send_opcode = MGMT_OP_REMOVE_DEVICE,
 	.send_param = remove_device_param_2,
@@ -3213,6 +3872,879 @@ static const struct generic_data remove_device_success_3 = {
 	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_ENABLE,
 	.expect_hci_param = set_le_scan_off,
 	.expect_hci_len = sizeof(set_le_scan_off),
+};
+
+static const struct generic_data remove_device_success_5 = {
+	.send_opcode = MGMT_OP_REMOVE_DEVICE,
+	.send_param = remove_device_param_2,
+	.send_len = sizeof(remove_device_param_2),
+	.expect_param = remove_device_param_2,
+	.expect_len = sizeof(remove_device_param_2),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_DEVICE_REMOVED,
+	.expect_alt_ev_param = remove_device_param_2,
+	.expect_alt_ev_len = sizeof(remove_device_param_2),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_ENABLE,
+	.expect_hci_param = set_le_scan_off,
+	.expect_hci_len = sizeof(set_le_scan_off),
+};
+
+static const struct generic_data read_adv_features_invalid_param_test = {
+	.send_opcode = MGMT_OP_READ_ADV_FEATURES,
+	.send_param = dummy_data,
+	.send_len = sizeof(dummy_data),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data read_adv_features_invalid_index_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_ADV_FEATURES,
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const uint8_t read_adv_features_rsp_1[] =  {
+	0x1f, 0x00, 0x00, 0x00,	/* supported flags */
+	0x1f,			/* max_adv_data_len */
+	0x1f,			/* max_scan_rsp_len */
+	0x05,			/* max_instances */
+	0x00,			/* num_instances */
+};
+
+static const struct generic_data read_adv_features_success_1 = {
+	.send_opcode = MGMT_OP_READ_ADV_FEATURES,
+	.expect_param = read_adv_features_rsp_1,
+	.expect_len = sizeof(read_adv_features_rsp_1),
+	.expect_status = MGMT_STATUS_SUCCESS,
+};
+
+static const uint8_t read_adv_features_rsp_2[] =  {
+	0x1f, 0x00, 0x00, 0x00,	/* supported flags */
+	0x1f,			/* max_adv_data_len */
+	0x1f,			/* max_scan_rsp_len */
+	0x05,			/* max_instances */
+	0x01,			/* num_instances */
+	0x01,			/* instance identifiers */
+};
+
+static const struct generic_data read_adv_features_success_2 = {
+	.send_opcode = MGMT_OP_READ_ADV_FEATURES,
+	.expect_param = read_adv_features_rsp_2,
+	.expect_len = sizeof(read_adv_features_rsp_2),
+	.expect_status = MGMT_STATUS_SUCCESS,
+};
+
+/* simple add advertising command */
+static const uint8_t add_advertising_param_uuid[] = {
+	0x01,			/* adv instance */
+	0x00, 0x00, 0x00, 0x00,	/* flags: none */
+	0x00, 0x00,		/* duration: default */
+	0x00, 0x00,		/* timeout: none */
+	0x09,			/* adv data len */
+	0x00,			/* scan rsp len */
+	/* adv data: */
+	0x03,			/* AD len */
+	0x02,			/* AD type: some 16 bit service class UUIDs */
+	0x0d, 0x18,		/* heart rate monitor */
+	0x04,			/* AD len */
+	0xff,			/* AD type: manufacturer specific data */
+	0x01, 0x02, 0x03,	/* custom advertising data */
+};
+
+/* add advertising with scan response data */
+static const uint8_t add_advertising_param_scanrsp[] = {
+	/* instance, flags, duration, timeout, adv data len: same as before */
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+	0x0a,			/* scan rsp len */
+	/* adv data: same as before */
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+	/* scan rsp data: */
+	0x03,			/* AD len */
+	0x19,			/* AD type: external appearance */
+	0x40, 0x03,		/* some custom appearance */
+	0x05,			/* AD len */
+	0x03,			/* AD type: all 16 bit service class UUIDs */
+	0x0d, 0x18,		/* heart rate monitor */
+	0x0f, 0x18,		/* battery service */
+};
+
+/* add advertising with timeout */
+static const uint8_t add_advertising_param_timeout[] = {
+	/* instance, flags, duration: same as before */
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x05, 0x00,		/* timeout: 5 seconds */
+	/* adv data: same as before */
+	0x09, 0x00, 0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising with connectable flag */
+static const uint8_t add_advertising_param_connectable[] = {
+	0x01,			/* adv instance */
+	0x01, 0x00, 0x00, 0x00,	/* flags: connectable*/
+	/* duration, timeout, adv/scan data: same as before */
+	0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising with general discoverable flag */
+static const uint8_t add_advertising_param_general_discov[] = {
+	0x01,			/* adv instance */
+	0x02, 0x00, 0x00, 0x00,	/* flags: general discoverable*/
+	/* duration, timeout, adv/scan data: same as before */
+	0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising with limited discoverable flag */
+static const uint8_t add_advertising_param_limited_discov[] = {
+	0x01,			/* adv instance */
+	0x04, 0x00, 0x00, 0x00,	/* flags: limited discoverable */
+	/* duration, timeout, adv/scan data: same as before */
+	0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising with managed flags */
+static const uint8_t add_advertising_param_managed[] = {
+	0x01,			/* adv instance */
+	0x08, 0x00, 0x00, 0x00,	/* flags: managed flags */
+	/* duration, timeout, adv/scan data: same as before */
+	0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising with tx power flag */
+static const uint8_t add_advertising_param_txpwr[] = {
+	0x01,			/* adv instance */
+	0x10, 0x00, 0x00, 0x00,	/* flags: tx power */
+	/* duration, timeout, adv/scan data: same as before */
+	0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+/* add advertising command for a second instance */
+static const uint8_t add_advertising_param_test2[] = {
+	0x02,				/* adv instance */
+	0x00, 0x00, 0x00, 0x00,		/* flags: none */
+	0x00, 0x00,			/* duration: default */
+	0x01, 0x00,			/* timeout: 1 second */
+	0x07,				/* adv data len */
+	0x00,				/* scan rsp len */
+	/* adv data: */
+	0x06,				/* AD len */
+	0x08,				/* AD type: shortened local name */
+	0x74, 0x65, 0x73, 0x74, 0x32,	/* "test2" */
+};
+
+static const uint8_t advertising_instance1_param[] = {
+	0x01,
+};
+
+static const uint8_t advertising_instance2_param[] = {
+	0x02,
+};
+
+static const uint8_t set_adv_data_uuid[] = {
+	/* adv data len */
+	0x09,
+	/* advertise heart rate monitor and manufacturer specific data */
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_test1[] = {
+	0x07,				/* adv data len */
+	0x06,				/* AD len */
+	0x08,				/* AD type: shortened local name */
+	0x74, 0x65, 0x73, 0x74, 0x31,	/* "test1" */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_test2[] = {
+	0x07,				/* adv data len */
+	0x06,				/* AD len */
+	0x08,				/* AD type: shortened local name */
+	0x74, 0x65, 0x73, 0x74, 0x32,	/* "test2" */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_txpwr[] = {
+	0x03,			/* adv data len */
+	0x02, 			/* AD len */
+	0x0a,			/* AD type: tx power */
+	0x00,			/* tx power */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_general_discov[] = {
+	0x0c,			/* adv data len */
+	0x02,			/* AD len */
+	0x01,			/* AD type: flags */
+	0x02,			/* general discoverable */
+	0x03,			/* AD len */
+	0x02,			/* AD type: some 16bit service class UUIDs */
+	0x0d, 0x18,		/* heart rate monitor */
+	0x04,			/* AD len */
+	0xff,			/* AD type: manufacturer specific data */
+	0x01, 0x02, 0x03,	/* custom advertising data */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_limited_discov[] = {
+	0x0c,			/* adv data len */
+	0x02,			/* AD len */
+	0x01,			/* AD type: flags */
+	0x01,			/* limited discoverable */
+	/* rest: same as before */
+	0x03, 0x02, 0x0d, 0x18, 0x04, 0xff, 0x01, 0x02, 0x03,
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_adv_data_uuid_txpwr[] = {
+	0x0c,			/* adv data len */
+	0x03,			/* AD len */
+	0x02,			/* AD type: some 16bit service class UUIDs */
+	0x0d, 0x18,		/* heart rate monitor */
+	0x04,			/* AD len */
+	0xff,			/* AD type: manufacturer specific data */
+	0x01, 0x02, 0x03,	/* custom advertising data */
+	0x02,			/* AD len */
+	0x0a,			/* AD type: tx power */
+	0x00,			/* tx power */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+static const uint8_t set_scan_rsp_uuid[] = {
+	0x0a,			/* scan rsp data len */
+	0x03,			/* AD len */
+	0x19,			/* AD type: external appearance */
+	0x40, 0x03,		/* some custom appearance */
+	0x05,			/* AD len */
+	0x03,			/* AD type: all 16 bit service class UUIDs */
+	0x0d, 0x18, 0x0f, 0x18,	/* heart rate monitor, battery service */
+	/* padding */
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00,
+};
+
+static const uint8_t add_advertising_invalid_param_1[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00,
+	0x03, 0x03, 0x0d, 0x18,
+	0x19, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+	0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+	0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+};
+
+static const uint8_t add_advertising_invalid_param_2[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x04, 0x03, 0x0d, 0x18,
+	0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_3[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x03, 0x0d, 0x18,
+	0x02, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_4[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+	0x03, 0x03, 0x0d, 0x18,
+	0x05, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_5[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1D, 0x00,
+	0x03, 0x03, 0x0d, 0x18,
+	0x19, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+	0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+	0x15, 0x16, 0x17, 0x18,
+};
+
+static const uint8_t add_advertising_invalid_param_6[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
+	0x03, 0x03, 0x0d, 0x18,
+	0x19, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+	0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+	0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e,
+};
+
+static const uint8_t add_advertising_invalid_param_7[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+	0x04, 0x03, 0x0d, 0x18,
+	0x04, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_8[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+	0x03, 0x03, 0x0d, 0x18,
+	0x02, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_9[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+	0x03, 0x03, 0x0d, 0x18,
+	0x05, 0xff, 0x01, 0x02, 0x03,
+};
+
+static const uint8_t add_advertising_invalid_param_10[] = {
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1D,
+	0x03, 0x03, 0x0d, 0x18,
+	0x19, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+	0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+	0x15, 0x16, 0x17, 0x18,
+};
+
+static const struct generic_data add_advertising_fail_1 = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_uuid,
+	.send_len = sizeof(add_advertising_param_uuid),
+	.expect_status = MGMT_STATUS_REJECTED,
+};
+
+static const struct generic_data add_advertising_fail_2 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_1,
+	.send_len = sizeof(add_advertising_invalid_param_1),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_3 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_2,
+	.send_len = sizeof(add_advertising_invalid_param_2),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_4 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_3,
+	.send_len = sizeof(add_advertising_invalid_param_3),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_5 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_4,
+	.send_len = sizeof(add_advertising_invalid_param_4),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_6 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_5,
+	.send_len = sizeof(add_advertising_invalid_param_5),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_7 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_6,
+	.send_len = sizeof(add_advertising_invalid_param_6),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_8 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_7,
+	.send_len = sizeof(add_advertising_invalid_param_7),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_9 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_8,
+	.send_len = sizeof(add_advertising_invalid_param_8),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_10 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_9,
+	.send_len = sizeof(add_advertising_invalid_param_9),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_11 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_invalid_param_10,
+	.send_len = sizeof(add_advertising_invalid_param_10),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data add_advertising_fail_12 = {
+	.setup_settings = settings_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_timeout,
+	.send_len = sizeof(add_advertising_param_timeout),
+	.expect_status = MGMT_STATUS_REJECTED,
+};
+
+static const struct generic_data add_advertising_success_1 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_uuid,
+	.send_len = sizeof(add_advertising_param_uuid),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_ADDED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_uuid,
+	.expect_hci_len = sizeof(set_adv_data_uuid),
+};
+
+static const char set_powered_adv_instance_settings_param[] = {
+	0x81, 0x02, 0x00, 0x00,
+};
+
+static const struct generic_data add_advertising_success_pwron_data = {
+	.send_opcode = MGMT_OP_SET_POWERED,
+	.send_param = set_powered_on_param,
+	.send_len = sizeof(set_powered_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_powered_adv_instance_settings_param,
+	.expect_len = sizeof(set_powered_adv_instance_settings_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_test1,
+	.expect_hci_len = sizeof(set_adv_data_test1),
+};
+
+static const struct generic_data add_advertising_success_pwron_enabled = {
+	.send_opcode = MGMT_OP_SET_POWERED,
+	.send_param = set_powered_on_param,
+	.send_len = sizeof(set_powered_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_powered_adv_instance_settings_param,
+	.expect_len = sizeof(set_powered_adv_instance_settings_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_ENABLE,
+	.expect_hci_param = set_adv_on_set_adv_enable_param,
+	.expect_hci_len = sizeof(set_adv_on_set_adv_enable_param),
+};
+
+static const struct generic_data add_advertising_success_4 = {
+	.send_opcode = MGMT_OP_SET_ADVERTISING,
+	.send_param = set_adv_on_param,
+	.send_len = sizeof(set_adv_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_adv_settings_param_2,
+	.expect_len = sizeof(set_adv_settings_param_2),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_txpwr,
+	.expect_hci_len = sizeof(set_adv_data_txpwr),
+};
+
+static const char set_adv_off_param[] = { 0x00 };
+
+static const struct generic_data add_advertising_success_5 = {
+	.send_opcode = MGMT_OP_SET_ADVERTISING,
+	.send_param = set_adv_off_param,
+	.send_len = sizeof(set_adv_off_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_powered_adv_instance_settings_param,
+	.expect_len = sizeof(set_powered_adv_instance_settings_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_test1,
+	.expect_hci_len = sizeof(set_adv_data_test1),
+};
+
+static const struct generic_data add_advertising_success_6 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scanrsp,
+	.send_len = sizeof(add_advertising_param_scanrsp),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_ADDED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_uuid,
+	.expect_hci_len = sizeof(set_adv_data_uuid),
+};
+
+static const struct generic_data add_advertising_success_7 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scanrsp,
+	.send_len = sizeof(add_advertising_param_scanrsp),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_ADDED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_SCAN_RSP_DATA,
+	.expect_hci_param = set_scan_rsp_uuid,
+	.expect_hci_len = sizeof(set_scan_rsp_uuid),
+};
+
+static const struct generic_data add_advertising_success_8 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_connectable,
+	.send_len = sizeof(add_advertising_param_connectable),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_on_adv_param,
+	.expect_hci_len = sizeof(set_connectable_on_adv_param),
+};
+
+static const struct generic_data add_advertising_success_9 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_general_discov,
+	.send_len = sizeof(add_advertising_param_general_discov),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_general_discov,
+	.expect_hci_len = sizeof(set_adv_data_general_discov),
+};
+
+static const struct generic_data add_advertising_success_10 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_limited_discov,
+	.send_len = sizeof(add_advertising_param_limited_discov),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_limited_discov,
+	.expect_hci_len = sizeof(set_adv_data_limited_discov),
+};
+
+static const struct generic_data add_advertising_success_11 = {
+	.setup_settings = settings_powered_le_discoverable,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_managed,
+	.send_len = sizeof(add_advertising_param_managed),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_general_discov,
+	.expect_hci_len = sizeof(set_adv_data_general_discov),
+};
+
+static const struct generic_data add_advertising_success_12 = {
+	.setup_settings = settings_powered_le_discoverable,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_txpwr,
+	.send_len = sizeof(add_advertising_param_txpwr),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_uuid_txpwr,
+	.expect_hci_len = sizeof(set_adv_data_uuid_txpwr),
+};
+
+static uint16_t settings_powered_le_connectable[] = {
+						MGMT_OP_SET_POWERED,
+						MGMT_OP_SET_LE,
+						MGMT_OP_SET_CONNECTABLE, 0 };
+
+static uint8_t set_connectable_off_scan_adv_param[] = {
+		0x00, 0x08,				/* min_interval */
+		0x00, 0x08,				/* max_interval */
+		0x02,					/* type */
+		0x01,					/* own_addr_type */
+		0x00,					/* direct_addr_type */
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,	/* direct_addr */
+		0x07,					/* channel_map */
+		0x00,					/* filter_policy */
+};
+
+static const struct generic_data add_advertising_success_13 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_scanrsp,
+	.send_len = sizeof(add_advertising_param_scanrsp),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_off_scan_adv_param,
+	.expect_hci_len = sizeof(set_connectable_off_scan_adv_param),
+};
+
+static const struct generic_data add_advertising_success_14 = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_uuid,
+	.send_len = sizeof(add_advertising_param_uuid),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_off_adv_param,
+	.expect_hci_len = sizeof(set_connectable_off_adv_param),
+};
+
+static const struct generic_data add_advertising_success_15 = {
+	.setup_settings = settings_powered_le_connectable,
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_uuid,
+	.send_len = sizeof(add_advertising_param_uuid),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_on_adv_param,
+	.expect_hci_len = sizeof(set_connectable_on_adv_param),
+};
+
+static const char set_connectable_settings_param_3[] = {
+						0x83, 0x02, 0x00, 0x00 };
+
+static const struct generic_data add_advertising_success_16 = {
+	.send_opcode = MGMT_OP_SET_CONNECTABLE,
+	.send_param = set_connectable_on_param,
+	.send_len = sizeof(set_connectable_on_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_connectable_settings_param_3,
+	.expect_len = sizeof(set_connectable_settings_param_3),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_on_adv_param,
+	.expect_hci_len = sizeof(set_connectable_on_adv_param),
+};
+
+static const struct generic_data add_advertising_success_17 = {
+	.send_opcode = MGMT_OP_SET_CONNECTABLE,
+	.send_param = set_connectable_off_param,
+	.send_len = sizeof(set_connectable_off_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_le_settings_param_2,
+	.expect_len = sizeof(set_le_settings_param_2),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_PARAMETERS,
+	.expect_hci_param = set_connectable_off_adv_param,
+	.expect_hci_len = sizeof(set_connectable_off_adv_param),
+};
+
+static const char set_powered_off_le_settings_param[] = {
+	0x80, 0x02, 0x00, 0x00
+};
+
+static const struct generic_data add_advertising_power_off = {
+	.send_opcode = MGMT_OP_SET_POWERED,
+	.send_param = set_powered_off_param,
+	.send_len = sizeof(set_powered_off_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_powered_off_le_settings_param,
+	.expect_len = sizeof(set_powered_off_le_settings_param),
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+};
+
+static const char set_le_settings_param_off[] = { 0x81, 0x00, 0x00, 0x00 };
+
+static const struct generic_data add_advertising_le_off = {
+	.send_opcode = MGMT_OP_SET_LE,
+	.send_param = set_le_off_param,
+	.send_len = sizeof(set_le_off_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = set_le_settings_param_off,
+	.expect_len = sizeof(set_le_settings_param_off),
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+};
+
+static const struct generic_data add_advertising_success_18 = {
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_uuid,
+	.send_len = sizeof(add_advertising_param_uuid),
+	.expect_param = advertising_instance1_param,
+	.expect_len = sizeof(advertising_instance1_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_uuid,
+	.expect_hci_len = sizeof(set_adv_data_uuid),
+};
+
+static const struct generic_data add_advertising_timeout_expired = {
+	.send_opcode = TESTER_NOOP_OPCODE,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_ENABLE,
+	.expect_hci_param = set_adv_on_set_adv_disable_param,
+	.expect_hci_len = sizeof(set_adv_on_set_adv_disable_param),
+};
+
+static const uint8_t remove_advertising_param_1[] = {
+	0x01,
+};
+
+static const uint8_t remove_advertising_param_2[] = {
+	0x00,
+};
+
+static const struct generic_data remove_advertising_fail_1 = {
+	.send_opcode = MGMT_OP_REMOVE_ADVERTISING,
+	.send_param = remove_advertising_param_1,
+	.send_len = sizeof(remove_advertising_param_1),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data remove_advertising_success_1 = {
+	.send_opcode = MGMT_OP_REMOVE_ADVERTISING,
+	.send_param = remove_advertising_param_1,
+	.send_len = sizeof(remove_advertising_param_1),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = remove_advertising_param_1,
+	.expect_len = sizeof(remove_advertising_param_1),
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_ENABLE,
+	.expect_hci_param = set_adv_off_param,
+	.expect_hci_len = sizeof(set_adv_off_param),
+};
+
+static const struct generic_data remove_advertising_success_2 = {
+	.send_opcode = MGMT_OP_REMOVE_ADVERTISING,
+	.send_param = remove_advertising_param_2,
+	.send_len = sizeof(remove_advertising_param_2),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = remove_advertising_param_2,
+	.expect_len = sizeof(remove_advertising_param_2),
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_ENABLE,
+	.expect_hci_param = set_adv_off_param,
+	.expect_hci_len = sizeof(set_adv_off_param),
+};
+
+static const struct generic_data multi_advertising_switch = {
+	.send_opcode = TESTER_NOOP_OPCODE,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_REMOVED,
+	.expect_alt_ev_param = advertising_instance1_param,
+	.expect_alt_ev_len = sizeof(advertising_instance1_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_test2,
+	.expect_hci_len = sizeof(set_adv_data_test2),
+};
+
+static const struct generic_data multi_advertising_add_second = {
+	.send_opcode = MGMT_OP_ADD_ADVERTISING,
+	.send_param = add_advertising_param_test2,
+	.send_len = sizeof(add_advertising_param_test2),
+	.expect_param = advertising_instance2_param,
+	.expect_len = sizeof(advertising_instance2_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_alt_ev = MGMT_EV_ADVERTISING_ADDED,
+	.expect_alt_ev_param = advertising_instance2_param,
+	.expect_alt_ev_len = sizeof(advertising_instance2_param),
+	.expect_hci_command = BT_HCI_CMD_LE_SET_ADV_DATA,
+	.expect_hci_param = set_adv_data_test2,
+	.expect_hci_len = sizeof(set_adv_data_test2),
+};
+
+/* based on G-Tag ADV_DATA */
+static const uint8_t adv_data_invalid_significant_len[] = { 0x02, 0x01, 0x06,
+		0x0d, 0xff, 0x80, 0x01, 0x02, 0x15, 0x12, 0x34, 0x80, 0x91,
+		0xd0, 0xf2, 0xbb, 0xc5, 0x03, 0x02, 0x0f, 0x18, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+static const char device_found_valid[] = { 0x00, 0x00, 0x01, 0x01, 0xaa, 0x00,
+		0x01, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x15, 0x00, 0x02, 0x01,
+		0x06, 0x0d, 0xff, 0x80, 0x01, 0x02, 0x15, 0x12, 0x34, 0x80,
+		0x91, 0xd0, 0xf2, 0xbb, 0xc5, 0x03, 0x02, 0x0f, 0x18 };
+
+static const struct generic_data device_found_gtag = {
+	.setup_settings = settings_powered_le,
+	.send_opcode = MGMT_OP_START_DISCOVERY,
+	.send_param = start_discovery_le_param,
+	.send_len = sizeof(start_discovery_le_param),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_param = start_discovery_le_param,
+	.expect_len = sizeof(start_discovery_le_param),
+	.expect_alt_ev = MGMT_EV_DEVICE_FOUND,
+	.expect_alt_ev_param = device_found_valid,
+	.expect_alt_ev_len = sizeof(device_found_valid),
+	.set_adv = true,
+	.adv_data_len = sizeof(adv_data_invalid_significant_len),
+	.adv_data = adv_data_invalid_significant_len,
+};
+
+static const struct generic_data read_local_oob_not_powered_test = {
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+};
+
+static const struct generic_data read_local_oob_invalid_param_test = {
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.send_param = dummy_data,
+	.send_len = sizeof(dummy_data),
+	.expect_status = MGMT_STATUS_INVALID_PARAMS,
+};
+
+static const struct generic_data read_local_oob_invalid_index_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const struct generic_data read_local_oob_legacy_pairing_test = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+};
+
+static const struct generic_data read_local_oob_success_ssp_test = {
+	.setup_settings = settings_powered_ssp,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_ignore_param = true,
+	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_DATA,
+};
+
+static const struct generic_data read_local_oob_success_sc_test = {
+	.setup_settings = settings_powered_sc,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_ignore_param = true,
+	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_EXT_DATA,
 };
 
 static void client_cmd_complete(uint16_t opcode, uint8_t status,
@@ -3255,12 +4787,12 @@ static void setup_bthost(void)
 	bthost = hciemu_client_get_host(data->hciemu);
 	bthost_set_cmd_complete_cb(bthost, client_cmd_complete, data);
 	if (data->hciemu_type == HCIEMU_TYPE_LE)
-		bthost_set_adv_enable(bthost, 0x01, 0x00);
+		bthost_set_adv_enable(bthost, 0x01);
 	else
 		bthost_write_scan_enable(bthost, 0x03);
 }
 
-static void setup_ssp_acceptor(const void *test_data)
+static void setup_pairing_acceptor(const void *test_data)
 {
 	struct test_data *data = tester_get_data();
 	const struct generic_data *test = data->test_data;
@@ -3305,6 +4837,29 @@ static void setup_class(const void *test_data)
 					setup_powered_callback, NULL, NULL);
 }
 
+static void discovering_event(uint16_t index, uint16_t length,
+					const void *param, void *user_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct mgmt_ev_discovering *ev = param;
+
+	mgmt_unregister(data->mgmt, data->mgmt_discov_ev_id);
+
+	if (length != sizeof(*ev)) {
+		tester_warn("Incorrect discovering event length");
+		tester_setup_failed();
+		return;
+	}
+
+	if (!ev->discovering) {
+		tester_warn("Unexpected discovery stopped event");
+		tester_setup_failed();
+		return;
+	}
+
+	tester_setup_complete();
+}
+
 static void setup_discovery_callback(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -3314,7 +4869,6 @@ static void setup_discovery_callback(uint8_t status, uint16_t length,
 	}
 
 	tester_print("Discovery started");
-	tester_setup_complete();
 }
 
 static void setup_start_discovery(const void *test_data)
@@ -3323,6 +4877,11 @@ static void setup_start_discovery(const void *test_data)
 	const struct generic_data *test = data->test_data;
 	const void *send_param = test->setup_send_param;
 	uint16_t send_len = test->setup_send_len;
+	unsigned int id;
+
+	id = mgmt_register(data->mgmt, MGMT_EV_DISCOVERING, data->mgmt_index,
+			   discovering_event, NULL, NULL);
+	data->mgmt_discov_ev_id = id;
 
 	mgmt_send(data->mgmt, test->setup_send_opcode, data->mgmt_index,
 				send_len, send_param, setup_discovery_callback,
@@ -3538,6 +5097,302 @@ static void setup_add_device(const void *test_data)
 					setup_powered_callback, NULL, NULL);
 }
 
+static void setup_add_advertising_callback(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	struct mgmt_rp_add_advertising *rp =
+				(struct mgmt_rp_add_advertising *) param;
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		tester_setup_failed();
+		return;
+	}
+
+	tester_print("Add Advertising setup complete (instance %d)",
+								rp->instance);
+
+	setup_bthost();
+}
+
+#define TESTER_ADD_ADV_DATA_LEN 7
+
+static void setup_add_adv_param(struct mgmt_cp_add_advertising *cp,
+							uint8_t instance)
+{
+	memset(cp, 0, sizeof(*cp));
+	cp->instance = instance;
+	cp->adv_data_len = TESTER_ADD_ADV_DATA_LEN;
+	cp->data[0] = TESTER_ADD_ADV_DATA_LEN - 1; /* AD len */
+	cp->data[1] = 0x08; /* AD type: shortened local name */
+	cp->data[2] = 't';  /* adv data ... */
+	cp->data[3] = 'e';
+	cp->data[4] = 's';
+	cp->data[5] = 't';
+	cp->data[6] = '0' + instance;
+}
+
+static void setup_add_advertising_not_powered(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding advertising instance while unpowered");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_add_advertising(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding advertising instance while powered");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_add_advertising_connectable(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding advertising instance while connectable");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_CONNECTABLE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_add_advertising_timeout(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding advertising instance with timeout");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+	cp->timeout = 1;
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_add_advertising_duration(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding instance with long timeout/short duration");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+	cp->duration = 1;
+	cp->timeout = 30;
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_power_cycle_callback(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	struct test_data *data = tester_get_data();
+	unsigned char param_off[] = { 0x00 };
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		tester_setup_failed();
+		return;
+	}
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param_off), &param_off,
+						NULL, NULL, NULL);
+
+	setup_bthost();
+}
+
+static void setup_add_advertising_power_cycle(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param_on[] = { 0x01 };
+
+	tester_print("Adding instance without timeout and power cycle");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param_on), &param_on,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param_on), &param_on,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_power_cycle_callback,
+						NULL, NULL);
+}
+
+static void setup_set_and_add_advertising(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Set and add advertising instance");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_ADVERTISING, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_multi_adv_second_instance(uint8_t status, uint16_t length,
+		const void *param, void *user_data) {
+	struct mgmt_rp_add_advertising *rp =
+				(struct mgmt_rp_add_advertising *) param;
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		tester_setup_failed();
+		return;
+	}
+
+	tester_print("Add Advertising setup complete (instance %d)",
+								rp->instance);
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 2);
+	cp->timeout = 1;
+	cp->duration = 1;
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_add_advertising_callback,
+						NULL, NULL);
+}
+
+static void setup_multi_adv(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	struct mgmt_cp_add_advertising *cp;
+	unsigned char adv_param[sizeof(*cp) + TESTER_ADD_ADV_DATA_LEN];
+	unsigned char param[] = { 0x01 };
+
+	tester_print("Adding two instances with timeout 1 and duration 1");
+
+	cp = (struct mgmt_cp_add_advertising *) adv_param;
+	setup_add_adv_param(cp, 1);
+	cp->timeout = 1;
+	cp->duration = 1;
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_LE, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_SET_POWERED, data->mgmt_index,
+						sizeof(param), &param,
+						NULL, NULL, NULL);
+
+	mgmt_send(data->mgmt, MGMT_OP_ADD_ADVERTISING, data->mgmt_index,
+						sizeof(adv_param), adv_param,
+						setup_multi_adv_second_instance,
+						NULL, NULL);
+}
+
 static void setup_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -3602,13 +5457,42 @@ static void user_confirm_request_callback(uint16_t index, uint16_t length,
 	memset(&cp, 0, sizeof(cp));
 	memcpy(&cp.addr, &ev->addr, sizeof(cp.addr));
 
-	if (test->reject_ssp)
+	if (test->reject_confirm)
 		opcode = MGMT_OP_USER_CONFIRM_NEG_REPLY;
 	else
 		opcode = MGMT_OP_USER_CONFIRM_REPLY;
 
 	mgmt_reply(data->mgmt, opcode, data->mgmt_index, sizeof(cp), &cp,
 							NULL, NULL, NULL);
+}
+
+static void user_passkey_request_callback(uint16_t index, uint16_t length,
+							const void *param,
+							void *user_data)
+{
+	const struct mgmt_ev_user_passkey_request *ev = param;
+	struct test_data *data = user_data;
+	const struct generic_data *test = data->test_data;
+	struct mgmt_cp_user_passkey_reply cp;
+
+	if (test->just_works) {
+		tester_warn("User Passkey Request for just-works case");
+		tester_test_failed();
+		return;
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	memcpy(&cp.addr, &ev->addr, sizeof(cp.addr));
+
+	if (test->reject_confirm) {
+		mgmt_reply(data->mgmt, MGMT_OP_USER_PASSKEY_NEG_REPLY,
+				data->mgmt_index, sizeof(cp.addr), &cp.addr,
+				NULL, NULL, NULL);
+		return;
+	}
+
+	mgmt_reply(data->mgmt, MGMT_OP_USER_PASSKEY_REPLY, data->mgmt_index,
+					sizeof(cp), &cp, NULL, NULL, NULL);
 }
 
 static void test_setup(const void *test_data)
@@ -3632,6 +5516,10 @@ static void test_setup(const void *test_data)
 			data->mgmt_index, user_confirm_request_callback,
 			data, NULL);
 
+	mgmt_register(data->mgmt, MGMT_EV_USER_PASSKEY_REQUEST,
+			data->mgmt_index, user_passkey_request_callback,
+			data, NULL);
+
 	if (test->client_pin)
 		bthost_set_pin_code(bthost, test->client_pin,
 							test->client_pin_len);
@@ -3644,8 +5532,14 @@ static void test_setup(const void *test_data)
 	else if (!test->just_works)
 		bthost_set_auth_req(bthost, 0x01);
 
-	if (test->client_reject_ssp)
+	if (test->client_reject_confirm)
 		bthost_set_reject_user_confirm(bthost, true);
+
+	if (test->client_enable_le)
+		bthost_write_le_host_supported(bthost, 0x01);
+
+	if (test->client_enable_sc)
+		bthost_set_sc_support(bthost, 0x01);
 
 proceed:
 	if (!test || !test->setup_settings) {
@@ -3740,31 +5634,49 @@ done:
 	test_condition_complete(data);
 }
 
+static bool verify_alt_ev(const void *param, uint16_t length)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+
+	if (length != test->expect_alt_ev_len) {
+		tester_warn("Invalid length %u != %u", length,
+						test->expect_alt_ev_len);
+		return false;
+	}
+
+	if (test->expect_alt_ev_param &&
+			memcmp(test->expect_alt_ev_param, param, length)) {
+		tester_warn("Event parameters do not match");
+		return false;
+	}
+
+	return true;
+}
+
 static void command_generic_event_alt(uint16_t index, uint16_t length,
 							const void *param,
 							void *user_data)
 {
 	struct test_data *data = tester_get_data();
 	const struct generic_data *test = data->test_data;
+	bool (*verify)(const void *param, uint16_t length);
 
-	if (length != test->expect_alt_ev_len) {
-		tester_warn("Invalid length %s event",
+	tester_print("New %s event received", mgmt_evstr(test->expect_alt_ev));
+
+	mgmt_unregister(data->mgmt_alt, data->mgmt_alt_ev_id);
+
+	if (test->verify_alt_ev_func)
+		verify = test->verify_alt_ev_func;
+	else
+		verify = verify_alt_ev;
+
+	if (!verify(param, length)) {
+		tester_warn("Incorrect %s event parameters",
 					mgmt_evstr(test->expect_alt_ev));
 		tester_test_failed();
 		return;
 	}
-
-	tester_print("New %s event received", mgmt_evstr(test->expect_alt_ev));
-
-	if (test->expect_alt_ev_param &&
-			memcmp(param, test->expect_alt_ev_param,
-						test->expect_alt_ev_len) != 0)
-		return;
-
-	tester_print("Unregistering %s notification",
-					mgmt_evstr(test->expect_alt_ev));
-
-	mgmt_unregister(data->mgmt_alt, data->mgmt_alt_ev_id);
 
 	test_condition_complete(data);
 }
@@ -3785,18 +5697,22 @@ static void command_generic_callback(uint8_t status, uint16_t length,
 		return;
 	}
 
-	if (test->expect_func)
-		expect_param = test->expect_func(&expect_len);
+	if (!test->expect_ignore_param) {
+		if (test->expect_func)
+			expect_param = test->expect_func(&expect_len);
 
-	if (length != expect_len) {
-		tester_test_failed();
-		return;
-	}
+		if (length != expect_len) {
+			tester_warn("Invalid cmd response parameter size");
+			tester_test_failed();
+			return;
+		}
 
-	if (expect_param && expect_len > 0 &&
-				memcmp(param, expect_param, length)) {
-		tester_test_failed();
-		return;
+		if (expect_param && expect_len > 0 &&
+					memcmp(param, expect_param, length)) {
+			tester_warn("Unexpected cmd response parameter value");
+			tester_test_failed();
+			return;
+		}
 	}
 
 	test_condition_complete(data);
@@ -3831,6 +5747,24 @@ static void command_hci_callback(uint16_t opcode, const void *param,
 	}
 
 	test_condition_complete(data);
+}
+
+static bool power_off(uint16_t index)
+{
+	int sk, err;
+
+	sk = hci_open_dev(index);
+	if (sk < 0)
+		return false;
+
+	err = ioctl(sk, HCIDEVDOWN, index);
+
+	hci_close_dev(sk);
+
+	if (err < 0)
+		return false;
+
+	return true;
 }
 
 static void test_command_generic(const void *test_data)
@@ -3873,14 +5807,51 @@ static void test_command_generic(const void *test_data)
 		test_add_condition(data);
 	}
 
+	if (test->send_opcode == 0x0000) {
+		tester_print("Executing no-op test");
+		return;
+	}
+
 	tester_print("Sending command 0x%04x", test->send_opcode);
 
 	if (test->send_func)
 		send_param = test->send_func(&send_len);
 
-	mgmt_send(data->mgmt, test->send_opcode, index, send_len, send_param,
+	if (test->force_power_off) {
+		mgmt_send_nowait(data->mgmt, test->send_opcode, index,
+					send_len, send_param,
 					command_generic_callback, NULL, NULL);
+		power_off(data->mgmt_index);
+	} else {
+		mgmt_send(data->mgmt, test->send_opcode, index, send_len,
+					send_param, command_generic_callback,
+					NULL, NULL);
+	}
+
 	test_add_condition(data);
+}
+
+static void test_device_found(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct generic_data *test = data->test_data;
+	struct bthost *bthost;
+
+	bthost = hciemu_client_get_host(data->hciemu);
+
+	if ((data->hciemu_type == HCIEMU_TYPE_LE) ||
+				(data->hciemu_type == HCIEMU_TYPE_BREDRLE)) {
+		if (test->set_adv)
+			bthost_set_adv_data(bthost, test->adv_data,
+							test->adv_data_len);
+
+		bthost_set_adv_enable(bthost, 0x01);
+	}
+
+	if (data->hciemu_type != HCIEMU_TYPE_LE)
+		bthost_write_scan_enable(bthost, 0x03);
+
+	test_command_generic(test_data);
 }
 
 static void pairing_new_conn(uint16_t handle, void *user_data)
@@ -3946,8 +5917,17 @@ static void connected_event(uint16_t index, uint16_t length, const void *param,
 	if (test->send_func)
 		send_param = test->send_func(&send_len);
 
-	mgmt_send(data->mgmt, test->send_opcode, data->mgmt_index, send_len,
-			send_param, command_generic_callback, NULL, NULL);
+	if (test->force_power_off) {
+		mgmt_send_nowait(data->mgmt, test->send_opcode, index,
+					send_len, send_param,
+					command_generic_callback, NULL, NULL);
+		power_off(data->mgmt_index);
+	} else {
+		mgmt_send(data->mgmt, test->send_opcode, index, send_len,
+					send_param, command_generic_callback,
+					NULL, NULL);
+	}
+
 	test_add_condition(data);
 
 	/* Complete MGMT_EV_DEVICE_CONNECTED *after* adding new one */
@@ -4025,6 +6005,24 @@ int main(int argc, char *argv[])
 				NULL, test_command_generic);
 	test_bredrle("Read info - Invalid index",
 				&read_info_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredrle("Read unconfigured index list - Invalid parameters",
+				&read_unconf_index_list_invalid_param_test,
+				NULL, test_command_generic);
+	test_bredrle("Read unconfigured index list - Invalid index",
+				&read_unconf_index_list_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredrle("Read configuration info - Invalid parameters",
+				&read_config_info_invalid_param_test,
+				NULL, test_command_generic);
+	test_bredrle("Read configuration info - Invalid index",
+				&read_config_info_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredrle("Read extended index list - Invalid parameters",
+				&read_ext_index_list_invalid_param_test,
+				NULL, test_command_generic);
+	test_bredrle("Read extended index list - Invalid index",
+				&read_ext_index_list_invalid_index_test,
 				NULL, test_command_generic);
 
 	test_bredrle("Set powered on - Success",
@@ -4116,6 +6114,15 @@ int main(int argc, char *argv[])
 
 	test_bredrle("Set fast connectable on - Success 1",
 				&set_fast_conn_on_success_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Set fast connectable on - Success 2",
+				&set_fast_conn_on_success_test_2,
+				NULL, test_command_generic);
+	test_bredrle("Set fast connectable on - Success 3",
+				&set_fast_conn_on_success_test_3,
+				NULL, test_command_generic);
+	test_bredrle("Set fast connectable on - Invalid Params 1",
+				&set_fast_conn_nval_param_test_1,
 				NULL, test_command_generic);
 	test_le("Set fast connectable on - Not Supported 1",
 				&set_fast_conn_on_not_supported_test_1,
@@ -4373,6 +6380,9 @@ int main(int argc, char *argv[])
 	test_le("Start Discovery - Success 2",
 				&start_discovery_valid_param_test_2,
 				NULL, test_command_generic);
+	test_bredrle("Start Discovery - Power Off 1",
+				&start_discovery_valid_param_power_off_1,
+				NULL, test_command_generic);
 
 	test_bredrle("Stop Discovery - Success 1",
 				&stop_discovery_success_test_1,
@@ -4386,6 +6396,22 @@ int main(int argc, char *argv[])
 	test_bredrle("Stop Discovery - Invalid parameters 1",
 				&stop_discovery_invalid_param_test_1,
 				setup_start_discovery, test_command_generic);
+
+	test_bredrle("Start Service Discovery - Not powered 1",
+				&start_service_discovery_not_powered_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Start Service Discovery - Invalid parameters 1",
+				&start_service_discovery_invalid_param_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Start Service Discovery - Not supported 1",
+				&start_service_discovery_not_supported_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Start Service Discovery - Success 1",
+				&start_service_discovery_valid_param_test_1,
+				NULL, test_command_generic);
+	test_le("Start Service Discovery - Success 2",
+				&start_service_discovery_valid_param_test_2,
+				NULL, test_command_generic);
 
 	test_bredrle("Set Device Class - Success 1",
 				&set_dev_class_valid_param_test_1,
@@ -4467,6 +6493,21 @@ int main(int argc, char *argv[])
 	test_bredrle("Pair Device - Not Powered 1",
 				&pair_device_not_powered_test_1,
 				NULL, test_command_generic);
+	test_bredrle("Pair Device - Power off 1",
+				&pair_device_power_off_test_1,
+				NULL, test_command_generic);
+	test_le("Pair Device - Incorrect transport reject 1",
+				&pair_device_not_supported_test_1,
+				NULL, test_command_generic);
+	test_bredr("Pair Device - Incorrect transport reject 2",
+				&pair_device_not_supported_test_2,
+				NULL, test_command_generic);
+	test_bredrle("Pair Device - Reject on not enabled transport 1",
+				&pair_device_reject_transport_not_enabled_1,
+				NULL, test_command_generic);
+	test_bredrle("Pair Device - Reject on not enabled transport 2",
+				&pair_device_reject_transport_not_enabled_2,
+				NULL, test_command_generic);
 	test_bredrle("Pair Device - Invalid Parameters 1",
 				&pair_device_invalid_param_test_1,
 				NULL, test_command_generic);
@@ -4521,6 +6562,30 @@ int main(int argc, char *argv[])
 	test_bredrle("Pair Device - SSP Non-bondable 1",
 				&pair_device_ssp_nonbondable_1,
 				NULL, test_command_generic);
+	test_bredrle("Pair Device - SMP over BR/EDR Success 1",
+				&pair_device_smp_bredr_test_1,
+				NULL, test_command_generic);
+	test_bredrle("Pair Device - SMP over BR/EDR Success 2",
+				&pair_device_smp_bredr_test_2,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE Success 1",
+				&pair_device_le_success_test_1,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE Success 2",
+				&pair_device_le_success_test_2,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE Reject 1",
+				&pair_device_le_reject_test_1,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE SC Legacy 1",
+				&pair_device_le_sc_legacy_test_1,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE SC Success 1",
+				&pair_device_le_sc_success_test_1,
+				NULL, test_command_generic);
+	test_le("Pair Device - LE SC Success 2",
+				&pair_device_le_sc_success_test_2,
+				NULL, test_command_generic);
 
 	test_bredrle("Pairing Acceptor - Legacy 1",
 				&pairing_acceptor_legacy_1, NULL,
@@ -4538,16 +6603,37 @@ int main(int argc, char *argv[])
 				&pairing_acceptor_linksec_2, NULL,
 				test_pairing_acceptor);
 	test_bredrle("Pairing Acceptor - SSP 1",
-				&pairing_acceptor_ssp_1, setup_ssp_acceptor,
+				&pairing_acceptor_ssp_1, setup_pairing_acceptor,
 				test_pairing_acceptor);
 	test_bredrle("Pairing Acceptor - SSP 2",
-				&pairing_acceptor_ssp_2, setup_ssp_acceptor,
+				&pairing_acceptor_ssp_2, setup_pairing_acceptor,
 				test_pairing_acceptor);
 	test_bredrle("Pairing Acceptor - SSP 3",
-				&pairing_acceptor_ssp_3, setup_ssp_acceptor,
+				&pairing_acceptor_ssp_3, setup_pairing_acceptor,
 				test_pairing_acceptor);
 	test_bredrle("Pairing Acceptor - SSP 4",
-				&pairing_acceptor_ssp_4, setup_ssp_acceptor,
+				&pairing_acceptor_ssp_4, setup_pairing_acceptor,
+				test_pairing_acceptor);
+	test_bredrle("Pairing Acceptor - SMP over BR/EDR 1",
+				&pairing_acceptor_smp_bredr_1,
+				setup_pairing_acceptor, test_pairing_acceptor);
+	test_bredrle("Pairing Acceptor - SMP over BR/EDR 2",
+				&pairing_acceptor_smp_bredr_2,
+				setup_pairing_acceptor, test_pairing_acceptor);
+	test_le("Pairing Acceptor - LE 1",
+				&pairing_acceptor_le_1, setup_pairing_acceptor,
+				test_pairing_acceptor);
+	test_le("Pairing Acceptor - LE 2",
+				&pairing_acceptor_le_2, setup_pairing_acceptor,
+				test_pairing_acceptor);
+	test_le("Pairing Acceptor - LE 3",
+				&pairing_acceptor_le_3, setup_pairing_acceptor,
+				test_pairing_acceptor);
+	test_le("Pairing Acceptor - LE 4",
+				&pairing_acceptor_le_4, setup_pairing_acceptor,
+				test_pairing_acceptor);
+	test_le("Pairing Acceptor - LE 5",
+				&pairing_acceptor_le_5, setup_pairing_acceptor,
 				test_pairing_acceptor);
 
 	test_bredrle("Unpair Device - Not Powered 1",
@@ -4572,11 +6658,17 @@ int main(int argc, char *argv[])
 				&unblock_device_invalid_param_test_1,
 				NULL, test_command_generic);
 
-	test_bredrle("Set Static Address - Success",
+	test_le("Set Static Address - Success 1",
 				&set_static_addr_success_test,
 				NULL, test_command_generic);
-	test_bredrle("Set Static Address - Failure",
+	test_bredrle("Set Static Address - Success 2",
+				&set_static_addr_success_test_2,
+				NULL, test_command_generic);
+	test_bredrle("Set Static Address - Failure 1",
 				&set_static_addr_failure_test,
+				NULL, test_command_generic);
+	test_bredr("Set Static Address - Failure 2",
+				&set_static_addr_failure_test_2,
 				NULL, test_command_generic);
 
 	test_bredrle("Set Scan Parameters - Success",
@@ -4618,6 +6710,9 @@ int main(int argc, char *argv[])
 	test_bredrle("Get Conn Info - Not Connected",
 				&get_conn_info_ncon_test, NULL,
 				test_command_generic);
+	test_bredrle("Get Conn Info - Power off",
+				&get_conn_info_power_off_test, NULL,
+				test_command_generic_connect);
 
 	test_bredrle("Load Connection Parameters - Invalid Params 1",
 				&load_conn_params_fail_1,
@@ -4631,6 +6726,9 @@ int main(int argc, char *argv[])
 				NULL, test_command_generic);
 	test_bredrle("Add Device - Invalid Params 3",
 				&add_device_fail_3,
+				NULL, test_command_generic);
+	test_bredrle("Add Device - Invalid Params 4",
+				&add_device_fail_4,
 				NULL, test_command_generic);
 	test_bredrle("Add Device - Success 1",
 				&add_device_success_1,
@@ -4654,15 +6752,214 @@ int main(int argc, char *argv[])
 	test_bredrle("Remove Device - Invalid Params 2",
 				&remove_device_fail_2,
 				NULL, test_command_generic);
+	test_bredrle("Remove Device - Invalid Params 3",
+				&remove_device_fail_3,
+				NULL, test_command_generic);
 	test_bredrle("Remove Device - Success 1",
 				&remove_device_success_1,
 				setup_add_device, test_command_generic);
 	test_bredrle("Remove Device - Success 2",
 				&remove_device_success_2,
 				setup_add_device, test_command_generic);
-	test_le("Remove Device - Success 3",
+	test_bredrle("Remove Device - Success 3",
 				&remove_device_success_3,
 				setup_add_device, test_command_generic);
+	test_le("Remove Device - Success 4",
+				&remove_device_success_4,
+				setup_add_device, test_command_generic);
+	test_le("Remove Device - Success 5",
+				&remove_device_success_5,
+				setup_add_device, test_command_generic);
+
+	test_bredrle("Read Advertising Features - Invalid parameters",
+				&read_adv_features_invalid_param_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Advertising Features - Invalid index",
+				&read_adv_features_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Advertising Features - Success 1 (No instance)",
+				&read_adv_features_success_1,
+				NULL, test_command_generic);
+	test_bredrle("Read Advertising Features - Success 2 (One instance)",
+				&read_adv_features_success_2,
+				setup_add_advertising,
+				test_command_generic);
+
+	test_bredrle("Add Advertising - Failure: LE off",
+					&add_advertising_fail_1,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 1 (AD too long)",
+					&add_advertising_fail_2,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 2 (Malformed len)",
+					&add_advertising_fail_3,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 3 (Malformed len)",
+					&add_advertising_fail_4,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 4 (Malformed len)",
+					&add_advertising_fail_5,
+					NULL, test_command_generic);
+	test_le("Add Advertising - Invalid Params 5 (AD too long)",
+					&add_advertising_fail_6,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 6 (ScRsp too long)",
+					&add_advertising_fail_7,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 7 (Malformed len)",
+					&add_advertising_fail_8,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 8 (Malformed len)",
+					&add_advertising_fail_9,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Invalid Params 9 (Malformed len)",
+					&add_advertising_fail_10,
+					NULL, test_command_generic);
+	test_le("Add Advertising - Invalid Params 10 (ScRsp too long)",
+					&add_advertising_fail_11,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Rejected (Timeout, !Powered)",
+					&add_advertising_fail_12,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 1 (Powered, Add Adv Inst)",
+					&add_advertising_success_1,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 2 (!Powered, Add Adv Inst)",
+					&add_advertising_success_pwron_data,
+					setup_add_advertising_not_powered,
+					test_command_generic);
+	test_bredrle("Add Advertising - Success 3 (!Powered, Adv Enable)",
+					&add_advertising_success_pwron_enabled,
+					setup_add_advertising_not_powered,
+					test_command_generic);
+	test_bredrle("Add Advertising - Success 4 (Set Adv on override)",
+					&add_advertising_success_4,
+					setup_add_advertising,
+					test_command_generic);
+	test_bredrle("Add Advertising - Success 5 (Set Adv off override)",
+					&add_advertising_success_5,
+					setup_set_and_add_advertising,
+					test_command_generic);
+	test_bredrle("Add Advertising - Success 6 (Scan Rsp Dta, Adv ok)",
+					&add_advertising_success_6,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 7 (Scan Rsp Dta, Scan ok) ",
+					&add_advertising_success_7,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 8 (Connectable Flag)",
+					&add_advertising_success_8,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 9 (General Discov Flag)",
+					&add_advertising_success_9,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 10 (Limited Discov Flag)",
+					&add_advertising_success_10,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 11 (Managed Flags)",
+					&add_advertising_success_11,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 12 (TX Power Flag)",
+					&add_advertising_success_12,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 13 (ADV_SCAN_IND)",
+					&add_advertising_success_13,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 14 (ADV_NONCONN_IND)",
+					&add_advertising_success_14,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 15 (ADV_IND)",
+					&add_advertising_success_15,
+					NULL, test_command_generic);
+	test_bredrle("Add Advertising - Success 16 (Connectable -> on)",
+					&add_advertising_success_16,
+					setup_add_advertising,
+					test_command_generic);
+	test_bredrle("Add Advertising - Success 17 (Connectable -> off)",
+					&add_advertising_success_17,
+					setup_add_advertising_connectable,
+					test_command_generic);
+	/* Adv instances with a timeout do NOT survive a power cycle. */
+	test_bredrle("Add Advertising - Success 18 (Power -> off, Remove)",
+					&add_advertising_power_off,
+					setup_add_advertising_timeout,
+					test_command_generic);
+	/* Adv instances without timeout survive a power cycle. */
+	test_bredrle("Add Advertising - Success 19 (Power -> off, Keep)",
+					&add_advertising_success_pwron_data,
+					setup_add_advertising_power_cycle,
+					test_command_generic);
+	/* Changing an advertising instance while it is still being
+	 * advertised will immediately update the advertised data if
+	 * there is no other instance to switch to.
+	 */
+	test_bredrle("Add Advertising - Success 20 (Add Adv override)",
+					&add_advertising_success_18,
+					setup_add_advertising,
+					test_command_generic);
+	/* An instance should be removed when its timeout has been reached.
+	 * Advertising will also be disabled if this was the last instance.
+	 */
+	test_bredrle_full("Add Advertising - Success 21 (Timeout expires)",
+					&add_advertising_timeout_expired,
+					setup_add_advertising_timeout,
+					test_command_generic, 3);
+	/* LE off will clear (remove) all instances. */
+	test_bredrle("Add Advertising - Success 22 (LE -> off, Remove)",
+					&add_advertising_le_off,
+					setup_add_advertising,
+					test_command_generic);
+
+
+	test_bredrle("Remove Advertising - Invalid Params 1",
+					&remove_advertising_fail_1,
+					NULL, test_command_generic);
+	test_bredrle("Remove Advertising - Success 1",
+						&remove_advertising_success_1,
+						setup_add_advertising,
+						test_command_generic);
+	test_bredrle("Remove Advertising - Success 2",
+						&remove_advertising_success_2,
+						setup_add_advertising,
+						test_command_generic);
+
+	/* When advertising two instances, the instances should be
+	 * advertised in a round-robin fashion.
+	 */
+	test_bredrle("Multi Advertising - Success 1 (Instance Switch)",
+					&multi_advertising_switch,
+					setup_multi_adv,
+					test_command_generic);
+	/* Adding a new instance when one is already being advertised
+	 * will switch to the new instance after the first has reached
+	 * its duration. A long timeout has been set to
+	 */
+	test_bredrle_full("Multi Advertising - Success 2 (Add Second Inst)",
+					&multi_advertising_add_second,
+					setup_add_advertising_duration,
+					test_command_generic, 3);
+
+	test_bredrle("Read Local OOB Data - Not powered",
+				&read_local_oob_not_powered_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Data - Invalid parameters",
+				&read_local_oob_invalid_param_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Data - Invalid index",
+				&read_local_oob_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredr20("Read Local OOB Data - Legacy pairing",
+				&read_local_oob_legacy_pairing_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Data - Success SSP",
+				&read_local_oob_success_ssp_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Data - Success SC",
+				&read_local_oob_success_sc_test,
+				NULL, test_command_generic);
+
+	test_bredrle("Device Found - Invalid remote ADV_DATA",
+				&device_found_gtag,
+				NULL, test_device_found);
 
 	return tester_run();
 }

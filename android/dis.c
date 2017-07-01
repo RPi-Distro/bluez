@@ -31,8 +31,12 @@
 
 #include "src/log.h"
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
 #include "src/shared/util.h"
+#include "src/shared/queue.h"
 
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
@@ -53,6 +57,7 @@ struct bt_dis {
 	struct gatt_primary	*primary;	/* Primary details */
 	bt_dis_notify		notify;
 	void			*notify_data;
+	struct queue		*gatt_op;
 };
 
 struct characteristic {
@@ -60,11 +65,25 @@ struct characteristic {
 	struct bt_dis		*d;	/* deviceinfo where the char belongs */
 };
 
+struct gatt_request {
+	unsigned int id;
+	struct bt_dis *dis;
+	void *user_data;
+};
+
+static void destroy_gatt_req(struct gatt_request *req)
+{
+	queue_remove(req->dis->gatt_op, req);
+	bt_dis_unref(req->dis);
+	free(req);
+}
+
 static void dis_free(struct bt_dis *dis)
 {
 	bt_dis_detach(dis);
 
 	g_free(dis->primary);
+	queue_destroy(dis->gatt_op, (void *) destroy_gatt_req);
 	g_free(dis);
 }
 
@@ -75,6 +94,12 @@ struct bt_dis *bt_dis_new(void *primary)
 	dis = g_try_new0(struct bt_dis, 1);
 	if (!dis)
 		return NULL;
+
+	dis->gatt_op = queue_new();
+	if (!dis->gatt_op) {
+		dis_free(dis);
+		return NULL;
+	}
 
 	if (primary)
 		dis->primary = g_memdup(primary, sizeof(*dis->primary));
@@ -103,12 +128,38 @@ void bt_dis_unref(struct bt_dis *dis)
 	dis_free(dis);
 }
 
+static struct gatt_request *create_request(struct bt_dis *dis,
+							void *user_data)
+{
+	struct gatt_request *req;
+
+	req = new0(struct gatt_request, 1);
+	if (!req)
+		return NULL;
+
+	req->user_data = user_data;
+	req->dis = bt_dis_ref(dis);
+
+	return req;
+}
+
+static bool set_and_store_gatt_req(struct bt_dis *dis,
+						struct gatt_request *req,
+						unsigned int id)
+{
+	req->id = id;
+	return queue_push_head(dis->gatt_op, req);
+}
+
 static void read_pnpid_cb(guint8 status, const guint8 *pdu, guint16 len,
 							gpointer user_data)
 {
-	struct bt_dis *dis = user_data;
+	struct gatt_request *req = user_data;
+	struct bt_dis *dis = req->user_data;
 	uint8_t value[PNP_ID_SIZE];
 	ssize_t vlen;
+
+	destroy_gatt_req(req);
 
 	if (status != 0) {
 		error("Error reading PNP_ID value: %s", att_ecode2str(status));
@@ -139,11 +190,56 @@ static void read_pnpid_cb(guint8 status, const guint8 *pdu, guint16 len,
 						dis->version, dis->notify_data);
 }
 
+static void read_char(struct bt_dis *dis, GAttrib *attrib, uint16_t handle,
+				GAttribResultFunc func, gpointer user_data)
+{
+	struct gatt_request *req;
+	unsigned int id;
+
+	req = create_request(dis, user_data);
+	if (!req)
+		return;
+
+	id = gatt_read_char(attrib, handle, func, req);
+
+	if (set_and_store_gatt_req(dis, req, id))
+		return;
+
+	error("dis: Could not read characteristic");
+	g_attrib_cancel(attrib, id);
+	free(req);
+}
+
+static void discover_char(struct bt_dis *dis, GAttrib *attrib,
+						uint16_t start, uint16_t end,
+						bt_uuid_t *uuid, gatt_cb_t func,
+						gpointer user_data)
+{
+	struct gatt_request *req;
+	unsigned int id;
+
+	req = create_request(dis, user_data);
+	if (!req)
+		return;
+
+	id = gatt_discover_char(attrib, start, end, uuid, func, req);
+
+	if (set_and_store_gatt_req(dis, req, id))
+		return;
+
+	error("dis: Could not send discover characteristic");
+	g_attrib_cancel(attrib, id);
+	free(req);
+}
+
 static void configure_deviceinfo_cb(uint8_t status, GSList *characteristics,
 								void *user_data)
 {
-	struct bt_dis *d = user_data;
+	struct gatt_request *req = user_data;
+	struct bt_dis *d = req->user_data;
 	GSList *l;
+
+	destroy_gatt_req(req);
 
 	if (status != 0) {
 		error("Discover deviceinfo characteristics: %s",
@@ -156,7 +252,7 @@ static void configure_deviceinfo_cb(uint8_t status, GSList *characteristics,
 
 		if (strcmp(c->uuid, PNPID_UUID) == 0) {
 			d->handle = c->value_handle;
-			gatt_read_char(d->attrib, d->handle, read_pnpid_cb, d);
+			read_char(d, d->attrib, d->handle, read_pnpid_cb, d);
 			break;
 		}
 	}
@@ -172,11 +268,17 @@ bool bt_dis_attach(struct bt_dis *dis, void *attrib)
 	dis->attrib = g_attrib_ref(attrib);
 
 	if (!dis->handle)
-		gatt_discover_char(dis->attrib, primary->range.start,
+		discover_char(dis, dis->attrib, primary->range.start,
 						primary->range.end, NULL,
 						configure_deviceinfo_cb, dis);
 
 	return true;
+}
+
+static void cancel_gatt_req(struct gatt_request *req)
+{
+	if (g_attrib_cancel(req->dis->attrib, req->id))
+		destroy_gatt_req(req);
 }
 
 void bt_dis_detach(struct bt_dis *dis)
@@ -184,6 +286,7 @@ void bt_dis_detach(struct bt_dis *dis)
 	if (!dis->attrib)
 		return;
 
+	queue_foreach(dis->gatt_op, (void *) cancel_gatt_req, NULL);
 	g_attrib_unref(dis->attrib);
 	dis->attrib = NULL;
 }

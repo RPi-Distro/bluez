@@ -34,18 +34,20 @@
 #include <sys/socket.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
-#include "btio/btio.h"
+#include "lib/bluetooth.h"
 #include "lib/uuid.h"
 
-#include "obexd.h"
-#include "plugin.h"
-#include "server.h"
-#include "obex.h"
-#include "transport.h"
-#include "service.h"
-#include "log.h"
+#include "gdbus/gdbus.h"
+
+#include "btio/btio.h"
+#include "obexd/src/obexd.h"
+#include "obexd/src/plugin.h"
+#include "obexd/src/server.h"
+#include "obexd/src/obex.h"
+#include "obexd/src/transport.h"
+#include "obexd/src/service.h"
+#include "obexd/src/log.h"
 
 #define BT_RX_MTU 32767
 #define BT_TX_MTU 32767

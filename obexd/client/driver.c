@@ -28,12 +28,13 @@
 #include <string.h>
 #include <errno.h>
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
+#include "gdbus/gdbus.h"
+
+#include "obexd/src/log.h"
 #include "transfer.h"
 #include "session.h"
 #include "driver.h"
-#include "log.h"
 
 static GSList *drivers = NULL;
 

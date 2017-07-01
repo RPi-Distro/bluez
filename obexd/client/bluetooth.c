@@ -25,20 +25,21 @@
 #include <config.h>
 #endif
 
+#include <stdlib.h>
 #include <errno.h>
 #include <inttypes.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/rfcomm.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/rfcomm.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
 
+#include "gdbus/gdbus.h"
 #include "btio/btio.h"
 
-#include "log.h"
+#include "obexd/src/log.h"
 #include "transport.h"
 #include "bluetooth.h"
 
@@ -481,6 +482,25 @@ static const void *bluetooth_getattribute(guint id, int attribute_id)
 
 		if (session->sdp_record == NULL)
 			break;
+
+		/* Read version since UUID is already known */
+		if (attribute_id == SDP_ATTR_PFILE_DESC_LIST) {
+			sdp_list_t *descs;
+			void *ret = NULL;
+
+			if (sdp_get_profile_descs(session->sdp_record,
+								&descs) < 0)
+				return NULL;
+
+			if (descs && descs->data) {
+				sdp_profile_desc_t *desc = descs->data;
+				ret = GINT_TO_POINTER(desc->version);
+			}
+
+			sdp_list_free(descs, free);
+
+			return ret;
+		}
 
 		data = sdp_data_get(session->sdp_record, attribute_id);
 		if (!data)

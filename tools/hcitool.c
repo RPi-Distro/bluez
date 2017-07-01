@@ -40,14 +40,18 @@
 #include <sys/socket.h>
 #include <signal.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "src/oui.h"
 
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
 /* Unofficial value, might still change */
-#define LE_LINK		0x03
+#define LE_LINK		0x80
 
 #define FLAGS_AD_TYPE 0x01
 #define FLAGS_LIMITED_MODE_BIT 0x01
@@ -70,6 +74,23 @@
 static volatile int signal_received = 0;
 
 static void usage(void);
+
+static int str2buf(const char *str, uint8_t *buf, size_t blen)
+{
+	int i, dlen;
+
+	if (str == NULL)
+		return -EINVAL;
+
+	memset(buf, 0, blen);
+
+	dlen = MIN((strlen(str) / 2), blen);
+
+	for (i = 0; i < dlen; i++)
+		sscanf(str + (i * 2), "%02hhX", &buf[i]);
+
+	return 0;
+}
 
 static int dev_info(int s, int dev_id, long arg)
 {
@@ -945,6 +966,9 @@ static void cmd_info(int dev_id, int argc, char **argv)
 	if ((di.features[7] & LMP_EXT_FEAT) && (features[7] & LMP_EXT_FEAT))
 		hci_read_remote_ext_features(dd, handle, 0, &max_page,
 							features, 20000);
+
+	if (max_page < 1 && (features[6] & LMP_SIMPLE_PAIR))
+		max_page = 1;
 
 	printf("\tFeatures%s: 0x%2.2x 0x%2.2x 0x%2.2x 0x%2.2x "
 				"0x%2.2x 0x%2.2x 0x%2.2x 0x%2.2x\n",
@@ -2459,6 +2483,7 @@ done:
 
 static struct option lescan_options[] = {
 	{ "help",	0, 0, 'h' },
+	{ "static",	0, 0, 's' },
 	{ "privacy",	0, 0, 'p' },
 	{ "passive",	0, 0, 'P' },
 	{ "whitelist",	0, 0, 'w' },
@@ -2479,18 +2504,21 @@ static const char *lescan_help =
 static void cmd_lescan(int dev_id, int argc, char **argv)
 {
 	int err, opt, dd;
-	uint8_t own_type = 0x00;
+	uint8_t own_type = LE_PUBLIC_ADDRESS;
 	uint8_t scan_type = 0x01;
 	uint8_t filter_type = 0;
 	uint8_t filter_policy = 0x00;
 	uint16_t interval = htobs(0x0010);
 	uint16_t window = htobs(0x0010);
-	uint8_t filter_dup = 1;
+	uint8_t filter_dup = 0x01;
 
 	for_each_opt(opt, lescan_options, NULL) {
 		switch (opt) {
+		case 's':
+			own_type = LE_RANDOM_ADDRESS;
+			break;
 		case 'p':
-			own_type = 0x01; /* Random */
+			own_type = LE_RANDOM_ADDRESS;
 			break;
 		case 'P':
 			scan_type = 0x00; /* Passive */
@@ -2528,13 +2556,13 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 	}
 
 	err = hci_le_set_scan_parameters(dd, scan_type, interval, window,
-						own_type, filter_policy, 1000);
+						own_type, filter_policy, 10000);
 	if (err < 0) {
 		perror("Set scan parameters failed");
 		exit(1);
 	}
 
-	err = hci_le_set_scan_enable(dd, 0x01, filter_dup, 1000);
+	err = hci_le_set_scan_enable(dd, 0x01, filter_dup, 10000);
 	if (err < 0) {
 		perror("Enable scan failed");
 		exit(1);
@@ -2548,7 +2576,7 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 		exit(1);
 	}
 
-	err = hci_le_set_scan_enable(dd, 0x00, filter_dup, 1000);
+	err = hci_le_set_scan_enable(dd, 0x00, filter_dup, 10000);
 	if (err < 0) {
 		perror("Disable scan failed");
 		exit(1);
@@ -2557,8 +2585,110 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 	hci_close_dev(dd);
 }
 
+static struct option leinfo_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "static",	0, 0, 's' },
+	{ "random",	0, 0, 'r' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *leinfo_help =
+	"Usage:\n"
+	"\tleinfo [--static] [--random] <bdaddr>\n";
+
+static void cmd_leinfo(int dev_id, int argc, char **argv)
+{
+	bdaddr_t bdaddr;
+	uint16_t handle;
+	uint8_t features[8];
+	struct hci_version version;
+	uint16_t interval, latency, max_ce_length, max_interval, min_ce_length;
+	uint16_t min_interval, supervision_timeout, window;
+	uint8_t initiator_filter, own_bdaddr_type, peer_bdaddr_type;
+	int opt, err, dd;
+
+	own_bdaddr_type = LE_PUBLIC_ADDRESS;
+	peer_bdaddr_type = LE_PUBLIC_ADDRESS;
+
+	for_each_opt(opt, leinfo_options, NULL) {
+		switch (opt) {
+		case 's':
+			own_bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
+		case 'r':
+			peer_bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
+		default:
+			printf("%s", leinfo_help);
+			return;
+		}
+	}
+	helper_arg(1, 1, &argc, &argv, leinfo_help);
+
+	str2ba(argv[0], &bdaddr);
+
+	printf("Requesting information ...\n");
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	interval = htobs(0x0004);
+	window = htobs(0x0004);
+	initiator_filter = 0;
+	min_interval = htobs(0x000F);
+	max_interval = htobs(0x000F);
+	latency = htobs(0x0000);
+	supervision_timeout = htobs(0x0C80);
+	min_ce_length = htobs(0x0000);
+	max_ce_length = htobs(0x0000);
+
+	err = hci_le_create_conn(dd, interval, window, initiator_filter,
+			peer_bdaddr_type, bdaddr, own_bdaddr_type, min_interval,
+			max_interval, latency, supervision_timeout,
+			min_ce_length, max_ce_length, &handle, 25000);
+	if (err < 0) {
+		perror("Could not create connection");
+		exit(1);
+	}
+
+	printf("\tHandle: %d (0x%04x)\n", handle, handle);
+
+	if (hci_read_remote_version(dd, handle, &version, 20000) == 0) {
+		char *ver = lmp_vertostr(version.lmp_ver);
+		printf("\tLMP Version: %s (0x%x) LMP Subversion: 0x%x\n"
+			"\tManufacturer: %s (%d)\n",
+			ver ? ver : "n/a",
+			version.lmp_ver,
+			version.lmp_subver,
+			bt_compidtostr(version.manufacturer),
+			version.manufacturer);
+		if (ver)
+			bt_free(ver);
+	}
+
+	memset(features, 0, sizeof(features));
+	hci_le_read_remote_features(dd, handle, features, 20000);
+
+	printf("\tFeatures: 0x%2.2x 0x%2.2x 0x%2.2x 0x%2.2x "
+				"0x%2.2x 0x%2.2x 0x%2.2x 0x%2.2x\n",
+		features[0], features[1], features[2], features[3],
+		features[4], features[5], features[6], features[7]);
+
+	usleep(10000);
+	hci_disconnect(dd, handle, HCI_OE_USER_ENDED_CONNECTION, 10000);
+
+	hci_close_dev(dd);
+}
+
 static struct option lecc_options[] = {
 	{ "help",	0, 0, 'h' },
+	{ "static",	0, 0, 's' },
 	{ "random",	0, 0, 'r' },
 	{ "whitelist",	0, 0, 'w' },
 	{ 0, 0, 0, 0 }
@@ -2566,7 +2696,7 @@ static struct option lecc_options[] = {
 
 static const char *lecc_help =
 	"Usage:\n"
-	"\tlecc [--random] <bdaddr>\n"
+	"\tlecc [--static] [--random] <bdaddr>\n"
 	"\tlecc --whitelist\n";
 
 static void cmd_lecc(int dev_id, int argc, char **argv)
@@ -2577,11 +2707,15 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 	uint16_t min_interval, supervision_timeout, window, handle;
 	uint8_t initiator_filter, own_bdaddr_type, peer_bdaddr_type;
 
+	own_bdaddr_type = LE_PUBLIC_ADDRESS;
 	peer_bdaddr_type = LE_PUBLIC_ADDRESS;
 	initiator_filter = 0; /* Use peer address */
 
 	for_each_opt(opt, lecc_options, NULL) {
 		switch (opt) {
+		case 's':
+			own_bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
 		case 'r':
 			peer_bdaddr_type = LE_RANDOM_ADDRESS;
 			break;
@@ -2610,7 +2744,6 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 
 	interval = htobs(0x0004);
 	window = htobs(0x0004);
-	own_bdaddr_type = 0x00;
 	min_interval = htobs(0x000F);
 	max_interval = htobs(0x000F);
 	latency = htobs(0x0000);
@@ -2818,6 +2951,291 @@ static void cmd_lewlclr(int dev_id, int argc, char **argv)
 	}
 }
 
+static struct option lerladd_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "random",	0, 0, 'r' },
+	{ "local",	1, 0, 'l' },
+	{ "peer",	1, 0, 'p' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerladd_help =
+	"Usage:\n"
+	"\tlerladd [--local irk] [--peer irk] [--random] <bdaddr>\n";
+
+static void cmd_lerladd(int dev_id, int argc, char **argv)
+{
+	int err, opt, dd;
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type = LE_PUBLIC_ADDRESS;
+	uint8_t local_irk[16], peer_irk[16];
+
+	memset(local_irk, 0, 16);
+	memset(peer_irk, 0, 16);
+
+	for_each_opt(opt, lerladd_options, NULL) {
+		switch (opt) {
+		case 'r':
+			bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
+		case 'l':
+			str2buf(optarg, local_irk, 16);
+			break;
+		case 'p':
+			str2buf(optarg, peer_irk, 16);
+			break;
+		default:
+			printf("%s", lerladd_help);
+			return;
+		}
+	}
+
+	helper_arg(1, 1, &argc, &argv, lerladd_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	str2ba(argv[0], &bdaddr);
+
+	err = hci_le_add_resolving_list(dd, &bdaddr, bdaddr_type,
+						peer_irk, local_irk, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "Can't add to resolving list: %s(%d)\n",
+							strerror(-err), -err);
+		exit(1);
+	}
+}
+
+static struct option lerlrm_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerlrm_help =
+	"Usage:\n"
+	"\tlerlrm <bdaddr>\n";
+
+static void cmd_lerlrm(int dev_id, int argc, char **argv)
+{
+	int err, opt, dd;
+	bdaddr_t bdaddr;
+
+	for_each_opt(opt, lerlrm_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lerlrm_help);
+			return;
+		}
+	}
+
+	helper_arg(1, 1, &argc, &argv, lerlrm_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	str2ba(argv[0], &bdaddr);
+
+	err = hci_le_rm_resolving_list(dd, &bdaddr, LE_PUBLIC_ADDRESS, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = errno;
+		fprintf(stderr, "Can't remove from resolving list: %s(%d)\n",
+							strerror(err), err);
+		exit(1);
+	}
+}
+
+static struct option lerlclr_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerlclr_help =
+	"Usage:\n"
+	"\tlerlclr\n";
+
+static void cmd_lerlclr(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+
+	for_each_opt(opt, lerlclr_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lerlclr_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lerlclr_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_clear_resolving_list(dd, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "Can't clear resolving list: %s(%d)\n",
+							strerror(-err), -err);
+		exit(1);
+	}
+}
+
+static struct option lerlsz_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerlsz_help =
+	"Usage:\n"
+	"\tlerlsz\n";
+
+static void cmd_lerlsz(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+	uint8_t size;
+
+	for_each_opt(opt, lerlsz_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lerlsz_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lerlsz_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_read_resolving_list_size(dd, &size, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "Can't read resolving list size: %s(%d)\n",
+							strerror(-err), -err);
+		exit(1);
+	}
+
+	printf("Resolving list size: %d\n", size);
+}
+
+static struct option lerlon_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerlon_help =
+	"Usage:\n"
+	"\tlerlon\n";
+
+static void cmd_lerlon(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+
+	for_each_opt(opt, lerlon_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lerlon_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lerlon_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_set_address_resolution_enable(dd, 0x01, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "Can't set address resolution enable: %s(%d)\n",
+							strerror(-err), -err);
+		exit(1);
+	}
+}
+
+static struct option lerloff_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lerloff_help =
+	"Usage:\n"
+	"\tlerloff\n";
+
+static void cmd_lerloff(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+
+	for_each_opt(opt, lerloff_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lerloff_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lerloff_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_set_address_resolution_enable(dd, 0x00, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = -errno;
+		fprintf(stderr, "Can't set address resolution enable: %s(%d)\n",
+							strerror(-err), -err);
+		exit(1);
+	}
+}
+
 static struct option ledc_options[] = {
 	{ "help",	0, 0, 'h' },
 	{ 0, 0, 0, 0 }
@@ -2878,18 +3296,19 @@ static const char *lecup_help =
 	"Usage:\n"
 	"\tlecup <handle> <min> <max> <latency> <timeout>\n"
 	"\tOptions:\n"
-	"\t    -H, --handle <0xXXXX>  LE connection handle\n"
-	"\t    -m, --min <interval>   Range: 0x0006 to 0x0C80\n"
-	"\t    -M, --max <interval>   Range: 0x0006 to 0x0C80\n"
-	"\t    -l, --latency <range>  Slave latency. Range: 0x0000 to 0x03E8\n"
-	"\t    -t, --timeout  <time>  N * 10ms. Range: 0x000A to 0x0C80\n"
+	"\t    --handle=<0xXXXX>  LE connection handle\n"
+	"\t    --min=<interval>   Range: 0x0006 to 0x0C80\n"
+	"\t    --max=<interval>   Range: 0x0006 to 0x0C80\n"
+	"\t    --latency=<range>  Slave latency. Range: 0x0000 to 0x03E8\n"
+	"\t    --timeout=<time>   N * 10ms. Range: 0x000A to 0x0C80\n"
 	"\n\t min/max range: 7.5ms to 4s. Multiply factor: 1.25ms"
 	"\n\t timeout range: 100ms to 32.0s. Larger than max interval\n";
 
 static void cmd_lecup(int dev_id, int argc, char **argv)
 {
 	uint16_t handle = 0, min, max, latency, timeout;
-	int opt, dd, base;
+	int opt, dd;
+	int options = 0;
 
 	/* Aleatory valid values */
 	min = 0x0C8;
@@ -2898,31 +3317,38 @@ static void cmd_lecup(int dev_id, int argc, char **argv)
 	timeout = 0x0C80;
 
 	for_each_opt(opt, lecup_options, NULL) {
-		if (optarg && strncasecmp("0x", optarg, 2) == 0)
-			base = 16;
-		else
-			base = 10;
-
 		switch (opt) {
 		case 'H':
-			handle = strtoul(optarg, NULL, base);
+			handle = strtoul(optarg, NULL, 0);
 			break;
 		case 'm':
-			min = strtoul(optarg, NULL, base);
+			min = strtoul(optarg, NULL, 0);
 			break;
 		case 'M':
-			max = strtoul(optarg, NULL, base);
+			max = strtoul(optarg, NULL, 0);
 			break;
 		case 'l':
-			latency = strtoul(optarg, NULL, base);
+			latency = strtoul(optarg, NULL, 0);
 			break;
 		case 't':
-			timeout = strtoul(optarg, NULL, base);
+			timeout = strtoul(optarg, NULL, 0);
 			break;
 		default:
 			printf("%s", lecup_help);
 			return;
 		}
+
+		options = 1;
+	}
+
+	if (options == 0) {
+		helper_arg(5, 5, &argc, &argv, lecup_help);
+
+		handle = strtoul(argv[0], NULL, 0);
+		min = strtoul(argv[1], NULL, 0);
+		max = strtoul(argv[2], NULL, 0);
+		latency = strtoul(argv[3], NULL, 0);
+		timeout = strtoul(argv[4], NULL, 0);
 	}
 
 	if (handle == 0) {
@@ -2979,10 +3405,17 @@ static struct {
 	{ "clkoff",   cmd_clkoff,  "Read clock offset"                    },
 	{ "clock",    cmd_clock,   "Read local or remote clock"           },
 	{ "lescan",   cmd_lescan,  "Start LE scan"                        },
+	{ "leinfo",   cmd_leinfo,  "Get LE remote information"            },
 	{ "lewladd",  cmd_lewladd, "Add device to LE White List"          },
 	{ "lewlrm",   cmd_lewlrm,  "Remove device from LE White List"     },
 	{ "lewlsz",   cmd_lewlsz,  "Read size of LE White List"           },
-	{ "lewlclr",  cmd_lewlclr, "Clear LE White list"                  },
+	{ "lewlclr",  cmd_lewlclr, "Clear LE White List"                  },
+	{ "lerladd",  cmd_lerladd, "Add device to LE Resolving List"      },
+	{ "lerlrm",   cmd_lerlrm,  "Remove device from LE Resolving List" },
+	{ "lerlclr",  cmd_lerlclr, "Clear LE Resolving List"              },
+	{ "lerlsz",   cmd_lerlsz,  "Read size of LE Resolving List"       },
+	{ "lerlon",   cmd_lerlon,  "Enable LE Address Resolution"         },
+	{ "lerloff",  cmd_lerloff, "Disable LE Address Resolution"        },
 	{ "lecc",     cmd_lecc,    "Create a LE Connection"               },
 	{ "ledc",     cmd_ledc,    "Disconnect a LE Connection"           },
 	{ "lecup",    cmd_lecup,   "LE Connection Update"                 },

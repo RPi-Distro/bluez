@@ -19,7 +19,6 @@
 #include <unistd.h>
 #include <math.h>
 
-#include "../src/shared/util.h"
 #include "if-main.h"
 #include "../hal-utils.h"
 
@@ -63,7 +62,14 @@ SINTMAP(audio_channel_mask_t, -1, "(AUDIO_CHANNEL_INVALID)")
 	DELEMENT(AUDIO_CHANNEL_OUT_MONO),
 	DELEMENT(AUDIO_CHANNEL_OUT_STEREO),
 	DELEMENT(AUDIO_CHANNEL_OUT_QUAD),
+#if ANDROID_VERSION < PLATFORM_VER(5, 0, 0)
 	DELEMENT(AUDIO_CHANNEL_OUT_SURROUND),
+#else
+	DELEMENT(AUDIO_CHANNEL_OUT_QUAD_BACK),
+	DELEMENT(AUDIO_CHANNEL_OUT_QUAD_SIDE),
+	DELEMENT(AUDIO_CHANNEL_OUT_5POINT1_BACK),
+	DELEMENT(AUDIO_CHANNEL_OUT_5POINT1_SIDE),
+#endif
 	DELEMENT(AUDIO_CHANNEL_OUT_5POINT1),
 	DELEMENT(AUDIO_CHANNEL_OUT_7POINT1),
 	DELEMENT(AUDIO_CHANNEL_OUT_ALL),
@@ -176,14 +182,11 @@ static void prepare_sample(void)
 
 static void mono_to_stereo_pcm16(const int16_t *in, int16_t *out, size_t samples)
 {
-	int16_t mono;
 	size_t i;
 
 	for (i = 0; i < samples; i++) {
-		mono = get_unaligned(&in[i]);
-
-		put_unaligned(mono, &out[2 * i]);
-		put_unaligned(mono, &out[2 * i + 1]);
+		out[2 * i] = in[i];
+		out[2 * i + 1] = in[i];
 	}
 }
 
@@ -267,17 +270,14 @@ static void *playback_thread(void *data)
 	return NULL;
 }
 
-static void write_stereo_pcm16(char *buffer, size_t len, FILE *out)
+static void write_stereo_pcm16(const short *input, size_t len, FILE *out)
 {
-	const int16_t *input = (const void *) buffer;
-	int16_t sample[2];
+	short sample[2];
 	size_t i;
 
 	for (i = 0; i < len / 2; i++) {
-		int16_t mono = get_unaligned(&input[i]);
-
-		put_unaligned(mono, &sample[0]);
-		put_unaligned(mono, &sample[1]);
+		sample[0] = input[i];
+		sample[1] = input[i];
 
 		fwrite(sample, sizeof(sample), 1, out);
 	}
@@ -319,7 +319,7 @@ static void *read_thread(void *data)
 		haltest_info("Read %zd bytes\n", len);
 
 		if (out) {
-			write_stereo_pcm16((char *) buffer, len, out);
+			write_stereo_pcm16(buffer, len, out);
 			haltest_info("Written %zd bytes\n", len * 2);
 		}
 	} while (len);
@@ -516,12 +516,21 @@ static void open_output_stream_p(int argc, const char **argv)
 		config->format = AUDIO_FORMAT_PCM_16_BIT;
 	}
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	err = if_audio_sco->open_output_stream(if_audio_sco,
+						0,
+						AUDIO_DEVICE_OUT_ALL_SCO,
+						AUDIO_OUTPUT_FLAG_NONE,
+						config,
+						&stream_out, NULL);
+#else
 	err = if_audio_sco->open_output_stream(if_audio_sco,
 						0,
 						AUDIO_DEVICE_OUT_ALL_SCO,
 						AUDIO_OUTPUT_FLAG_NONE,
 						config,
 						&stream_out);
+#endif
 	if (err < 0) {
 		haltest_error("open output stream returned %d\n", err);
 		goto failed;
@@ -579,11 +588,19 @@ static void open_input_stream_p(int argc, const char **argv)
 		config->format = AUDIO_FORMAT_PCM_16_BIT;
 	}
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	err = if_audio_sco->open_input_stream(if_audio_sco,
+						0,
+						AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,
+						config,
+						&stream_in, 0, NULL, 0);
+#else
 	err = if_audio_sco->open_input_stream(if_audio_sco,
 						0,
 						AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,
 						config,
 						&stream_in);
+#endif
 	if (err < 0) {
 		haltest_error("open output stream returned %d\n", err);
 		goto failed;

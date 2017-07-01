@@ -35,8 +35,8 @@
 #include "hal-log.h"
 #include "hal-msg.h"
 #include "hal-audio.h"
-#include "src/shared/util.h"
-#include "src/shared/queue.h"
+#include "hal-utils.h"
+#include "hal.h"
 
 #define FIXED_A2DP_PLAYBACK_LATENCY_MS 25
 
@@ -97,16 +97,17 @@ extern int clock_nanosleep(clockid_t clock_id, int flags,
 					struct timespec *remain);
 #endif
 
-static const audio_codec_get_t audio_codecs[] = {
-		codec_aptx,
-		codec_sbc,
+static struct {
+	const audio_codec_get_t get_codec;
+	bool loaded;
+} audio_codecs[] = {
+		{ .get_codec = codec_aptx, .loaded = false },
+		{ .get_codec = codec_sbc, .loaded = false },
 };
 
 #define NUM_CODECS (sizeof(audio_codecs) / sizeof(audio_codecs[0]))
 
 #define MAX_AUDIO_ENDPOINTS NUM_CODECS
-
-static struct queue *loaded_codecs;
 
 struct audio_endpoint {
 	uint8_t id;
@@ -423,10 +424,9 @@ struct register_state {
 	bool error;
 };
 
-static void register_endpoint(void *data, void *user_data)
+static void register_endpoint(const struct audio_codec *codec,
+						struct register_state *state)
 {
-	struct audio_codec *codec = data;
-	struct register_state *state = user_data;
 	struct audio_endpoint *ep = state->ep;
 
 	/* don't even try to register more endpoints if one failed */
@@ -451,11 +451,19 @@ static void register_endpoint(void *data, void *user_data)
 static int register_endpoints(void)
 {
 	struct register_state state;
+	unsigned int i;
 
 	state.ep = &audio_endpoints[0];
 	state.error = false;
 
-	queue_foreach(loaded_codecs, register_endpoint, &state);
+	for (i = 0; i < NUM_CODECS; i++) {
+		const struct audio_codec *codec = audio_codecs[i].get_codec();
+
+		if (!audio_codecs[i].loaded)
+			continue;
+
+		register_endpoint(codec, &state);
+	}
 
 	return state.error ? AUDIO_STATUS_FAILED : AUDIO_STATUS_SUCCESS;
 }
@@ -581,10 +589,10 @@ static void downmix_to_mono(struct a2dp_stream_out *out, const uint8_t *buffer,
 	frames = bytes / (2 * sizeof(int16_t));
 
 	for (i = 0; i < frames; i++) {
-		int16_t l = le16_to_cpu(get_unaligned(&input[i * 2]));
-		int16_t r = le16_to_cpu(get_unaligned(&input[i * 2 + 1]));
+		int16_t l = get_le16(&input[i * 2]);
+		int16_t r = get_le16(&input[i * 2 + 1]);
 
-		put_unaligned(cpu_to_le16((l + r) / 2), &output[i]);
+		put_le16((l + r) / 2, &output[i]);
 	}
 }
 
@@ -1101,13 +1109,13 @@ static int in_remove_audio_effect(const struct audio_stream *stream,
 	return -ENOSYS;
 }
 
-static int audio_open_output_stream(struct audio_hw_device *dev,
+static int audio_open_output_stream_real(struct audio_hw_device *dev,
 					audio_io_handle_t handle,
 					audio_devices_t devices,
 					audio_output_flags_t flags,
 					struct audio_config *config,
-					struct audio_stream_out **stream_out)
-
+					struct audio_stream_out **stream_out,
+					const char *address)
 {
 	struct a2dp_audio_dev *a2dp_dev = (struct a2dp_audio_dev *) dev;
 	struct a2dp_stream_out *out;
@@ -1163,6 +1171,31 @@ fail:
 	*stream_out = NULL;
 	return -EIO;
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int audio_open_output_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					audio_output_flags_t flags,
+					struct audio_config *config,
+					struct audio_stream_out **stream_out,
+					const char *address)
+{
+	return audio_open_output_stream_real(dev, handle, devices, flags,
+						config, stream_out, address);
+}
+#else
+static int audio_open_output_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					audio_output_flags_t flags,
+					struct audio_config *config,
+					struct audio_stream_out **stream_out)
+{
+	return audio_open_output_stream_real(dev, handle, devices, flags,
+						config, stream_out, NULL);
+}
+#endif
 
 static void audio_close_output_stream(struct audio_hw_device *dev,
 					struct audio_stream_out *stream)
@@ -1245,11 +1278,14 @@ static size_t audio_get_input_buffer_size(const struct audio_hw_device *dev,
 	return -ENOSYS;
 }
 
-static int audio_open_input_stream(struct audio_hw_device *dev,
+static int audio_open_input_stream_real(struct audio_hw_device *dev,
 					audio_io_handle_t handle,
 					audio_devices_t devices,
 					struct audio_config *config,
-					struct audio_stream_in **stream_in)
+					struct audio_stream_in **stream_in,
+					audio_input_flags_t flags,
+					const char *address,
+					audio_source_t source)
 {
 	struct audio_stream_in *in;
 
@@ -1280,6 +1316,32 @@ static int audio_open_input_stream(struct audio_hw_device *dev,
 	return 0;
 }
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int audio_open_input_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					struct audio_config *config,
+					struct audio_stream_in **stream_in,
+					audio_input_flags_t flags,
+					const char *address,
+					audio_source_t source)
+{
+	return audio_open_input_stream_real(dev, handle, devices, config,
+						stream_in, flags, address,
+						source);
+}
+#else
+static int audio_open_input_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					struct audio_config *config,
+					struct audio_stream_in **stream_in)
+{
+	return audio_open_input_stream_real(dev, handle, devices, config,
+						stream_in, 0, NULL, 0);
+}
+#endif
+
 static void audio_close_input_stream(struct audio_hw_device *dev,
 					struct audio_stream_in *stream_in)
 {
@@ -1293,24 +1355,71 @@ static int audio_dump(const audio_hw_device_t *device, int fd)
 	return -ENOSYS;
 }
 
-static void unload_codec(void *data)
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int set_master_mute(struct audio_hw_device *dev, bool mute)
 {
-	struct audio_codec *codec = data;
-
-	if (codec->unload)
-		codec->unload();
+	DBG("");
+	return -ENOSYS;
 }
+
+static int get_master_mute(struct audio_hw_device *dev, bool *mute)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int create_audio_patch(struct audio_hw_device *dev,
+					unsigned int num_sources,
+					const struct audio_port_config *sources,
+					unsigned int num_sinks,
+					const struct audio_port_config *sinks,
+					audio_patch_handle_t *handle)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int release_audio_patch(struct audio_hw_device *dev,
+					audio_patch_handle_t handle)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int get_audio_port(struct audio_hw_device *dev, struct audio_port *port)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int set_audio_port_config(struct audio_hw_device *dev,
+					const struct audio_port_config *config)
+{
+	DBG("");
+	return -ENOSYS;
+}
+#endif
 
 static int audio_close(hw_device_t *device)
 {
 	struct a2dp_audio_dev *a2dp_dev = (struct a2dp_audio_dev *)device;
+	unsigned int i;
 
 	DBG("");
 
 	unregister_endpoints();
 
-	queue_destroy(loaded_codecs, unload_codec);
-	loaded_codecs = NULL;
+	for (i = 0; i < NUM_CODECS; i++) {
+		const struct audio_codec *codec = audio_codecs[i].get_codec();
+
+		if (!audio_codecs[i].loaded)
+			continue;
+
+		if (codec->unload)
+			codec->unload();
+
+		audio_codecs[i].loaded = false;
+	}
 
 	shutdown(listen_sk, SHUT_RDWR);
 	shutdown(audio_sk, SHUT_RDWR);
@@ -1487,17 +1596,22 @@ static int audio_open(const hw_module_t *module, const char *name,
 	a2dp_dev->dev.open_input_stream = audio_open_input_stream;
 	a2dp_dev->dev.close_input_stream = audio_close_input_stream;
 	a2dp_dev->dev.dump = audio_dump;
-
-	loaded_codecs = queue_new();
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	a2dp_dev->dev.set_master_mute = set_master_mute;
+	a2dp_dev->dev.get_master_mute = get_master_mute;
+	a2dp_dev->dev.create_audio_patch = create_audio_patch;
+	a2dp_dev->dev.release_audio_patch = release_audio_patch;
+	a2dp_dev->dev.get_audio_port = get_audio_port;
+	a2dp_dev->dev.set_audio_port_config = set_audio_port_config;
+#endif
 
 	for (i = 0; i < NUM_CODECS; i++) {
-		audio_codec_get_t get_codec = audio_codecs[i];
-		const struct audio_codec *codec = get_codec();
+		const struct audio_codec *codec = audio_codecs[i].get_codec();
 
 		if (codec->load && !codec->load())
 			continue;
 
-		queue_push_tail(loaded_codecs, (void *) codec);
+		audio_codecs[i].loaded = true;
 	}
 
 	/*

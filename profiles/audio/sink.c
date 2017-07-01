@@ -30,20 +30,21 @@
 #include <stdbool.h>
 #include <errno.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus/gdbus.h>
+
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+
+#include "gdbus/gdbus.h"
 
 #include "src/log.h"
-
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/service.h"
 #include "src/error.h"
 #include "src/dbus-common.h"
+#include "src/shared/queue.h"
 
 #include "avdtp.h"
 #include "media.h"
@@ -271,7 +272,9 @@ gboolean sink_setup_stream(struct btd_service *service, struct avdtp *session)
 	if (!sink->session)
 		return FALSE;
 
-	if (avdtp_discover(sink->session, discovery_complete, sink) < 0)
+	sink->connect_id = a2dp_discover(sink->session, discovery_complete,
+								sink);
+	if (sink->connect_id == 0)
 		return FALSE;
 
 	return TRUE;
@@ -282,7 +285,7 @@ int sink_connect(struct btd_service *service)
 	struct sink *sink = btd_service_get_user_data(service);
 
 	if (!sink->session)
-		sink->session = avdtp_get(btd_service_get_device(service));
+		sink->session = a2dp_avdtp_get(btd_service_get_device(service));
 
 	if (!sink->session) {
 		DBG("Unable to get a session");
@@ -290,6 +293,9 @@ int sink_connect(struct btd_service *service)
 	}
 
 	if (sink->connect_id > 0 || sink->disconnect_id > 0)
+		return -EBUSY;
+
+	if (sink->state == SINK_STATE_CONNECTING)
 		return -EBUSY;
 
 	if (sink->stream_state >= AVDTP_STATE_OPEN)

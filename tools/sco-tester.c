@@ -38,10 +38,10 @@
 
 #include "monitor/bt.h"
 #include "emulator/bthost.h"
+#include "emulator/hciemu.h"
 
 #include "src/shared/tester.h"
 #include "src/shared/mgmt.h"
-#include "src/shared/hciemu.h"
 
 struct test_data {
 	const void *test_data;
@@ -331,8 +331,9 @@ static void test_getsockopt(const void *test_data)
 		return;
 	}
 
-	voice.setting = 0;
 	len = sizeof(voice);
+	memset(&voice, 0, len);
+
 	err = getsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &voice, &len);
 	if (err < 0) {
 		tester_warn("Can't get socket option : %s (%d)",
@@ -368,8 +369,9 @@ static void test_setsockopt(const void *test_data)
 	}
 
 
-	voice.setting = 0;
 	len = sizeof(voice);
+	memset(&voice, 0, len);
+
 	err = getsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &voice, &len);
 	if (err < 0) {
 		tester_warn("Can't get socket option : %s (%d)",
@@ -384,7 +386,9 @@ static void test_setsockopt(const void *test_data)
 		goto end;
 	}
 
+	memset(&voice, 0, sizeof(voice));
 	voice.setting = BT_VOICE_TRANSPARENT;
+
 	err = setsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &voice, sizeof(voice));
 	if (err < 0) {
 		tester_warn("Can't set socket option : %s (%d)",
@@ -393,8 +397,9 @@ static void test_setsockopt(const void *test_data)
 		goto end;
 	}
 
-	voice.setting = 0;
 	len = sizeof(voice);
+	memset(&voice, 0, len);
+
 	err = getsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &voice, &len);
 	if (err < 0) {
 		tester_warn("Can't get socket option : %s (%d)",
@@ -549,7 +554,9 @@ static void test_connect_transp(const void *test_data)
 		return;
 	}
 
+	memset(&voice, 0, sizeof(voice));
 	voice.setting = BT_VOICE_TRANSPARENT;
+
 	err = setsockopt(sk, SOL_BLUETOOTH, BT_VOICE, &voice, sizeof(voice));
 	if (err < 0) {
 		tester_warn("Can't set socket option : %s (%d)",

@@ -38,18 +38,18 @@
 #include <fcntl.h>
 #include <inttypes.h>
 
-#include <gobex/gobex.h>
-#include <gobex-apparam.h>
+#include "gobex/gobex.h"
+#include "gobex/gobex-apparam.h"
 
-#include "obexd.h"
-#include "plugin.h"
-#include "log.h"
-#include "obex.h"
-#include "service.h"
+#include "obexd/src/obexd.h"
+#include "obexd/src/plugin.h"
+#include "obexd/src/log.h"
+#include "obexd/src/obex.h"
+#include "obexd/src/service.h"
+#include "obexd/src/manager.h"
+#include "obexd/src/mimetype.h"
 #include "phonebook.h"
-#include "mimetype.h"
 #include "filesystem.h"
-#include "manager.h"
 
 #define PHONEBOOK_TYPE		"x-bt/phonebook"
 #define VCARDLISTING_TYPE	"x-bt/vcard-listing"
@@ -454,6 +454,12 @@ static struct apparam_field *parse_aparam(const uint8_t *buffer, uint32_t hlen)
 
 	param = g_new0(struct apparam_field, 1);
 
+	/*
+	 * As per spec when client doesn't include MAXLISTCOUNT_TAG then it
+	 * should be assume as Maximum value in vcardlisting 65535
+	 */
+	param->maxlistcount = UINT16_MAX;
+
 	g_obex_apparam_get_uint8(apparam, ORDER_TAG, &param->order);
 	g_obex_apparam_get_uint8(apparam, SEARCHATTRIB_TAG,
 						&param->searchattrib);
@@ -722,15 +728,15 @@ static void *vobject_list_open(const char *name, int oflag, mode_t mode,
 	int ret;
 	void *request;
 
+	if (name == NULL) {
+		ret = -EBADR;
+		goto fail;
+	}
+
 	DBG("name %s context %p valid %d", name, context, pbap->cache.valid);
 
 	if (oflag != O_RDONLY) {
 		ret = -EPERM;
-		goto fail;
-	}
-
-	if (name == NULL) {
-		ret = -EBADR;
 		goto fail;
 	}
 

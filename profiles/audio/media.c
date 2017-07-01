@@ -31,9 +31,13 @@
 #include <inttypes.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
+
 #include "src/plugin.h"
 #include "src/adapter.h"
 #include "src/device.h"
@@ -43,6 +47,7 @@
 #include "src/uuid-helper.h"
 #include "src/log.h"
 #include "src/error.h"
+#include "src/shared/queue.h"
 
 #include "avdtp.h"
 #include "media.h"
@@ -269,9 +274,6 @@ static void endpoint_reply(DBusPendingCall *call, void *user_data)
 
 		/* Clear endpoint configuration in case of NO_REPLY error */
 		if (dbus_error_has_name(&err, DBUS_ERROR_NO_REPLY)) {
-			if (request->cb)
-				request->cb(endpoint, NULL, size,
-							request->user_data);
 			clear_endpoint(endpoint);
 			dbus_message_unref(reply);
 			dbus_error_free(&err);
@@ -530,8 +532,9 @@ static void config_cb(struct media_endpoint *endpoint, void *ret, int size,
 							void *user_data)
 {
 	struct a2dp_config_data *data = user_data;
+	gboolean *ret_value = ret;
 
-	data->cb(data->setup, ret ? TRUE : FALSE);
+	data->cb(data->setup, *ret_value ? TRUE : FALSE);
 }
 
 static int set_config(struct a2dp_sep *sep, uint8_t *configuration,

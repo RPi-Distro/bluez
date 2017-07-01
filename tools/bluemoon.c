@@ -35,10 +35,21 @@
 #include <sys/stat.h>
 #include <sys/param.h>
 
-#include "monitor/mainloop.h"
 #include "monitor/bt.h"
+#include "src/shared/mainloop.h"
 #include "src/shared/util.h"
 #include "src/shared/hci.h"
+
+#define CMD_RESET		0xfc01
+struct cmd_reset {
+	uint8_t  reset_type;
+	uint8_t  patch_enable;
+	uint8_t  otp_ddc_reload;
+	uint8_t  boot_option;
+	uint32_t boot_addr;
+} __attribute__ ((packed));
+
+#define CMD_NO_OPERATION	0xfc02
 
 #define CMD_READ_VERSION	0xfc05
 struct rsp_read_version {
@@ -52,6 +63,35 @@ struct rsp_read_version {
 	uint8_t  fw_build_cw;
 	uint8_t  fw_build_yy;
 	uint8_t  fw_patch;
+} __attribute__ ((packed));
+
+#define CMD_READ_BOOT_PARAMS	0xfc0d
+struct rsp_read_boot_params {
+	uint8_t  status;
+	uint8_t  otp_format;
+	uint8_t  otp_content;
+	uint8_t  otp_patch;
+	uint16_t dev_revid;
+	uint8_t  secure_boot;
+	uint8_t  key_from_hdr;
+	uint8_t  key_type;
+	uint8_t  otp_lock;
+	uint8_t  api_lock;
+	uint8_t  debug_lock;
+	uint8_t  otp_bdaddr[6];
+	uint8_t  min_fw_build_nn;
+	uint8_t  min_fw_build_cw;
+	uint8_t  min_fw_build_yy;
+	uint8_t  limited_cce;
+	uint8_t  unlocked_state;
+} __attribute__ ((packed));
+
+#define CMD_WRITE_BOOT_PARAMS	0xfc0e
+struct cmd_write_boot_params {
+	uint32_t boot_addr;
+	uint8_t  fw_build_nn;
+	uint8_t  fw_build_cw;
+	uint8_t  fw_build_yy;
 } __attribute__ ((packed));
 
 #define CMD_MANUFACTURER_MODE	0xfc11
@@ -95,6 +135,11 @@ struct cmd_act_deact_traces {
 	uint8_t  rx_trace;
 } __attribute__ ((packed));
 
+#define CMD_TRIGGER_EXCEPTION	0xfc4d
+struct cmd_trigger_exception {
+	uint8_t  type;
+} __attribute__ ((packed));
+
 #define CMD_MEMORY_WRITE	0xfc8e
 
 static struct bt_hci *hci_dev;
@@ -110,10 +155,14 @@ static const char *load_firmware_value = NULL;
 static uint8_t *firmware_data = NULL;
 static size_t firmware_size = 0;
 static size_t firmware_offset = 0;
+static bool check_firmware = false;
+static const char *check_firmware_value = NULL;
 uint8_t manufacturer_mode_reset = 0x00;
 static bool use_manufacturer_mode = false;
 static bool set_traces = false;
+static bool set_exception = false;
 static bool reset_on_exit = false;
+static bool cold_boot = false;
 
 static void reset_complete(const void *data, uint8_t size, void *user_data)
 {
@@ -122,6 +171,25 @@ static void reset_complete(const void *data, uint8_t size, void *user_data)
 	if (status) {
 		fprintf(stderr, "Failed to reset (0x%02x)\n", status);
 		mainloop_quit();
+		return;
+	}
+
+	mainloop_quit();
+}
+
+static void cold_boot_complete(const void *data, uint8_t size, void *user_data)
+{
+	uint8_t status = *((uint8_t *) data);
+
+	if (status) {
+		fprintf(stderr, "Failed to cold boot (0x%02x)\n", status);
+		mainloop_quit();
+		return;
+	}
+
+	if (reset_on_exit) {
+		bt_hci_send(hci_dev, BT_HCI_CMD_RESET, NULL, 0,
+						reset_complete, NULL, NULL);
 		return;
 	}
 
@@ -251,6 +319,18 @@ static void act_deact_traces(void)
 
 	bt_hci_send(hci_dev, CMD_ACT_DEACT_TRACES, &cmd, sizeof(cmd),
 					act_deact_traces_complete, NULL, NULL);
+}
+
+static void trigger_exception(void)
+{
+	struct cmd_trigger_exception cmd;
+
+	cmd.type = 0x00;
+
+	bt_hci_send(hci_dev, CMD_TRIGGER_EXCEPTION, &cmd, sizeof(cmd),
+							NULL, NULL, NULL);
+
+	shutdown_device();
 }
 
 static void write_bd_data_complete(const void *data, uint8_t size,
@@ -393,6 +473,11 @@ static void enter_manufacturer_mode_complete(const void *data, uint8_t size,
 		return;
 	}
 
+	if (set_exception) {
+		trigger_exception();
+		return;
+	}
+
 	shutdown_device();
 }
 
@@ -488,16 +573,97 @@ static void request_firmware(const char *path)
 		firmware_offset = 1;
 }
 
+static void read_boot_params_complete(const void *data, uint8_t size,
+							void *user_data)
+{
+	const struct rsp_read_boot_params *rsp = data;
+
+	if (rsp->status) {
+		fprintf(stderr, "Failed to read boot params (0x%02x)\n",
+							rsp->status);
+		mainloop_quit();
+		return;
+	}
+
+	if (size != sizeof(*rsp)) {
+		fprintf(stderr, "Size mismatch for read boot params\n");
+		mainloop_quit();
+		return;
+	}
+
+	printf("Secure Boot Parameters\n");
+	printf("\tOTP Format Version:\t%u\n", rsp->otp_format);
+	printf("\tOTP Content Version:\t%u\n", rsp->otp_content);
+	printf("\tOTP ROM Patch Version:\t%u\n", rsp->otp_patch);
+	printf("\tDevice Revision ID:\t%u\n", le16_to_cpu(rsp->dev_revid));
+	printf("\tSecure Boot Enable:\t%u\n", rsp->secure_boot);
+	printf("\tTake Key From Header:\t%u\n", rsp->key_from_hdr);
+	printf("\tRSA Key Type:\t\t%u\n", rsp->key_type);
+	printf("\tOTP Lock:\t\t%u\n", rsp->otp_lock);
+	printf("\tAPI Lock:\t\t%u\n", rsp->api_lock);
+	printf("\tDebug Lock:\t\t%u\n", rsp->debug_lock);
+	printf("\tMin FW Build Number:\t%u-%u.%u\n", rsp->min_fw_build_nn,
+			rsp->min_fw_build_cw, 2000 + rsp->min_fw_build_yy);
+	printf("\tLimited CCE to ISSC:\t%u\n", rsp->limited_cce);
+	printf("\tUnlocked State:\t\t%u\n", rsp->unlocked_state);
+
+	mainloop_quit();
+}
+
+static const struct {
+	uint8_t val;
+	const char *str;
+} hw_variant_table[] = {
+	{ 0x06, "iBT 1.1 (XG223)"	},
+	{ 0x07, "iBT 2.0 (WP)"		},
+	{ 0x08, "iBT 2.5 (StP)"		},
+	{ 0x09, "iBT 1.5 (AG610)"	},
+	{ 0x0a, "iBT 2.1 (AG620)"	},
+	{ 0x0b, "iBT 3.0 (LnP)"		},
+	{ }
+};
+
+static const struct {
+	uint8_t val;
+	const char *str;
+} fw_variant_table[] = {
+	{ 0x01, "iBT 1.0 - iBT 2.5"	},
+	{ 0x06, "iBT Bootloader"	},
+	{ 0x23, "iBT 3.x Bluetooth FW"	},
+	{ }
+};
+
 static void read_version_complete(const void *data, uint8_t size,
 							void *user_data)
 {
 	const struct rsp_read_version *rsp = data;
 	const char *str;
+	int i;
 
 	if (rsp->status) {
 		fprintf(stderr, "Failed to read version (0x%02x)\n",
 							rsp->status);
 		mainloop_quit();
+		return;
+	}
+
+	if (size != sizeof(*rsp)) {
+		fprintf(stderr, "Size mismatch for read version response\n");
+		mainloop_quit();
+		return;
+	}
+
+	if (cold_boot) {
+		struct cmd_reset cmd;
+
+		cmd.reset_type = 0x01;
+		cmd.patch_enable = 0x00;
+		cmd.otp_ddc_reload = 0x01;
+		cmd.boot_option = 0x00;
+		cmd.boot_addr = cpu_to_le32(0x00000000);
+
+		bt_hci_send(hci_dev, CMD_RESET, &cmd, sizeof(cmd),
+					cold_boot_complete, NULL, NULL);
 		return;
 	}
 
@@ -542,29 +708,26 @@ static void read_version_complete(const void *data, uint8_t size,
 	printf("Controller Version Information\n");
 	printf("\tHardware Platform:\t%u\n", rsp->hw_platform);
 
-	switch (rsp->hw_variant) {
-	case 0x07:
-		str = "iBT 2.0";
-		break;
-	default:
-		str = "Reserved";
-		break;
+	str = "Reserved";
+
+	for (i = 0; hw_variant_table[i].str; i++) {
+		if (hw_variant_table[i].val == rsp->hw_variant) {
+			str = hw_variant_table[i].str;
+			break;
+		}
 	}
 
 	printf("\tHardware Variant:\t%s (0x%02x)\n", str, rsp->hw_variant);
 	printf("\tHardware Revision:\t%u.%u\n", rsp->hw_revision >> 4,
 						rsp->hw_revision & 0x0f);
 
-	switch (rsp->fw_variant) {
-	case 0x01:
-		str = "BT IP 4.0";
-		break;
-	case 0x06:
-		str = "iBT Bootloader";
-		break;
-	default:
-		str = "Reserved";
-		break;
+	str = "Reserved";
+
+	for (i = 0; fw_variant_table[i].str; i++) {
+		if (fw_variant_table[i].val == rsp->fw_variant) {
+			str = fw_variant_table[i].str;
+			break;
+		}
 	}
 
 	printf("\tFirmware Variant:\t%s (0x%02x)\n", str, rsp->fw_variant);
@@ -574,7 +737,142 @@ static void read_version_complete(const void *data, uint8_t size,
 				rsp->fw_build_cw, 2000 + rsp->fw_build_yy);
 	printf("\tFirmware Patch Number:\t%u\n", rsp->fw_patch);
 
+	if (rsp->hw_variant == 0x0b && rsp->fw_variant == 0x06) {
+		bt_hci_send(hci_dev, CMD_READ_BOOT_PARAMS, NULL, 0,
+					read_boot_params_complete, NULL, NULL);
+		return;
+	}
+
 	mainloop_quit();
+}
+
+struct css_hdr {
+	uint32_t module_type;
+	uint32_t header_len;
+	uint32_t header_version;
+	uint32_t module_id;
+	uint32_t module_vendor;
+	uint32_t date;
+	uint32_t size;
+	uint32_t key_size;
+	uint32_t modulus_size;
+	uint32_t exponent_size;
+	uint8_t  reserved[88];
+} __attribute__ ((packed));
+
+static void analyze_firmware(const char *path)
+{
+	unsigned int cmd_num = 0;
+	struct css_hdr *css;
+	struct stat st;
+	ssize_t len;
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		fprintf(stderr, "Failed to open firmware %s\n", path);
+		return;
+	}
+
+	if (fstat(fd, &st) < 0) {
+		fprintf(stderr, "Failed to get firmware size\n");
+		close(fd);
+		return;
+	}
+
+	firmware_data = malloc(st.st_size);
+	if (!firmware_data) {
+		fprintf(stderr, "Failed to allocate firmware buffer\n");
+		close(fd);
+		return;
+	}
+
+	len = read(fd, firmware_data, st.st_size);
+	if (len < 0) {
+		fprintf(stderr, "Failed to read firmware file\n");
+		close(fd);
+		goto done;
+	}
+
+	close(fd);
+
+	if (len != st.st_size) {
+		fprintf(stderr, "Failed to read complete firmware file\n");
+		goto done;
+	}
+
+	if ((size_t) len < sizeof(*css)) {
+		fprintf(stderr, "Firmware file is too short\n");
+		goto done;
+	}
+
+	css = (void *) firmware_data;
+
+	printf("Module type:\t%u\n", le32_to_cpu(css->module_type));
+	printf("Header len:\t%u DWORDs / %u bytes\n",
+				le32_to_cpu(css->header_len),
+				le32_to_cpu(css->header_len) * 4);
+	printf("Header version:\t%u.%u\n",
+				le32_to_cpu(css->header_version) >> 16,
+				le32_to_cpu(css->header_version) & 0xffff);
+	printf("Module ID:\t%u\n", le32_to_cpu(css->module_id));
+	printf("Module vendor:\t%u\n", le32_to_cpu(css->module_vendor));
+	printf("Date:\t\t%u\n", le32_to_cpu(css->date));
+	printf("Size:\t\t%u DWORDs / %u bytes\n", le32_to_cpu(css->size),
+						le32_to_cpu(css->size) * 4);
+	printf("Key size:\t%u DWORDs / %u bytes\n",
+					le32_to_cpu(css->key_size),
+					le32_to_cpu(css->key_size) * 4);
+	printf("Modulus size:\t%u DWORDs / %u bytes\n",
+					le32_to_cpu(css->modulus_size),
+					le32_to_cpu(css->modulus_size) * 4);
+	printf("Exponent size:\t%u DWORDs / %u bytes\n",
+					le32_to_cpu(css->exponent_size),
+					le32_to_cpu(css->exponent_size) * 4);
+	printf("\n");
+
+
+	if ((size_t) len != le32_to_cpu(css->size) * 4) {
+		fprintf(stderr, "CSS.size does not match file length\n");
+		goto done;
+	}
+
+	if (le32_to_cpu(css->header_len) != (sizeof(*css) / 4) +
+					le32_to_cpu(css->key_size) +
+					le32_to_cpu(css->modulus_size) +
+					le32_to_cpu(css->exponent_size)) {
+		fprintf(stderr, "CSS.headerLen does not match data sizes\n");
+		goto done;
+	}
+
+	firmware_size = le32_to_cpu(css->size) * 4;
+	firmware_offset = le32_to_cpu(css->header_len) * 4;
+
+	while (firmware_offset < firmware_size) {
+		uint16_t opcode;
+		uint8_t dlen;
+
+		opcode = get_le16(firmware_data + firmware_offset);
+		dlen = firmware_data[firmware_offset + 2];
+
+		switch (opcode) {
+		case CMD_NO_OPERATION:
+		case CMD_WRITE_BOOT_PARAMS:
+		case CMD_MEMORY_WRITE:
+			break;
+		default:
+			printf("Unexpected opcode 0x%02x\n", opcode);
+			break;
+		}
+
+		firmware_offset += dlen + 3;
+		cmd_num++;
+	}
+
+	printf("Firmware with %u commands\n", cmd_num);
+
+done:
+	free(firmware_data);
 }
 
 static void signal_callback(int signum, void *user_data)
@@ -593,35 +891,43 @@ static void usage(void)
 		"Usage:\n");
 	printf("\tbluemoon [options]\n");
 	printf("Options:\n"
-		"\t-B, --bdaddr [addr]    Set Bluetooth address\n"
-		"\t-F, --firwmare [file]  Load firmware\n"
+		"\t-A, --bdaddr [addr]    Set Bluetooth address\n"
+		"\t-F, --firmware [file]  Load firmware\n"
+		"\t-C, --check <file>     Check firmware image\n"
 		"\t-R, --reset            Reset controller\n"
+		"\t-B, --coldboot         Cold boot controller\n"
+		"\t-E, --exception        Trigger exception\n"
 		"\t-i, --index <num>      Use specified controller\n"
 		"\t-h, --help             Show help options\n");
 }
 
 static const struct option main_options[] = {
-	{ "bdaddr",  optional_argument, NULL, 'A' },
-	{ "bddata",  no_argument,       NULL, 'D' },
-	{ "firmware",optional_argument, NULL, 'F' },
-	{ "traces",  no_argument,       NULL, 'T' },
-	{ "reset",   no_argument,       NULL, 'R' },
-	{ "index",   required_argument, NULL, 'i' },
-	{ "version", no_argument,       NULL, 'v' },
-	{ "help",    no_argument,       NULL, 'h' },
+	{ "bdaddr",   optional_argument, NULL, 'A' },
+	{ "bddata",   no_argument,       NULL, 'D' },
+	{ "firmware", optional_argument, NULL, 'F' },
+	{ "check",    required_argument, NULL, 'C' },
+	{ "traces",   no_argument,       NULL, 'T' },
+	{ "reset",    no_argument,       NULL, 'R' },
+	{ "coldboot", no_argument,       NULL, 'B' },
+	{ "exception",no_argument,       NULL, 'E' },
+	{ "index",    required_argument, NULL, 'i' },
+	{ "raw",      no_argument,       NULL, 'r' },
+	{ "version",  no_argument,       NULL, 'v' },
+	{ "help",     no_argument,       NULL, 'h' },
 	{ }
 };
 
 int main(int argc, char *argv[])
 {
 	const char *str;
+	bool use_raw = false;
 	sigset_t mask;
 	int exit_status;
 
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "A::DF::TRi:vh",
+		opt = getopt_long(argc, argv, "A::DF::C:TRBEi:rvh",
 						main_options, NULL);
 		if (opt < 0)
 			break;
@@ -642,12 +948,23 @@ int main(int argc, char *argv[])
 				load_firmware_value = optarg;
 			load_firmware = true;
 			break;
+		case 'C':
+			check_firmware_value = optarg;
+			check_firmware = true;
+			break;
+		case 'E':
+			use_manufacturer_mode = true;
+			set_exception = true;
+			break;
 		case 'T':
 			use_manufacturer_mode = true;
 			set_traces = true;
 			break;
 		case 'R':
 			reset_on_exit = true;
+			break;
+		case 'B':
+			cold_boot = true;
 			break;
 		case 'i':
 			if (strlen(optarg) > 3 && !strncmp(optarg, "hci", 3))
@@ -659,6 +976,9 @@ int main(int argc, char *argv[])
 				return EXIT_FAILURE;
 			}
 			hci_index = atoi(str);
+			break;
+		case 'r':
+			use_raw = true;
 			break;
 		case 'v':
 			printf("%s\n", VERSION);
@@ -686,10 +1006,23 @@ int main(int argc, char *argv[])
 
 	printf("Bluemoon configuration utility ver %s\n", VERSION);
 
-	hci_dev = bt_hci_new_user_channel(hci_index);
-	if (!hci_dev) {
-		fprintf(stderr, "Failed to open HCI user channel\n");
-		return EXIT_FAILURE;
+	if (check_firmware) {
+		analyze_firmware(check_firmware_value);
+		return EXIT_SUCCESS;
+	}
+
+	if (use_raw) {
+		hci_dev = bt_hci_new_raw_device(hci_index);
+		if (!hci_dev) {
+			fprintf(stderr, "Failed to open HCI raw device\n");
+			return EXIT_FAILURE;
+		}
+	} else {
+		hci_dev = bt_hci_new_user_channel(hci_index);
+		if (!hci_dev) {
+			fprintf(stderr, "Failed to open HCI user channel\n");
+			return EXIT_FAILURE;
+		}
 	}
 
 	bt_hci_send(hci_dev, CMD_READ_VERSION, NULL, 0,

@@ -29,10 +29,11 @@
 #include <hardware/hardware.h>
 #include <audio_utils/resampler.h>
 
-#include "../src/shared/util.h"
+#include "hal-utils.h"
 #include "sco-msg.h"
 #include "ipc-common.h"
 #include "hal-log.h"
+#include "hal.h"
 
 #define AUDIO_STREAM_DEFAULT_RATE	44100
 #define AUDIO_STREAM_SCO_RATE		8000
@@ -79,6 +80,8 @@ struct sco_stream_out {
 	struct resampler_itfe *resampler;
 	int16_t *resample_buf;
 	uint32_t resample_frame_num;
+
+	bt_bdaddr_t bd_addr;
 };
 
 static void sco_close_socket(void)
@@ -101,6 +104,8 @@ struct sco_stream_in {
 	struct resampler_itfe *resampler;
 	int16_t *resample_buf;
 	uint32_t resample_frame_num;
+
+	bt_bdaddr_t bd_addr;
 };
 
 struct sco_dev {
@@ -277,20 +282,23 @@ failed:
 	return SCO_STATUS_FAILED;
 }
 
-static int ipc_get_sco_fd(void)
+static int ipc_get_sco_fd(bt_bdaddr_t *bd_addr)
 {
 	int ret = SCO_STATUS_SUCCESS;
 
 	pthread_mutex_lock(&sco_mutex);
 
 	if (sco_fd < 0) {
+		struct sco_cmd_get_fd cmd;
 		struct sco_rsp_get_fd rsp;
 		size_t rsp_len = sizeof(rsp);
 
 		DBG("Getting SCO fd");
 
-		ret = sco_ipc_cmd(SCO_SERVICE_ID, SCO_OP_GET_FD, 0, NULL,
-						&rsp_len, &rsp, &sco_fd);
+		memcpy(cmd.bdaddr, bd_addr, sizeof(cmd.bdaddr));
+
+		ret = sco_ipc_cmd(SCO_SERVICE_ID, SCO_OP_GET_FD, sizeof(cmd),
+						&cmd, &rsp_len, &rsp, &sco_fd);
 
 		/* Sometimes mtu returned is wrong */
 		sco_mtu = /* rsp.mtu */ 48;
@@ -311,10 +319,10 @@ static void downmix_to_mono(struct sco_stream_out *out, const uint8_t *buffer,
 	size_t i;
 
 	for (i = 0; i < frame_num; i++) {
-		int16_t l = le16_to_cpu(get_unaligned(&input[i * 2]));
-		int16_t r = le16_to_cpu(get_unaligned(&input[i * 2 + 1]));
+		int16_t l = get_le16(&input[i * 2]);
+		int16_t r = get_le16(&input[i * 2 + 1]);
 
-		put_unaligned(cpu_to_le16((l + r) >> 1), &output[i]);
+		put_le16((l + r) / 2, &output[i]);
 	}
 }
 
@@ -371,7 +379,7 @@ static bool write_data(struct sco_stream_out *out, const uint8_t *buffer,
 		if ((int) (audio_sent_us - audio_passed_us) > 1500) {
 			struct timespec timeout = {0,
 						(audio_sent_us -
-						 audio_passed_us) * 1000};
+						audio_passed_us) * 1000};
 			DBG("Sleeping for %d ms",
 					(int) (audio_sent_us - audio_passed_us));
 			nanosleep(&timeout, NULL);
@@ -438,14 +446,18 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
 								size_t bytes)
 {
 	struct sco_stream_out *out = (struct sco_stream_out *) stream;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	size_t frame_num = bytes / audio_stream_out_frame_size(stream);
+#else
 	size_t frame_num = bytes / audio_stream_frame_size(&out->stream.common);
+#endif
 	size_t output_frame_num = frame_num;
 	void *send_buf = out->downmix_buf;
 	size_t total;
 
 	DBG("write to fd %d bytes %zu", sco_fd, bytes);
 
-	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
+	if (ipc_get_sco_fd(&out->bd_addr) != SCO_STATUS_SUCCESS)
 		return -1;
 
 	if (!out->downmix_buf) {
@@ -507,8 +519,13 @@ static int out_set_sample_rate(struct audio_stream *stream, uint32_t rate)
 static size_t out_get_buffer_size(const struct audio_stream *stream)
 {
 	struct sco_stream_out *out = (struct sco_stream_out *) stream;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	size_t size = audio_stream_out_frame_size(&out->stream) *
+							out->cfg.frame_num;
+#else
 	size_t size = audio_stream_frame_size(&out->stream.common) *
 							out->cfg.frame_num;
+#endif
 
 	/* buffer size without resampling */
 	if (out->cfg.rate == AUDIO_STREAM_SCO_RATE)
@@ -612,12 +629,13 @@ static int out_remove_audio_effect(const struct audio_stream *stream,
 	return -ENOSYS;
 }
 
-static int sco_open_output_stream(struct audio_hw_device *dev,
+static int sco_open_output_stream_real(struct audio_hw_device *dev,
 					audio_io_handle_t handle,
 					audio_devices_t devices,
 					audio_output_flags_t flags,
 					struct audio_config *config,
-					struct audio_stream_out **stream_out)
+					struct audio_stream_out **stream_out,
+					const char *address)
 {
 	struct sco_dev *adev = (struct sco_dev *) dev;
 	struct sco_stream_out *out;
@@ -630,9 +648,6 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 		DBG("stream_out already open");
 		return -EIO;
 	}
-
-	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
-		DBG("SCO is not connected yet; get fd on write()");
 
 	out = calloc(1, sizeof(struct sco_stream_out));
 	if (!out)
@@ -656,6 +671,17 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 	out->stream.set_volume = out_set_volume;
 	out->stream.write = out_write;
 	out->stream.get_render_position = out_get_render_position;
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	if (address) {
+		DBG("address %s", address);
+
+		str2bt_bdaddr_t(address, &out->bd_addr);
+	}
+#endif
+
+	if (ipc_get_sco_fd(&out->bd_addr) != SCO_STATUS_SUCCESS)
+		DBG("SCO is not connected yet; get fd on write()");
 
 	if (config) {
 		DBG("config: rate %u chan mask %x format %d offload %p",
@@ -740,6 +766,31 @@ failed:
 
 	return ret;
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int sco_open_output_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					audio_output_flags_t flags,
+					struct audio_config *config,
+					struct audio_stream_out **stream_out,
+					const char *address)
+{
+	return  sco_open_output_stream_real(dev, handle, devices, flags,
+						config, stream_out, address);
+}
+#else
+static int sco_open_output_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					audio_output_flags_t flags,
+					struct audio_config *config,
+					struct audio_stream_out **stream_out)
+{
+	return sco_open_output_stream_real(dev, handle, devices, flags,
+						config, stream_out, NULL);
+}
+#endif
 
 static void sco_close_output_stream(struct audio_hw_device *dev,
 					struct audio_stream_out *stream_out)
@@ -854,8 +905,13 @@ static int in_set_sample_rate(struct audio_stream *stream, uint32_t rate)
 static size_t in_get_buffer_size(const struct audio_stream *stream)
 {
 	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	size_t size = audio_stream_in_frame_size(&in->stream) *
+							in->cfg.frame_num;
+#else
 	size_t size = audio_stream_frame_size(&in->stream.common) *
 							in->cfg.frame_num;
+#endif
 
 	/* buffer size without resampling */
 	if (in->cfg.rate == AUDIO_STREAM_SCO_RATE)
@@ -998,16 +1054,26 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer,
 								size_t bytes)
 {
 	struct sco_stream_in *in = (struct sco_stream_in *) stream;
-	size_t frame_size = audio_stream_frame_size(&stream->common);
-	size_t frame_num = bytes / frame_size;
-	size_t input_frame_num = frame_num;
+	size_t frame_size, frame_num, input_frame_num;
 	void *read_buf = buffer;
 	size_t total = bytes;
 	int ret;
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	frame_size = audio_stream_in_frame_size(&in->stream);
+#else
+	frame_size = audio_stream_frame_size(&stream->common);
+#endif
+
+	if (!frame_size)
+		return -1;
+
+	frame_num = bytes / frame_size;
+	input_frame_num = frame_num;
+
 	DBG("Read from fd %d bytes %zu", sco_fd, bytes);
 
-	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
+	if (ipc_get_sco_fd(&in->bd_addr) != SCO_STATUS_SUCCESS)
 		return -1;
 
 	if (!in->resampler && in->cfg.rate != AUDIO_STREAM_SCO_RATE) {
@@ -1060,11 +1126,14 @@ static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream)
 	return -ENOSYS;
 }
 
-static int sco_open_input_stream(struct audio_hw_device *dev,
+static int sco_open_input_stream_real(struct audio_hw_device *dev,
 					audio_io_handle_t handle,
 					audio_devices_t devices,
 					struct audio_config *config,
-					struct audio_stream_in **stream_in)
+					struct audio_stream_in **stream_in,
+					audio_input_flags_t flags,
+					const char *address,
+					audio_source_t source)
 {
 	struct sco_dev *sco_dev = (struct sco_dev *) dev;
 	struct sco_stream_in *in;
@@ -1100,6 +1169,14 @@ static int sco_open_input_stream(struct audio_hw_device *dev,
 	in->stream.set_gain = in_set_gain;
 	in->stream.read = in_read;
 	in->stream.get_input_frames_lost = in_get_input_frames_lost;
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	if (address) {
+		DBG("address %s", address);
+
+		str2bt_bdaddr_t(address, &in->bd_addr);
+	}
+#endif
 
 	if (config) {
 		DBG("config: rate %u chan mask %x format %d offload %p",
@@ -1165,6 +1242,32 @@ failed2:
 	return ret;
 }
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int sco_open_input_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					struct audio_config *config,
+					struct audio_stream_in **stream_in,
+					audio_input_flags_t flags,
+					const char *address,
+					audio_source_t source)
+{
+	return sco_open_input_stream_real(dev, handle, devices, config,
+						stream_in, flags, address,
+						source);
+}
+#else
+static int sco_open_input_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					struct audio_config *config,
+					struct audio_stream_in **stream_in)
+{
+	return sco_open_input_stream_real(dev, handle, devices, config,
+						stream_in, 0, NULL, 0);
+}
+#endif
+
 static void sco_close_input_stream(struct audio_hw_device *dev,
 					struct audio_stream_in *stream_in)
 {
@@ -1197,6 +1300,51 @@ static int sco_dump(const audio_hw_device_t *device, int fd)
 
 	return 0;
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static int set_master_mute(struct audio_hw_device *dev, bool mute)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int get_master_mute(struct audio_hw_device *dev, bool *mute)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int create_audio_patch(struct audio_hw_device *dev,
+					unsigned int num_sources,
+					const struct audio_port_config *sources,
+					unsigned int num_sinks,
+					const struct audio_port_config *sinks,
+					audio_patch_handle_t *handle)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int release_audio_patch(struct audio_hw_device *dev,
+					audio_patch_handle_t handle)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int get_audio_port(struct audio_hw_device *dev, struct audio_port *port)
+{
+	DBG("");
+	return -ENOSYS;
+}
+
+static int set_audio_port_config(struct audio_hw_device *dev,
+					const struct audio_port_config *config)
+{
+	DBG("");
+	return -ENOSYS;
+}
+#endif
 
 static int sco_close(hw_device_t *device)
 {
@@ -1351,6 +1499,14 @@ static int sco_open(const hw_module_t *module, const char *name,
 	dev->dev.open_input_stream = sco_open_input_stream;
 	dev->dev.close_input_stream = sco_close_input_stream;
 	dev->dev.dump = sco_dump;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	dev->dev.set_master_mute = set_master_mute;
+	dev->dev.get_master_mute = get_master_mute;
+	dev->dev.create_audio_patch = create_audio_patch;
+	dev->dev.release_audio_patch = release_audio_patch;
+	dev->dev.get_audio_port = get_audio_port;
+	dev->dev.set_audio_port_config = set_audio_port_config;
+#endif
 
 	*device = &dev->dev.common;
 

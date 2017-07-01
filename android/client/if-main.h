@@ -37,6 +37,13 @@
 #include <hardware/bt_hf.h>
 #include <hardware/bt_hl.h>
 
+#include "hal.h"
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+#include <hardware/bt_hf_client.h>
+#include <hardware/bt_mce.h>
+#endif
+
 #include <hardware/bt_rc.h>
 #include <hardware/bt_gatt.h>
 #include <hardware/bt_gatt_types.h>
@@ -57,6 +64,12 @@ extern const btsock_interface_t *if_sock;
 extern const btgatt_interface_t *if_gatt;
 extern const btgatt_server_interface_t *if_gatt_server;
 extern const btgatt_client_interface_t *if_gatt_client;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+extern const btrc_ctrl_interface_t *if_rc_ctrl;
+extern const bthf_client_interface_t *if_hf_client;
+extern const btmce_interface_t *if_mce;
+extern const btav_interface_t *if_av_sink;
+#endif
 
 /*
  * Structure defines top level interfaces that can be used in test tool
@@ -80,6 +93,12 @@ extern const struct interface sock_if;
 extern const struct interface hf_if;
 extern const struct interface hh_if;
 extern const struct interface hl_if;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+extern const struct interface ctrl_rc_if;
+extern const struct interface hf_client_if;
+extern const struct interface mce_if;
+extern const struct interface av_sink_if;
+#endif
 
 /* Interfaces that will show up in tool (first part of command line) */
 extern const struct interface *interfaces[];
@@ -137,6 +156,7 @@ const char *enum_devices(void *v, int i);
 const char *interface_name(void *v, int i);
 const char *command_name(void *v, int i);
 void add_remote_device(const bt_bdaddr_t *addr);
+bool close_hw_bt_dev(void);
 
 const struct interface *get_interface(const char *name);
 struct method *get_method(struct method *methods, const char *name);

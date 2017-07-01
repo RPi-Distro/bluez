@@ -26,9 +26,10 @@
 #endif
 
 #include <errno.h>
-#include <gdbus/gdbus.h>
 
-#include "log.h"
+#include "gdbus/gdbus.h"
+
+#include "obexd/src/log.h"
 
 #include "transfer.h"
 #include "session.h"

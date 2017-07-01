@@ -33,10 +33,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
 
 #include <sys/param.h>
 #include <sys/uio.h>
-#include <sys/poll.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -650,6 +650,7 @@ static hci_map ver_map[] = {
 	{ "3.0",	0x05 },
 	{ "4.0",	0x06 },
 	{ "4.1",	0x07 },
+	{ "4.2",	0x08 },
 	{ NULL }
 };
 
@@ -899,8 +900,15 @@ static int __same_bdaddr(int dd, int dev_id, long arg)
 
 int hci_get_route(bdaddr_t *bdaddr)
 {
-	return hci_for_each_dev(HCI_UP, __other_bdaddr,
+	int dev_id;
+
+	dev_id = hci_for_each_dev(HCI_UP, __other_bdaddr,
 				(long) (bdaddr ? bdaddr : BDADDR_ANY));
+	if (dev_id < 0)
+		dev_id = hci_for_each_dev(HCI_UP, __same_bdaddr,
+				(long) (bdaddr ? bdaddr : BDADDR_ANY));
+
+	return dev_id;
 }
 
 int hci_devid(const char *str)
@@ -1035,6 +1043,12 @@ int hci_open_dev(int dev_id)
 {
 	struct sockaddr_hci a;
 	int dd, err;
+
+	/* Check for valid device id */
+	if (dev_id < 0) {
+		errno = ENODEV;
+		return -1;
+	}
 
 	/* Create HCI socket */
 	dd = socket(AF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC, BTPROTO_HCI);
@@ -1400,6 +1414,146 @@ int hci_le_clear_white_list(int dd, int to)
 	memset(&rq, 0, sizeof(rq));
 	rq.ogf = OGF_LE_CTL;
 	rq.ocf = OCF_LE_CLEAR_WHITE_LIST;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_add_resolving_list(int dd, const bdaddr_t *bdaddr, uint8_t type,
+				uint8_t *peer_irk, uint8_t *local_irk, int to)
+{
+	struct hci_request rq;
+	le_add_device_to_resolv_list_cp cp;
+	uint8_t status;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.bdaddr_type = type;
+	bacpy(&cp.bdaddr, bdaddr);
+	if (peer_irk)
+		memcpy(cp.peer_irk, peer_irk, 16);
+	if (local_irk)
+		memcpy(cp.local_irk, local_irk, 16);
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_ADD_DEVICE_TO_RESOLV_LIST;
+	rq.cparam = &cp;
+	rq.clen = LE_ADD_DEVICE_TO_RESOLV_LIST_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_rm_resolving_list(int dd, const bdaddr_t *bdaddr, uint8_t type, int to)
+{
+	struct hci_request rq;
+	le_remove_device_from_resolv_list_cp cp;
+	uint8_t status;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.bdaddr_type = type;
+	bacpy(&cp.bdaddr, bdaddr);
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_REMOVE_DEVICE_FROM_RESOLV_LIST;
+	rq.cparam = &cp;
+	rq.clen = LE_REMOVE_DEVICE_FROM_RESOLV_LIST_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_clear_resolving_list(int dd, int to)
+{
+	struct hci_request rq;
+	uint8_t status;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_CLEAR_RESOLV_LIST;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_read_resolving_list_size(int dd, uint8_t *size, int to)
+{
+	struct hci_request rq;
+	le_read_resolv_list_size_rp rp;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&rq, 0, sizeof(rq));
+
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_READ_RESOLV_LIST_SIZE;
+	rq.rparam = &rp;
+	rq.rlen = LE_READ_RESOLV_LIST_SIZE_RP_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	if (size)
+		*size = rp.size;
+
+	return 0;
+}
+
+int hci_le_set_address_resolution_enable(int dd, uint8_t enable, int to)
+{
+	struct hci_request rq;
+	le_set_address_resolution_enable_cp cp;
+	uint8_t status;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.enable = enable;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_ADDRESS_RESOLUTION_ENABLE;
+	rq.cparam = &cp;
+	rq.clen = LE_SET_ADDRESS_RESOLUTION_ENABLE_CP_SIZE;
 	rq.rparam = &status;
 	rq.rlen = 1;
 
@@ -2924,6 +3078,38 @@ int hci_le_conn_update(int dd, uint16_t handle, uint16_t min_interval,
 		errno = EIO;
 		return -1;
 	}
+
+	return 0;
+}
+
+int hci_le_read_remote_features(int dd, uint16_t handle, uint8_t *features, int to)
+{
+	evt_le_read_remote_used_features_complete rp;
+	le_read_remote_used_features_cp cp;
+	struct hci_request rq;
+
+	memset(&cp, 0, sizeof(cp));
+	cp.handle = handle;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf    = OGF_LE_CTL;
+	rq.ocf    = OCF_LE_READ_REMOTE_USED_FEATURES;
+	rq.event  = EVT_LE_READ_REMOTE_USED_FEATURES_COMPLETE;
+	rq.cparam = &cp;
+	rq.clen   = LE_READ_REMOTE_USED_FEATURES_CP_SIZE;
+	rq.rparam = &rp;
+	rq.rlen   = EVT_LE_READ_REMOTE_USED_FEATURES_COMPLETE_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	if (features)
+		memcpy(features, rp.features, 8);
 
 	return 0;
 }

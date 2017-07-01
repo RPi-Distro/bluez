@@ -36,14 +36,13 @@
 #include <string.h>
 #include <getopt.h>
 #include <sys/socket.h>
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-
 #include <netinet/in.h>
+
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
 
 #include "src/sdp-xml.h"
 
@@ -227,15 +226,32 @@ static struct attrib_def audio_attrib_names[] = {
 	{ 0x302, "Remote audio volume control", NULL, 0 },
 };
 
+/* Name of the various IrMCSync attributes. See BT assigned numbers */
+static struct attrib_def irmc_attrib_names[] = {
+	{ 0x0301, "SupportedDataStoresList", NULL, 0 },
+};
+
 /* Name of the various GOEP attributes. See BT assigned numbers */
 static struct attrib_def goep_attrib_names[] = {
 	{ 0x200, "GoepL2capPsm", NULL, 0 },
+};
+
+/* Name of the various PBAP attributes. See BT assigned numbers */
+static struct attrib_def pbap_attrib_names[] = {
+	{ 0x0314, "SupportedRepositories", NULL, 0 },
+	{ 0x0317, "PbapSupportedFeatures", NULL, 0 },
 };
 
 /* Name of the various MAS attributes. See BT assigned numbers */
 static struct attrib_def mas_attrib_names[] = {
 	{ 0x0315, "MASInstanceID", NULL, 0 },
 	{ 0x0316, "SupportedMessageTypes", NULL, 0 },
+	{ 0x0317, "MapSupportedFeatures", NULL, 0 },
+};
+
+/* Name of the various MNS attributes. See BT assigned numbers */
+static struct attrib_def mns_attrib_names[] = {
+	{ 0x0317, "MapSupportedFeatures", NULL, 0 },
 };
 
 /* Same for the UUIDs. See BT assigned numbers */
@@ -272,7 +288,8 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x1101, "SerialPort", NULL, 0 },
 	{ 0x1102, "LANAccessUsingPPP", NULL, 0 },
 	{ 0x1103, "DialupNetworking (DUN)", NULL, 0 },
-	{ 0x1104, "IrMCSync", NULL, 0 },
+	{ 0x1104, "IrMCSync",
+		irmc_attrib_names, N_ELEMENTS(irmc_attrib_names) },
 	{ 0x1105, "OBEXObjectPush",
 		goep_attrib_names, N_ELEMENTS(goep_attrib_names) },
 	{ 0x1106, "OBEXFileTransfer",
@@ -321,12 +338,14 @@ static struct uuid_def uuid16_names[] = {
 	{ 0x112c, "Audio/Video", NULL, 0 },
 	{ 0x112d, "SIM Access (SAP)", NULL, 0 },
 	{ 0x112e, "Phonebook Access (PBAP) - PCE", NULL, 0 },
-	{ 0x112f, "Phonebook Access (PBAP) - PSE", NULL, 0 },
+	{ 0x112f, "Phonebook Access (PBAP) - PSE",
+		pbap_attrib_names, N_ELEMENTS(pbap_attrib_names) },
 	{ 0x1130, "Phonebook Access (PBAP)", NULL, 0 },
 	{ 0x1131, "Headset (HSP)", NULL, 0 },
 	{ 0x1132, "Message Access (MAP) - MAS",
 		mas_attrib_names, N_ELEMENTS(mas_attrib_names) },
-	{ 0x1133, "Message Access (MAP) - MNS", NULL, 0 },
+	{ 0x1133, "Message Access (MAP) - MNS",
+		mns_attrib_names, N_ELEMENTS(mns_attrib_names) },
 	{ 0x1134, "Message Access (MAP)", NULL, 0 },
 	/* ... */
 	{ 0x1200, "PnPInformation",
@@ -902,9 +921,14 @@ static int set_attribseq(sdp_session_t *session, uint32_t handle, uint16_t attri
 	}
 
 	/* Create arrays */
-	dtdArray = (void **)malloc(argc * sizeof(void *));
-	valueArray = (void **)malloc(argc * sizeof(void *));
-	allocArray = (void **)malloc(argc * sizeof(void *));
+	dtdArray = malloc(argc * sizeof(void *));
+	valueArray = malloc(argc * sizeof(void *));
+	allocArray = malloc(argc * sizeof(void *));
+
+	if (!dtdArray || !valueArray || !allocArray) {
+		ret = -ENOMEM;
+		goto cleanup;
+	}
 
 	/* Loop on all args, add them in arrays */
 	for (i = 0; i < argc; i++) {
@@ -912,7 +936,12 @@ static int set_attribseq(sdp_session_t *session, uint32_t handle, uint16_t attri
 		if (!strncasecmp(argv[i], "u0x", 3)) {
 			/* UUID16 */
 			uint16_t value_int = strtoul((argv[i]) + 3, NULL, 16);
-			uuid_t *value_uuid = (uuid_t *) malloc(sizeof(uuid_t));
+			uuid_t *value_uuid = malloc(sizeof(uuid_t));
+			if (!value_uuid) {
+				ret = -ENOMEM;
+				goto cleanup;
+			}
+
 			allocArray[i] = value_uuid;
 			sdp_uuid16_create(value_uuid, value_int);
 
@@ -921,7 +950,12 @@ static int set_attribseq(sdp_session_t *session, uint32_t handle, uint16_t attri
 			valueArray[i] = &value_uuid->value.uuid16;
 		} else if (!strncasecmp(argv[i], "0x", 2)) {
 			/* Int */
-			uint32_t *value_int = (uint32_t *) malloc(sizeof(int));
+			uint32_t *value_int = malloc(sizeof(int));
+			if (!value_int) {
+				ret = -ENOMEM;
+				goto cleanup;
+			}
+
 			allocArray[i] = value_int;
 			*value_int = strtoul((argv[i]) + 2, NULL, 16);
 
@@ -948,9 +982,14 @@ static int set_attribseq(sdp_session_t *session, uint32_t handle, uint16_t attri
 	} else
 		printf("Failed to create pSequenceHolder\n");
 
+cleanup:
+	if (ret == -ENOMEM)
+		printf("Memory allocation failed\n");
+
 	/* Cleanup */
 	for (i = 0; i < argc; i++)
-		free(allocArray[i]);
+		if (allocArray)
+			free(allocArray[i]);
 
 	free(dtdArray);
 	free(valueArray);
@@ -1881,6 +1920,86 @@ static int add_pbap(sdp_session_t *session, svc_info_t *si)
 	}
 
 	printf("PBAP service registered\n");
+
+end:
+	sdp_data_free(channel);
+	sdp_list_free(proto[0], 0);
+	sdp_list_free(proto[1], 0);
+	sdp_list_free(proto[2], 0);
+	sdp_list_free(apseq, 0);
+	sdp_list_free(pfseq, 0);
+	sdp_list_free(aproto, 0);
+	sdp_list_free(root, 0);
+	sdp_list_free(svclass_id, 0);
+
+	return ret;
+}
+
+static int add_map(sdp_session_t *session, svc_info_t *si)
+{
+	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
+	uuid_t root_uuid, map_uuid, l2cap_uuid, rfcomm_uuid, obex_uuid;
+	sdp_profile_desc_t profile[1];
+	sdp_list_t *aproto, *proto[3];
+	sdp_record_t record;
+	uint8_t chan = si->channel ? si->channel : 17;
+	sdp_data_t *channel;
+	uint8_t msg_formats[] = {0x0f};
+	uint32_t supp_features[] = {0x0000007f};
+	uint8_t dtd_msg = SDP_UINT8, dtd_sf = SDP_UINT32;
+	sdp_data_t *smlist;
+	sdp_data_t *sflist;
+	int ret = 0;
+
+	memset(&record, 0, sizeof(sdp_record_t));
+	record.handle = si->handle;
+
+	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
+	root = sdp_list_append(0, &root_uuid);
+	sdp_set_browse_groups(&record, root);
+
+	sdp_uuid16_create(&map_uuid, MAP_MSE_SVCLASS_ID);
+	svclass_id = sdp_list_append(0, &map_uuid);
+	sdp_set_service_classes(&record, svclass_id);
+
+	sdp_uuid16_create(&profile[0].uuid, MAP_PROFILE_ID);
+	profile[0].version = 0x0100;
+	pfseq = sdp_list_append(0, profile);
+	sdp_set_profile_descs(&record, pfseq);
+
+	sdp_uuid16_create(&l2cap_uuid, L2CAP_UUID);
+	proto[0] = sdp_list_append(0, &l2cap_uuid);
+	apseq = sdp_list_append(0, proto[0]);
+
+	sdp_uuid16_create(&rfcomm_uuid, RFCOMM_UUID);
+	proto[1] = sdp_list_append(0, &rfcomm_uuid);
+	channel = sdp_data_alloc(SDP_UINT8, &chan);
+	proto[1] = sdp_list_append(proto[1], channel);
+	apseq = sdp_list_append(apseq, proto[1]);
+
+	sdp_uuid16_create(&obex_uuid, OBEX_UUID);
+	proto[2] = sdp_list_append(0, &obex_uuid);
+	apseq = sdp_list_append(apseq, proto[2]);
+
+	aproto = sdp_list_append(0, apseq);
+	sdp_set_access_protos(&record, aproto);
+
+	smlist = sdp_data_alloc(dtd_msg, msg_formats);
+	sdp_attr_add(&record, SDP_ATTR_SUPPORTED_MESSAGE_TYPES, smlist);
+
+	sflist = sdp_data_alloc(dtd_sf, supp_features);
+	sdp_attr_add(&record, SDP_ATTR_MAP_SUPPORTED_FEATURES, sflist);
+
+	sdp_set_info_attr(&record, "OBEX Message Access Server", 0, 0);
+
+	if (sdp_device_record_register(session, &interface, &record,
+			SDP_RECORD_PERSIST) < 0) {
+		printf("Service Record registration failed\n");
+		ret = -1;
+		goto end;
+	}
+
+	printf("MAP service registered\n");
 
 end:
 	sdp_data_free(channel);
@@ -3527,6 +3646,7 @@ struct {
 	{ "SAP",	SAP_SVCLASS_ID,			add_simaccess	},
 	{ "PBAP",	PBAP_SVCLASS_ID,		add_pbap,	},
 
+	{ "MAP",	MAP_SVCLASS_ID,			add_map,	},
 	{ "NAP",	NAP_SVCLASS_ID,			add_nap		},
 	{ "GN",		GN_SVCLASS_ID,			add_gn		},
 	{ "PANU",	PANU_SVCLASS_ID,		add_panu	},

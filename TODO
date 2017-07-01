@@ -15,7 +15,7 @@ Background
   once the task is better understood.
 
 General
-==========
+=======
 
 - UUID handling: Use the new functions created for UUID handling in all parts
   of BlueZ code.  Currently, the new bt_uuid_* functions are being used by
@@ -64,65 +64,25 @@ General
 Low Energy
 ==========
 
-- Advertising management. Adapter interface needs to be changed to manage
-  connection modes, adapter type and advertising policy. See Volume 3,
-  Part C, section 9.3. If Attribute Server is enabled the LE capable
-  adapter shall to start advertising. Further investigation is necessary
-  to define which connectable mode needs to be supported: Non-connectable,
-  directed connectable and undirected connectable. Basically, two connectable
-  scenarios shall be addressed:
-  1. GATT client is disconnected, but intends to become a Peripheral to
-     receive indications/notifications.
-  2. GATT server intends to accept connections.
+- Connection modes. Adapter interface needs to be changed to manage
+  connection modes and adapter type. See Volume 3, Part C, section 9.3.
+  1. Mode management: Peripheral / Central
 
   Priority: Medium
   Complexity: C2
 
-- Define Auto Connection Establishment Procedure. Some profiles such as
-  Proximity requires an active link to identify path lost situation. It is
-  necessary to define how to manage connections, it seems that White List
-  is appropriated to address auto connections, however is not clear if the
-  this procedure shall be a profile specific detail or if the remote device
-  object can expose a property "WhiteList", maybe "Trusted" property can be
-  also used for this purpose. Another alternative is to define a method to
-  allow application to request/register the wanted scanning/connection
-  parameters. Before start this task, a RFC/PATCH shall be sent to the ML.
-  See Volume 3, Part C, section 9.3.5 for more information.
+- Advertising data. The D-Bus interface needs to be updated to enable setting
+  scan response data, and to read the advertising and scan response data which
+  has been broadcast from other LE devices.
 
   Priority: Medium
   Complexity: C2
-
-- Implement a tool(or extend hciconfig) to setup the advertising parameters
-  and data. Extend hciconfig passing extra arguments when enabling the
-  advertises is not the right approach, it will be almost impossible to
-  address all arguments needed in an acceptable way. For testing, we need
-  a tool to change easily the AD Flags, the UUIDs and other data that can be
-  exported through the advertising data field. Suggestions: 1) extend hciconfig
-  passing a config file when enabling advertises; 2) write a ncurses based tool
-
-  Priority: Medium
-  Complexity: C2
-
-- Privacy: When privacy is enabled in the adapter, LE scanning/connection
-  should use a private address. StartDiscovery method shall be changed and
-  new adapter property shall be added.
-
-  Priority: Medium
-  Complexity: C1
 
 - Static random address setup and storage. Once this address is written
   in a given remote, the address can not be changed anymore.
 
   Priority: Low
   Complexity: C1
-
-- Reconnection address: Reconnection address is a non resolvable private
-  address that the central writes in the peripheral. BlueZ will support
-  multiple profiles, it is not clear how it needs to be implemented.
-  Further discussion is necessary.
-
-  Priority: Low
-  Complexity: C2
 
 - Device Name Characteristic is a GAP characteristic for Low Energy. This
   characteristic shall be integrated/used in the discovery procedure. The
@@ -139,75 +99,112 @@ Low Energy
 ATT/GATT (new shared stack)
 ===========================
 
-- shared/att currently doesn't handle signed writes. It should be extended to
-  support signing outgoing and verify incoming ATT PDUs.
+- Add complete GATT test coverage in unit/test-gatt following the GATT test
+  spec. This could use shared/gatt-client and shared/gatt-server at the same
+  time to test both against eachother. We should definitely have tests for
+  gatt-server and gatt-client simultaneously on one side of the connection.
 
-  Priority: Medium
-  Complexity: C1
+  Priority: High
+  Complexity: C4
 
-- Properly handle indications from the "Service Changed" characteristic.
-  shared/gatt-client should automatically rediscover all changed GATT services
-  and notify the upper layer using a specially assigned handler.
+- Write an example using client D-Bus API using C.
 
-  Priority: Medium
-  Complexity: C1
+  Priority: High
+  Complexity: C2
 
-- Define API functions in shared/gatt-client for enabling/disabling
-  characteristic handle-value notifications/indications on a reference counted
-  basis. Code that is no longer interested in notifications from a
-  characteristic should be able to unregister any callbacks without writing to
-  the "Client Characteristic Configuration" descriptor if there are others who
-  are still interested.
+- Write an example using client D-Bus API using python.
+
+  Priority: High
+  Complexity: C2
+
+- Define packed structs for ATT protocol PDUs in shared/att-types to improve
+  readability. We should probably do this once there are extensive unit tests
+  for gatt-client/gatt-server so that we don't accidentally break working code.
 
   Priority: Medium
   Complexity: C2
 
-- Introduce a handler interface to shared/gatt-client which can be used by the
-  upper layer to determine when the link has been disconnected or an ATT
-  protocol request times out.
+- Use struct iovec to pass around byte buffers that will be sent over the wire,
+  instead of passing uint8_t and size_t parameters everywhere.
 
   Priority: Medium
-  Complexity: C2
+  Complexity: C1
 
-- Introduce long-term caching of attributes to shared/gatt-client, such that the
-  services, characteristics, and descriptors obtained from a peripheral are
-  remembered in the case of bonding. This may involve storing data about GATT
-  services to disk.
+- Persist client attribute cache across reboots.
 
-  Priority: Low
+  Priority: Medium
   Complexity: C4
 
 - Move all daemon plugins and profiles that are GATT based to use
   shared/gatt-client instead of attrib/*. This is a complicated task that
   potentially needs a new plugin/profile probing interface and a lot of
-  rewriting that can cause regressions in existing functionality. The biggest
-  challenge here is that an instance of bt_att (shared/att) and GAttrib
-  (attrib/gattrib) cannot coexist on the same file descriptor, since they will
-  cause ATT protocol violations by breaking the sequential request-response
-  structure. A special shared/gatt-client-gattrib implementation may be
-  necessary to move each profile/plugin to the new API before actually switching
-  to the shared/att based implementation.
+  rewriting that can cause regressions in existing functionality.
 
   Priority: Medium
   Complexity: C4
 
-- Implement the client portion of doc/gatt-api.txt using shared/gatt-client once
-  plugin/profile code uses it.
+- Introduce a way for shared/gatt-server to check security permissions on the
+  current connection through bt_att.
 
   Priority: Medium
   Complexity: C2
 
-- Introduce shared/gatt-server, which combined with shared/gatt-db, can be used
-  as a GATT server implementation.
+- Implement other low-priority ATT protocol operations for shared/gatt-server:
 
-  Priority: Medium
-  Complexity: C2
+      Read Multiple Request
+
+  Priority: Low
+  Complexity: C1
 
 - Implement the server portion of doc/gatt-api.txt using shared/gatt-server once
   it exists.
 
   Priority: Medium
   Complexity: C4
+
+- Send out indications from the "Service Changed" characteristic upon
+  reconnection if a bonded device is not connected when the local database is
+  modified.
+
+  Priority: High
+  Complexity: C2
+
+- Unify the GATT server and client D-Bus implementations into a single module.
+  While these don't share a lot of code, keeping them all in src/gatt-dbus seems
+  to make more sense from an organizational perspective.
+
+  Priority: Low
+  Complexity: C1
+
+- Isolate all GATT code inside the daemon into its own module and perform
+  interaction with other modules (e.g. src/device.c) via callbacks. This
+  includes client/server management, tracking incoming/outgoing connections for
+  ATT, and callbacks to perform profile probing.
+
+  Priority: Low
+  Complexity: C4
+
+- Support included services in the GATT D-Bus client API.
+
+  Priority: Medium
+  Complexity: C1
+
+- The recently added support for ATT signed writes requires the following kernel
+  modules to be enabled:
+
+     CONFIG_CRYPTO_USER_API
+     CONFIG_CRYPTO_USER_API_HASH
+     CONFIG_CRYPTO_USER_API_SKCIPHER
+
+  Currently, if these are not enabled, bt_att_new silently returns NULL. We
+  should handle this more gracefully by not supporting signed writes if we can't
+  initialize bt_crypto while succeeding bt_att initialization regardless.
+
+  This behavior should be documented in the README.
+
+  Priority: High
+  Complexity: C1
+
 
 ATT/GATT (old/outdated)
 =======================
@@ -283,9 +280,3 @@ ATT/GATT (old/outdated)
 
 Management Interface
 ====================
-
-- Whitelist support (initially only for LE)
-
-  Priority: Medium
-  Complexity: C2
-  Owner: Andre Guedes <andre.guedes@openbossa.org>

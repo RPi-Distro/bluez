@@ -15,10 +15,15 @@
  *
  */
 
+#include <string.h>
+#include <inttypes.h>
+
 #include "if-main.h"
 #include "terminal.h"
+#include "../hal-msg.h"
 #include "../hal-utils.h"
 
+static hw_device_t *bt_device;
 const bt_interface_t *if_bluetooth;
 
 #define VERIFY_PROP_TYPE_ARG(n, typ) \
@@ -113,10 +118,19 @@ void add_remote_device(const bt_bdaddr_t *addr)
 
 	/* Realloc space if needed */
 	if (remote_devices_cnt >= remote_devices_capacity) {
+		bt_bdaddr_t *tmp;
+
 		remote_devices_capacity *= 2;
+		/*
+		 * Save reference to previously allocated memory block so that
+		 * it can be freed in case realloc fails.
+		 */
+		tmp = remote_devices;
+
 		remote_devices = realloc(remote_devices, sizeof(bt_bdaddr_t) *
 						remote_devices_capacity);
 		if (remote_devices == NULL) {
+			free(tmp);
 			remote_devices_capacity = 0;
 			remote_devices_cnt = 0;
 			return;
@@ -157,6 +171,15 @@ static void add_remote_device_from_props(int num_properties,
 		if (property.type == BT_PROPERTY_BDADDR)
 			add_remote_device((bt_bdaddr_t *) property.val);
 	}
+}
+
+bool close_hw_bt_dev(void)
+{
+	if (!bt_device)
+		return false;
+
+	bt_device->close(bt_device);
+	return true;
 }
 
 static void adapter_state_changed_cb(bt_state_t state)
@@ -285,6 +308,8 @@ static void ssp_request_cb(bt_bdaddr_t *remote_bd_addr, bt_bdname_t *bd_name,
 
 		terminal_prompt_for(prompt, ssp_request_yes_no_answer);
 		break;
+	case BT_SSP_VARIANT_PASSKEY_ENTRY:
+	case BT_SSP_VARIANT_PASSKEY_NOTIFICATION:
 	default:
 		haltest_info("Not automatically handled\n");
 		break;
@@ -325,6 +350,18 @@ static void le_test_mode_cb(bt_status_t status, uint16_t num_packets)
 								num_packets);
 }
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static void energy_info_cb(bt_activity_energy_info *energy_info)
+{
+	haltest_info("%s status=%s, ctrl_state=0x%02X, tx_time=0x%jx,"
+			"rx_time=0x%jx, idle_time=0x%jx, energu_used=0x%jx\n",
+			__func__, bt_status_t2str(energy_info->status),
+			energy_info->ctrl_state, energy_info->tx_time,
+			energy_info->rx_time, energy_info->idle_time,
+			energy_info->energy_used);
+}
+#endif
+
 static bt_callbacks_t bt_callbacks = {
 	.size = sizeof(bt_callbacks),
 	.adapter_state_changed_cb = adapter_state_changed_cb,
@@ -338,14 +375,55 @@ static bt_callbacks_t bt_callbacks = {
 	.acl_state_changed_cb = acl_state_changed_cb,
 	.thread_evt_cb = thread_evt_cb,
 	.dut_mode_recv_cb = dut_mode_recv_cb,
-	.le_test_mode_cb = le_test_mode_cb
+	.le_test_mode_cb = le_test_mode_cb,
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	.energy_info_cb = energy_info_cb,
+#endif
 };
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static alarm_cb alarm_cb_p = NULL;
+static void *alarm_cb_p_data = NULL;
+
+static bool set_wake_alarm(uint64_t delay_millis, bool should_wake, alarm_cb cb,
+								void *data)
+{
+	haltest_info("%s: delay %"PRIu64" should_wake %u cb %p data %p\n",
+				__func__, delay_millis, should_wake, cb, data);
+
+	/* TODO call alarm callback after specified delay */
+	alarm_cb_p = cb;
+	alarm_cb_p_data = data;
+
+	return true;
+}
+
+static int acquire_wake_lock(const char *lock_name)
+{
+	haltest_info("%s: %s\n", __func__, lock_name);
+
+	return BT_STATUS_SUCCESS;
+}
+
+static int release_wake_lock(const char *lock_name)
+{
+	haltest_info("%s: %s\n", __func__, lock_name);
+
+	return BT_STATUS_SUCCESS;
+}
+
+static bt_os_callouts_t bt_os_callouts = {
+	.size = sizeof(bt_os_callouts),
+	.set_wake_alarm = set_wake_alarm,
+	.acquire_wake_lock = acquire_wake_lock,
+	.release_wake_lock = release_wake_lock,
+};
+#endif
 
 static void init_p(int argc, const char **argv)
 {
 	int err;
 	const hw_module_t *module;
-	hw_device_t *device;
 
 	err = hw_get_module(BT_HARDWARE_MODULE_ID, &module);
 	if (err) {
@@ -353,20 +431,24 @@ static void init_p(int argc, const char **argv)
 		return;
 	}
 
-	err = module->methods->open(module, BT_HARDWARE_MODULE_ID, &device);
+	err = module->methods->open(module, BT_HARDWARE_MODULE_ID, &bt_device);
 	if (err) {
 		haltest_error("module->methods->open returned %d\n", err);
 		return;
 	}
 
 	if_bluetooth =
-		    ((bluetooth_device_t *) device)->get_bluetooth_interface();
+		((bluetooth_device_t *) bt_device)->get_bluetooth_interface();
 	if (!if_bluetooth) {
 		haltest_error("get_bluetooth_interface returned NULL\n");
 		return;
 	}
 
 	EXEC(if_bluetooth->init, &bt_callbacks);
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	EXEC(if_bluetooth->set_os_callouts, &bt_os_callouts);
+#endif
 }
 
 static void cleanup_p(int argc, const char **argv)
@@ -384,6 +466,28 @@ static void enable_p(int argc, const char **argv)
 
 	EXEC(if_bluetooth->enable);
 }
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static void read_energy_info_p(int argc, const char **argv)
+{
+	RETURN_IF_NULL(if_bluetooth);
+
+	EXEC(if_bluetooth->read_energy_info);
+}
+
+#define get_connection_state_c complete_addr_c
+
+static void get_connection_state_p(int argc, const char **argv)
+{
+	bt_bdaddr_t addr;
+
+	RETURN_IF_NULL(if_bluetooth);
+
+	VERIFY_ADDR_ARG(2, &addr);
+
+	haltest_info("if_bluetooth->get_connection_state : %d\n",
+				if_bluetooth->get_connection_state(&addr));
+}
+#endif
 
 static void disable_p(int argc, const char **argv)
 {
@@ -470,6 +574,19 @@ static void set_adapter_property_p(int argc, const char **argv)
 		property.len = sizeof(timeout);
 		break;
 
+	case BT_PROPERTY_BDADDR:
+	case BT_PROPERTY_UUIDS:
+	case BT_PROPERTY_CLASS_OF_DEVICE:
+	case BT_PROPERTY_TYPE_OF_DEVICE:
+	case BT_PROPERTY_SERVICE_RECORD:
+	case BT_PROPERTY_ADAPTER_BONDED_DEVICES:
+	case BT_PROPERTY_REMOTE_FRIENDLY_NAME:
+	case BT_PROPERTY_REMOTE_RSSI:
+	case BT_PROPERTY_REMOTE_VERSION_INFO:
+	case BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP:
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	case BT_PROPERTY_LOCAL_LE_FEATURES:
+#endif
 	default:
 		haltest_error("Invalid property %s\n", argv[3]);
 		return;
@@ -546,6 +663,21 @@ static void set_remote_device_property_p(int argc, const char **argv)
 		property.len = strlen(argv[4]);
 		property.val = (char *) argv[4];
 		break;
+	case BT_PROPERTY_BDNAME:
+	case BT_PROPERTY_BDADDR:
+	case BT_PROPERTY_UUIDS:
+	case BT_PROPERTY_CLASS_OF_DEVICE:
+	case BT_PROPERTY_TYPE_OF_DEVICE:
+	case BT_PROPERTY_SERVICE_RECORD:
+	case BT_PROPERTY_ADAPTER_SCAN_MODE:
+	case BT_PROPERTY_ADAPTER_BONDED_DEVICES:
+	case BT_PROPERTY_ADAPTER_DISCOVERY_TIMEOUT:
+	case BT_PROPERTY_REMOTE_RSSI:
+	case BT_PROPERTY_REMOTE_VERSION_INFO:
+	case BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP:
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	case BT_PROPERTY_LOCAL_LE_FEATURES:
+#endif
 	default:
 		return;
 	}
@@ -607,11 +739,23 @@ static void cancel_discovery_p(int argc, const char **argv)
 static void create_bond_p(int argc, const char **argv)
 {
 	bt_bdaddr_t addr;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	int transport;
+#endif
 
 	RETURN_IF_NULL(if_bluetooth);
 	VERIFY_ADDR_ARG(2, &addr);
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	if (argc < 4)
+		transport = BT_TRANSPORT_UNKNOWN;
+	else
+		transport = atoi(argv[3]);
+
+	EXEC(if_bluetooth->create_bond, &addr, transport);
+#else
 	EXEC(if_bluetooth->create_bond, &addr);
+#endif
 }
 
 /* Just addres to complete, use complete_addr_c */
@@ -732,6 +876,12 @@ static void get_profile_interface_c(int argc, const char **argv,
 		BT_PROFILE_PAN_ID,
 		BT_PROFILE_GATT_ID,
 		BT_PROFILE_AV_RC_ID,
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+		BT_PROFILE_HANDSFREE_CLIENT_ID,
+		BT_PROFILE_MAP_CLIENT_ID,
+		BT_PROFILE_AV_RC_CTRL_ID,
+		BT_PROFILE_ADVANCED_AUDIO_SINK_ID,
+#endif
 		NULL
 	};
 
@@ -770,6 +920,16 @@ static void get_profile_interface_p(int argc, const char **argv)
 		pif = (const void **) &if_rc;
 	else if (strcmp(BT_PROFILE_GATT_ID, id) == 0)
 		pif = (const void **) &if_gatt;
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	else if (strcmp(BT_PROFILE_AV_RC_CTRL_ID, id) == 0)
+		pif = (const void **) &if_rc_ctrl;
+	else if (strcmp(BT_PROFILE_HANDSFREE_CLIENT_ID, id) == 0)
+		pif = (const void **) &if_hf_client;
+	else if (strcmp(BT_PROFILE_MAP_CLIENT_ID, id) == 0)
+		pif = (const void **) &if_mce;
+	else if (strcmp(BT_PROFILE_ADVANCED_AUDIO_SINK_ID, id) == 0)
+		pif = (const void **) &if_av_sink;
+#endif
 	else
 		haltest_error("%s is not correct for get_profile_interface\n",
 									id);
@@ -838,7 +998,13 @@ static struct method methods[] = {
 	STD_METHODCH(get_remote_services, "<addr>"),
 	STD_METHOD(start_discovery),
 	STD_METHOD(cancel_discovery),
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	STD_METHODCH(create_bond, "<addr> [<transport>]"),
+	STD_METHOD(read_energy_info),
+	STD_METHODCH(get_connection_state, "<addr>"),
+#else
 	STD_METHODCH(create_bond, "<addr>"),
+#endif
 	STD_METHODCH(remove_bond, "<addr>"),
 	STD_METHODCH(cancel_bond, "<addr>"),
 	STD_METHODCH(pin_reply, "<address> [<pin>]"),

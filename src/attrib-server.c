@@ -34,11 +34,11 @@
 #include <glib.h>
 #include <sys/stat.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
 #include "lib/uuid.h"
+
 #include "btio/btio.h"
 #include "log.h"
 #include "adapter.h"
@@ -97,15 +97,6 @@ static bt_uuid_t ccc_uuid = {
 			.type = BT_UUID16,
 			.value.u16 = GATT_CLIENT_CHARAC_CFG_UUID
 };
-
-static inline void put_uuid_le(const bt_uuid_t *src, void *dst)
-{
-	if (src->type == BT_UUID16)
-		put_le16(src->value.u16, dst);
-	else
-		/* Convert from 128-bit BE to LE */
-		bswap_128(&src->value.u128, dst);
-}
 
 static void attrib_free(void *data)
 {
@@ -370,6 +361,18 @@ static struct attribute *attrib_db_add_new(struct gatt_server *server,
 								attribute_cmp);
 
 	return a;
+}
+
+static bool g_attrib_is_encrypted(GAttrib *attrib)
+{
+	BtIOSecLevel sec_level;
+	GIOChannel *io = g_attrib_get_channel(attrib);
+
+	if (!bt_io_get(io, NULL, BT_IO_OPT_SEC_LEVEL, &sec_level,
+							     BT_IO_OPT_INVALID))
+		return FALSE;
+
+	return sec_level > BT_IO_SEC_LOW;
 }
 
 static uint8_t att_check_reqs(struct gatt_channel *channel, uint8_t opcode,
@@ -685,7 +688,7 @@ static uint16_t find_info(struct gatt_channel *channel, uint16_t start,
 		put_le16(a->handle, value);
 
 		/* Attribute Value */
-		put_uuid_le(&a->uuid, &value[2]);
+		bt_uuid_to_le(&a->uuid, &value[2]);
 	}
 
 	length = enc_find_info_resp(format, adl, pdu, len);
@@ -844,7 +847,7 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 
 	a = l->data;
 
-	if (a->len <= offset)
+	if (a->len < offset)
 		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
 					ATT_ECODE_INVALID_OFFSET, pdu, len);
 
@@ -1211,43 +1214,32 @@ guint attrib_channel_attach(GAttrib *attrib)
 	return channel->id;
 }
 
-static int channel_id_cmp(gconstpointer data, gconstpointer user_data)
+static struct gatt_channel *find_channel(guint id)
 {
-	const struct gatt_channel *channel = data;
-	guint id = GPOINTER_TO_UINT(user_data);
+	GSList *l;
 
-	return channel->id - id;
+	for (l = servers; l; l = g_slist_next(l)) {
+		struct gatt_server *server = l->data;
+		GSList *c;
+
+		for (c = server->clients; c; c = g_slist_next(c)) {
+			struct gatt_channel *channel = c->data;
+
+			if (channel->id == id)
+				return channel;
+		}
+	}
+
+	return NULL;
 }
 
 gboolean attrib_channel_detach(GAttrib *attrib, guint id)
 {
-	struct gatt_server *server;
 	struct gatt_channel *channel;
-	GError *gerr = NULL;
-	GIOChannel *io;
-	bdaddr_t src;
-	GSList *l;
 
-	io = g_attrib_get_channel(attrib);
-
-	bt_io_get(io, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src, BT_IO_OPT_INVALID);
-
-	if (gerr != NULL) {
-		error("bt_io_get: %s", gerr->message);
-		g_error_free(gerr);
+	channel = find_channel(id);
+	if (channel == NULL)
 		return FALSE;
-	}
-
-	server = find_gatt_server(&src);
-	if (server == NULL)
-		return FALSE;
-
-	l = g_slist_find_custom(server->clients, GUINT_TO_POINTER(id),
-								channel_id_cmp);
-	if (!l)
-		return FALSE;
-
-	channel = l->data;
 
 	g_attrib_unregister(channel->attrib, channel->id);
 	channel_remove(channel);
@@ -1288,7 +1280,7 @@ static void connect_event(GIOChannel *io, GError *gerr, void *user_data)
 	if (!device)
 		return;
 
-	device_attach_attrib(device, io);
+	device_attach_att(device, io);
 }
 
 static gboolean register_core_services(struct gatt_server *server)

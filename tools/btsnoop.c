@@ -35,6 +35,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <getopt.h>
+#include <endian.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
 
@@ -211,8 +212,9 @@ next_packet:
 		goto next_packet;
 	}
 
-	written = input_pkt[select_input].size = htobe32(toread - 1);
-	written = input_pkt[select_input].len = htobe32(toread - 1);
+	written = htobe32(toread - 1);
+	input_pkt[select_input].size = written;
+	input_pkt[select_input].len = written;
 
 	switch (buf[0]) {
 	case 0x01:
@@ -228,7 +230,7 @@ next_packet:
 		if (flags & 0x01)
 			opcode = BTSNOOP_OPCODE_SCO_RX_PKT;
 		else
-			opcode = BTSNOOP_OPCODE_ACL_TX_PKT;
+			opcode = BTSNOOP_OPCODE_SCO_TX_PKT;
 		break;
 	case 0x04:
 		opcode = BTSNOOP_OPCODE_EVENT_PKT;

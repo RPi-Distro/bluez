@@ -36,6 +36,7 @@ struct context {
 	int fd_server;
 	int fd_client;
 	struct hfp_gw *hfp;
+	struct hfp_hf *hfp_hf;
 	const struct test_data *data;
 	unsigned int pdu_offset;
 };
@@ -52,6 +53,9 @@ struct test_data {
 	char *test_name;
 	struct test_pdu *pdu_list;
 	hfp_result_func_t result_func;
+	hfp_response_func_t response_func;
+	hfp_hf_result_func_t hf_result_func;
+	GIOFunc test_handler;
 };
 
 #define data(args...) ((const unsigned char[]) { args })
@@ -91,10 +95,25 @@ struct test_data {
 		};							\
 		static struct test_data data;				\
 		data.test_name = g_strdup(name);			\
-		data.pdu_list = g_malloc(sizeof(pdus));			\
+		data.pdu_list = g_memdup(pdus, sizeof(pdus));		\
 		data.result_func = result_function;			\
-		memcpy(data.pdu_list, pdus, sizeof(pdus));		\
 		g_test_add_data_func(name, &data, function);		\
+		data.test_handler = test_handler;			\
+	} while (0)
+
+#define define_hf_test(name, function, result_func, response_function,	\
+								args...)\
+	do {								\
+		const struct test_pdu pdus[] = {			\
+			args, { }					\
+		};							\
+		static struct test_data data;				\
+		data.test_name = g_strdup(name);			\
+		data.pdu_list = g_memdup(pdus, sizeof(pdus));		\
+		data.hf_result_func = result_func;			\
+		data.response_func = response_function;			\
+		g_test_add_data_func(name, &data, function);		\
+		data.test_handler = test_hf_handler;			\
 	} while (0)
 
 static void context_quit(struct context *context)
@@ -126,6 +145,51 @@ static gboolean test_handler(GIOChannel *channel, GIOCondition cond,
 	return FALSE;
 }
 
+static gboolean send_pdu(gpointer user_data)
+{
+	struct context *context = user_data;
+	const struct test_pdu *pdu;
+	ssize_t len;
+
+	pdu = &context->data->pdu_list[context->pdu_offset++];
+	if (!pdu || !pdu->valid)
+		return FALSE;
+
+	len = write(context->fd_server, pdu->data, pdu->size);
+	g_assert_cmpint(len, ==, pdu->size);
+
+	pdu = &context->data->pdu_list[context->pdu_offset];
+	if (pdu->fragmented)
+		g_idle_add(send_pdu, context);
+
+	return FALSE;
+}
+
+static gboolean test_hf_handler(GIOChannel *channel, GIOCondition cond,
+							gpointer user_data)
+{
+	struct context *context = user_data;
+	gchar buf[60];
+	gsize bytes_read;
+	GError *error = NULL;
+
+	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
+		goto done;
+
+	/* dummy read */
+	g_io_channel_read_chars(channel, buf, 60, &bytes_read, &error);
+
+	send_pdu(context);
+
+	return TRUE;
+
+done:
+	context_quit(context);
+	context->watch_id = 0;
+
+	return FALSE;
+}
+
 static void cmd_handler(const char *command, void *user_data)
 {
 	struct context *context = user_data;
@@ -140,7 +204,7 @@ static void cmd_handler(const char *command, void *user_data)
 	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
 }
 
-static void prefix_handler(struct hfp_gw_result *result,
+static void prefix_handler(struct hfp_context *result,
 				enum hfp_gw_cmd_type type, void *user_data)
 {
 	struct context *context = user_data;
@@ -158,6 +222,7 @@ static struct context *create_context(gconstpointer data)
 	struct context *context = g_new0(struct context, 1);
 	GIOChannel *channel;
 	int err, sv[2];
+	const struct test_data *d = data;
 
 	context->main_loop = g_main_loop_new(NULL, FALSE);
 	g_assert(context->main_loop);
@@ -173,7 +238,8 @@ static struct context *create_context(gconstpointer data)
 
 	context->watch_id = g_io_add_watch(channel,
 				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				test_handler, context);
+				d->test_handler, context);
+
 	g_assert(context->watch_id > 0);
 
 	g_io_channel_unref(channel);
@@ -198,6 +264,9 @@ static void execute_context(struct context *context)
 
 	if (context->hfp)
 		hfp_gw_unref(context->hfp);
+
+	if (context->hfp_hf)
+		hfp_hf_unref(context->hfp_hf);
 
 	g_free(context);
 }
@@ -271,24 +340,6 @@ static void test_register(gconstpointer data)
 	execute_context(context);
 }
 
-static gboolean send_pdu(gpointer user_data)
-{
-	struct context *context = user_data;
-	const struct test_pdu *pdu;
-	ssize_t len;
-
-	pdu = &context->data->pdu_list[context->pdu_offset++];
-
-	len = write(context->fd_server, pdu->data, pdu->size);
-	g_assert_cmpint(len, ==, pdu->size);
-
-	pdu = &context->data->pdu_list[context->pdu_offset];
-	if (pdu->fragmented)
-		g_idle_add(send_pdu, context);
-
-	return FALSE;
-}
-
 static void test_fragmented(gconstpointer data)
 {
 	struct context *context = create_context(data);
@@ -305,7 +356,26 @@ static void test_fragmented(gconstpointer data)
 	execute_context(context);
 }
 
-static void check_ustring_1(struct hfp_gw_result *result,
+static void test_send_and_close(gconstpointer data)
+{
+	struct context *context = create_context(data);
+	bool ret;
+
+	context->hfp = hfp_gw_new(context->fd_client);
+	g_assert(context->hfp);
+
+	ret = hfp_gw_set_close_on_unref(context->hfp, true);
+	g_assert(ret);
+
+	send_pdu(context);
+
+	hfp_gw_unref(context->hfp);
+	context->hfp = NULL;
+
+	execute_context(context);
+}
+
+static void check_ustring_1(struct hfp_context *result,
 				enum hfp_gw_cmd_type type, void *user_data)
 {
 	struct context *context = user_data;
@@ -317,7 +387,7 @@ static void check_ustring_1(struct hfp_gw_result *result,
 
 	g_assert(type == pdu->type);
 
-	g_assert(hfp_gw_result_get_unquoted_string(result, str, sizeof(str)));
+	g_assert(hfp_context_get_unquoted_string(result, str, sizeof(str)));
 
 	while (context->data->pdu_list[1].data[i] != '\r') {
 		g_assert(j < sizeof(str));
@@ -332,7 +402,7 @@ static void check_ustring_1(struct hfp_gw_result *result,
 	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
 }
 
-static void check_ustring_2(struct hfp_gw_result *result,
+static void check_ustring_2(struct hfp_context *result,
 				enum hfp_gw_cmd_type type, void *user_data)
 {
 	struct context *context = user_data;
@@ -345,14 +415,14 @@ static void check_ustring_2(struct hfp_gw_result *result,
 
 	g_assert(type == pdu->type);
 
-	g_assert(!hfp_gw_result_get_unquoted_string(result, str, 3));
+	g_assert(!hfp_context_get_unquoted_string(result, str, 3));
 
 	g_assert(str[3] == 'X');
 
 	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
 }
 
-static void check_string_1(struct hfp_gw_result *result,
+static void check_string_1(struct hfp_context *result,
 				enum hfp_gw_cmd_type type, void *user_data)
 {
 	struct context *context = user_data;
@@ -364,7 +434,7 @@ static void check_string_1(struct hfp_gw_result *result,
 
 	g_assert(type == pdu->type);
 
-	g_assert(hfp_gw_result_get_string(result, str, sizeof(str)));
+	g_assert(hfp_context_get_string(result, str, sizeof(str)));
 
 	while (context->data->pdu_list[1].data[i] != '\"') {
 		g_assert(j < sizeof(str));
@@ -380,7 +450,7 @@ static void check_string_1(struct hfp_gw_result *result,
 	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
 }
 
-static void check_string_2(struct hfp_gw_result *result,
+static void check_string_2(struct hfp_context *result,
 				enum hfp_gw_cmd_type type, void *user_data)
 {
 	struct context *context = user_data;
@@ -393,11 +463,231 @@ static void check_string_2(struct hfp_gw_result *result,
 
 	g_assert(type == pdu->type);
 
-	g_assert(!hfp_gw_result_get_string(result, str, 3));
+	g_assert(!hfp_context_get_string(result, str, 3));
 
 	g_assert(str[3] == 'X');
 
 	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
+}
+
+static void check_string_3(struct hfp_context *result,
+				enum hfp_gw_cmd_type type, void *user_data)
+{
+	struct context *context = user_data;
+	const struct test_pdu *pdu;
+
+	pdu = &context->data->pdu_list[context->pdu_offset++];
+
+	g_assert(type == pdu->type);
+
+	hfp_gw_send_result(context->hfp, HFP_RESULT_ERROR);
+}
+
+static void test_hf_init(gconstpointer data)
+{
+	struct context *context = create_context(data);
+
+	context->hfp_hf = hfp_hf_new(context->fd_client);
+	g_assert(context->hfp_hf);
+	g_assert(hfp_hf_set_close_on_unref(context->hfp_hf, true));
+
+	hfp_hf_unref(context->hfp_hf);
+	context->hfp_hf = NULL;
+
+	execute_context(context);
+}
+
+static bool unsolicited_resp = false;
+
+static void hf_unsolicited_resp_cb(struct hfp_context *context,
+							void *user_data) {
+	unsolicited_resp = true;
+}
+
+static void hf_response_with_data(enum hfp_result res,
+							enum hfp_error cme_err,
+							void *user_data)
+{
+	struct context *context = user_data;
+
+	g_assert(unsolicited_resp);
+	unsolicited_resp = false;
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void hf_cme_error_response_cb(enum hfp_result res,
+							enum hfp_error cme_err,
+							void *user_data)
+{
+	struct context *context = user_data;
+
+	g_assert_cmpint(res, ==, HFP_RESULT_CME_ERROR);
+	g_assert_cmpint(cme_err, ==, 30);
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void hf_response_cb(enum hfp_result res, enum hfp_error cme_err,
+							void *user_data)
+{
+	struct context *context = user_data;
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void test_hf_send_command(gconstpointer data)
+{
+	struct context *context = create_context(data);
+	const struct test_pdu *pdu;
+	bool ret;
+
+	context->hfp_hf = hfp_hf_new(context->fd_client);
+	g_assert(context->hfp_hf);
+
+	ret = hfp_hf_set_close_on_unref(context->hfp_hf, true);
+	g_assert(ret);
+
+	if (context->data->response_func) {
+		if (context->data->hf_result_func) {
+			pdu = &context->data->pdu_list[context->pdu_offset++];
+
+			ret = hfp_hf_register(context->hfp_hf,
+						context->data->hf_result_func,
+						(char *)pdu->data,
+						NULL, NULL);
+			g_assert(ret);
+		}
+
+		pdu = &context->data->pdu_list[context->pdu_offset++];
+
+		ret = hfp_hf_send_command(context->hfp_hf,
+						context->data->response_func,
+						context, (char *)pdu->data);
+		g_assert(ret);
+	}
+
+	execute_context(context);
+}
+static void hf_chld_result_handler(struct hfp_context *hf_context,
+							void *user_data)
+{
+	struct context *context = user_data;
+	char str[3];
+
+	g_assert(hf_context);
+	g_assert(hfp_context_get_unquoted_string(hf_context, str,
+							sizeof(str)));
+	g_assert_cmpstr(str, ==, "1");
+	g_assert(hfp_context_get_unquoted_string(hf_context, str,
+							sizeof(str)));
+	g_assert_cmpstr(str, ==, "2x");
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void hf_chld_skip_field(struct hfp_context *hf_context,
+							void *user_data)
+{
+	struct context *context = user_data;
+	char str[3];
+
+	g_assert(hf_context);
+
+	hfp_context_skip_field(hf_context);
+
+	g_assert(hfp_context_get_unquoted_string(hf_context, str,
+								sizeof(str)));
+	g_assert_cmpstr(str, ==, "2x");
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void hf_clcc_result_handler(struct hfp_context *hf_context,
+							void *user_data)
+{
+	struct context *context = user_data;
+	char name[10];
+	uint32_t val1, val2;
+
+	g_assert(hf_context);
+	g_assert(hfp_context_open_container(hf_context));
+	g_assert(hfp_context_get_string(hf_context, name, sizeof(name)));
+	g_assert_cmpstr(name, ==, "call");
+	g_assert(hfp_context_open_container(hf_context));
+	g_assert(hfp_context_get_number(hf_context, &val1));
+	g_assert_cmpint(val1, ==, 0);
+	g_assert(hfp_context_get_number(hf_context, &val1));
+	g_assert_cmpint(val1, ==, 1);
+	g_assert(hfp_context_close_container(hf_context));
+	g_assert(hfp_context_close_container(hf_context));
+
+	g_assert(hfp_context_open_container(hf_context));
+	g_assert(hfp_context_get_string(hf_context, name, sizeof(name)));
+	g_assert_cmpstr(name, ==, "callsetup");
+	g_assert(hfp_context_open_container(hf_context));
+	g_assert(hfp_context_get_range(hf_context, &val1, &val2));
+	g_assert_cmpint(val1, ==, 0);
+	g_assert_cmpint(val2, ==, 3);
+	g_assert(hfp_context_close_container(hf_context));
+	g_assert(hfp_context_close_container(hf_context));
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void hf_result_handler(struct hfp_context *result,
+							void *user_data)
+{
+	struct context *context = user_data;
+
+	hfp_hf_disconnect(context->hfp_hf);
+}
+
+static void test_hf_unsolicited(gconstpointer data)
+{
+	struct context *context = create_context(data);
+	bool ret;
+
+	context->hfp_hf = hfp_hf_new(context->fd_client);
+	g_assert(context->hfp_hf);
+
+	ret = hfp_hf_set_close_on_unref(context->hfp_hf, true);
+	g_assert(ret);
+
+	if (context->data->hf_result_func) {
+		const struct test_pdu *pdu;
+
+		pdu = &context->data->pdu_list[context->pdu_offset++];
+
+		ret = hfp_hf_register(context->hfp_hf,
+						context->data->hf_result_func,
+						(char *)pdu->data, context,
+						NULL);
+		g_assert(ret);
+	}
+
+	send_pdu(context);
+
+	execute_context(context);
+}
+
+static void test_hf_robustness(gconstpointer data)
+{
+	struct context *context = create_context(data);
+	bool ret;
+
+	context->hfp_hf = hfp_hf_new(context->fd_client);
+	g_assert(context->hfp_hf);
+
+	ret = hfp_hf_set_close_on_unref(context->hfp_hf, true);
+	g_assert(ret);
+
+	send_pdu(context);
+
+	hfp_hf_unref(context->hfp_hf);
+	context->hfp_hf = NULL;
+
+	execute_context(context);
 }
 
 int main(int argc, char *argv[])
@@ -465,8 +755,109 @@ int main(int argc, char *argv[])
 									'\r'),
 			type_pdu(HFP_GW_CMD_TYPE_SET, 0),
 			data_end());
-	define_test("/hfp/test_empty", test_fragmented, NULL,
+	define_test("/hfp/test_corrupted_1", test_register, check_string_3,
+			raw_pdu('D', '\0'),
+			raw_pdu('\r', 'A', 'T', 'D', '\"', '0', '1', '2', '3',
+								'\"', '\r'),
+			type_pdu(HFP_GW_CMD_TYPE_SET, 0),
+			data_end());
+	define_test("/hfp/test_empty", test_send_and_close, NULL,
 			raw_pdu('\r'),
+			data_end());
+	define_hf_test("/hfp_hf/test_init", test_hf_init, NULL, NULL,
+			data_end());
+	define_hf_test("/hfp_hf/test_send_command_1", test_hf_send_command,
+			NULL, hf_response_cb,
+			raw_pdu('A', 'T', '+', 'B', 'R', 'S', 'F', '\0'),
+			raw_pdu('\r', '\n', 'O', 'k', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_send_command_2", test_hf_send_command,
+			hf_unsolicited_resp_cb,
+			hf_response_with_data,
+			raw_pdu('+', 'B', 'R', 'S', 'F', '\0'),
+			raw_pdu('A', 'T', '+', 'B', 'R', 'S', 'F', '\0'),
+			frg_pdu('\r', '\n', '+', 'B', 'R', 'S', 'F', '\r',
+									'\n'),
+			frg_pdu('\r', '\n', 'O', 'k', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_send_command_3", test_hf_send_command,
+			NULL, hf_cme_error_response_cb,
+			raw_pdu('A', 'T', '+', 'C', 'H', 'L', 'D', '=',
+								'1', '\0'),
+			frg_pdu('\r', '\n', '+', 'C', 'M', 'E', ' ', 'E'),
+			frg_pdu('R', 'R', 'O', 'R', ':', '3', '0', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_unsolicited_1", test_hf_unsolicited,
+			hf_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			frg_pdu('\r', '\n', '+', 'C', 'L', 'C'),
+			frg_pdu('C', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_unsolicited_2", test_hf_unsolicited,
+			hf_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			frg_pdu('\r', '\n', '+', 'C', 'L', 'C', 'C', ':', '1'),
+			frg_pdu(',', '3', ',', '0', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_unsolicited_3", test_hf_unsolicited,
+			hf_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			frg_pdu('\r'), frg_pdu('\n'), frg_pdu('+'),
+			frg_pdu('C'), frg_pdu('L'), frg_pdu('C'), frg_pdu('C'),
+			frg_pdu(':'), frg_pdu('1'), frg_pdu(','), frg_pdu('3'),
+			frg_pdu(','), frg_pdu('0'), frg_pdu('\r'),
+			frg_pdu('\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_corrupted_1", test_hf_unsolicited,
+			hf_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			frg_pdu('\r', 'X', '\r', '\n'),
+			frg_pdu('+', 'C', 'L', 'C', 'C', ':', '1', ',', '3'),
+			frg_pdu(',', '0', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_corrupted_2", test_hf_unsolicited,
+			hf_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_empty", test_hf_robustness, NULL, NULL,
+			raw_pdu('\r'), data_end());
+
+	define_hf_test("/hfp_hf/test_unknown", test_hf_robustness, NULL, NULL,
+			raw_pdu('\r', '\n', 'B', 'R', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_context_parser_1", test_hf_unsolicited,
+			hf_clcc_result_handler, NULL,
+			raw_pdu('+', 'C', 'L', 'C', 'C', '\0'),
+			frg_pdu('+', 'C', 'L', 'C', 'C', ':'),
+			frg_pdu('(', '\"', 'c', 'a', 'l', 'l', '\"'),
+			frg_pdu('(', '0', ',', '1', ')', ')', ','),
+			frg_pdu('(', '\"', 'c', 'a', 'l', 'l', 's', 'e', 't'),
+			frg_pdu('u', 'p', '\"', ',', '(', '0', '-', '3', ')'),
+			frg_pdu(')', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_context_parser_2", test_hf_unsolicited,
+			hf_chld_result_handler, NULL,
+			raw_pdu('+', 'C', 'H', 'L', 'D', '\0'),
+			frg_pdu('+', 'C', 'H', 'L', 'D', ':'),
+			frg_pdu('1', ',', '2', 'x', '\r', '\n'),
+			data_end());
+
+	define_hf_test("/hfp_hf/test_context_skip_field", test_hf_unsolicited,
+			hf_chld_skip_field, NULL,
+			raw_pdu('+', 'C', 'H', 'L', 'D', '\0'),
+			frg_pdu('+', 'C', 'H', 'L', 'D', ':'),
+			frg_pdu('1', ',', '2', 'x', '\r', '\n'),
 			data_end());
 
 	return g_test_run();

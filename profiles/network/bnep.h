@@ -26,26 +26,17 @@ struct bnep;
 int bnep_init(void);
 int bnep_cleanup(void);
 
-uint16_t bnep_service_id(const char *svc);
-const char *bnep_uuid(uint16_t id);
-const char *bnep_name(uint16_t id);
-
 struct bnep *bnep_new(int sk, uint16_t local_role, uint16_t remote_role,
 								char *iface);
 void bnep_free(struct bnep *session);
 
 typedef void (*bnep_connect_cb) (char *iface, int err, void *data);
-int bnep_connect(struct bnep *b, bnep_connect_cb conn_cb, void *data);
 typedef void (*bnep_disconnect_cb) (void *data);
-void bnep_set_disconnect(struct bnep *session, bnep_disconnect_cb disconn_cb,
-								void *data);
+int bnep_connect(struct bnep *session, bnep_connect_cb conn_cb,
+					bnep_disconnect_cb disconn_cb,
+					void *conn_data, void *disconn_data);
 void bnep_disconnect(struct bnep *session);
 
-int bnep_server_add(int sk, uint16_t dst, char *bridge, char *iface,
-							const bdaddr_t *addr);
+int bnep_server_add(int sk, char *bridge, char *iface, const bdaddr_t *addr,
+						uint8_t *setup_data, int len);
 void bnep_server_delete(char *bridge, char *iface, const bdaddr_t *addr);
-
-ssize_t bnep_send_ctrl_rsp(int sk, uint8_t type, uint8_t ctrl, uint16_t resp);
-uint16_t bnep_setup_chk(uint16_t dst_role, uint16_t src_role);
-uint16_t bnep_setup_decode(struct bnep_setup_conn_req *req, uint16_t *dst,
-								uint16_t *src);

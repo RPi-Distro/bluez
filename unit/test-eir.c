@@ -29,10 +29,11 @@
 
 #include <glib.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/sdp.h>
-
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/sdp.h"
+#include "src/shared/tester.h"
+#include "src/shared/util.h"
 #include "src/eir.h"
 
 struct test_data {
@@ -527,44 +528,51 @@ static const struct test_data citizen_scan_test = {
 	.uuid = citizen_scan_uuid,
 };
 
-static void test_basic(void)
+static void test_basic(const void *data)
 {
-	struct eir_data data;
+	struct eir_data eir;
 	unsigned char buf[HCI_MAX_EIR_LENGTH];
 
 	memset(buf, 0, sizeof(buf));
-	memset(&data, 0, sizeof(data));
+	memset(&eir, 0, sizeof(eir));
 
-	eir_parse(&data, buf, HCI_MAX_EIR_LENGTH);
-	g_assert(data.services == NULL);
-	g_assert(data.name == NULL);
+	eir_parse(&eir, buf, HCI_MAX_EIR_LENGTH);
+	g_assert(eir.services == NULL);
+	g_assert(eir.name == NULL);
 
-	eir_data_free(&data);
+	eir_data_free(&eir);
+
+	tester_test_passed();
+}
+
+static void print_debug(const char *str, void *user_data)
+{
+	char *prefix = user_data;
+
+	tester_debug("%s%s", prefix, str);
 }
 
 static void test_parsing(gconstpointer data)
 {
 	const struct test_data *test = data;
 	struct eir_data eir;
+	GSList *list;
 
 	memset(&eir, 0, sizeof(eir));
 
 	eir_parse(&eir, test->eir_data, test->eir_size);
 
-	if (g_test_verbose() == TRUE) {
-		GSList *list;
+	tester_debug("Flags: %d", eir.flags);
+	tester_debug("Name: %s", eir.name);
+	tester_debug("TX power: %d", eir.tx_power);
 
-		g_print("Flags: %d\n", eir.flags);
-		g_print("Name: %s\n", eir.name);
-		g_print("TX power: %d\n", eir.tx_power);
+	for (list = eir.services; list; list = list->next) {
+		char *uuid_str = list->data;
 
-		for (list = eir.services; list; list = list->next) {
-			char *uuid_str = list->data;
-			g_print("UUID: %s\n", uuid_str);
-		}
+		tester_debug("UUID: %s", uuid_str);
 	}
 
-	g_assert(eir.flags == test->flags);
+	g_assert_cmpint(eir.flags, ==, test->flags);
 
 	if (test->name) {
 		g_assert_cmpstr(eir.name, ==, test->name);
@@ -588,28 +596,89 @@ static void test_parsing(gconstpointer data)
 		g_assert(eir.services == NULL);
 	}
 
+	for (list = eir.msd_list; list; list = list->next) {
+		struct eir_msd *msd = list->data;
+
+		tester_debug("Manufacturer ID: 0x%04x", msd->company);
+		util_hexdump(' ', msd->data, msd->data_len, print_debug,
+							"Manufacturer Data:");
+	}
+
+	for (list = eir.sd_list; list; list = list->next) {
+		struct eir_sd *sd = list->data;
+
+		tester_debug("Service UUID: %s", sd->uuid);
+		util_hexdump(' ', sd->data, sd->data_len, print_debug,
+							"Service Data:");
+	}
+
 	eir_data_free(&eir);
+
+	tester_test_passed();
 }
+
+static const unsigned char gigaset_gtag_data[] = {
+		0x02, 0x01, 0x06, 0x0d, 0xff, 0x80, 0x01, 0x02,
+		0x15, 0x12, 0x34, 0x80, 0x91, 0xd0, 0xf2, 0xbb,
+		0xc5, 0x03, 0x02, 0x0f, 0x18, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static const char *gigaset_gtag_uuid[] = {
+		"0000180f-0000-1000-8000-00805f9b34fb",
+		NULL
+};
+
+static const struct test_data gigaset_gtag_test = {
+	.eir_data = gigaset_gtag_data,
+	.eir_size = sizeof(gigaset_gtag_data),
+	.flags = 0x06,
+	.tx_power = 127,
+	.uuid = gigaset_gtag_uuid,
+};
+
+static const char *uri_beacon_uuid[] = {
+		"0000fed8-0000-1000-8000-00805f9b34fb",
+		NULL
+};
+
+static const unsigned char uri_beacon_data[] = {
+		0x03, 0x03, 0xd8, 0xfe, 0x0c, 0x16, 0xd8, 0xfe, 0x00,
+		0x20, 0x00, 'b', 'l', 'u', 'e', 'z', 0x08
+};
+
+static const struct test_data uri_beacon_test = {
+	.eir_data = uri_beacon_data,
+	.eir_size = sizeof(uri_beacon_data),
+	.tx_power = 127,
+	.uuid = uri_beacon_uuid,
+};
 
 int main(int argc, char *argv[])
 {
-	g_test_init(&argc, &argv, NULL);
+	tester_init(&argc, &argv);
 
-	g_test_add_func("/eir/basic", test_basic);
+	tester_add("/eir/basic", NULL, NULL, test_basic, NULL);
 
-	g_test_add_data_func("/eir/macbookair", &macbookair_test, test_parsing);
-	g_test_add_data_func("/eir/iphone5", &iphone5_test, test_parsing);
-	g_test_add_data_func("/eir/ipadmini", &ipadmini_test, test_parsing);
-	g_test_add_data_func("/eir/sl400h", &gigaset_sl400h_test, test_parsing);
-	g_test_add_data_func("/eir/sl910", &gigaset_sl910_test, test_parsing);
-	g_test_add_data_func("/eir/bh907", &nokia_bh907_test, test_parsing);
-	g_test_add_data_func("/eir/fuelband", &fuelband_test, test_parsing);
-	g_test_add_data_func("/ad/bluesc", &bluesc_test, test_parsing);
-	g_test_add_data_func("/ad/wahooscale", &wahoo_scale_test, test_parsing);
-	g_test_add_data_func("/ad/mioalpha", &mio_alpha_test, test_parsing);
-	g_test_add_data_func("/ad/cookoo", &cookoo_test, test_parsing);
-	g_test_add_data_func("/ad/citizen1", &citizen_adv_test, test_parsing);
-	g_test_add_data_func("/ad/citizen2", &citizen_scan_test, test_parsing);
+	tester_add("/eir/macbookair", &macbookair_test, NULL, test_parsing,
+									NULL);
+	tester_add("/eir/iphone5", &iphone5_test, NULL, test_parsing, NULL);
+	tester_add("/eir/ipadmini", &ipadmini_test, NULL, test_parsing, NULL);
+	tester_add("/eir/sl400h", &gigaset_sl400h_test, NULL, test_parsing,
+									NULL);
+	tester_add("/eir/sl910", &gigaset_sl910_test, NULL, test_parsing, NULL);
+	tester_add("/eir/bh907", &nokia_bh907_test, NULL, test_parsing, NULL);
+	tester_add("/eir/fuelband", &fuelband_test, NULL, test_parsing, NULL);
+	tester_add("/ad/bluesc", &bluesc_test, NULL, test_parsing, NULL);
+	tester_add("/ad/wahooscale", &wahoo_scale_test, NULL, test_parsing,
+									NULL);
+	tester_add("/ad/mioalpha", &mio_alpha_test, NULL, test_parsing, NULL);
+	tester_add("/ad/cookoo", &cookoo_test, NULL, test_parsing, NULL);
+	tester_add("/ad/citizen1", &citizen_adv_test, NULL, test_parsing, NULL);
+	tester_add("/ad/citizen2", &citizen_scan_test, NULL, test_parsing,
+									NULL);
+	tester_add("ad/g-tag", &gigaset_gtag_test, NULL, test_parsing, NULL);
+	tester_add("ad/uri-beacon", &uri_beacon_test, NULL, test_parsing, NULL);
 
-	return g_test_run();
+	return tester_run();
 }

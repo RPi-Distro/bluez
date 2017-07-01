@@ -49,11 +49,6 @@
 
 #define L2CAP_PSM_AVCTP 0x17
 
-#define AVRCP_FEATURE_CATEGORY_1	0x0001
-#define AVRCP_FEATURE_CATEGORY_2	0x0002
-#define AVRCP_FEATURE_CATEGORY_3	0x0004
-#define AVRCP_FEATURE_CATEGORY_4	0x0008
-
 static bdaddr_t adapter_addr;
 static uint32_t record_tg_id = 0;
 static uint32_t record_ct_id = 0;
@@ -271,8 +266,6 @@ static void handle_register_notification(const void *buf, uint16_t len)
 	struct hal_cmd_avrcp_register_notification *cmd = (void *) buf;
 	uint8_t status;
 	struct avrcp_request *req;
-	uint8_t pdu[IPC_MTU];
-	size_t pdu_len;
 	uint8_t code;
 	bool peek = false;
 	int ret;
@@ -298,24 +291,10 @@ static void handle_register_notification(const void *buf, uint16_t len)
 		goto done;
 	}
 
-	pdu[0] = cmd->event;
-	pdu_len = 1;
-
-	switch (cmd->event) {
-	case AVRCP_EVENT_STATUS_CHANGED:
-	case AVRCP_EVENT_TRACK_CHANGED:
-	case AVRCP_EVENT_PLAYBACK_POS_CHANGED:
-		memcpy(&pdu[1], cmd->data, cmd->len);
-		pdu_len += cmd->len;
-		break;
-	default:
-		status = HAL_STATUS_FAILED;
-		goto done;
-	}
-
 	ret = avrcp_register_notification_rsp(req->dev->session,
 						req->transaction, code,
-						pdu, pdu_len);
+						cmd->event, cmd->data,
+						cmd->len);
 	if (ret < 0) {
 		status = HAL_STATUS_FAILED;
 		if (!peek)
@@ -658,7 +637,7 @@ static int handle_get_capabilities_cmd(struct avrcp *session,
 	avrcp_get_capabilities_rsp(session, transaction, sizeof(events),
 								events);
 
-	return -EAGAIN;
+	return 0;
 }
 
 static void push_request(struct avrcp_device *dev, uint8_t pdu_id,
@@ -687,7 +666,7 @@ static int handle_get_play_status_cmd(struct avrcp *session,
 
 	push_request(dev, AVRCP_GET_PLAY_STATUS, 0, transaction);
 
-	return -EAGAIN;
+	return 0;
 }
 
 static int handle_get_element_attrs_cmd(struct avrcp *session,
@@ -723,7 +702,7 @@ done:
 
 	push_request(dev, AVRCP_GET_ELEMENT_ATTRIBUTES, 0, transaction);
 
-	return -EAGAIN;
+	return 0;
 
 }
 
@@ -757,7 +736,7 @@ static int handle_register_notification_cmd(struct avrcp *session,
 
 	push_request(dev, AVRCP_REGISTER_NOTIFICATION, event, transaction);
 
-	return -EAGAIN;
+	return 0;
 }
 
 static const struct avrcp_control_ind control_ind = {
@@ -769,11 +748,12 @@ static const struct avrcp_control_ind control_ind = {
 
 static bool handle_register_notification_rsp(struct avrcp *session, int err,
 						uint8_t code, uint8_t event,
-						uint8_t *params,
+						void *params,
 						void *user_data)
 {
 	struct avrcp_device *dev = user_data;
 	struct hal_ev_avrcp_volume_changed ev;
+	uint8_t *volume = params;
 
 	if (err < 0) {
 		error("AVRCP: %s", strerror(-err));
@@ -787,7 +767,7 @@ static bool handle_register_notification_rsp(struct avrcp *session, int err,
 		return false;
 
 	ev.type = code;
-	ev.volume = params[0] & 0x7f;
+	ev.volume = volume[0];
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
 					HAL_EV_AVRCP_VOLUME_CHANGED,

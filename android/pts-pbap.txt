@@ -1,8 +1,8 @@
 PTS test results for PBAP
 
-PTS version: 5.2
-Tested: 04-August-2014
-Android version: 4.4.4
+PTS version: 6.1
+Tested: 19-May-2015
+Android version: 5.1
 
 Results:
 PASS	test passed

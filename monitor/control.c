@@ -42,7 +42,8 @@
 
 #include "src/shared/util.h"
 #include "src/shared/btsnoop.h"
-#include "mainloop.h"
+#include "src/shared/mainloop.h"
+
 #include "display.h"
 #include "packet.h"
 #include "hcidump.h"
@@ -92,6 +93,40 @@ static void mgmt_unconf_index_added(uint16_t len, const void *buf)
 static void mgmt_unconf_index_removed(uint16_t len, const void *buf)
 {
 	printf("@ Unconfigured Index Removed\n");
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_ext_index_added(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_ext_index_added *ev = buf;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Extended Index Added control\n");
+		return;
+	}
+
+	printf("@ Extended Index Added: %u (%u)\n", ev->type, ev->bus);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_ext_index_removed(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_ext_index_removed *ev = buf;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Extended Index Removed control\n");
+		return;
+	}
+
+	printf("@ Extended Index Removed: %u (%u)\n", ev->type, ev->bus);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
 
 	packet_hexdump(buf, len);
 }
@@ -154,6 +189,7 @@ static const char *settings_str[] = {
 	"powered", "connectable", "fast-connectable", "discoverable",
 	"bondable", "link-security", "ssp", "br/edr", "hs", "le",
 	"advertising", "secure-conn", "debug-keys", "privacy",
+	"configuration", "static-addr",
 };
 
 static void mgmt_new_settings(uint16_t len, const void *buf)
@@ -195,9 +231,9 @@ static void mgmt_class_of_dev_changed(uint16_t len, const void *buf)
 	}
 
 	printf("@ Class of Device Changed: 0x%2.2x%2.2x%2.2x\n",
-						ev->class_of_dev[2],
-						ev->class_of_dev[1],
-						ev->class_of_dev[0]);
+						ev->dev_class[2],
+						ev->dev_class[1],
+						ev->dev_class[0]);
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -225,16 +261,34 @@ static void mgmt_local_name_changed(uint16_t len, const void *buf)
 static void mgmt_new_link_key(uint16_t len, const void *buf)
 {
 	const struct mgmt_ev_new_link_key *ev = buf;
+	const char *type;
 	char str[18];
+	static const char *types[] = {
+		"Combination key",
+		"Local Unit key",
+		"Remote Unit key",
+		"Debug Combination key",
+		"Unauthenticated Combination key from P-192",
+		"Authenticated Combination key from P-192",
+		"Changed Combination key",
+		"Unauthenticated Combination key from P-256",
+		"Authenticated Combination key from P-256",
+	};
 
 	if (len < sizeof(*ev)) {
 		printf("* Malformed New Link Key control\n");
 		return;
 	}
 
+	if (ev->key.type < NELEM(types))
+		type = types[ev->key.type];
+	else
+		type = "Reserved";
+
 	ba2str(&ev->key.addr.bdaddr, str);
 
-	printf("@ New Link Key: %s (%d)\n", str, ev->key.addr.type);
+	printf("@ New Link Key: %s (%d) %s (%u)\n", str,
+				ev->key.addr.type, type, ev->key.type);
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -245,6 +299,7 @@ static void mgmt_new_link_key(uint16_t len, const void *buf)
 static void mgmt_new_long_term_key(uint16_t len, const void *buf)
 {
 	const struct mgmt_ev_new_long_term_key *ev = buf;
+	const char *type;
 	char str[18];
 
 	if (len < sizeof(*ev)) {
@@ -252,10 +307,38 @@ static void mgmt_new_long_term_key(uint16_t len, const void *buf)
 		return;
 	}
 
+	/* LE SC keys are both for master and slave */
+	switch (ev->key.type) {
+	case 0x00:
+		if (ev->key.master)
+			type = "Master (Unauthenticated)";
+		else
+			type = "Slave (Unauthenticated)";
+		break;
+	case 0x01:
+		if (ev->key.master)
+			type = "Master (Authenticated)";
+		else
+			type = "Slave (Authenticated)";
+		break;
+	case 0x02:
+		type = "SC (Unauthenticated)";
+		break;
+	case 0x03:
+		type = "SC (Authenticated)";
+		break;
+	case 0x04:
+		type = "SC (Debug)";
+		break;
+	default:
+		type = "<unknown>";
+		break;
+	}
+
 	ba2str(&ev->key.addr.bdaddr, str);
 
-	printf("@ New Long Term Key: %s (%d) %s\n", str, ev->key.addr.type,
-					ev->key.master ? "Master" : "Slave");
+	printf("@ New Long Term Key: %s (%d) %s 0x%02x\n", str,
+			ev->key.addr.type, type, ev->key.type);
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -569,6 +652,7 @@ static void mgmt_new_irk(uint16_t len, const void *buf)
 static void mgmt_new_csrk(uint16_t len, const void *buf)
 {
 	const struct mgmt_ev_new_csrk *ev = buf;
+	const char *type;
 	char addr[18];
 
 	if (len < sizeof(*ev)) {
@@ -578,8 +662,26 @@ static void mgmt_new_csrk(uint16_t len, const void *buf)
 
 	ba2str(&ev->key.addr.bdaddr, addr);
 
-	printf("@ New CSRK: %s (%d) %s\n", addr, ev->key.addr.type,
-					ev->key.master ? "Master" : "Slave");
+	switch (ev->key.type) {
+	case 0x00:
+		type = "Local Unauthenticated";
+		break;
+	case 0x01:
+		type = "Remote Unauthenticated";
+		break;
+	case 0x02:
+		type = "Local Authenticated";
+		break;
+	case 0x03:
+		type = "Remote Authenticated";
+		break;
+	default:
+		type = "<unknown>";
+		break;
+	}
+
+	printf("@ New CSRK: %s (%d) %s (%u)\n", addr, ev->key.addr.type,
+							type, ev->key.type);
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -647,6 +749,40 @@ static void mgmt_new_conn_param(uint16_t len, const void *buf)
 	printf("@ New Conn Param: %s (%d) hint %d min 0x%4.4x max 0x%4.4x "
 		"latency 0x%4.4x timeout 0x%4.4x\n", addr, ev->addr.type,
 		ev->store_hint, min, max, latency, timeout);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_advertising_added(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_advertising_added *ev = buf;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Advertising Added control\n");
+		return;
+	}
+
+	printf("@ Advertising Added: %u\n", ev->instance);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_advertising_removed(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_advertising_removed *ev = buf;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Advertising Removed control\n");
+		return;
+	}
+
+	printf("@ Advertising Removed: %u\n", ev->instance);
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -743,6 +879,18 @@ void control_message(uint16_t opcode, const void *data, uint16_t size)
 		break;
 	case MGMT_EV_NEW_CONFIG_OPTIONS:
 		mgmt_new_config_options(size, data);
+		break;
+	case MGMT_EV_EXT_INDEX_ADDED:
+		mgmt_ext_index_added(size, data);
+		break;
+	case MGMT_EV_EXT_INDEX_REMOVED:
+		mgmt_ext_index_removed(size, data);
+		break;
+	case MGMT_EV_ADVERTISING_ADDED:
+		mgmt_advertising_added(size, data);
+		break;
+	case MGMT_EV_ADVERTISING_REMOVED:
+		mgmt_advertising_removed(size, data);
 		break;
 	default:
 		printf("* Unknown control (code %d len %d)\n", opcode, size);
