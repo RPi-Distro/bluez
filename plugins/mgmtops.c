@@ -407,9 +407,10 @@ static void mgmt_new_key(int sk, uint16_t index, void *buf, size_t len)
 
 	info = &controllers[index];
 
-	btd_event_link_key_notify(&info->bdaddr, &ev->key.bdaddr,
-					ev->key.val, ev->key.type,
-					ev->key.pin_len);
+	if (ev->store_hint)
+		btd_event_link_key_notify(&info->bdaddr, &ev->key.bdaddr,
+						ev->key.val, ev->key.type,
+						ev->key.pin_len);
 
 	btd_event_bonding_complete(&info->bdaddr, &ev->key.bdaddr, 0);
 }
@@ -601,6 +602,26 @@ static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, gboolean success)
 	return 0;
 }
 
+struct confirm_data {
+	int index;
+	bdaddr_t bdaddr;
+};
+
+static gboolean confirm_accept(gpointer user_data)
+{
+	struct confirm_data *data = user_data;
+	struct controller_info *info = &controllers[data->index];
+
+	DBG("auto-accepting incoming pairing request");
+
+	if (data->index > max_index || !info->valid)
+		return FALSE;
+
+	mgmt_confirm_reply(data->index, &data->bdaddr, TRUE);
+
+	return FALSE;
+}
+
 static void mgmt_user_confirm_request(int sk, uint16_t index, void *buf,
 								size_t len)
 {
@@ -616,11 +637,23 @@ static void mgmt_user_confirm_request(int sk, uint16_t index, void *buf,
 
 	ba2str(&ev->bdaddr, addr);
 
-	DBG("hci%u %s", index, addr);
+	DBG("hci%u %s confirm_hint %u", index, addr, ev->confirm_hint);
 
 	if (index > max_index) {
 		error("Unexpected index %u in user_confirm_request event",
 									index);
+		return;
+	}
+
+	if (ev->confirm_hint) {
+		struct confirm_data *data;
+
+		data = g_new0(struct confirm_data, 1);
+		data->index = index;
+		bacpy(&data->bdaddr, &ev->bdaddr);
+
+		g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 1,
+						confirm_accept, data, g_free);
 		return;
 	}
 
@@ -1257,6 +1290,101 @@ static void mgmt_local_name_changed(int sk, uint16_t index, void *buf, size_t le
 		adapter_update_local_name(adapter, (char *) ev->name);
 }
 
+static void mgmt_device_found(int sk, uint16_t index, void *buf, size_t len)
+{
+	struct mgmt_ev_device_found *ev = buf;
+	struct controller_info *info;
+	char addr[18];
+	uint8_t *eir;
+	uint32_t cls;
+
+	if (len < sizeof(*ev)) {
+		error("Too small mgmt_device_found event packet");
+		return;
+	}
+
+	if (index > max_index) {
+		error("Unexpected index %u in device_found event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	cls = ev->dev_class[0] | (ev->dev_class[1] << 8) |
+						(ev->dev_class[2] << 16);
+
+	if (ev->eir[0] == 0)
+		eir = NULL;
+	else
+		eir = ev->eir;
+
+	ba2str(&ev->bdaddr, addr);
+	DBG("hci%u addr %s, class %u rssi %d %s", index, addr, cls,
+						ev->rssi, eir ? "eir" : "");
+
+	btd_event_device_found(&info->bdaddr, &ev->bdaddr, cls, ev->rssi, eir);
+}
+
+static void mgmt_remote_name(int sk, uint16_t index, void *buf, size_t len)
+{
+	struct mgmt_ev_remote_name *ev = buf;
+	struct controller_info *info;
+	char addr[18];
+
+	if (len < sizeof(*ev)) {
+		error("Too small mgmt_remote_name packet");
+		return;
+	}
+
+	if (index > max_index) {
+		error("Unexpected index %u in remote_name event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	ba2str(&ev->bdaddr, addr);
+	DBG("hci%u addr %s, name %s", index, addr, ev->name);
+
+	btd_event_remote_name(&info->bdaddr, &ev->bdaddr, 0, (char *) ev->name);
+}
+
+static void mgmt_discovering(int sk, uint16_t index, void *buf, size_t len)
+{
+	struct mgmt_mode *ev = buf;
+	struct controller_info *info;
+	struct btd_adapter *adapter;
+	int state;
+
+	if (len < sizeof(*ev)) {
+		error("Too small discovering event");
+		return;
+	}
+
+	DBG("Controller %u discovering %u", index, ev->val);
+
+	if (index > max_index) {
+		error("Unexpected index %u in discovering event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	adapter = manager_find_adapter(&info->bdaddr);
+	if (!adapter)
+		return;
+
+	state = adapter_get_state(adapter);
+
+	if (ev->val) {
+		if (!(state & (STATE_STDINQ | STATE_LE_SCAN | STATE_PINQ)))
+			state |= STATE_PINQ;
+	} else
+		state &= ~(STATE_STDINQ | STATE_PINQ);
+
+	adapter_set_state(adapter, state);
+}
+
 static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data)
 {
 	char buf[MGMT_BUF_SIZE];
@@ -1351,6 +1479,15 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 		break;
 	case MGMT_EV_LOCAL_NAME_CHANGED:
 		mgmt_local_name_changed(sk, index, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_DEVICE_FOUND:
+		mgmt_device_found(sk, index, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_REMOTE_NAME:
+		mgmt_remote_name(sk, index, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_DISCOVERING:
+		mgmt_discovering(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	default:
 		error("Unknown Management opcode %u (index %u)", opcode, index);
@@ -1453,14 +1590,34 @@ static int mgmt_set_limited_discoverable(int index, gboolean limited)
 
 static int mgmt_start_inquiry(int index, uint8_t length, gboolean periodic)
 {
+	struct mgmt_hdr hdr;
+
 	DBG("index %d length %u periodic %d", index, length, periodic);
-	return -ENOSYS;
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.opcode = htobs(MGMT_OP_START_DISCOVERY);
+	hdr.index = htobs(index);
+
+	if (write(mgmt_sock, &hdr, sizeof(hdr)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static int mgmt_stop_inquiry(int index)
 {
+	struct mgmt_hdr hdr;
+
 	DBG("index %d", index);
-	return -ENOSYS;
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.opcode = htobs(MGMT_OP_STOP_DISCOVERY);
+	hdr.index = htobs(index);
+
+	if (write(mgmt_sock, &hdr, sizeof(hdr)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static int mgmt_start_scanning(int index)
@@ -1578,23 +1735,6 @@ static int mgmt_get_conn_list(int index, GSList **conns)
 
 	*conns = info->connections;
 	info->connections = NULL;
-
-	return 0;
-}
-
-static int mgmt_read_local_version(int index, struct hci_version *ver)
-{
-	struct controller_info *info = &controllers[index];
-
-	DBG("index %d", index);
-
-	if (!info->valid)
-		return -ENODEV;
-
-	memset(ver, 0, sizeof(*ver));
-	ver->manufacturer = info->manufacturer;
-	ver->hci_ver = info->hci_ver;
-	ver->hci_rev = info->hci_rev;
 
 	return 0;
 }
@@ -1900,7 +2040,6 @@ static struct btd_adapter_ops mgmt_ops = {
 	.block_device = mgmt_block_device,
 	.unblock_device = mgmt_unblock_device,
 	.get_conn_list = mgmt_get_conn_list,
-	.read_local_version = mgmt_read_local_version,
 	.read_local_features = mgmt_read_local_features,
 	.disconnect = mgmt_disconnect,
 	.remove_bonding = mgmt_remove_bonding,

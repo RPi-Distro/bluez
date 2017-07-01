@@ -37,7 +37,7 @@
 #include <mcap.h>
 #include <btio.h>
 #include <mcap_lib.h>
-#include <l2cap.h>
+#include <bluetooth/l2cap.h>
 #include <sdpd.h>
 #include "../src/dbus-common.h"
 #include <unistd.h>
@@ -2058,7 +2058,7 @@ static DBusMessage *device_get_properties(DBusConnection *conn,
 		path = g_strdup(device->fr->path);
 	else
 		path = g_strdup("");
-	dict_append_entry(&dict, "MainChannel", DBUS_TYPE_STRING, &path);
+	dict_append_entry(&dict, "MainChannel", DBUS_TYPE_OBJECT_PATH, &path);
 	g_free(path);
 	dbus_message_iter_close_container(&iter, &dict);
 

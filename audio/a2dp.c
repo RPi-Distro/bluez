@@ -82,6 +82,7 @@ struct a2dp_setup_cb {
 	a2dp_config_cb_t config_cb;
 	a2dp_stream_cb_t resume_cb;
 	a2dp_stream_cb_t suspend_cb;
+	guint source_id;
 	void *user_data;
 	unsigned int id;
 };
@@ -197,13 +198,40 @@ static void setup_cb_free(struct a2dp_setup_cb *cb)
 {
 	struct a2dp_setup *setup = cb->setup;
 
+	if (cb->source_id)
+		g_source_remove(cb->source_id);
+
 	setup->cb = g_slist_remove(setup->cb, cb);
 	setup_unref(cb->setup);
 	g_free(cb);
 }
 
-static gboolean finalize_config(struct a2dp_setup *s)
+static void finalize_setup_errno(struct a2dp_setup *s, int err,
+					GSourceFunc cb1, ...)
 {
+	GSourceFunc finalize;
+	va_list args;
+	struct avdtp_error avdtp_err;
+
+	if (err < 0) {
+		avdtp_error_init(&avdtp_err, AVDTP_ERRNO, -err);
+		s->err = &avdtp_err;
+	}
+
+	va_start(args, cb1);
+	finalize = cb1;
+	setup_ref(s);
+	while (finalize != NULL) {
+		finalize(s);
+		finalize = va_arg(args, GSourceFunc);
+	}
+	setup_unref(s);
+	va_end(args);
+}
+
+static gboolean finalize_config(gpointer data)
+{
+	struct a2dp_setup *s = data;
 	GSList *l;
 	struct avdtp_stream *stream = s->err ? NULL : s->stream;
 
@@ -223,18 +251,9 @@ static gboolean finalize_config(struct a2dp_setup *s)
 	return FALSE;
 }
 
-static gboolean finalize_config_errno(struct a2dp_setup *s, int err)
+static gboolean finalize_resume(gpointer data)
 {
-	struct avdtp_error avdtp_err;
-
-	avdtp_error_init(&avdtp_err, AVDTP_ERRNO, -err);
-	s->err = err ? &avdtp_err : NULL;
-
-	return finalize_config(s);
-}
-
-static gboolean finalize_resume(struct a2dp_setup *s)
-{
+	struct a2dp_setup *s = data;
 	GSList *l;
 
 	for (l = s->cb; l != NULL; ) {
@@ -252,18 +271,9 @@ static gboolean finalize_resume(struct a2dp_setup *s)
 	return FALSE;
 }
 
-static gboolean finalize_resume_errno(struct a2dp_setup *s, int err)
+static gboolean finalize_suspend(gpointer data)
 {
-	struct avdtp_error avdtp_err;
-
-	avdtp_error_init(&avdtp_err, AVDTP_ERRNO, -err);
-	s->err = err ? &avdtp_err : NULL;
-
-	return finalize_resume(s);
-}
-
-static gboolean finalize_suspend(struct a2dp_setup *s)
-{
+	struct a2dp_setup *s = data;
 	GSList *l;
 
 	for (l = s->cb; l != NULL; ) {
@@ -281,17 +291,7 @@ static gboolean finalize_suspend(struct a2dp_setup *s)
 	return FALSE;
 }
 
-static gboolean finalize_suspend_errno(struct a2dp_setup *s, int err)
-{
-	struct avdtp_error avdtp_err;
-
-	avdtp_error_init(&avdtp_err, AVDTP_ERRNO, -err);
-	s->err = err ? &avdtp_err : NULL;
-
-	return finalize_suspend(s);
-}
-
-static gboolean finalize_select(struct a2dp_setup *s)
+static void finalize_select(struct a2dp_setup *s)
 {
 	GSList *l;
 
@@ -306,8 +306,6 @@ static gboolean finalize_select(struct a2dp_setup *s)
 		cb->select_cb(s->session, s->sep, s->caps, cb->user_data);
 		setup_cb_free(cb);
 	}
-
-	return FALSE;
 }
 
 static struct a2dp_setup *find_setup_by_session(struct avdtp *session)
@@ -777,7 +775,7 @@ static void endpoint_open_cb(struct media_endpoint *endpoint, void *ret,
 
 	if (ret == NULL) {
 		setup->stream = NULL;
-		finalize_config_errno(setup, -EPERM);
+		finalize_setup_errno(setup, -EPERM, finalize_config, NULL);
 		return;
 	}
 
@@ -787,7 +785,7 @@ static void endpoint_open_cb(struct media_endpoint *endpoint, void *ret,
 
 	error("Error on avdtp_open %s (%d)", strerror(-err), -err);
 	setup->stream = NULL;
-	finalize_config_errno(setup, err);
+	finalize_setup_errno(setup, err, finalize_config, NULL);
 }
 
 static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
@@ -844,7 +842,7 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 			return;
 
 		setup->stream = NULL;
-		finalize_config_errno(setup, -EPERM);
+		finalize_setup_errno(setup, -EPERM, finalize_config, NULL);
 		return;
 	}
 
@@ -852,7 +850,7 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (ret < 0) {
 		error("Error on avdtp_open %s (%d)", strerror(-ret), -ret);
 		setup->stream = NULL;
-		finalize_config_errno(setup, ret);
+		finalize_setup_errno(setup, ret, finalize_config, NULL);
 	}
 }
 
@@ -1011,6 +1009,7 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	struct a2dp_sep *a2dp_sep = user_data;
 	struct a2dp_setup *setup;
 	gboolean start;
+	int perr;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
 		DBG("Sink %p: Suspend_Cfm", sep);
@@ -1029,23 +1028,22 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (err) {
 		setup->stream = NULL;
 		setup->err = err;
-		finalize_suspend(setup);
 	}
-	else
-		finalize_suspend_errno(setup, 0);
+
+	finalize_suspend(setup);
 
 	if (!start)
 		return;
 
 	if (err) {
-		setup->err = err;
-		finalize_suspend(setup);
-	} else if (avdtp_start(session, a2dp_sep->stream) < 0) {
-		struct avdtp_error start_err;
-		error("avdtp_start failed");
-		avdtp_error_init(&start_err, AVDTP_ERRNO, EIO);
-		setup->err = err;
-		finalize_suspend(setup);
+		finalize_resume(setup);
+		return;
+	}
+
+	perr = avdtp_start(session, a2dp_sep->stream);
+	if (perr < 0) {
+		error("Error on avdtp_start %s (%d)", strerror(-perr), -perr);
+		finalize_setup_errno(setup, -EIO, finalize_suspend, NULL);
 	}
 }
 
@@ -1065,8 +1063,8 @@ static gboolean close_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (!setup)
 		return TRUE;
 
-	finalize_suspend_errno(setup, -ECONNRESET);
-	finalize_resume_errno(setup, -ECONNRESET);
+	finalize_setup_errno(setup, -ECONNRESET, finalize_suspend,
+							finalize_resume, NULL);
 
 	return TRUE;
 }
@@ -1099,7 +1097,7 @@ static gboolean a2dp_reconfigure(gpointer data)
 	return FALSE;
 
 failed:
-	finalize_config_errno(setup, posix_err);
+	finalize_setup_errno(setup, posix_err, finalize_config, NULL);
 	return FALSE;
 }
 
@@ -1688,6 +1686,9 @@ void a2dp_remove_sep(struct a2dp_sep *sep)
 		}
 	}
 
+	if (sep->locked)
+		return;
+
 	a2dp_unregister_sep(sep);
 }
 
@@ -2126,7 +2127,8 @@ unsigned int a2dp_config(struct avdtp *session, struct a2dp_sep *sep,
 	case AVDTP_STATE_STREAMING:
 		if (avdtp_stream_has_capabilities(setup->stream, caps)) {
 			DBG("Configuration match: resuming");
-			g_idle_add((GSourceFunc) finalize_config, setup);
+			cb_data->source_id = g_idle_add(finalize_config,
+								setup);
 		} else if (!setup->reconfigure) {
 			setup->reconfigure = TRUE;
 			if (avdtp_close(session, sep->stream, FALSE) < 0) {
@@ -2184,7 +2186,8 @@ unsigned int a2dp_resume(struct avdtp *session, struct a2dp_sep *sep,
 		if (sep->suspending)
 			setup->start = TRUE;
 		else
-			g_idle_add((GSourceFunc) finalize_resume, setup);
+			cb_data->source_id = g_idle_add(finalize_resume,
+								setup);
 		break;
 	default:
 		error("SEP in bad state for resume");
@@ -2221,7 +2224,7 @@ unsigned int a2dp_suspend(struct avdtp *session, struct a2dp_sep *sep,
 		goto failed;
 		break;
 	case AVDTP_STATE_OPEN:
-		g_idle_add((GSourceFunc) finalize_suspend, setup);
+		cb_data->source_id = g_idle_add(finalize_suspend, setup);
 		break;
 	case AVDTP_STATE_STREAMING:
 		if (avdtp_suspend(session, sep->stream) < 0) {
@@ -2286,13 +2289,26 @@ gboolean a2dp_sep_lock(struct a2dp_sep *sep, struct avdtp *session)
 
 gboolean a2dp_sep_unlock(struct a2dp_sep *sep, struct avdtp *session)
 {
+	struct a2dp_server *server = sep->server;
 	avdtp_state_t state;
+	GSList *l;
 
 	state = avdtp_sep_get_state(sep->lsep);
 
 	sep->locked = FALSE;
 
 	DBG("SEP %p unlocked", sep->lsep);
+
+	if (sep->type == AVDTP_SEP_TYPE_SOURCE)
+		l = server->sources;
+	else
+		l = server->sinks;
+
+	/* Unregister sep if it was removed */
+	if (g_slist_find(l, sep) == NULL) {
+		a2dp_unregister_sep(sep);
+		return TRUE;
+	}
 
 	if (!sep->stream || state == AVDTP_STATE_IDLE)
 		return TRUE;

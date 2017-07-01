@@ -96,7 +96,7 @@ static struct dev_info {
 	int sk;
 	bdaddr_t bdaddr;
 	char name[249];
-	uint8_t eir[240];
+	uint8_t eir[HCI_MAX_EIR_LENGTH];
 	uint8_t features[8];
 	uint8_t ssp_mode;
 
@@ -1658,7 +1658,6 @@ static void read_simple_pairing_mode_complete(int index, void *ptr)
 {
 	struct dev_info *dev = &devs[index];
 	read_simple_pairing_mode_rp *rp = ptr;
-	struct btd_adapter *adapter;
 
 	DBG("hci%d status %u", index, rp->status);
 
@@ -1667,14 +1666,6 @@ static void read_simple_pairing_mode_complete(int index, void *ptr)
 
 	dev->ssp_mode = rp->mode;
 	update_ext_inquiry_response(index);
-
-	adapter = manager_find_adapter(&dev->bdaddr);
-	if (!adapter) {
-		error("No matching adapter found");
-		return;
-	}
-
-	adapter_update_ssp_mode(adapter, rp->mode);
 }
 
 static void read_local_ext_features_complete(int index,
@@ -3240,17 +3231,6 @@ static int hciops_get_conn_list(int index, GSList **conns)
 	return 0;
 }
 
-static int hciops_read_local_version(int index, struct hci_version *ver)
-{
-	struct dev_info *dev = &devs[index];
-
-	DBG("hci%d", index);
-
-	memcpy(ver, &dev->ver, sizeof(*ver));
-
-	return 0;
-}
-
 static int hciops_read_local_features(int index, uint8_t *features)
 {
 	struct dev_info *dev = &devs[index];
@@ -3705,7 +3685,6 @@ static struct btd_adapter_ops hci_ops = {
 	.block_device = hciops_block_device,
 	.unblock_device = hciops_unblock_device,
 	.get_conn_list = hciops_get_conn_list,
-	.read_local_version = hciops_read_local_version,
 	.read_local_features = hciops_read_local_features,
 	.disconnect = hciops_disconnect,
 	.remove_bonding = hciops_remove_bonding,
