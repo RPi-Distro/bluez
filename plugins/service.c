@@ -761,6 +761,8 @@ static void path_unregister(void *data)
 		g_dbus_remove_watch(connection, user_record->listener_id);
 		exit_callback(connection, user_record);
 	}
+
+	g_free(serv_adapter);
 }
 
 static int register_interface(const char *path, struct btd_adapter *adapter)
@@ -859,4 +861,5 @@ static void service_exit(void)
 	dbus_connection_unref(connection);
 }
 
-BLUETOOTH_PLUGIN_DEFINE("service", VERSION, service_init, service_exit)
+BLUETOOTH_PLUGIN_DEFINE(service, VERSION,
+		BLUETOOTH_PLUGIN_PRIORITY_HIGH, service_init, service_exit)

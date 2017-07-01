@@ -137,6 +137,7 @@ struct headset {
 	GIOChannel *tmp_rfcomm;
 	GIOChannel *sco;
 	guint sco_id;
+	guint dc_id;
 
 	gboolean auto_dc;
 
@@ -290,7 +291,7 @@ static const char *state2str(headset_state_t state)
 static int headset_send_valist(struct headset *hs, char *format, va_list ap)
 {
 	char rsp[BUF_SIZE];
-	ssize_t total_written, written, count;
+	ssize_t total_written, count;
 	int fd;
 
 	count = vsnprintf(rsp, sizeof(rsp), format, ap);
@@ -303,11 +304,14 @@ static int headset_send_valist(struct headset *hs, char *format, va_list ap)
 		return -EIO;
 	}
 
-	written = total_written = 0;
+	total_written = 0;
 	fd = g_io_channel_unix_get_fd(hs->rfcomm);
 
 	while (total_written < count) {
-		written = write(fd, rsp + total_written, count - total_written);
+		ssize_t written;
+
+		written = write(fd, rsp + total_written,
+				count - total_written);
 		if (written < 0)
 			return -errno;
 
@@ -399,6 +403,11 @@ static int report_indicators(struct audio_device *device, const char *buf)
 	if (strlen(buf) < 8)
 		return -EINVAL;
 
+	if (ag.indicators == NULL) {
+		error("HFP AG indicators not initialized");
+		return headset_send(hs, "\r\nERROR\r\n");
+	}
+
 	if (buf[7] == '=')
 		str = indicator_ranges(ag.indicators);
 	else
@@ -476,6 +485,9 @@ static unsigned int connect_cb_new(struct headset *hs,
 	unsigned int free_cb_id = 1;
 
 	pending_connect_init(hs, target_state);
+
+	if (!func)
+		return 0;
 
 	cb = g_new(struct connect_cb, 1);
 
@@ -566,7 +578,6 @@ static void sco_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	sk = g_io_channel_unix_get_fd(chan);
 
 	debug("SCO fd=%d", sk);
-	hs->sco = g_io_channel_ref(chan);
 
 	if (p) {
 		p->io = NULL;
@@ -612,7 +623,7 @@ static int sco_connect(struct audio_device *dev, headset_stream_cb_t cb,
 		return -EIO;
 	}
 
-	g_io_channel_unref(io);
+	hs->sco = io;
 
 	headset_set_state(dev, HEADSET_STATE_PLAY_IN_PROGRESS);
 
@@ -1073,7 +1084,8 @@ int telephony_operator_selection_ind(int mode, const char *oper)
 	if (!active_devices)
 		return -ENODEV;
 
-	send_foreach_headset(active_devices, hfp_cmp, "\r\n+COPS: %d,0,%s\r\n",
+	send_foreach_headset(active_devices, hfp_cmp,
+				"\r\n+COPS: %d,0,\"%s\"\r\n",
 				mode, oper);
 	return 0;
 }
@@ -1157,11 +1169,14 @@ static void close_sco(struct audio_device *device)
 	struct headset *hs = device->headset;
 
 	if (hs->sco) {
-		g_source_remove(hs->sco_id);
-		hs->sco_id = 0;
 		g_io_channel_shutdown(hs->sco, TRUE, NULL);
 		g_io_channel_unref(hs->sco);
 		hs->sco = NULL;
+	}
+
+	if (hs->sco_id) {
+		g_source_remove(hs->sco_id);
+		hs->sco_id = 0;
 	}
 }
 
@@ -1248,12 +1263,8 @@ failed:
 static gboolean sco_cb(GIOChannel *chan, GIOCondition cond,
 			struct audio_device *device)
 {
-	struct headset *hs;
-
 	if (cond & G_IO_NVAL)
 		return FALSE;
-
-	hs = device->headset;
 
 	error("Audio connection got disconnected");
 
@@ -1294,12 +1305,6 @@ void headset_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	else
 		hs->auto_dc = FALSE;
 
-	if (server_is_enabled(&dev->src, HANDSFREE_SVCLASS_ID) &&
-			hs->hfp_handle != 0)
-		hs->hfp_active = TRUE;
-	else
-		hs->hfp_active = FALSE;
-
 	g_io_add_watch(chan, G_IO_IN | G_IO_ERR | G_IO_HUP| G_IO_NVAL,
 			(GIOFunc) rfcomm_io_cb, dev);
 
@@ -1337,14 +1342,38 @@ failed:
 		headset_set_state(dev, HEADSET_STATE_DISCONNECTED);
 }
 
+static void headset_set_channel(struct headset *headset,
+				const sdp_record_t *record, uint16_t svc)
+{
+	int ch;
+	sdp_list_t *protos;
+
+	if (sdp_get_access_protos(record, &protos) < 0) {
+		error("Unable to get access protos from headset record");
+		return;
+	}
+
+	ch = sdp_get_proto_port(protos, RFCOMM_UUID);
+
+	sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free, NULL);
+	sdp_list_free(protos, NULL);
+
+	if (ch > 0) {
+		headset->rfcomm_ch = ch;
+		debug("Discovered %s service on RFCOMM channel %d",
+			svc == HEADSET_SVCLASS_ID ? "Headset" : "Handsfree",
+			ch);
+	} else
+		error("Unable to get RFCOMM channel from Headset record");
+}
+
 static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 {
 	struct audio_device *dev = user_data;
 	struct headset *hs = dev->headset;
 	struct pending_connect *p = hs->pending;
-	int ch = -1;
 	sdp_record_t *record = NULL;
-	sdp_list_t *protos, *classes = NULL;
+	sdp_list_t *classes = NULL;
 	uuid_t uuid;
 
 	if (err < 0) {
@@ -1386,24 +1415,16 @@ static void get_record_cb(sdp_list_t *recs, int err, gpointer user_data)
 		hs->hsp_handle = record->handle;
 	}
 
-	if (!sdp_get_access_protos(record, &protos)) {
-		ch = sdp_get_proto_port(protos, RFCOMM_UUID);
-		sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free,
-					NULL);
-		sdp_list_free(protos, NULL);
-		protos = NULL;
-	}
+	headset_set_channel(hs, record, uuid.value.uuid16);
 
-	if (ch == -1) {
+	if (hs->rfcomm_ch == -1) {
 		error("Unable to extract RFCOMM channel from service record");
 		goto failed_not_supported;
 	}
 
-	hs->rfcomm_ch = ch;
-
 	err = rfcomm_connect(dev, NULL, NULL, NULL);
 	if (err < 0) {
-		error("Unable to connect: %s (%s)", strerror(-err), -err);
+		error("Unable to connect: %s (%d)", strerror(-err), -err);
 		p->err = -err;
 		error_connection_attempt_failed(dev->conn, p->msg, p->err);
 		goto failed;
@@ -1470,11 +1491,16 @@ static int rfcomm_connect(struct audio_device *dev, headset_stream_cb_t cb,
 				BT_IO_OPT_DEST_BDADDR, &dev->dst,
 				BT_IO_OPT_CHANNEL, hs->rfcomm_ch,
 				BT_IO_OPT_INVALID);
+
+	hs->rfcomm_ch = -1;
+
 	if (!io) {
 		error("%s", err->message);
 		g_error_free(err);
 		return -EIO;
 	}
+
+	hs->hfp_active = hs->hfp_handle != 0 ? TRUE : FALSE;
 
 	g_io_channel_unref(io);
 
@@ -1980,31 +2006,6 @@ static GDBusSignalTable headset_signals[] = {
 	{ NULL, NULL }
 };
 
-static void headset_set_channel(struct headset *headset,
-				const sdp_record_t *record, uint16_t svc)
-{
-	int ch;
-	sdp_list_t *protos;
-
-	if (sdp_get_access_protos(record, &protos) < 0) {
-		error("Unable to get access protos from headset record");
-		return;
-	}
-
-	ch = sdp_get_proto_port(protos, RFCOMM_UUID);
-
-	sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free, NULL);
-	sdp_list_free(protos, NULL);
-
-	if (ch > 0) {
-		headset->rfcomm_ch = ch;
-		debug("Discovered %s service on RFCOMM channel %d",
-			svc == HEADSET_SVCLASS_ID ? "Headset" : "Handsfree",
-			ch);
-	} else
-		error("Unable to get RFCOMM channel from Headset record");
-}
-
 void headset_update(struct audio_device *dev, uint16_t svc,
 			const char *uuidstr)
 {
@@ -2045,8 +2046,6 @@ void headset_update(struct audio_device *dev, uint16_t svc,
 		debug("Invalid record passed to headset_update");
 		return;
 	}
-
-	headset_set_channel(headset, record, svc);
 }
 
 static void headset_free(struct audio_device *dev)
@@ -2057,6 +2056,9 @@ static void headset_free(struct audio_device *dev)
 		g_source_remove(hs->dc_timer);
 		hs->dc_timer = 0;
 	}
+
+	if (hs->dc_id)
+		device_remove_disconnect_watch(dev->btd_dev, hs->dc_id);
 
 	if (hs->sco) {
 		g_io_channel_shutdown(hs->sco, TRUE, NULL);
@@ -2079,6 +2081,7 @@ static void path_unregister(void *data)
 
 	if (hs->state > HEADSET_STATE_DISCONNECTED) {
 		debug("Headset unregistered while device was connected!");
+		bt_cancel_discovery(&dev->src, &dev->dst);
 		headset_set_state(dev, HEADSET_STATE_DISCONNECTED);
 	}
 
@@ -2128,7 +2131,6 @@ struct headset *headset_init(struct audio_device *dev, uint16_t svc,
 		return NULL;
 	}
 
-	headset_set_channel(hs, record, svc);
 register_iface:
 	if (!g_dbus_register_interface(dev->conn, dev->path,
 					AUDIO_HEADSET_INTERFACE,
@@ -2230,7 +2232,7 @@ unsigned int headset_request_stream(struct audio_device *dev,
 	struct headset *hs = dev->headset;
 	unsigned int id;
 
-	if (hs->rfcomm && hs->sco) {
+	if (hs->state == HEADSET_STATE_PLAYING) {
 		id = connect_cb_new(hs, HEADSET_STATE_PLAYING, cb, user_data);
 		g_idle_add((GSourceFunc) dummy_connect_complete, dev);
 		return id;
@@ -2249,7 +2251,7 @@ unsigned int headset_request_stream(struct audio_device *dev,
 		if (rfcomm_connect(dev, cb, user_data, &id) < 0)
 			return 0;
 		hs->auto_dc = TRUE;
-	} else {
+	} else if (hs->sco == NULL) {
 		if (sco_connect(dev, cb, user_data, &id) < 0)
 			return 0;
 	}
@@ -2260,6 +2262,7 @@ unsigned int headset_request_stream(struct audio_device *dev,
 }
 
 unsigned int headset_config_stream(struct audio_device *dev,
+					gboolean auto_dc,
 					headset_stream_cb_t cb,
 					void *user_data)
 {
@@ -2281,7 +2284,7 @@ unsigned int headset_config_stream(struct audio_device *dev,
 	if (rfcomm_connect(dev, cb, user_data, &id) < 0)
 		return 0;
 
-	hs->auto_dc = TRUE;
+	hs->auto_dc = auto_dc;
 	hs->pending->target_state = HEADSET_STATE_CONNECTED;
 
 	return id;
@@ -2385,6 +2388,16 @@ static int headset_close_rfcomm(struct audio_device *dev)
 	return 0;
 }
 
+static void disconnect_cb(struct btd_device *btd_dev, gboolean removal,
+				void *user_data)
+{
+	struct audio_device *device = user_data;
+
+	info("Headset: disconnect %s", device->path);
+
+	headset_set_state(device, HEADSET_STATE_DISCONNECTED);
+}
+
 void headset_set_state(struct audio_device *dev, headset_state_t state)
 {
 	struct headset *hs = dev->headset;
@@ -2417,6 +2430,8 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 
 		telephony_device_disconnected(dev);
 		active_devices = g_slist_remove(active_devices, dev);
+		device_remove_disconnect_watch(dev->btd_dev, hs->dc_id);
+		hs->dc_id = 0;
 		break;
 	case HEADSET_STATE_CONNECT_IN_PROGRESS:
 		emit_property_changed(dev->conn, dev->path,
@@ -2441,6 +2456,9 @@ void headset_set_state(struct audio_device *dev, headset_state_t state)
 						DBUS_TYPE_BOOLEAN, &value);
 			active_devices = g_slist_append(active_devices, dev);
 			telephony_device_connected(dev);
+			hs->dc_id = device_add_disconnect_watch(dev->btd_dev,
+								disconnect_cb,
+								dev, NULL);
 		} else if (hs->state == HEADSET_STATE_PLAYING) {
 			value = FALSE;
 			g_dbus_emit_signal(dev->conn, dev->path,
@@ -2653,16 +2671,7 @@ int telephony_incoming_call_ind(const char *number, int type)
 
 	if (ag.features & AG_FEATURE_INBAND_RINGTONE && hs->hfp_active &&
 			hs->state != HEADSET_STATE_PLAYING) {
-		if (hs->state == HEADSET_STATE_CONNECTED) {
-			int ret;
-
-			ret = sco_connect(dev, NULL, NULL, NULL);
-			if (ret < 0)
-				return ret;
-		}
-
 		hs->pending_ring = TRUE;
-
 		return 0;
 	}
 
@@ -2722,9 +2731,8 @@ int telephony_list_current_call_ind(int idx, int dir, int status, int mode,
 
 	if (number)
 		send_foreach_headset(active_devices, hfp_cmp,
-					"\r\n+CLCC: %d,%d,%d,%d,%d,%s,%d\r\n",
-					idx, dir, status, mode, mprty,
-					number, type);
+				"\r\n+CLCC: %d,%d,%d,%d,%d,\"%s\",%d\r\n",
+				idx, dir, status, mode, mprty, number, type);
 	else
 		send_foreach_headset(active_devices, hfp_cmp,
 					"\r\n+CLCC: %d,%d,%d,%d,%d\r\n",

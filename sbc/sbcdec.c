@@ -47,9 +47,9 @@ static void decode(char *filename, char *output, int tofile)
 {
 	unsigned char buf[BUF_SIZE], *stream;
 	struct stat st;
-	off_t filesize;
 	sbc_t sbc;
-	int fd, ad, pos, streamlen, framelen, count, len;
+	int fd, ad, pos, streamlen, framelen, count;
+	size_t len;
 	int format = AFMT_S16_BE, frequency, channels;
 	ssize_t written;
 
@@ -59,7 +59,6 @@ static void decode(char *filename, char *output, int tofile)
 		return;
 	}
 
-	filesize = st.st_size;
 	stream = malloc(st.st_size);
 
 	if (!stream) {
@@ -187,7 +186,7 @@ static void decode(char *filename, char *output, int tofile)
 		if (count + len >= BUF_SIZE) {
 			fprintf(stderr,
 				"buffer size of %d is too small for decoded"
-				" data (%d)\n", BUF_SIZE, len + count);
+				" data (%lu)\n", BUF_SIZE, (unsigned long) (len + count));
 			exit(1);
 		}
 

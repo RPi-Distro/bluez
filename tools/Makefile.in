@@ -35,8 +35,8 @@ host_triplet = @host@
 sbin_PROGRAMS = hciattach$(EXEEXT) hciconfig$(EXEEXT) $(am__EXEEXT_4) \
 	$(am__EXEEXT_5)
 bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2)
-noinst_PROGRAMS = hcisecfilter$(EXEEXT) ppporc$(EXEEXT) \
-	avinfo$(EXEEXT) $(am__EXEEXT_3)
+noinst_PROGRAMS = hcieventmask$(EXEEXT) hcisecfilter$(EXEEXT) \
+	ppporc$(EXEEXT) avinfo$(EXEEXT) $(am__EXEEXT_3)
 @BCCMD_TRUE@@USB_TRUE@am__append_1 = csr_usb.c
 @BCCMD_TRUE@@USB_TRUE@am__append_2 = @USB_LIBS@
 subdir = tools
@@ -93,6 +93,9 @@ hciattach_DEPENDENCIES =
 am_hciconfig_OBJECTS = hciconfig.$(OBJEXT) csr.$(OBJEXT)
 hciconfig_OBJECTS = $(am_hciconfig_OBJECTS)
 hciconfig_DEPENDENCIES = $(top_builddir)/common/libhelper.a
+hcieventmask_SOURCES = hcieventmask.c
+hcieventmask_OBJECTS = hcieventmask.$(OBJEXT)
+hcieventmask_DEPENDENCIES =
 hcisecfilter_SOURCES = hcisecfilter.c
 hcisecfilter_OBJECTS = hcisecfilter.$(OBJEXT)
 hcisecfilter_LDADD = $(LDADD)
@@ -126,11 +129,11 @@ LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	$(LDFLAGS) -o $@
 SOURCES = avctrl.c avinfo.c $(bccmd_SOURCES) ciptool.c dfubabel.c \
 	$(dfutool_SOURCES) $(hciattach_SOURCES) $(hciconfig_SOURCES) \
-	hcisecfilter.c $(hcitool_SOURCES) hid2hci.c l2ping.c ppporc.c \
-	sdptool.c
+	hcieventmask.c hcisecfilter.c $(hcitool_SOURCES) hid2hci.c \
+	l2ping.c ppporc.c sdptool.c
 DIST_SOURCES = avctrl.c avinfo.c $(am__bccmd_SOURCES_DIST) ciptool.c \
 	dfubabel.c $(am__dfutool_SOURCES_DIST) $(hciattach_SOURCES) \
-	$(hciconfig_SOURCES) hcisecfilter.c \
+	$(hciconfig_SOURCES) hcieventmask.c hcisecfilter.c \
 	$(am__hcitool_SOURCES_DIST) hid2hci.c l2ping.c ppporc.c \
 	sdptool.c
 man1dir = $(mandir)/man1
@@ -290,6 +293,7 @@ top_srcdir = @top_srcdir@
 @DFUTOOL_TRUE@dfutool_manfiles = dfutool.1
 @USB_FALSE@usb_programs = 
 @USB_TRUE@usb_programs = dfubabel avctrl
+hcieventmask_LDADD = @BLUEZ_LIBS@
 hciattach_SOURCES = hciattach.c hciattach.h \
 			hciattach_st.c hciattach_ti.c hciattach_tialt.c
 
@@ -441,6 +445,9 @@ hciattach$(EXEEXT): $(hciattach_OBJECTS) $(hciattach_DEPENDENCIES)
 hciconfig$(EXEEXT): $(hciconfig_OBJECTS) $(hciconfig_DEPENDENCIES) 
 	@rm -f hciconfig$(EXEEXT)
 	$(LINK) $(hciconfig_OBJECTS) $(hciconfig_LDADD) $(LIBS)
+hcieventmask$(EXEEXT): $(hcieventmask_OBJECTS) $(hcieventmask_DEPENDENCIES) 
+	@rm -f hcieventmask$(EXEEXT)
+	$(LINK) $(hcieventmask_OBJECTS) $(hcieventmask_LDADD) $(LIBS)
 hcisecfilter$(EXEEXT): $(hcisecfilter_OBJECTS) $(hcisecfilter_DEPENDENCIES) 
 	@rm -f hcisecfilter$(EXEEXT)
 	$(LINK) $(hcisecfilter_OBJECTS) $(hcisecfilter_LDADD) $(LIBS)
@@ -484,6 +491,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hciattach_ti.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hciattach_tialt.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hciconfig.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hcieventmask.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hcisecfilter.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hcitool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hid2hci.Po@am__quote@

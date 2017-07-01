@@ -60,7 +60,7 @@ const char *manager_get_base_path(void)
 	return base_path;
 }
 
-int manager_update_adapter(uint16_t dev_id, uint8_t svc, gboolean starting)
+int manager_update_adapter(uint16_t dev_id, uint8_t svc)
 {
 	struct btd_adapter *adapter;
 
@@ -68,7 +68,7 @@ int manager_update_adapter(uint16_t dev_id, uint8_t svc, gboolean starting)
 	if (!adapter)
 		return -EINVAL;
 
-	return adapter_update(adapter, svc, starting);
+	return adapter_update(adapter, svc);
 }
 
 int manager_startup_complete(void)
@@ -77,7 +77,7 @@ int manager_startup_complete(void)
 
 	for (l = adapters; l != NULL; l = l->next) {
 		struct btd_adapter *adapter = l->data;
-		adapter_update(adapter, 0, FALSE);
+		adapter_update(adapter, 0);
 	}
 
 	return 0;
@@ -108,50 +108,6 @@ static inline DBusMessage *no_such_adapter(DBusMessage *msg)
 			"No such adapter");
 }
 
-static int find_by_address(const char *str)
-{
-	struct hci_dev_list_req *dl;
-	struct hci_dev_req *dr;
-	bdaddr_t ba;
-	int i, sk;
-	int devid = -1;
-
-	sk = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
-	if (sk < 0)
-		return -1;
-
-	dl = g_malloc0(HCI_MAX_DEV * sizeof(*dr) + sizeof(*dl));
-
-	dl->dev_num = HCI_MAX_DEV;
-	dr = dl->dev_req;
-
-	if (ioctl(sk, HCIGETDEVLIST, dl) < 0)
-		goto out;
-
-	dr = dl->dev_req;
-	str2ba(str, &ba);
-
-	for (i = 0; i < dl->dev_num; i++, dr++) {
-		struct hci_dev_info di;
-
-		if (hci_devinfo(dr->dev_id, &di) < 0)
-			continue;
-
-		if (hci_test_bit(HCI_RAW, &di.flags))
-			continue;
-
-		if (!bacmp(&ba, &di.bdaddr)) {
-			devid = dr->dev_id;
-			break;
-		}
-	}
-
-out:
-	g_free(dl);
-	close(sk);
-	return devid;
-}
-
 static DBusMessage *default_adapter(DBusConnection *conn,
 					DBusMessage *msg, void *data)
 {
@@ -180,7 +136,6 @@ static DBusMessage *find_adapter(DBusConnection *conn,
 {
 	DBusMessage *reply;
 	struct btd_adapter *adapter;
-	struct hci_dev_info di;
 	const char *pattern;
 	int dev_id;
 	const gchar *path;
@@ -195,22 +150,13 @@ static DBusMessage *find_adapter(DBusConnection *conn,
 		path = adapter_any_get_path();
 		if (path != NULL)
 			goto done;
-		dev_id = -1;
-	} if (!strncmp(pattern, "hci", 3) && strlen(pattern) >= 4)
+		return no_such_adapter(msg);
+	} else if (!strncmp(pattern, "hci", 3) && strlen(pattern) >= 4) {
 		dev_id = atoi(pattern + 3);
-	else
-		dev_id = find_by_address(pattern);
+		adapter = manager_find_adapter_by_id(dev_id);
+	} else
+		adapter = manager_find_adapter_by_address(pattern);
 
-	if (dev_id < 0)
-		return no_such_adapter(msg);
-
-	if (hci_devinfo(dev_id, &di) < 0)
-		return no_such_adapter(msg);
-
-	if (hci_test_bit(HCI_RAW, &di.flags))
-		return no_such_adapter(msg);
-
-	adapter = manager_find_adapter_by_id(dev_id);
 	if (!adapter)
 		return no_such_adapter(msg);
 
@@ -234,7 +180,6 @@ static DBusMessage *list_adapters(DBusConnection *conn,
 	DBusMessageIter array_iter;
 	DBusMessage *reply;
 	GSList *l;
-	uint16_t dev_id;
 
 	reply = dbus_message_new_method_return(msg);
 	if (!reply)
@@ -247,16 +192,7 @@ static DBusMessage *list_adapters(DBusConnection *conn,
 
 	for (l = adapters; l; l = l->next) {
 		struct btd_adapter *adapter = l->data;
-		struct hci_dev_info di;
 		const gchar *path = adapter_get_path(adapter);
-
-		dev_id = adapter_get_dev_id(adapter);
-
-		if (hci_devinfo(dev_id, &di) < 0)
-			continue;
-
-		if (hci_test_bit(HCI_RAW, &di.flags))
-			continue;
 
 		dbus_message_iter_append_basic(&array_iter,
 					DBUS_TYPE_OBJECT_PATH, &path);
@@ -291,6 +227,10 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	array = g_new0(char *, g_slist_length(adapters) + 1);
 	for (i = 0, list = adapters; list; list = list->next, i++) {
 		struct btd_adapter *adapter = list->data;
+
+		if (!adapter_is_ready(adapter))
+			continue;
+
 		array[i] = (char *) adapter_get_path(adapter);
 	}
 	dict_append_array(&dict, "Adapters", DBUS_TYPE_OBJECT_PATH, &array, i);
@@ -337,6 +277,10 @@ static void manager_update_adapters(void)
 	array = g_new0(char *, g_slist_length(adapters) + 1);
 	for (i = 0, list = adapters; list; list = list->next, i++) {
 		struct btd_adapter *adapter = list->data;
+
+		if (!adapter_is_ready(adapter))
+			continue;
+
 		array[i] = (char *) adapter_get_path(adapter);
 	}
 
@@ -396,6 +340,17 @@ static gint adapter_path_cmp(gconstpointer a, gconstpointer b)
 	return strcmp(adapter_path, path);
 }
 
+static gint adapter_cmp(gconstpointer a, gconstpointer b)
+{
+	struct btd_adapter *adapter = (struct btd_adapter *) a;
+	const bdaddr_t *bdaddr = b;
+	bdaddr_t src;
+
+	adapter_get_address(adapter, &src);
+
+	return bacmp(&src, bdaddr);
+}
+
 static gint adapter_address_cmp(gconstpointer a, gconstpointer b)
 {
 	struct btd_adapter *adapter = (struct btd_adapter *) a;
@@ -405,16 +360,24 @@ static gint adapter_address_cmp(gconstpointer a, gconstpointer b)
 
 	adapter_get_address(adapter, &bdaddr);
 	ba2str(&bdaddr, addr);
-	
+
 	return strcmp(addr, address);
 }
 
 struct btd_adapter *manager_find_adapter(const bdaddr_t *sba)
 {
 	GSList *match;
-	char address[18];
 
-	ba2str(sba, address);
+	match = g_slist_find_custom(adapters, sba, adapter_cmp);
+	if (!match)
+		return NULL;
+
+	return match->data;
+}
+
+struct btd_adapter *manager_find_adapter_by_address(const char *address)
+{
+	GSList *match;
 
 	match = g_slist_find_custom(adapters, address, adapter_address_cmp);
 	if (!match)
@@ -450,22 +413,12 @@ GSList *manager_get_adapters(void)
 	return adapters;
 }
 
-static void manager_add_adapter(struct btd_adapter *adapter)
+void manager_add_adapter(const char *path)
 {
-	const gchar *path = adapter_get_path(adapter);
-
-	adapters = g_slist_append(adapters, adapter);
-
 	g_dbus_emit_signal(connection, "/",
 			MANAGER_INTERFACE, "AdapterAdded",
 			DBUS_TYPE_OBJECT_PATH, &path,
 			DBUS_TYPE_INVALID);
-
-	if (default_adapter_id < 0) {
-		int new_default = hci_get_route(NULL);
-
-		manager_set_default_adapter(new_default);
-	}
 
 	manager_update_adapters();
 }
@@ -484,7 +437,7 @@ int manager_register_adapter(int id, gboolean devup)
 	if (!adapter)
 		return -1;
 
-	manager_add_adapter(adapter);
+	adapters = g_slist_append(adapters, adapter);
 
 	return 0;
 }

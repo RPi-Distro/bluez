@@ -78,6 +78,7 @@ struct a2dp_setup_cb {
 };
 
 struct a2dp_setup {
+	struct audio_device *dev;
 	struct avdtp *session;
 	struct a2dp_sep *sep;
 	struct avdtp_stream *stream;
@@ -243,9 +244,8 @@ static struct a2dp_setup *find_setup_by_dev(struct audio_device *dev)
 
 	for (l = setups; l != NULL; l = l->next) {
 		struct a2dp_setup *setup = l->data;
-		struct audio_device *setup_dev = a2dp_get_dev(setup->session);
 
-		if (setup_dev == dev)
+		if (setup->dev == dev)
 			return setup;
 	}
 
@@ -507,8 +507,7 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	ret = avdtp_open(session, stream);
 	if (ret < 0) {
-		error("Error on avdtp_open %s (%d)", strerror(-ret),
-				-ret);
+		error("Error on avdtp_open %s (%d)", strerror(-ret), -ret);
 		setup->stream = NULL;
 		finalize_config_errno(setup, ret);
 	}
@@ -520,9 +519,9 @@ static gboolean getconf_ind(struct avdtp *session, struct avdtp_local_sep *sep,
 	struct a2dp_sep *a2dp_sep = user_data;
 
 	if (a2dp_sep->type == AVDTP_SEP_TYPE_SINK)
-		debug("Sink %p: Get_Configuration_Ind");
+		debug("Sink %p: Get_Configuration_Ind", sep);
 	else
-		debug("Source %p: Get_Configuration_Ind");
+		debug("Source %p: Get_Configuration_Ind", sep);
 	return TRUE;
 }
 
@@ -759,24 +758,33 @@ static gboolean a2dp_reconfigure(gpointer data)
 		break;
 	}
 
+	if (!codec_cap) {
+		error("Cannot find capabilities to reconfigure");
+		posix_err = -EINVAL;
+		goto failed;
+	}
+
 	posix_err = avdtp_get_seps(setup->session, AVDTP_SEP_TYPE_SINK,
 					codec_cap->media_type,
 					codec_cap->media_codec_type,
 					&lsep, &rsep);
 	if (posix_err < 0) {
 		error("No matching ACP and INT SEPs found");
-		finalize_config_errno(setup, posix_err);
+		goto failed;
 	}
 
 	posix_err = avdtp_set_configuration(setup->session, rsep, lsep,
 						setup->client_caps,
 						&setup->stream);
 	if (posix_err < 0) {
-		error("avdtp_set_configuration: %s",
-			strerror(-posix_err));
-		finalize_config_errno(setup, posix_err);
+		error("avdtp_set_configuration: %s", strerror(-posix_err));
+		goto failed;
 	}
 
+	return FALSE;
+
+failed:
+	finalize_config_errno(setup, posix_err);
 	return FALSE;
 }
 
@@ -1189,6 +1197,8 @@ void a2dp_unregister(const bdaddr_t *src)
 	g_slist_foreach(server->sources, (GFunc) a2dp_unregister_sep, NULL);
 	g_slist_free(server->sources);
 
+	avdtp_exit(src);
+
 	if (server->source_record_id)
 		remove_record_from_server(server->source_record_id);
 
@@ -1211,6 +1221,8 @@ gboolean a2dp_source_cancel(struct audio_device *dev, unsigned int id)
 	struct a2dp_setup *setup;
 	GSList *l;
 
+	debug("a2dp_source_cancel()");
+
 	setup = find_setup_by_dev(dev);
 	if (!setup)
 		return FALSE;
@@ -1225,7 +1237,7 @@ gboolean a2dp_source_cancel(struct audio_device *dev, unsigned int id)
 	}
 
 	if (!cb_data)
-		return FALSE;
+		error("a2dp_source_cancel: no matching callback with id %u", id);
 
 	setup->cb = g_slist_remove(setup->cb, cb_data);
 	g_free(cb_data);
@@ -1319,6 +1331,7 @@ unsigned int a2dp_source_config(struct avdtp *session, struct a2dp_sep *sep,
 	if (!setup) {
 		setup = g_new0(struct a2dp_setup, 1);
 		setup->session = avdtp_ref(session);
+		setup->dev = a2dp_get_dev(session);
 		setups = g_slist_append(setups, setup);
 	}
 
@@ -1403,6 +1416,7 @@ unsigned int a2dp_source_resume(struct avdtp *session, struct a2dp_sep *sep,
 	if (!setup) {
 		setup = g_new0(struct a2dp_setup, 1);
 		setup->session = avdtp_ref(session);
+		setup->dev = a2dp_get_dev(session);
 		setups = g_slist_append(setups, setup);
 	}
 
@@ -1461,6 +1475,7 @@ unsigned int a2dp_source_suspend(struct avdtp *session, struct a2dp_sep *sep,
 	if (!setup) {
 		setup = g_new0(struct a2dp_setup, 1);
 		setup->session = avdtp_ref(session);
+		setup->dev = a2dp_get_dev(session);
 		setups = g_slist_append(setups, setup);
 	}
 

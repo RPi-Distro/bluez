@@ -43,8 +43,17 @@ static GSList *plugins = NULL;
 
 struct bluetooth_plugin {
 	void *handle;
+	gboolean active;
 	struct bluetooth_plugin_desc *desc;
 };
+
+static gint compare_priority(gconstpointer a, gconstpointer b)
+{
+	const struct bluetooth_plugin *plugin1 = a;
+	const struct bluetooth_plugin *plugin2 = b;
+
+	return plugin2->desc->priority - plugin1->desc->priority;
+}
 
 static gboolean add_plugin(void *handle, struct bluetooth_plugin_desc *desc)
 {
@@ -54,23 +63,21 @@ static gboolean add_plugin(void *handle, struct bluetooth_plugin_desc *desc)
 		return FALSE;
 
 	if (g_str_equal(desc->version, VERSION) == FALSE) {
-		DBG("version mismatch for %s", desc->name);
+		error("Version mismatch for %s", desc->name);
 		return FALSE;
 	}
+
+	debug("Loading %s plugin", desc->name);
 
 	plugin = g_try_new0(struct bluetooth_plugin, 1);
 	if (plugin == NULL)
 		return FALSE;
 
 	plugin->handle = handle;
+	plugin->active = FALSE;
 	plugin->desc = desc;
 
-	if (desc->init() < 0) {
-		g_free(plugin);
-		return FALSE;
-	}
-
-	plugins = g_slist_append(plugins, plugin);
+	plugins = g_slist_insert_sorted(plugins, plugin, compare_priority);
 
 	return TRUE;
 }
@@ -82,6 +89,9 @@ static gboolean is_disabled(const char *name, char **list)
 	for (i = 0; list[i] != NULL; i++) {
 		char *str;
 		gboolean equal;
+
+		if (g_str_equal(name, list[i]))
+			return TRUE;
 
 		str = g_strdup_printf("%s.so", list[i]);
 
@@ -96,11 +106,15 @@ static gboolean is_disabled(const char *name, char **list)
 	return FALSE;
 }
 
+#include "builtin.h"
+
 gboolean plugin_init(GKeyFile *config)
 {
+	GSList *list;
 	GDir *dir;
 	const gchar *file;
 	gchar **disabled;
+	unsigned int i;
 
 	if (strlen(PLUGINDIR) == 0)
 		return FALSE;
@@ -115,6 +129,16 @@ gboolean plugin_init(GKeyFile *config)
 							NULL, NULL);
 	else
 		disabled = NULL;
+
+	debug("Loading builtin plugins");
+
+	for (i = 0; __bluetooth_builtin[i]; i++) {
+		if (disabled && is_disabled(__bluetooth_builtin[i]->name,
+								disabled))
+			continue;
+
+		add_plugin(NULL,  __bluetooth_builtin[i]);
+	}
 
 	debug("Loading plugins %s", PLUGINDIR);
 
@@ -171,6 +195,15 @@ gboolean plugin_init(GKeyFile *config)
 
 	g_strfreev(disabled);
 
+	for (list = plugins; list; list = list->next) {
+		struct bluetooth_plugin *plugin = list->data;
+
+		if (plugin->desc->init() < 0)
+			continue;
+
+		plugin->active = TRUE;
+	}
+
 	return TRUE;
 }
 
@@ -183,10 +216,11 @@ void plugin_cleanup(void)
 	for (list = plugins; list; list = list->next) {
 		struct bluetooth_plugin *plugin = list->data;
 
-		if (plugin->desc->exit)
+		if (plugin->active == TRUE && plugin->desc->exit)
 			plugin->desc->exit();
 
-		dlclose(plugin->handle);
+		if (plugin->handle != NULL)
+			dlclose(plugin->handle);
 
 		g_free(plugin);
 	}

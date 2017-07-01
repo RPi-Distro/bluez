@@ -32,6 +32,9 @@ PRE_UNINSTALL = :
 POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
+@SERVICEPLUGIN_TRUE@am__append_1 = service
+@SERVICEPLUGIN_TRUE@am__append_2 = service.c
+@NETLINK_TRUE@am__append_3 = netlink.la
 subdir = plugins
 DIST_COMMON = $(srcdir)/Makefile.am $(srcdir)/Makefile.in
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -52,24 +55,25 @@ am__installdirs = "$(DESTDIR)$(plugindir)"
 pluginLTLIBRARIES_INSTALL = $(INSTALL)
 LTLIBRARIES = $(noinst_LTLIBRARIES) $(plugin_LTLIBRARIES)
 echo_la_LIBADD =
-am_echo_la_OBJECTS = echo.lo
-echo_la_OBJECTS = $(am_echo_la_OBJECTS)
-hal_la_LIBADD =
-hal_la_SOURCES = hal.c
-hal_la_OBJECTS = hal.lo
+echo_la_SOURCES = echo.c
+echo_la_OBJECTS = echo.lo
+libbuiltin_la_LIBADD =
+am__libbuiltin_la_SOURCES_DIST = service.c hciops.c hal.c storage.c
+@SERVICEPLUGIN_TRUE@am__objects_1 = libbuiltin_la-service.lo
+am__objects_2 = $(am__objects_1) libbuiltin_la-hciops.lo \
+	libbuiltin_la-hal.lo libbuiltin_la-storage.lo
+am_libbuiltin_la_OBJECTS = $(am__objects_2)
+am__objects_3 =
+nodist_libbuiltin_la_OBJECTS = $(am__objects_3)
+libbuiltin_la_OBJECTS = $(am_libbuiltin_la_OBJECTS) \
+	$(nodist_libbuiltin_la_OBJECTS)
+libbuiltin_la_LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) \
+	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(libbuiltin_la_CFLAGS) \
+	$(CFLAGS) $(libbuiltin_la_LDFLAGS) $(LDFLAGS) -o $@
 netlink_la_DEPENDENCIES =
-am__netlink_la_SOURCES_DIST = netlink.c
-@NETLINK_TRUE@am_netlink_la_OBJECTS = netlink.lo
-netlink_la_OBJECTS = $(am_netlink_la_OBJECTS)
+netlink_la_SOURCES = netlink.c
+netlink_la_OBJECTS = netlink.lo
 @NETLINK_TRUE@am_netlink_la_rpath = -rpath $(plugindir)
-service_la_LIBADD =
-am__service_la_SOURCES_DIST = service.c
-@SERVICEPLUGIN_TRUE@am_service_la_OBJECTS = service.lo
-service_la_OBJECTS = $(am_service_la_OBJECTS)
-@SERVICEPLUGIN_TRUE@am_service_la_rpath = -rpath $(plugindir)
-storage_la_LIBADD =
-am_storage_la_OBJECTS = storage.lo
-storage_la_OBJECTS = $(am_storage_la_OBJECTS)
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)
 depcomp = $(SHELL) $(top_srcdir)/depcomp
 am__depfiles_maybe = depfiles
@@ -82,10 +86,9 @@ CCLD = $(CC)
 LINK = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
-SOURCES = $(echo_la_SOURCES) hal.c $(netlink_la_SOURCES) \
-	$(service_la_SOURCES) $(storage_la_SOURCES)
-DIST_SOURCES = $(echo_la_SOURCES) hal.c $(am__netlink_la_SOURCES_DIST) \
-	$(am__service_la_SOURCES_DIST) $(storage_la_SOURCES)
+SOURCES = echo.c $(libbuiltin_la_SOURCES) \
+	$(nodist_libbuiltin_la_SOURCES) netlink.c
+DIST_SOURCES = echo.c $(am__libbuiltin_la_SOURCES_DIST) netlink.c
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -222,24 +225,28 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 plugindir = $(libdir)/bluetooth/plugins
-@NETLINK_FALSE@netlink_plugins = 
-@NETLINK_TRUE@netlink_plugins = netlink.la
-@SERVICEPLUGIN_FALSE@service_plugins = 
-@SERVICEPLUGIN_TRUE@service_plugins = service.la
-plugin_LTLIBRARIES = hal.la $(netlink_plugins) $(service_plugins)
-noinst_LTLIBRARIES = echo.la storage.la
-echo_la_SOURCES = echo.c
-storage_la_SOURCES = storage.c
-@NETLINK_TRUE@netlink_la_SOURCES = netlink.c
+plugin_LTLIBRARIES = $(am__append_3)
+builtin_modules = $(am__append_1) hciops hal storage
+builtin_sources = $(am__append_2) hciops.c hal.c storage.c
+builtin_cflags = 
 @NETLINK_TRUE@netlink_la_LIBADD = @NETLINK_LIBS@
-@SERVICEPLUGIN_TRUE@service_la_SOURCES = service.c
+noinst_LTLIBRARIES = libbuiltin.la echo.la
+libbuiltin_la_SOURCES = $(builtin_sources)
+libbuiltin_la_LDFLAGS = 
+libbuiltin_la_CFLAGS = $(AM_CFLAGS) \
+			$(builtin_cflags) -DBLUETOOTH_PLUGIN_BUILTIN
+
+BUILT_SOURCES = builtin.h
+nodist_libbuiltin_la_SOURCES = $(BUILT_SOURCES)
 AM_LDFLAGS = -module -avoid-version -no-undefined
 AM_CFLAGS = -fvisibility=hidden @BLUEZ_CFLAGS@ @DBUS_CFLAGS@ \
 			@GLIB_CFLAGS@ @GDBUS_CFLAGS@ @NETLINK_CFLAGS@
 
 INCLUDES = -I$(top_srcdir)/common -I$(top_srcdir)/src
+CLEANFILES = $(BUILT_SOURCES)
 MAINTAINERCLEANFILES = Makefile.in
-all: all-am
+all: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) all-am
 
 .SUFFIXES:
 .SUFFIXES: .c .lo .o .obj
@@ -310,14 +317,10 @@ clean-pluginLTLIBRARIES:
 	done
 echo.la: $(echo_la_OBJECTS) $(echo_la_DEPENDENCIES) 
 	$(LINK)  $(echo_la_OBJECTS) $(echo_la_LIBADD) $(LIBS)
-hal.la: $(hal_la_OBJECTS) $(hal_la_DEPENDENCIES) 
-	$(LINK) -rpath $(plugindir) $(hal_la_OBJECTS) $(hal_la_LIBADD) $(LIBS)
+libbuiltin.la: $(libbuiltin_la_OBJECTS) $(libbuiltin_la_DEPENDENCIES) 
+	$(libbuiltin_la_LINK)  $(libbuiltin_la_OBJECTS) $(libbuiltin_la_LIBADD) $(LIBS)
 netlink.la: $(netlink_la_OBJECTS) $(netlink_la_DEPENDENCIES) 
 	$(LINK) $(am_netlink_la_rpath) $(netlink_la_OBJECTS) $(netlink_la_LIBADD) $(LIBS)
-service.la: $(service_la_OBJECTS) $(service_la_DEPENDENCIES) 
-	$(LINK) $(am_service_la_rpath) $(service_la_OBJECTS) $(service_la_LIBADD) $(LIBS)
-storage.la: $(storage_la_OBJECTS) $(storage_la_DEPENDENCIES) 
-	$(LINK)  $(storage_la_OBJECTS) $(storage_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -326,10 +329,11 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/echo.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/hal.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libbuiltin_la-hal.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libbuiltin_la-hciops.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libbuiltin_la-service.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libbuiltin_la-storage.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/netlink.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/service.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/storage.Plo@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(COMPILE) -MT $@ -MD -MP -MF $(DEPDIR)/$*.Tpo -c -o $@ $<
@@ -351,6 +355,34 @@ distclean-compile:
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	source='$<' object='$@' libtool=yes @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(LTCOMPILE) -c -o $@ $<
+
+libbuiltin_la-service.lo: service.c
+@am__fastdepCC_TRUE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -MT libbuiltin_la-service.lo -MD -MP -MF $(DEPDIR)/libbuiltin_la-service.Tpo -c -o libbuiltin_la-service.lo `test -f 'service.c' || echo '$(srcdir)/'`service.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/libbuiltin_la-service.Tpo $(DEPDIR)/libbuiltin_la-service.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='service.c' object='libbuiltin_la-service.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -c -o libbuiltin_la-service.lo `test -f 'service.c' || echo '$(srcdir)/'`service.c
+
+libbuiltin_la-hciops.lo: hciops.c
+@am__fastdepCC_TRUE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -MT libbuiltin_la-hciops.lo -MD -MP -MF $(DEPDIR)/libbuiltin_la-hciops.Tpo -c -o libbuiltin_la-hciops.lo `test -f 'hciops.c' || echo '$(srcdir)/'`hciops.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/libbuiltin_la-hciops.Tpo $(DEPDIR)/libbuiltin_la-hciops.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='hciops.c' object='libbuiltin_la-hciops.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -c -o libbuiltin_la-hciops.lo `test -f 'hciops.c' || echo '$(srcdir)/'`hciops.c
+
+libbuiltin_la-hal.lo: hal.c
+@am__fastdepCC_TRUE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -MT libbuiltin_la-hal.lo -MD -MP -MF $(DEPDIR)/libbuiltin_la-hal.Tpo -c -o libbuiltin_la-hal.lo `test -f 'hal.c' || echo '$(srcdir)/'`hal.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/libbuiltin_la-hal.Tpo $(DEPDIR)/libbuiltin_la-hal.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='hal.c' object='libbuiltin_la-hal.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -c -o libbuiltin_la-hal.lo `test -f 'hal.c' || echo '$(srcdir)/'`hal.c
+
+libbuiltin_la-storage.lo: storage.c
+@am__fastdepCC_TRUE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -MT libbuiltin_la-storage.lo -MD -MP -MF $(DEPDIR)/libbuiltin_la-storage.Tpo -c -o libbuiltin_la-storage.lo `test -f 'storage.c' || echo '$(srcdir)/'`storage.c
+@am__fastdepCC_TRUE@	mv -f $(DEPDIR)/libbuiltin_la-storage.Tpo $(DEPDIR)/libbuiltin_la-storage.Plo
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	source='storage.c' object='libbuiltin_la-storage.lo' libtool=yes @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=compile $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(libbuiltin_la_CFLAGS) $(CFLAGS) -c -o libbuiltin_la-storage.lo `test -f 'storage.c' || echo '$(srcdir)/'`storage.c
 
 mostlyclean-libtool:
 	-rm -f *.lo
@@ -432,13 +464,15 @@ distdir: $(DISTFILES)
 	  fi; \
 	done
 check-am: all-am
-check: check-am
+check: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) check-am
 all-am: Makefile $(LTLIBRARIES) all-local
 installdirs:
 	for dir in "$(DESTDIR)$(plugindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
-install: install-am
+install: $(BUILT_SOURCES)
+	$(MAKE) $(AM_MAKEFLAGS) install-am
 install-exec: install-exec-am
 install-data: install-data-am
 uninstall: uninstall-am
@@ -455,6 +489,7 @@ install-strip:
 mostlyclean-generic:
 
 clean-generic:
+	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
 
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
@@ -462,6 +497,7 @@ distclean-generic:
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
 	@echo "it deletes files that may require special tools to rebuild."
+	-test -z "$(BUILT_SOURCES)" || rm -f $(BUILT_SOURCES)
 	-test -z "$(MAINTAINERCLEANFILES)" || rm -f $(MAINTAINERCLEANFILES)
 clean: clean-am
 
@@ -541,17 +577,23 @@ uninstall-am: uninstall-pluginLTLIBRARIES
 	uninstall-pluginLTLIBRARIES
 
 
+builtin.h:
+	echo "" > $@
+	list='$(builtin_modules)'; for i in $$list; \
+	  do echo "extern struct bluetooth_plugin_desc __bluetooth_builtin_$$i;" >> $@; done
+	echo "" >> $@
+	echo "static struct bluetooth_plugin_desc *__bluetooth_builtin[] = {" >> $@
+	list='$(builtin_modules)'; for i in $$list; \
+	  do echo "&__bluetooth_builtin_$$i," >> $@; done
+	echo "NULL };" >> $@
+
 all-local:
 	@$(LN_S) -f $(top_srcdir)/input/.libs/input.so
 	@$(LN_S) -f $(top_srcdir)/audio/.libs/audio.so
 	@$(LN_S) -f $(top_srcdir)/serial/.libs/serial.so
 	@$(LN_S) -f $(top_srcdir)/network/.libs/network.so
-	@$(LN_S) -f .libs/service.so
-	@$(LN_S) -f .libs/hal.so
 
 clean-local:
-	@rm -f hal.so
-	@rm -f service.so
 	@rm -f network.so
 	@rm -f serial.so
 	@rm -f audio.so

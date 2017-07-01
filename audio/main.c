@@ -41,10 +41,11 @@
 #include "btio.h"
 #include "plugin.h"
 #include "logging.h"
-#include "unix.h"
 #include "device.h"
+#include "unix.h"
 #include "headset.h"
 #include "manager.h"
+#include "gateway.h"
 
 static GIOChannel *sco_server = NULL;
 
@@ -89,27 +90,42 @@ static void sco_server_cb(GIOChannel *chan, GError *err, gpointer data)
 		goto drop;
 	}
 
-	device = manager_find_device(NULL, &src, &dst, NULL, FALSE);
+	device = manager_find_device(NULL, &src, &dst, AUDIO_HEADSET_INTERFACE,
+					FALSE);
 	if (!device)
 		goto drop;
 
-	if (headset_get_state(device) < HEADSET_STATE_CONNECTED) {
-		debug("Refusing SCO from non-connected headset");
-		goto drop;
-	}
+	if (device->headset) {
+		if (headset_get_state(device) < HEADSET_STATE_CONNECTED) {
+			debug("Refusing SCO from non-connected headset");
+			goto drop;
+		}
 
-	if (!get_hfp_active(device)) {
-		error("Refusing non-HFP SCO connect attempt from %s", addr);
+		if (!get_hfp_active(device)) {
+			error("Refusing non-HFP SCO connect attempt from %s",
+									addr);
+			goto drop;
+		}
+
+		if (headset_connect_sco(device, chan) < 0)
+			goto drop;
+
+		headset_set_state(device, HEADSET_STATE_PLAYING);
+	} else if (device->gateway) {
+		if (!gateway_is_connected(device)) {
+			debug("Refusing SCO from non-connected AG");
+			goto drop;
+		}
+
+		if (gateway_connect_sco(device, chan) < 0)
+			goto drop;
+	} else
 		goto drop;
-	}
 
 	sk = g_io_channel_unix_get_fd(chan);
 	fcntl(sk, F_SETFL, 0);
 
-	if (headset_connect_sco(device, chan) == 0) {
-		debug("Accepted SCO connection from %s", addr);
-		headset_set_state(device, HEADSET_STATE_PLAYING);
-	}
+	debug("Accepted SCO connection from %s", addr);
 
 	return;
 
@@ -174,4 +190,5 @@ static void audio_exit(void)
 	dbus_connection_unref(connection);
 }
 
-BLUETOOTH_PLUGIN_DEFINE("audio", VERSION, audio_init, audio_exit)
+BLUETOOTH_PLUGIN_DEFINE(audio, VERSION,
+			BLUETOOTH_PLUGIN_PRIORITY_DEFAULT, audio_init, audio_exit)

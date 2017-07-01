@@ -73,12 +73,23 @@ int device_request_authentication(struct btd_device *device, auth_type_t type,
 				uint32_t passkey, void *cb);
 void device_cancel_authentication(struct btd_device *device, gboolean aborted);
 gboolean device_is_authenticating(struct btd_device *device);
+gboolean device_is_authorizing(struct btd_device *device);
+void device_set_authorizing(struct btd_device *device, gboolean auth);
 void device_set_renewed_key(struct btd_device *device, gboolean renewed);
 void device_add_connection(struct btd_device *device, DBusConnection *conn,
 				uint16_t handle);
 void device_remove_connection(struct btd_device *device, DBusConnection *conn,
 				uint16_t handle);
 gboolean device_has_connection(struct btd_device *device, uint16_t handle);
+void device_request_disconnect(struct btd_device *device, DBusMessage *msg);
+
+typedef void (*disconnect_watch) (struct btd_device *device, gboolean removal,
+					void *user_data);
+
+guint device_add_disconnect_watch(struct btd_device *device,
+				disconnect_watch watch, void *user_data,
+				GDestroyNotify destroy);
+void device_remove_disconnect_watch(struct btd_device *device, guint id);
 
 #define BTD_UUIDS(args...) ((const char *[]) { args, NULL } )
 
@@ -91,3 +102,6 @@ struct btd_device_driver {
 
 int btd_register_device_driver(struct btd_device_driver *driver);
 void btd_unregister_device_driver(struct btd_device_driver *driver);
+
+struct btd_device *btd_device_ref(struct btd_device *device);
+void btd_device_unref(struct btd_device *device);

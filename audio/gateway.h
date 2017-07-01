@@ -22,13 +22,26 @@
  *
  */
 
-#define AUDIO_GATEWAY_INTERFACE "org.bluez.Gateway"
+#define AUDIO_GATEWAY_INTERFACE "org.bluez.HeadsetGateway"
 
 #define DEFAULT_HSP_HS_CHANNEL 6
 #define DEFAULT_HFP_HS_CHANNEL 7
 
-int gateway_init(DBusConnection *conn, gboolean disable_hfp, gboolean sco_hci);
+typedef enum {
+	GATEWAY_STATE_DISCONNECTED,
+	GATEWAY_STATE_CONNECTED
+} gateway_state_t;
 
-void gateway_exit(void);
-
-gboolean gateway_is_enabled(uint16_t svc);
+typedef void (*gateway_stream_cb_t) (struct audio_device *dev, void *user_data);
+struct gateway *gateway_init(struct audio_device *device);
+gboolean gateway_is_connected(struct audio_device *dev);
+int gateway_connect_rfcomm(struct audio_device *dev, GIOChannel *chan);
+int gateway_connect_sco(struct audio_device *dev, GIOChannel *chan);
+void gateway_start_service(struct audio_device *device);
+gboolean gateway_request_stream(struct audio_device *dev,
+			gateway_stream_cb_t cb, void *user_data);
+int gateway_config_stream(struct audio_device *dev, gateway_stream_cb_t cb,
+			void *user_data);
+gboolean gateway_cancel_stream(struct audio_device *dev, unsigned int id);
+int gateway_get_sco_fd(struct audio_device *dev);
+void gateway_suspend_stream(struct audio_device *dev);

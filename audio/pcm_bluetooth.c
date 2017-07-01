@@ -146,7 +146,7 @@ struct bluetooth_data {
 
 static int audioservice_send(int sk, const bt_audio_msg_header_t *msg);
 static int audioservice_expect(int sk, bt_audio_msg_header_t *outmsg,
-				int expected_type);
+							int expected_type);
 
 static int bluetooth_start(snd_pcm_ioplug_t *io)
 {
@@ -522,7 +522,7 @@ static uint8_t default_bitpool(uint8_t freq, uint8_t mode)
 }
 
 static int bluetooth_a2dp_init(struct bluetooth_data *data,
-				snd_pcm_hw_params_t *params)
+					snd_pcm_hw_params_t *params)
 {
 	struct bluetooth_alsa_config *cfg = &data->alsa_config;
 	sbc_capabilities_t *cap = &data->a2dp.sbc_capabilities;
@@ -958,8 +958,7 @@ done:
 
 static snd_pcm_sframes_t bluetooth_a2dp_read(snd_pcm_ioplug_t *io,
 				const snd_pcm_channel_area_t *areas,
-				snd_pcm_uframes_t offset,
-				snd_pcm_uframes_t size)
+				snd_pcm_uframes_t offset, snd_pcm_uframes_t size)
 {
 	snd_pcm_uframes_t ret = 0;
 	return ret;
@@ -1007,7 +1006,8 @@ static snd_pcm_sframes_t bluetooth_a2dp_write(snd_pcm_ioplug_t *io,
 	struct bluetooth_a2dp *a2dp = &data->a2dp;
 	snd_pcm_sframes_t ret = 0;
 	unsigned int bytes_left;
-	int frame_size, encoded, written;
+	int frame_size, encoded;
+	size_t written;
 	uint8_t *buff;
 
 	DBG("areas->step=%u areas->first=%u offset=%lu size=%lu",
@@ -1584,7 +1584,7 @@ static int audioservice_recv(int sk, bt_audio_msg_header_t *inmsg)
 }
 
 static int audioservice_expect(int sk, bt_audio_msg_header_t *rsp,
-				int expected_name)
+							int expected_name)
 {
 	bt_audio_error_t *error;
 	int err = audioservice_recv(sk, rsp);
@@ -1640,8 +1640,8 @@ static int bluetooth_parse_capabilities(struct bluetooth_data *data,
 	return 0;
 }
 
-static int bluetooth_init(struct bluetooth_data *data, snd_pcm_stream_t stream,
-				snd_config_t *conf)
+static int bluetooth_init(struct bluetooth_data *data,
+				snd_pcm_stream_t stream, snd_config_t *conf)
 {
 	int sk, err;
 	struct bluetooth_alsa_config *alsa_conf = &data->alsa_config;
