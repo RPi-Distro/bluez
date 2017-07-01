@@ -661,6 +661,8 @@ static inline void remote_features_notify(int dev, bdaddr_t *sba, void *ptr)
 		hcid_dbus_set_legacy_pairing(sba, &evt->bdaddr, FALSE);
 	else
 		hcid_dbus_set_legacy_pairing(sba, &evt->bdaddr, TRUE);
+
+	write_features_info(sba, &evt->bdaddr, NULL, evt->features);
 }
 
 static inline void cmd_status(int dev, bdaddr_t *sba, void *ptr)
@@ -703,6 +705,10 @@ static inline void cmd_complete(int dev, bdaddr_t *sba, void *ptr)
 	case cmd_opcode_pack(OGF_HOST_CTL, OCF_READ_LOCAL_NAME):
 		ptr += sizeof(evt_cmd_complete);
 		adapter_update_local_name(sba, status, ptr);
+		break;
+	case cmd_opcode_pack(OGF_HOST_CTL, OCF_READ_INQ_RESPONSE_TX_POWER_LEVEL):
+		ptr += sizeof(evt_cmd_complete);
+		adapter_update_tx_power(sba, status, ptr);
 		break;
 	};
 }
@@ -833,7 +839,7 @@ static inline void remote_features_information(int dev, bdaddr_t *sba, void *ptr
 	if (get_bdaddr(dev, sba, btohs(evt->handle), &dba) < 0)
 		return;
 
-	write_features_info(sba, &dba, evt->features);
+	write_features_info(sba, &dba, evt->features, NULL);
 }
 
 static inline void conn_complete(int dev, int dev_id, bdaddr_t *sba, void *ptr)

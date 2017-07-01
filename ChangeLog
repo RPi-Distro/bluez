@@ -1,3 +1,26 @@
+ver 4.63:
+	Fix avdtp_abort not canceling pending requests.
+	Fix stale connection when abort gets rejected.
+
+ver 4.62:
+	Fix accidental symbol breakage with inquiry transmit power.
+	Fix using invalid data from previous headset connection.
+	Fix double free on AVDTP Abort response.
+	Fix possible crash while verifying AVDTP version.
+	Fix missing inuse flag when AVDTP stream is configured.
+	Add support for Bluetooth controller types.
+
+ver 4.61:
+	Fix issues with Read Inquiry Response Transmit Power Level.
+	Fix possible invalid read when removing a temporary device.
+	Fix mode restoration when remember_powered is false.
+	Fix conference call releasing in telephony-maemo.
+	Fix segmentation fault with authorization during headset disconnects.
+	Add support for handling unanswered AVDTP request on disconnect.
+	Add support for handling Inquiry Response Transmit Power Level.
+	Add support for caching of remote host features.
+	Add preliminary voice dialing support for HSP.
+
 ver 4.60:
 	Fix voice mailbox number reading from SIM.
 	Fix some races with D-Bus mainloop integration.

@@ -47,7 +47,7 @@ extern "C" {
 #define HCI_DEV_SUSPEND	5
 #define HCI_DEV_RESUME	6
 
-/* HCI device types */
+/* HCI bus types */
 #define HCI_VIRTUAL	0
 #define HCI_USB		1
 #define HCI_PCCARD	2
@@ -55,6 +55,10 @@ extern "C" {
 #define HCI_RS232	4
 #define HCI_PCI		5
 #define HCI_SDIO	6
+
+/* HCI controller types */
+#define HCI_BREDR	0x00
+#define HCI_80211	0x01
 
 /* HCI device flags */
 enum {
@@ -1056,6 +1060,13 @@ typedef struct {
 	uint8_t		randomizer[16];
 } __attribute__ ((packed)) read_local_oob_data_rp;
 #define READ_LOCAL_OOB_DATA_RP_SIZE 33
+
+#define OCF_READ_INQ_RESPONSE_TX_POWER_LEVEL	0x0058
+typedef struct {
+	uint8_t		status;
+	int8_t		level;
+} __attribute__ ((packed)) read_inq_response_tx_power_level_rp;
+#define READ_INQ_RESPONSE_TX_POWER_LEVEL_RP_SIZE 2
 
 #define OCF_READ_INQUIRY_TRANSMIT_POWER_LEVEL	0x0058
 typedef struct {

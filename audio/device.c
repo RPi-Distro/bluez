@@ -663,6 +663,9 @@ void audio_device_unregister(struct audio_device *device)
 	if (device->headset)
 		headset_unregister(device);
 
+	if (device->gateway)
+		gateway_unregister(device);
+
 	if (device->sink)
 		sink_unregister(device);
 
@@ -778,7 +781,7 @@ int audio_device_cancel_authorization(struct audio_device *dev,
 	GSList *l, *next;
 
 	for (l = priv->auths; l != NULL; l = next) {
-		struct service_auth *auth = priv->auths->data;
+		struct service_auth *auth = l->data;
 
 		next = g_slist_next(l);
 

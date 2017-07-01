@@ -387,6 +387,14 @@ void telephony_key_press_req(void *telephony_device, const char *keys)
 	telephony_key_press_rsp(telephony_device, CME_ERROR_NONE);
 }
 
+void telephony_voice_dial_req(void *telephony_device, gboolean enable)
+{
+	debug("telephony-ofono: got %s voice dial request",
+			enable ? "enable" : "disable");
+
+	telephony_voice_dial_rsp(telephony_device, CME_ERROR_NOT_SUPPORTED);
+}
+
 static gboolean iter_get_basic_args(DBusMessageIter *iter,
 					int first_arg_type, ...)
 {
@@ -478,7 +486,7 @@ static void get_registration_reply(DBusPendingCall *call, void *user_data)
 
 	dbus_message_iter_init(reply, &iter);
 
-	/* ARRAY -> ENTRY -> VARIANT*/
+	/* ARRAY -> ENTRY -> VARIANT */
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY) {
 		error("Unexpected signature in GetProperties return");
 		goto done;
@@ -780,14 +788,13 @@ static gboolean handle_vc_property_changed(DBusConnection *conn,
 			telephony_update_indicator(ofono_indicators,
 							"callsetup",
 							EV_CALLSETUP_INACTIVE);
-			if (vc->status == CALL_STATUS_INCOMING) {
+			if (vc->status == CALL_STATUS_INCOMING)
 				telephony_calling_stopped_ind();
-			}
 			vc->status = CALL_STATUS_ACTIVE;
 			debug("vc status is CALL_STATUS_ACTIVE");
 		} else if (g_str_equal(state, "alerting")) {
 			telephony_update_indicator(ofono_indicators,
-					 "callsetup", EV_CALLSETUP_ALERTING);
+					"callsetup", EV_CALLSETUP_ALERTING);
 			vc->status = CALL_STATUS_ALERTING;
 			debug("vc status is CALL_STATUS_ALERTING");
 		} else if (g_str_equal(state, "incoming")) {
@@ -843,7 +850,7 @@ static gboolean handle_vcmanager_property_changed(DBusConnection *conn,
 			vc_new = g_new0(struct voice_call, 1);
 			vc_new->obj_path = g_strdup(vc_obj_path);
 			calls = g_slist_append(calls, vc_new);
-			device_watch = g_dbus_add_signal_watch(connection,
+			vc_new->watch = g_dbus_add_signal_watch(connection,
 					NULL, vc_obj_path,
 					OFONO_VC_INTERFACE,
 					"PropertyChanged",
@@ -881,9 +888,15 @@ static void hal_battery_level_reply(DBusPendingCall *call, void *user_data)
 		goto done;
 	}
 
-	dbus_message_get_args(reply, NULL,
+	dbus_error_init(&err);
+	if (dbus_message_get_args(reply, &err,
 				DBUS_TYPE_INT32, &level,
-				DBUS_TYPE_INVALID);
+				DBUS_TYPE_INVALID) == FALSE) {
+		error("Unable to parse GetPropertyInteger reply: %s, %s",
+							err.name, err.message);
+		dbus_error_free(&err);
+		goto done;
+	}
 
 	*value = (int) level;
 

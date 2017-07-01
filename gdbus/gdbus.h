@@ -40,6 +40,9 @@ typedef gboolean (* GDBusSignalFunction) (DBusConnection *connection,
 DBusConnection *g_dbus_setup_bus(DBusBusType type, const char *name,
 							DBusError *error);
 
+DBusConnection *g_dbus_setup_private(DBusBusType type, const char *name,
+							DBusError *error);
+
 gboolean g_dbus_request_name(DBusConnection *connection, const char *name,
 							DBusError *error);
 
@@ -88,9 +91,9 @@ typedef struct {
 
 gboolean g_dbus_register_interface(DBusConnection *connection,
 					const char *path, const char *name,
-					GDBusMethodTable *methods,
-					GDBusSignalTable *signals,
-					GDBusPropertyTable *properties,
+					const GDBusMethodTable *methods,
+					const GDBusSignalTable *signals,
+					const GDBusPropertyTable *properties,
 					void *user_data,
 					GDBusDestroyFunction destroy);
 gboolean g_dbus_unregister_interface(DBusConnection *connection,
