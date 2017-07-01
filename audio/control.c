@@ -178,6 +178,21 @@ struct control {
 	gboolean target;
 };
 
+static struct {
+	const char *name;
+	uint8_t avrcp;
+	uint16_t uinput;
+} key_map[] = {
+	{ "PLAY",		PLAY_OP,		KEY_PLAYCD },
+	{ "STOP",		STOP_OP,		KEY_STOPCD },
+	{ "PAUSE",		PAUSE_OP,		KEY_PAUSECD },
+	{ "FORWARD",		FORWARD_OP,		KEY_NEXTSONG },
+	{ "BACKWARD",		BACKWARD_OP,		KEY_PREVIOUSSONG },
+	{ "REWIND",		REWIND_OP,		KEY_REWIND },
+	{ "FAST FORWARD",	FAST_FORWARD_OP,	KEY_FASTFORWARD },
+	{ NULL }
+};
+
 static GSList *avctp_callbacks = NULL;
 
 static sdp_record_t *avrcp_ct_record()
@@ -332,7 +347,7 @@ static void handle_panel_passthrough(struct control *control,
 					int operand_count)
 {
 	const char *status;
-	int pressed;
+	int pressed, i;
 
 	if (operand_count == 0)
 		return;
@@ -345,39 +360,17 @@ static void handle_panel_passthrough(struct control *control,
 		pressed = 1;
 	}
 
-	switch (operands[0] & 0x7F) {
-	case PLAY_OP:
-		debug("AVRCP: PLAY %s", status);
-		send_key(control->uinput, KEY_PLAYCD, pressed);
-		break;
-	case STOP_OP:
-		debug("AVRCP: STOP %s", status);
-		send_key(control->uinput, KEY_STOPCD, pressed);
-		break;
-	case PAUSE_OP:
-		debug("AVRCP: PAUSE %s", status);
-		send_key(control->uinput, KEY_PAUSECD, pressed);
-		break;
-	case FORWARD_OP:
-		debug("AVRCP: FORWARD %s", status);
-		send_key(control->uinput, KEY_NEXTSONG, pressed);
-		break;
-	case BACKWARD_OP:
-		debug("AVRCP: BACKWARD %s", status);
-		send_key(control->uinput, KEY_PREVIOUSSONG, pressed);
-		break;
-	case REWIND_OP:
-		debug("AVRCP: REWIND %s", status);
-		send_key(control->uinput, KEY_REWIND, pressed);
-		break;
-	case FAST_FORWARD_OP:
-		debug("AVRCP: FAST FORWARD %s", status);
-		send_key(control->uinput, KEY_FASTFORWARD, pressed);
-		break;
-	default:
-		debug("AVRCP: unknown button 0x%02X %s", operands[0] & 0x7F, status);
-		break;
+	for (i = 0; key_map[i].name != NULL; i++) {
+		if ((operands[0] & 0x7F) == key_map[i].avrcp) {
+			debug("AVRCP: %s %s", key_map[i].name, status);
+			send_key(control->uinput, key_map[i].uinput, pressed);
+			break;
+		}
 	}
+
+	if (key_map[i].name == NULL)
+		debug("AVRCP: unknown button 0x%02X %s",
+						operands[0] & 0x7F, status);
 }
 
 static void avctp_disconnected(struct audio_device *dev)
@@ -524,6 +517,14 @@ static gboolean control_cb(GIOChannel *chan, GIOCondition cond,
 			|| avrcp->opcode == OP_SUBUNITINFO)) {
 		avctp->cr = AVCTP_RESPONSE;
 		avrcp->code = CTYPE_STABLE;
+		/* The first operand should be 0x07 for the UNITINFO response.
+		 * Neither AVRCP (section 22.1, page 117) nor AVC Digital
+		 * Interface Command Set (section 9.2.1, page 45) specs
+		 * explain this value but both use it */
+		if (operand_count >= 1 && avrcp->opcode == OP_UNITINFO)
+			operands[0] = 0x07;
+		if (operand_count >= 2)
+			operands[1] = SUBUNIT_PANEL << 3;
 		debug("reply to %s", avrcp->opcode == OP_UNITINFO ?
 				"OP_UNITINFO" : "OP_SUBUNITINFO");
 	} else {
@@ -543,7 +544,7 @@ failed:
 static int uinput_create(char *name)
 {
 	struct uinput_dev dev;
-	int fd, err;
+	int fd, err, i;
 
 	fd = open("/dev/uinput", O_RDWR);
 	if (fd < 0) {
@@ -582,12 +583,8 @@ static int uinput_create(char *name)
 	ioctl(fd, UI_SET_EVBIT, EV_REP);
 	ioctl(fd, UI_SET_EVBIT, EV_SYN);
 
-	ioctl(fd, UI_SET_KEYBIT, KEY_PLAYPAUSE);
-	ioctl(fd, UI_SET_KEYBIT, KEY_STOPCD);
-	ioctl(fd, UI_SET_KEYBIT, KEY_NEXTSONG);
-	ioctl(fd, UI_SET_KEYBIT, KEY_PREVIOUSSONG);
-	ioctl(fd, UI_SET_KEYBIT, KEY_REWIND);
-	ioctl(fd, UI_SET_KEYBIT, KEY_FASTFORWARD);
+	for (i = 0; key_map[i].name != NULL; i++)
+		ioctl(fd, UI_SET_KEYBIT, key_map[i].uinput);
 
 	if (ioctl(fd, UI_DEV_CREATE, NULL) < 0) {
 		err = errno;
@@ -717,8 +714,8 @@ static void avctp_confirm_cb(GIOChannel *chan, gpointer data)
 		if (!bt_io_accept(chan, avctp_connect_cb, dev->control,
 								NULL, NULL))
 			goto drop;
-	} else if (btd_request_authorization(&src, &dst,
-				AVRCP_TARGET_UUID, auth_cb, dev->control) < 0)
+	} else if (audio_device_request_authorization(dev, AVRCP_TARGET_UUID,
+			auth_cb, dev->control) < 0)
 		goto drop;
 
 	return;
