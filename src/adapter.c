@@ -29,7 +29,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -37,9 +36,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
 #include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
 
 #include <glib.h>
 #include <dbus/dbus.h>
@@ -50,7 +47,6 @@
 
 #include "hcid.h"
 #include "sdpd.h"
-#include "sdp-xml.h"
 #include "manager.h"
 #include "adapter.h"
 #include "device.h"
@@ -60,8 +56,6 @@
 #include "glib-helper.h"
 #include "agent.h"
 #include "storage.h"
-
-#define NUM_ELEMENTS(table) (sizeof(table)/sizeof(const char *))
 
 #define IO_CAPABILITY_DISPLAYONLY	0x00
 #define IO_CAPABILITY_DISPLAYYESNO	0x01
@@ -114,8 +108,6 @@ struct btd_adapter {
 					 * resloving */
 	GSList *found_devices;
 	GSList *oor_devices;		/* out of range device list */
-	DBusMessage *discovery_cancel;	/* discovery cancel message request */
-	GSList *passkey_agents;
 	struct agent *agent;		/* For the new API */
 	guint auth_idle_id;		/* Ongoing authorization */
 	GSList *connections;		/* Connected devices */
@@ -150,33 +142,16 @@ static inline DBusMessage *invalid_args(DBusMessage *msg)
 			"Invalid arguments in method call");
 }
 
-static inline DBusMessage *not_available(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotAvailable",
-			"Not Available");
-}
-
 static inline DBusMessage *adapter_not_ready(DBusMessage *msg)
 {
 	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotReady",
 			"Adapter is not ready");
 }
 
-static inline DBusMessage *no_such_adapter(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".NoSuchAdapter",
-							"No such adapter");
-}
-
 static inline DBusMessage *failed_strerror(DBusMessage *msg, int err)
 {
 	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
 							strerror(err));
-}
-
-static inline DBusMessage *in_progress(DBusMessage *msg, const char *str)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InProgress", str);
 }
 
 static inline DBusMessage *not_in_progress(DBusMessage *msg, const char *str)
@@ -188,13 +163,6 @@ static inline DBusMessage *not_authorized(DBusMessage *msg)
 {
 	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotAuthorized",
 			"Not authorized");
-}
-
-static inline DBusMessage *unsupported_major_class(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg,
-			ERROR_INTERFACE ".UnsupportedMajorClass",
-			"Unsupported Major Class");
 }
 
 static int found_device_cmp(const struct remote_dev_info *d1,
@@ -1478,9 +1446,7 @@ static DBusMessage *cancel_device_creation(DBusConnection *conn,
 
 	device = adapter_find_device(adapter, address);
 	if (!device || !device_is_creating(device, NULL))
-		return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".NotInProgress",
-				"Device creation not in progress");
+		return not_in_progress(msg, "Device creation not in progress");
 
 	if (!device_is_creating(device, sender))
 		return not_authorized(msg);
@@ -1906,10 +1872,6 @@ static void create_stored_device_from_profiles(char *key, char *value,
 	struct btd_adapter *adapter = user_data;
 	GSList *uuids = bt_string2list(value);
 	struct btd_device *device;
-	bdaddr_t dst;
-	char srcaddr[18], dstaddr[18];
-
-	ba2str(&adapter->bdaddr, srcaddr);
 
 	if (g_slist_find_custom(adapter->devices,
 				key, (GCompareFunc) device_address_cmp))
@@ -1921,9 +1883,6 @@ static void create_stored_device_from_profiles(char *key, char *value,
 
 	device_set_temporary(device, FALSE);
 	adapter->devices = g_slist_append(adapter->devices, device);
-
-	device_get_address(device, &dst);
-	ba2str(&dst, dstaddr);
 
 	device_probe_drivers(device, uuids);
 
@@ -2472,7 +2431,8 @@ void adapter_remove(struct btd_adapter *adapter)
 		device_remove(l->data, FALSE);
 	g_slist_free(adapter->devices);
 
-	unload_drivers(adapter);
+	if (adapter->initialized)
+		unload_drivers(adapter);
 
 	/* Return adapter to down state if it was not up on init */
 	if (adapter->up && !adapter->already_up)
