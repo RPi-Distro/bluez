@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/signalfd.h>
 
 #include <glib.h>
@@ -55,6 +56,7 @@ static GSList *services;
 static DBusConnection *connection;
 
 struct characteristic {
+	char *service;
 	char *uuid;
 	char *path;
 	uint8_t *value;
@@ -63,10 +65,12 @@ struct characteristic {
 };
 
 struct descriptor {
+	struct characteristic *chr;
 	char *uuid;
 	char *path;
 	uint8_t *value;
 	int vlen;
+	const char **props;
 };
 
 /*
@@ -75,6 +79,7 @@ struct descriptor {
  * property of the GattCharacteristic1.
  */
 static const char *ias_alert_level_props[] = { "write-without-response", NULL };
+static const char *desc_props[] = { "read", "write", NULL };
 
 static gboolean desc_get_uuid(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *user_data)
@@ -86,13 +91,20 @@ static gboolean desc_get_uuid(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
-static gboolean desc_get_value(const GDBusPropertyTable *property,
+static gboolean desc_get_characteristic(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *user_data)
 {
 	struct descriptor *desc = user_data;
-	DBusMessageIter array;
 
-	printf("Descriptor(%s): Get(\"Value\")\n", desc->uuid);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH,
+						&desc->chr->path);
+
+	return TRUE;
+}
+
+static bool desc_read(struct descriptor *desc, DBusMessageIter *iter)
+{
+	DBusMessageIter array;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
 					DBUS_TYPE_BYTE_AS_STRING, &array);
@@ -103,7 +115,40 @@ static gboolean desc_get_value(const GDBusPropertyTable *property,
 
 	dbus_message_iter_close_container(iter, &array);
 
-	return TRUE;
+	return true;
+}
+
+static gboolean desc_get_value(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *user_data)
+{
+	struct descriptor *desc = user_data;
+
+	printf("Descriptor(%s): Get(\"Value\")\n", desc->uuid);
+
+	return desc_read(desc, iter);
+}
+
+static void desc_write(struct descriptor *desc, const uint8_t *value, int len)
+{
+	g_free(desc->value);
+	desc->value = g_memdup(value, len);
+	desc->vlen = len;
+
+	g_dbus_emit_property_changed(connection, desc->path,
+					GATT_DESCRIPTOR_IFACE, "Value");
+}
+
+static int parse_value(DBusMessageIter *iter, const uint8_t **value, int *len)
+{
+	DBusMessageIter array;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
+		return -EINVAL;
+
+	dbus_message_iter_recurse(iter, &array);
+	dbus_message_iter_get_fixed_array(&array, value, len);
+
+	return 0;
 }
 
 static void desc_set_value(const GDBusPropertyTable *property,
@@ -111,29 +156,48 @@ static void desc_set_value(const GDBusPropertyTable *property,
 				GDBusPendingPropertySet id, void *user_data)
 {
 	struct descriptor *desc = user_data;
-	DBusMessageIter array;
 	const uint8_t *value;
-	int vlen;
+	int len;
 
 	printf("Descriptor(%s): Set(\"Value\", ...)\n", desc->uuid);
 
-	dbus_message_iter_recurse(iter, &array);
-	dbus_message_iter_get_fixed_array(&array, &value, &vlen);
+	if (parse_value(iter, &value, &len)) {
+		printf("Invalid value for Set('Value'...)\n");
+		g_dbus_pending_property_error(id,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+		return;
+	}
 
-	g_free(desc->value);
-	desc->value = g_memdup(value, vlen);
-	desc->vlen = vlen;
+	desc_write(desc, value, len);
 
 	g_dbus_pending_property_success(id);
+}
 
-	g_dbus_emit_property_changed(connection, desc->path,
-					GATT_DESCRIPTOR_IFACE, "Value");
+static gboolean desc_get_props(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct descriptor *desc = data;
+	DBusMessageIter array;
+	int i;
 
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_STRING_AS_STRING, &array);
+
+	for (i = 0; desc->props[i]; i++)
+		dbus_message_iter_append_basic(&array,
+					DBUS_TYPE_STRING, &desc->props[i]);
+
+	dbus_message_iter_close_container(iter, &array);
+
+	return TRUE;
 }
 
 static const GDBusPropertyTable desc_properties[] = {
-	{ "UUID",		"s",	desc_get_uuid },
-	{ "Value",		"ay",	desc_get_value, desc_set_value, NULL },
+	{ "UUID",		"s", desc_get_uuid },
+	{ "Characteristic",	"o", desc_get_characteristic },
+	{ "Value",		"ay", desc_get_value, desc_set_value, NULL },
+	{ "Flags",		"as", desc_get_props, NULL, NULL },
 	{ }
 };
 
@@ -147,13 +211,20 @@ static gboolean chr_get_uuid(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
-static gboolean chr_get_value(const GDBusPropertyTable *property,
+static gboolean chr_get_service(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *user_data)
 {
 	struct characteristic *chr = user_data;
-	DBusMessageIter array;
 
-	printf("Characteristic(%s): Get(\"Value\")\n", chr->uuid);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH,
+							&chr->service);
+
+	return TRUE;
+}
+
+static bool chr_read(struct characteristic *chr, DBusMessageIter *iter)
+{
+	DBusMessageIter array;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
 					DBUS_TYPE_BYTE_AS_STRING, &array);
@@ -163,7 +234,17 @@ static gboolean chr_get_value(const GDBusPropertyTable *property,
 
 	dbus_message_iter_close_container(iter, &array);
 
-	return TRUE;
+	return true;
+}
+
+static gboolean chr_get_value(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *user_data)
+{
+	struct characteristic *chr = user_data;
+
+	printf("Characteristic(%s): Get(\"Value\")\n", chr->uuid);
+
+	return chr_read(chr, iter);
 }
 
 static gboolean chr_get_props(const GDBusPropertyTable *property,
@@ -185,18 +266,27 @@ static gboolean chr_get_props(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static void chr_write(struct characteristic *chr, const uint8_t *value, int len)
+{
+	g_free(chr->value);
+	chr->value = g_memdup(value, len);
+	chr->vlen = len;
+
+	g_dbus_emit_property_changed(connection, chr->path, GATT_CHR_IFACE,
+								"Value");
+}
+
 static void chr_set_value(const GDBusPropertyTable *property,
 				DBusMessageIter *iter,
 				GDBusPendingPropertySet id, void *user_data)
 {
 	struct characteristic *chr = user_data;
-	DBusMessageIter array;
-	uint8_t *value;
+	const uint8_t *value;
 	int len;
 
 	printf("Characteristic(%s): Set('Value', ...)\n", chr->uuid);
 
-	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) {
+	if (!parse_value(iter, &value, &len)) {
 		printf("Invalid value for Set('Value'...)\n");
 		g_dbus_pending_property_error(id,
 					ERROR_INTERFACE ".InvalidArguments",
@@ -204,24 +294,30 @@ static void chr_set_value(const GDBusPropertyTable *property,
 		return;
 	}
 
-	dbus_message_iter_recurse(iter, &array);
-	dbus_message_iter_get_fixed_array(&array, &value, &len);
-
-	g_free(chr->value);
-	chr->value = g_memdup(value, len);
-	chr->vlen = len;
+	chr_write(chr, value, len);
 
 	g_dbus_pending_property_success(id);
-	g_dbus_emit_property_changed(connection, chr->path,
-						GATT_CHR_IFACE, "Value");
 }
 
 static const GDBusPropertyTable chr_properties[] = {
-	{ "UUID",	"s",	chr_get_uuid },
-	{ "Value", "ay", chr_get_value, chr_set_value, NULL },
-	{ "Flags", "as", chr_get_props, NULL, NULL },
+	{ "UUID",	"s", chr_get_uuid },
+	{ "Service",	"o", chr_get_service },
+	{ "Value",	"ay", chr_get_value, chr_set_value, NULL },
+	{ "Flags",	"as", chr_get_props, NULL, NULL },
 	{ }
 };
+
+static gboolean service_get_primary(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *user_data)
+{
+	dbus_bool_t primary = TRUE;
+
+	printf("Get Primary: %s\n", primary ? "True" : "False");
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &primary);
+
+	return TRUE;
+}
 
 static gboolean service_get_uuid(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *user_data)
@@ -256,6 +352,7 @@ static gboolean service_exist_includes(const GDBusPropertyTable *property,
 }
 
 static const GDBusPropertyTable service_properties[] = {
+	{ "Primary", "b", service_get_primary },
 	{ "UUID", "s", service_get_uuid },
 	{ "Includes", "ao", service_get_includes, NULL,
 					service_exist_includes },
@@ -267,6 +364,7 @@ static void chr_iface_destroy(gpointer user_data)
 	struct characteristic *chr = user_data;
 
 	g_free(chr->uuid);
+	g_free(chr->service);
 	g_free(chr->value);
 	g_free(chr->path);
 	g_free(chr);
@@ -282,10 +380,189 @@ static void desc_iface_destroy(gpointer user_data)
 	g_free(desc);
 }
 
+static int parse_options(DBusMessageIter *iter, const char **device)
+{
+	DBusMessageIter dict;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
+		return -EINVAL;
+
+	dbus_message_iter_recurse(iter, &dict);
+
+	while (dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_DICT_ENTRY) {
+		const char *key;
+		DBusMessageIter value, entry;
+		int var;
+
+		dbus_message_iter_recurse(&dict, &entry);
+		dbus_message_iter_get_basic(&entry, &key);
+
+		dbus_message_iter_next(&entry);
+		dbus_message_iter_recurse(&entry, &value);
+
+		var = dbus_message_iter_get_arg_type(&value);
+		if (strcasecmp(key, "device") == 0) {
+			if (var != DBUS_TYPE_OBJECT_PATH)
+				return -EINVAL;
+			dbus_message_iter_get_basic(&value, device);
+			printf("Device: %s\n", *device);
+		}
+	}
+
+	return 0;
+}
+
+static DBusMessage *chr_read_value(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct characteristic *chr = user_data;
+	DBusMessage *reply;
+	DBusMessageIter iter;
+	const char *device;
+
+	if (!dbus_message_iter_init(msg, &iter))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	if (parse_options(&iter, &device))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	reply = dbus_message_new_method_return(msg);
+	if (!reply)
+		return g_dbus_create_error(msg, DBUS_ERROR_NO_MEMORY,
+							"No Memory");
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	chr_read(chr, &iter);
+
+	return reply;
+}
+
+static DBusMessage *chr_write_value(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct characteristic *chr = user_data;
+	DBusMessageIter iter;
+	const uint8_t *value;
+	int len;
+	const char *device;
+
+	dbus_message_iter_init(msg, &iter);
+
+	if (parse_value(&iter, &value, &len))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	if (parse_options(&iter, &device))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	chr_write(chr, value, len);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static DBusMessage *chr_start_notify(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	return g_dbus_create_error(msg, DBUS_ERROR_NOT_SUPPORTED,
+							"Not Supported");
+}
+
+static DBusMessage *chr_stop_notify(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	return g_dbus_create_error(msg, DBUS_ERROR_NOT_SUPPORTED,
+							"Not Supported");
+}
+
+static const GDBusMethodTable chr_methods[] = {
+	{ GDBUS_ASYNC_METHOD("ReadValue", GDBUS_ARGS({ "options", "a{sv}" }),
+					GDBUS_ARGS({ "value", "ay" }),
+					chr_read_value) },
+	{ GDBUS_ASYNC_METHOD("WriteValue", GDBUS_ARGS({ "value", "ay" },
+						{ "options", "a{sv}" }),
+					NULL, chr_write_value) },
+	{ GDBUS_ASYNC_METHOD("StartNotify", NULL, NULL, chr_start_notify) },
+	{ GDBUS_METHOD("StopNotify", NULL, NULL, chr_stop_notify) },
+	{ }
+};
+
+static DBusMessage *desc_read_value(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct descriptor *desc = user_data;
+	DBusMessage *reply;
+	DBusMessageIter iter;
+	const char *device;
+
+	if (!dbus_message_iter_init(msg, &iter))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	if (parse_options(&iter, &device))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	reply = dbus_message_new_method_return(msg);
+	if (!reply)
+		return g_dbus_create_error(msg, DBUS_ERROR_NO_MEMORY,
+							"No Memory");
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	if (parse_options(&iter, &device))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	desc_read(desc, &iter);
+
+	return reply;
+}
+
+static DBusMessage *desc_write_value(DBusConnection *conn, DBusMessage *msg,
+							void *user_data)
+{
+	struct descriptor *desc = user_data;
+	DBusMessageIter iter;
+	const char *device;
+	const uint8_t *value;
+	int len;
+
+	if (!dbus_message_iter_init(msg, &iter))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	if (parse_value(&iter, &value, &len))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	if (parse_options(&iter, &device))
+		return g_dbus_create_error(msg, DBUS_ERROR_INVALID_ARGS,
+							"Invalid arguments");
+
+	desc_write(desc, value, len);
+
+	return dbus_message_new_method_return(msg);
+}
+
+static const GDBusMethodTable desc_methods[] = {
+	{ GDBUS_ASYNC_METHOD("ReadValue", GDBUS_ARGS({ "options", "a{sv}" }),
+					GDBUS_ARGS({ "value", "ay" }),
+					desc_read_value) },
+	{ GDBUS_ASYNC_METHOD("WriteValue", GDBUS_ARGS({ "value", "ay" },
+						{ "options", "a{sv}" }),
+					NULL, desc_write_value) },
+	{ }
+};
+
 static gboolean register_characteristic(const char *chr_uuid,
 						const uint8_t *value, int vlen,
 						const char **props,
 						const char *desc_uuid,
+						const char **desc_props,
 						const char *service_path)
 {
 	struct characteristic *chr;
@@ -297,10 +574,11 @@ static gboolean register_characteristic(const char *chr_uuid,
 	chr->value = g_memdup(value, vlen);
 	chr->vlen = vlen;
 	chr->props = props;
+	chr->service = g_strdup(service_path);
 	chr->path = g_strdup_printf("%s/characteristic%d", service_path, id++);
 
 	if (!g_dbus_register_interface(connection, chr->path, GATT_CHR_IFACE,
-					NULL, NULL, chr_properties,
+					chr_methods, NULL, chr_properties,
 					chr, chr_iface_destroy)) {
 		printf("Couldn't register characteristic interface\n");
 		chr_iface_destroy(chr);
@@ -312,11 +590,13 @@ static gboolean register_characteristic(const char *chr_uuid,
 
 	desc = g_new0(struct descriptor, 1);
 	desc->uuid = g_strdup(desc_uuid);
+	desc->chr = chr;
+	desc->props = desc_props;
 	desc->path = g_strdup_printf("%s/descriptor%d", chr->path, id++);
 
 	if (!g_dbus_register_interface(connection, desc->path,
 					GATT_DESCRIPTOR_IFACE,
-					NULL, NULL, desc_properties,
+					desc_methods, NULL, desc_properties,
 					desc, desc_iface_destroy)) {
 		printf("Couldn't register descriptor interface\n");
 		g_dbus_unregister_interface(connection, chr->path,
@@ -360,6 +640,7 @@ static void create_services()
 						&level, sizeof(level),
 						ias_alert_level_props,
 						READ_WRITE_DESCRIPTOR_UUID,
+						desc_props,
 						service_path)) {
 		printf("Couldn't register Alert Level characteristic (IAS)\n");
 		g_dbus_unregister_interface(connection, service_path,
@@ -372,63 +653,55 @@ static void create_services()
 	printf("Registered service: %s\n", service_path);
 }
 
-static void register_external_service_reply(DBusPendingCall *call,
-							void *user_data)
+static void register_app_reply(DBusMessage *reply, void *user_data)
 {
-	DBusMessage *reply = dbus_pending_call_steal_reply(call);
 	DBusError derr;
 
 	dbus_error_init(&derr);
 	dbus_set_error_from_message(&derr, reply);
 
 	if (dbus_error_is_set(&derr))
-		printf("RegisterService: %s\n", derr.message);
+		printf("RegisterApplication: %s\n", derr.message);
 	else
-		printf("RegisterService: OK\n");
+		printf("RegisterApplication: OK\n");
 
-	dbus_message_unref(reply);
 	dbus_error_free(&derr);
 }
 
-static void register_external_service(gpointer a, gpointer b)
+static void register_app_setup(DBusMessageIter *iter, void *user_data)
 {
-	DBusConnection *conn = b;
-	const char *path = a;
-	DBusMessage *msg;
-	DBusPendingCall *call;
-	DBusMessageIter iter, dict;
+	const char *path = "/";
+	DBusMessageIter dict;
 
-	msg = dbus_message_new_method_call("org.bluez", "/org/bluez",
-					GATT_MGR_IFACE, "RegisterService");
-	if (!msg) {
-		printf("Couldn't allocate D-Bus message\n");
-		return;
-	}
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &path);
 
-	dbus_message_iter_init_append(msg, &iter);
-
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_OBJECT_PATH, &path);
-
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", &dict);
 
 	/* TODO: Add options dictionary */
 
-	dbus_message_iter_close_container(&iter, &dict);
-
-	if (!g_dbus_send_message_with_reply(conn, msg, &call, -1)) {
-		dbus_message_unref(msg);
-		return;
-	}
-
-	dbus_pending_call_set_notify(call, register_external_service_reply,
-								NULL, NULL);
-
-	dbus_pending_call_unref(call);
+	dbus_message_iter_close_container(iter, &dict);
 }
 
-static void connect_handler(DBusConnection *conn, void *user_data)
+static void register_app(GDBusProxy *proxy)
 {
-	g_slist_foreach(services, register_external_service, conn);
+	if (!g_dbus_proxy_method_call(proxy, "RegisterApplication",
+					register_app_setup, register_app_reply,
+					NULL, NULL)) {
+		printf("Unable to call RegisterApplication\n");
+		return;
+	}
+}
+
+static void proxy_added_cb(GDBusProxy *proxy, void *user_data)
+{
+	const char *iface;
+
+	iface = g_dbus_proxy_get_interface(proxy);
+
+	if (g_strcmp0(iface, GATT_MGR_IFACE))
+		return;
+
+	register_app(proxy);
 }
 
 static gboolean signal_handler(GIOChannel *channel, GIOCondition cond,
@@ -520,9 +793,10 @@ int main(int argc, char *argv[])
 
 	create_services();
 
-	client = g_dbus_client_new(connection, "org.bluez", "/org/bluez");
+	client = g_dbus_client_new(connection, "org.bluez", "/");
 
-	g_dbus_client_set_connect_watch(client, connect_handler, NULL);
+	g_dbus_client_set_proxy_handlers(client, proxy_added_cb, NULL, NULL,
+									NULL);
 
 	g_main_loop_run(main_loop);
 

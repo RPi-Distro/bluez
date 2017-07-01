@@ -21,6 +21,10 @@
  *
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdbool.h>
 #include <errno.h>
 
@@ -48,6 +52,8 @@ static const bt_uuid_t characteristic_uuid = { .type = BT_UUID16,
 					.value.u16 = GATT_CHARAC_UUID };
 static const bt_uuid_t included_service_uuid = { .type = BT_UUID16,
 					.value.u16 = GATT_INCLUDE_UUID };
+static const bt_uuid_t ext_desc_uuid = { .type = BT_UUID16,
+				.value.u16 = GATT_CHARAC_EXT_PROPER_UUID };
 
 struct gatt_db {
 	int ref_count;
@@ -166,8 +172,6 @@ static struct gatt_db_attribute *new_attribute(struct gatt_db_service *service,
 	struct gatt_db_attribute *attribute;
 
 	attribute = new0(struct gatt_db_attribute, 1);
-	if (!attribute)
-		return NULL;
 
 	attribute->service = service;
 	attribute->handle = handle;
@@ -182,12 +186,7 @@ static struct gatt_db_attribute *new_attribute(struct gatt_db_service *service,
 	}
 
 	attribute->pending_reads = queue_new();
-	if (!attribute->pending_reads)
-		goto failed;
-
 	attribute->pending_writes = queue_new();
-	if (!attribute->pending_reads)
-		goto failed;
 
 	return attribute;
 
@@ -211,22 +210,8 @@ struct gatt_db *gatt_db_new(void)
 	struct gatt_db *db;
 
 	db = new0(struct gatt_db, 1);
-	if (!db)
-		return NULL;
-
 	db->services = queue_new();
-	if (!db->services) {
-		free(db);
-		return NULL;
-	}
-
 	db->notify_list = queue_new();
-	if (!db->notify_list) {
-		queue_destroy(db->services, NULL);
-		free(db);
-		return NULL;
-	}
-
 	db->next_handle = 0x0001;
 
 	return gatt_db_ref(db);
@@ -386,14 +371,7 @@ static struct gatt_db_service *gatt_db_service_create(const bt_uuid_t *uuid,
 		return NULL;
 
 	service = new0(struct gatt_db_service, 1);
-	if (!service)
-		return NULL;
-
 	service->attributes = new0(struct gatt_db_attribute *, num_handles);
-	if (!service->attributes) {
-		free(service);
-		return NULL;
-	}
 
 	if (primary)
 		type = &primary_service_uuid;
@@ -605,9 +583,6 @@ unsigned int gatt_db_register(struct gatt_db *db,
 		return 0;
 
 	notify = new0(struct notify, 1);
-	if (!notify)
-		return 0;
-
 	notify->service_added = service_added;
 	notify->service_removed = service_removed;
 	notify->destroy = destroy;
@@ -1483,10 +1458,68 @@ bool gatt_db_attribute_get_service_data(const struct gatt_db_attribute *attrib,
 	return le_to_uuid(decl->value, decl->value_len, uuid);
 }
 
+static void read_ext_prop_value(struct gatt_db_attribute *attrib,
+						int err, const uint8_t *value,
+						size_t length, void *user_data)
+{
+	uint16_t *ext_prop = user_data;
+
+	if (err || (length != sizeof(uint16_t)))
+		return;
+
+	*ext_prop = (uint16_t) value[0];
+}
+
+static void read_ext_prop(struct gatt_db_attribute *attrib,
+							void *user_data)
+{
+	uint16_t *ext_prop = user_data;
+
+	/*
+	 * If ext_prop is set that means extended properties descriptor
+	 * has been already found
+	 */
+	if (*ext_prop != 0)
+		return;
+
+	if (bt_uuid_cmp(&ext_desc_uuid, &attrib->uuid))
+		return;
+
+	gatt_db_attribute_read(attrib, 0, BT_ATT_OP_READ_REQ, NULL,
+						read_ext_prop_value, ext_prop);
+}
+
+static uint8_t get_char_extended_prop(const struct gatt_db_attribute *attrib)
+{
+	uint16_t ext_prop;
+
+	if (!attrib)
+		return 0;
+
+	if (bt_uuid_cmp(&characteristic_uuid, &attrib->uuid))
+		return 0;
+
+	/* Check properties first */
+	if (!(attrib->value[0] & BT_GATT_CHRC_PROP_EXT_PROP))
+		return 0;
+
+	ext_prop = 0;
+
+	/*
+	 * Cast needed for foreach function. We do not change attrib during
+	 * this call
+	 */
+	gatt_db_service_foreach_desc((struct gatt_db_attribute *) attrib,
+						read_ext_prop, &ext_prop);
+
+	return ext_prop;
+}
+
 bool gatt_db_attribute_get_char_data(const struct gatt_db_attribute *attrib,
 							uint16_t *handle,
 							uint16_t *value_handle,
 							uint8_t *properties,
+							uint16_t *ext_prop,
 							bt_uuid_t *uuid)
 {
 	if (!attrib)
@@ -1510,6 +1543,9 @@ bool gatt_db_attribute_get_char_data(const struct gatt_db_attribute *attrib,
 
 	if (properties)
 		*properties = attrib->value[0];
+
+	if (ext_prop)
+		*ext_prop = get_char_extended_prop(attrib);
 
 	if (value_handle)
 		*value_handle = get_le16(attrib->value + 1);
@@ -1591,9 +1627,6 @@ bool gatt_db_attribute_read(struct gatt_db_attribute *attrib, uint16_t offset,
 		struct pending_read *p;
 
 		p = new0(struct pending_read, 1);
-		if (!p)
-			return false;
-
 		p->attrib = attrib;
 		p->id = ++attrib->read_id;
 		p->timeout_id = timeout_add(ATTRIBUTE_TIMEOUT, read_timeout,
@@ -1675,9 +1708,6 @@ bool gatt_db_attribute_write(struct gatt_db_attribute *attrib, uint16_t offset,
 		struct pending_write *p;
 
 		p = new0(struct pending_write, 1);
-		if (!p)
-			return false;
-
 		p->attrib = attrib;
 		p->id = ++attrib->write_id;
 		p->timeout_id = timeout_add(ATTRIBUTE_TIMEOUT, write_timeout,

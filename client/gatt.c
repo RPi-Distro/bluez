@@ -75,12 +75,13 @@ static void print_service(GDBusProxy *proxy, const char *description)
 	if (!text)
 		text = uuid;
 
-	rl_printf("%s%s%sService %s %s %s\n",
+	rl_printf("%s%s%s%s Service\n\t%s\n\t%s\n",
 				description ? "[" : "",
 				description ? : "",
 				description ? "] " : "",
+				primary ? "Primary" : "Secondary",
 				g_dbus_proxy_get_path(proxy),
-				text, primary ? "(Primary)" : "(Secondary)");
+				text);
 }
 
 void gatt_add_service(GDBusProxy *proxy)
@@ -92,7 +93,13 @@ void gatt_add_service(GDBusProxy *proxy)
 
 void gatt_remove_service(GDBusProxy *proxy)
 {
-	services = g_list_remove(services, proxy);
+	GList *l;
+
+	l = g_list_find(services, proxy);
+	if (!l)
+		return;
+
+	services = g_list_delete_link(services, l);
 
 	print_service(proxy, COLORED_DEL);
 }
@@ -111,7 +118,7 @@ static void print_characteristic(GDBusProxy *proxy, const char *description)
 	if (!text)
 		text = uuid;
 
-	rl_printf("%s%s%sCharacteristic %s %s\n",
+	rl_printf("%s%s%sCharacteristic\n\t%s\n\t%s\n",
 				description ? "[" : "",
 				description ? : "",
 				description ? "] " : "",
@@ -154,10 +161,13 @@ void gatt_add_characteristic(GDBusProxy *proxy)
 
 void gatt_remove_characteristic(GDBusProxy *proxy)
 {
-	if (!characteristic_is_child(proxy))
+	GList *l;
+
+	l = g_list_find(characteristics, proxy);
+	if (!l)
 		return;
 
-	characteristics = g_list_remove(characteristics, proxy);
+	characteristics = g_list_delete_link(characteristics, l);
 
 	print_characteristic(proxy, COLORED_DEL);
 }
@@ -176,7 +186,7 @@ static void print_descriptor(GDBusProxy *proxy, const char *description)
 	if (!text)
 		text = uuid;
 
-	rl_printf("%s%s%sDescriptor %s %s\n",
+	rl_printf("%s%s%sDescriptor\n\t%s\n\t%s\n",
 				description ? "[" : "",
 				description ? : "",
 				description ? "] " : "",
@@ -219,10 +229,13 @@ void gatt_add_descriptor(GDBusProxy *proxy)
 
 void gatt_remove_descriptor(GDBusProxy *proxy)
 {
-	if (!descriptor_is_child(proxy))
+	GList *l;
+
+	l = g_list_find(descriptors, proxy);
+	if (!l)
 		return;
 
-	descriptors = g_list_remove(descriptors, proxy);
+	descriptors = g_list_delete_link(descriptors, l);
 
 	print_descriptor(proxy, COLORED_DEL);
 }
@@ -366,9 +379,23 @@ static void read_reply(DBusMessage *message, void *user_data)
 	rl_hexdump(value, len);
 }
 
+static void read_setup(DBusMessageIter *iter, void *user_data)
+{
+	DBusMessageIter dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+	/* TODO: Add offset support */
+	dbus_message_iter_close_container(iter, &dict);
+}
+
 static void read_attribute(GDBusProxy *proxy)
 {
-	if (g_dbus_proxy_method_call(proxy, "ReadValue", NULL, read_reply,
+	if (g_dbus_proxy_method_call(proxy, "ReadValue", read_setup, read_reply,
 							NULL, NULL) == FALSE) {
 		rl_printf("Failed to read\n");
 		return;
@@ -408,12 +435,21 @@ static void write_reply(DBusMessage *message, void *user_data)
 static void write_setup(DBusMessageIter *iter, void *user_data)
 {
 	struct iovec *iov = user_data;
-	DBusMessageIter array;
+	DBusMessageIter array, dict;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "y", &array);
 	dbus_message_iter_append_fixed_array(&array, DBUS_TYPE_BYTE,
 						&iov->iov_base, iov->iov_len);
 	dbus_message_iter_close_container(iter, &array);
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+	/* TODO: Add offset support */
+	dbus_message_iter_close_container(iter, &dict);
 }
 
 static void write_attribute(GDBusProxy *proxy, char *arg)

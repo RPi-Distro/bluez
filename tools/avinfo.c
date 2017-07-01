@@ -74,6 +74,10 @@
 #define AVDTP_MEDIA_TYPE_VIDEO		0x01
 #define AVDTP_MEDIA_TYPE_MULTIMEDIA	0x02
 
+/* Content Protection types definitions */
+#define AVDTP_CONTENT_PROTECTION_TYPE_DTCP	0x0001
+#define AVDTP_CONTENT_PROTECTION_TYPE_SCMS_T	0x0002
+
 struct avdtp_service_capability {
 	uint8_t category;
 	uint8_t length;
@@ -158,6 +162,11 @@ struct getcap_resp {
 	uint8_t caps[0];
 } __attribute__ ((packed));
 
+struct avdtp_content_protection_capability {
+	uint16_t content_protection_type;
+	uint8_t data[0];
+} __attribute__ ((packed));
+
 static void print_aptx(a2dp_aptx_t *aptx)
 {
 	printf("\t\tVendor Specific Value (aptX)");
@@ -181,6 +190,16 @@ static void print_aptx(a2dp_aptx_t *aptx)
 	printf("\n");
 }
 
+static void print_ldac(a2dp_ldac_t *ldac)
+{
+	printf("\t\tVendor Specific Value (LDAC)");
+
+	printf("\n\t\t\tUnknown: %02x %02x", ldac->unknown[0],
+							ldac->unknown[1]);
+
+	printf("\n");
+}
+
 static void print_vendor(a2dp_vendor_codec_t *vendor)
 {
 	uint32_t vendor_id = btohl(vendor->vendor_id);
@@ -194,6 +213,8 @@ static void print_vendor(a2dp_vendor_codec_t *vendor)
 
 	if (vendor_id == APTX_VENDOR_ID && codec_id == APTX_CODEC_ID)
 		print_aptx((void *) vendor);
+	else if (vendor_id == LDAC_VENDOR_ID && codec_id == LDAC_CODEC_ID)
+		print_ldac((void *) vendor);
 }
 
 static void print_mpeg24(a2dp_aac_t *aac)
@@ -393,6 +414,25 @@ static void print_media_codec(struct avdtp_media_codec_capability *cap)
 	}
 }
 
+static void print_content_protection(
+				struct avdtp_content_protection_capability *cap)
+{
+	printf("\tContent Protection: ");
+
+	switch (btohs(cap->content_protection_type)) {
+	case AVDTP_CONTENT_PROTECTION_TYPE_DTCP:
+		printf("DTCP");
+		break;
+	case AVDTP_CONTENT_PROTECTION_TYPE_SCMS_T:
+		printf("SCMS-T");
+		break;
+	default:
+		printf("Unknown");
+	}
+
+	printf("\n");
+}
+
 static void print_caps(void *data, int size)
 {
 	int processed;
@@ -411,12 +451,14 @@ static void print_caps(void *data, int size)
 		case AVDTP_MEDIA_TRANSPORT:
 		case AVDTP_REPORTING:
 		case AVDTP_RECOVERY:
-		case AVDTP_CONTENT_PROTECTION:
 		case AVDTP_MULTIPLEXING:
 			/* FIXME: Add proper functions */
 			break;
 		case AVDTP_MEDIA_CODEC:
 			print_media_codec((void *) cap->data);
+			break;
+		case AVDTP_CONTENT_PROTECTION:
+			print_content_protection((void *) cap->data);
 			break;
 		}
 

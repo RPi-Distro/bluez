@@ -45,14 +45,6 @@ Properties	string UUID [read-only]
 			belongs to. Only present on services from remote
 			devices.
 
-		array{object} Characteristics [read-only]
-
-			Array of object paths representing the characteristics
-			of this service. This property is set only when the
-			characteristic discovery has been completed, however the
-			characteristic objects will become available via
-			ObjectManager as soon as they get discovered.
-
 		array{object} Includes [read-only]: Not implemented
 
 			Array of object paths representing the included
@@ -69,11 +61,14 @@ Service		org.bluez
 Interface	org.bluez.GattCharacteristic1 [Experimental]
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX/serviceXX/charYYYY
 
-Methods		array{byte} ReadValue()
+Methods		array{byte} ReadValue(dict options)
 
 			Issues a request to read the value of the
 			characteristic and returns the value if the
 			operation was successful.
+
+			Possible options: "offset": uint16 offset
+					  "device": Object Device (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -81,10 +76,13 @@ Methods		array{byte} ReadValue()
 					 org.bluez.Error.NotAuthorized
 					 org.bluez.Error.NotSupported
 
-		void WriteValue(array{byte} value)
+		void WriteValue(array{byte} value, dict options)
 
 			Issues a request to write the value of the
 			characteristic.
+
+			Possible options: "offset": Start offset
+					  "device": Device path (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -127,7 +125,7 @@ Properties	string UUID [read-only]
 			when a notification or indication is received, upon
 			which a PropertiesChanged signal will be emitted.
 
-		boolean Notifying [read-only]
+		boolean Notifying [read-only, optional]
 
 			True, if notifications or indications on this
 			characteristic are currently enabled.
@@ -152,15 +150,8 @@ Properties	string UUID [read-only]
 				"encrypt-write"
 				"encrypt-authenticated-read"
 				"encrypt-authenticated-write"
-
-		array{object} Descriptors [read-only]
-
-			Array of object paths representing the descriptors
-			of this service. This property is set only when the
-			descriptor discovery has been completed, however the
-			descriptor objects will become available via
-			ObjectManager as soon as they get discovered.
-
+				"secure-read" (Server only)
+				"secure-write" (Server only)
 
 Characteristic Descriptors hierarchy
 ====================================
@@ -171,11 +162,14 @@ Service		org.bluez
 Interface	org.bluez.GattDescriptor1 [Experimental]
 Object path	[variable prefix]/{hci0,hci1,...}/dev_XX_XX_XX_XX_XX_XX/serviceXX/charYYYY/descriptorZZZ
 
-Methods		array{byte} ReadValue()
+Methods		array{byte} ReadValue(dict flags)
 
 			Issues a request to read the value of the
 			characteristic and returns the value if the
 			operation was successful.
+
+			Possible options: "offset": Start offset
+					  "device": Device path (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -183,10 +177,13 @@ Methods		array{byte} ReadValue()
 					 org.bluez.Error.NotAuthorized
 					 org.bluez.Error.NotSupported
 
-		void WriteValue(array{byte} value)
+		void WriteValue(array{byte} value, dict flags)
 
 			Issues a request to write the value of the
 			characteristic.
+
+			Possible options: "offset": Start offset
+					  "device": Device path (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -222,9 +219,11 @@ Properties	string UUID [read-only]
 				"encrypt-write"
 				"encrypt-authenticated-read"
 				"encrypt-authenticated-write"
+				"secure-read" (Server Only)
+				"secure-write" (Server Only)
 
-Profile hierarcy
-================
+GATT Profile hierarcy
+=====================
 
 Local profile (GATT client) instance. By registering this type of object
 an application effectively indicates support for a specific GATT profile
@@ -242,6 +241,10 @@ Methods		void Release()
 			do cleanup tasks. There is no need to unregister the
 			profile, because when this method gets called it has
 			already been unregistered.
+
+Properties	array{string} UUIDs [read-only]
+
+			128-bit GATT service UUIDs to auto connect.
 
 
 GATT Manager hierarchy
@@ -270,9 +273,9 @@ must be available on the root service path. An example application hierarchy
 containing two separate GATT services may look like this:
 
 -> /com/example
+  |   - org.freedesktop.DBus.ObjectManager
   |
   -> /com/example/service0
-  | |   - org.freedesktop.DBus.ObjectManager
   | |   - org.freedesktop.DBus.Properties
   | |   - org.bluez.GattService1
   | |
@@ -289,7 +292,6 @@ containing two separate GATT services may look like this:
   |       - org.bluez.GattDescriptor1
   |
   -> /com/example/service1
-    |   - org.freedesktop.DBus.ObjectManager
     |   - org.freedesktop.DBus.Properties
     |   - org.bluez.GattService1
     |
@@ -309,45 +311,22 @@ Service		org.bluez
 Interface	org.bluez.GattManager1 [Experimental]
 Object path	[variable prefix]/{hci0,hci1,...}
 
-Methods		void RegisterService(object service, dict options)
+Methods		void RegisterApplication(object application, dict options)
 
-			Registers a local GATT service hierarchy as described
-			above.
+			Registers a local GATT services hierarchy as described
+			above (GATT Server) and/or GATT profiles (GATT Client).
 
-			"service" object path together with the D-Bus system
-			bus connection ID define the identification of the
-			application registering a GATT based service.
-
-			Possible errors: org.bluez.Error.InvalidArguments
-					 org.bluez.Error.AlreadyExists
-
-		void UnregisterService(object service)
-
-			This unregisters the service that has been
-			previously registered. The object path parameter
-			must match the same value that has been used
-			on registration.
-
-			Possible errors: org.bluez.Error.InvalidArguments
-					 org.bluez.Error.DoesNotExist
-
-		void RegisterProfile(object profile, array{string} UUIDs,
-				     dict options)
-
-			Registers a GATT (client role) profile exported
-			under interface GattProfile1. The array of UUIDs
-			specifies the mandatory set of remote service
-			UUIDs that should all be available for the
-			remote device to match this profile. Matching
-			devices will be added to the auto-connection
-			list and connected whenever available.
+			The application object path together with the D-Bus
+			system bus connection ID define the identification of
+			the application registering a GATT based
+			service or profile.
 
 			Possible errors: org.bluez.Error.InvalidArguments
 					 org.bluez.Error.AlreadyExists
 
-		void UnregisterProfile(object profile)
+		void UnregisterApplication(object application)
 
-			This unregisters the profile that has been
+			This unregisters the services that has been
 			previously registered. The object path parameter
 			must match the same value that has been used
 			on registration.

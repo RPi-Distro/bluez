@@ -21,6 +21,10 @@
  *
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <sys/uio.h>
 #include <errno.h>
 
@@ -68,6 +72,8 @@ struct prep_write_data {
 	uint16_t handle;
 	uint16_t offset;
 	uint16_t length;
+
+	bool reliable_supported;
 };
 
 static void prep_write_data_destroy(void *user_data)
@@ -248,10 +254,6 @@ static void read_by_grp_type_cb(uint8_t opcode, const void *pdu,
 	}
 
 	q = queue_new();
-	if (!q) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
 
 	start = get_le16(pdu);
 	end = get_le16(pdu + 2);
@@ -396,6 +398,9 @@ static uint8_t check_permissions(struct bt_gatt_server *server,
 		return 0;
 
 	security = bt_att_get_security(server->att);
+	if (perm & BT_ATT_PERM_SECURE && security < BT_ATT_SECURITY_FIPS)
+		return BT_ATT_ERROR_AUTHENTICATION;
+
 	if (perm & BT_ATT_PERM_AUTHEN && security < BT_ATT_SECURITY_HIGH)
 		return BT_ATT_ERROR_AUTHENTICATION;
 
@@ -457,10 +462,6 @@ static void read_by_type_cb(uint8_t opcode, const void *pdu,
 	}
 
 	q = queue_new();
-	if (!q) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
 
 	start = get_le16(pdu);
 	end = get_le16(pdu + 2);
@@ -495,11 +496,6 @@ static void read_by_type_cb(uint8_t opcode, const void *pdu,
 	}
 
 	op = new0(struct async_read_op, 1);
-	if (!op) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
-
 	op->pdu = malloc(bt_att_get_mtu(server->att));
 	if (!op->pdu) {
 		free(op);
@@ -593,10 +589,6 @@ static void find_info_cb(uint8_t opcode, const void *pdu,
 	}
 
 	q = queue_new();
-	if (!q) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
 
 	start = get_le16(pdu);
 	end = get_le16(pdu + 2);
@@ -724,7 +716,7 @@ static void find_by_type_val_cb(uint8_t opcode, const void *pdu,
 	if (data.ecode)
 		goto error;
 
-	bt_att_send(server->att, BT_ATT_OP_FIND_BY_TYPE_VAL_RSP, data.pdu,
+	bt_att_send(server->att, BT_ATT_OP_FIND_BY_TYPE_RSP, data.pdu,
 						data.len, NULL, NULL, NULL);
 
 	return;
@@ -802,11 +794,6 @@ static void write_cb(uint8_t opcode, const void *pdu,
 	}
 
 	op = new0(struct async_write_op, 1);
-	if (!op) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
-
 	op->server = server;
 	op->opcode = opcode;
 	server->pending_write_op = op;
@@ -914,11 +901,6 @@ static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
 	}
 
 	op = new0(struct async_read_op, 1);
-	if (!op) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
-
 	op->opcode = opcode;
 	op->server = server;
 	server->pending_read_op = op;
@@ -1088,9 +1070,6 @@ static void read_multiple_cb(uint8_t opcode, const void *pdu,
 
 	data.handles = new0(uint16_t, data.num_handles);
 
-	if (!data.handles)
-		goto error;
-
 	for (i = 0; i < data.num_handles; i++)
 		data.handles[i] = get_le16(pdu + i * 2);
 
@@ -1114,11 +1093,97 @@ error:
 	bt_att_send_error_rsp(server->att, opcode, 0, ecode);
 }
 
+static bool append_prep_data(struct prep_write_data *prep_data, uint16_t handle,
+					uint16_t length, uint8_t *value)
+{
+	uint8_t *val;
+	uint16_t len;
+
+	if (!length)
+		return true;
+
+	len = prep_data->length + length;
+
+	val = realloc(prep_data->value, len);
+	if (!val)
+		return false;
+
+	memcpy(val + prep_data->length, value, length);
+
+	prep_data->value = val;
+	prep_data->length = len;
+
+	return true;
+}
+
+static bool is_reliable_write_supported(const struct bt_gatt_server  *server,
+							uint16_t handle)
+{
+	struct gatt_db_attribute *attr;
+	uint16_t ext_prop;
+
+	attr = gatt_db_get_attribute(server->db, handle);
+	if (!attr)
+		return false;
+
+	if (!gatt_db_attribute_get_char_data(attr, NULL, NULL, NULL, &ext_prop,
+									NULL))
+		return false;
+
+	return (ext_prop & BT_GATT_CHRC_EXT_PROP_RELIABLE_WRITE);
+}
+
+static bool prep_data_new(struct bt_gatt_server *server,
+					uint16_t handle, uint16_t offset,
+					uint16_t length, uint8_t *value)
+{
+	struct prep_write_data *prep_data;
+
+	prep_data = new0(struct prep_write_data, 1);
+
+	if (!append_prep_data(prep_data, handle, length, value)) {
+		prep_write_data_destroy(prep_data);
+		return false;
+	}
+
+	prep_data->server = server;
+	prep_data->handle = handle;
+	prep_data->offset = offset;
+
+	/*
+	 * Handle is the value handle. We need characteristic declaration
+	 * handle which in BlueZ is handle_value -1
+	 */
+	prep_data->reliable_supported = is_reliable_write_supported(server,
+								handle - 1);
+
+	queue_push_tail(server->prep_queue, prep_data);
+
+	return true;
+}
+
+static bool store_prep_data(struct bt_gatt_server *server,
+					uint16_t handle, uint16_t offset,
+					uint16_t length, uint8_t *value)
+{
+	struct prep_write_data *prep_data = NULL;
+
+	/*
+	 * Now lets check if prep write is a continuation of long write
+	 * If so do aggregation of data
+	 */
+	prep_data = queue_peek_tail(server->prep_queue);
+	if (prep_data && (prep_data->handle == handle) &&
+			(offset == (prep_data->length + prep_data->offset)))
+		return append_prep_data(prep_data, handle, length, value);
+
+	return prep_data_new(server, handle, offset, length, value);
+}
+
 static void prep_write_cb(uint8_t opcode, const void *pdu,
 					uint16_t length, void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
-	struct prep_write_data *prep_data = NULL;
 	uint16_t handle = 0;
 	uint16_t offset;
 	struct gatt_db_attribute *attr;
@@ -1152,38 +1217,18 @@ static void prep_write_cb(uint8_t opcode, const void *pdu,
 	if (ecode)
 		goto error;
 
-	prep_data = new0(struct prep_write_data, 1);
-	if (!prep_data) {
+	if (!store_prep_data(server, handle, offset, length - 4,
+						&((uint8_t *) pdu)[4])) {
 		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
 		goto error;
 	}
-
-	prep_data->length = length - 4;
-	if (prep_data->length) {
-		prep_data->value = malloc(prep_data->length);
-		if (!prep_data->value) {
-			ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-			goto error;
-		}
-	}
-
-	prep_data->server = server;
-	prep_data->handle = handle;
-	prep_data->offset = offset;
-	memcpy(prep_data->value, pdu + 4, prep_data->length);
-
-	queue_push_tail(server->prep_queue, prep_data);
 
 	bt_att_send(server->att, BT_ATT_OP_PREP_WRITE_RSP, pdu, length, NULL,
 								NULL, NULL);
 	return;
 
 error:
-	if (prep_data)
-		prep_write_data_destroy(prep_data);
-
 	bt_att_send_error_rsp(server->att, opcode, handle, ecode);
-
 }
 
 static void exec_next_prep_write(struct bt_gatt_server *server,
@@ -1235,8 +1280,19 @@ static void exec_next_prep_write(struct bt_gatt_server *server,
 	err = BT_ATT_ERROR_UNLIKELY;
 
 error:
+	queue_remove_all(server->prep_queue, NULL, NULL,
+						prep_write_data_destroy);
+
 	bt_att_send_error_rsp(server->att, BT_ATT_OP_EXEC_WRITE_REQ,
 								ehandle, err);
+}
+
+static bool find_no_reliable_characteristic(const void *data,
+						const void *match_data)
+{
+	const struct prep_write_data *prep_data = data;
+
+	return !prep_data->reliable_supported;
 }
 
 static void exec_write_cb(uint8_t opcode, const void *pdu,
@@ -1246,6 +1302,7 @@ static void exec_write_cb(uint8_t opcode, const void *pdu,
 	uint8_t flags;
 	uint8_t ecode;
 	bool write;
+	uint16_t ehandle = 0;
 
 	if (length != 1) {
 		ecode = BT_ATT_ERROR_INVALID_PDU;
@@ -1274,12 +1331,27 @@ static void exec_write_cb(uint8_t opcode, const void *pdu,
 		return;
 	}
 
+	/* If there is more than one prep request, we are in reliable session */
+	if (queue_length(server->prep_queue) > 1) {
+		struct prep_write_data *prep_data;
+
+		prep_data = queue_find(server->prep_queue,
+					find_no_reliable_characteristic, NULL);
+		if (prep_data) {
+			ecode = BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+			ehandle = prep_data->handle;
+			goto error;
+		}
+	}
+
 	exec_next_prep_write(server, 0, 0);
 
 	return;
 
 error:
-	bt_att_send_error_rsp(server->att, opcode, 0, ecode);
+	queue_remove_all(server->prep_queue, NULL, NULL,
+						prep_write_data_destroy);
+	bt_att_send_error_rsp(server->att, opcode, ehandle, ecode);
 }
 
 static void exchange_mtu_cb(uint8_t opcode, const void *pdu,
@@ -1347,7 +1419,7 @@ static bool gatt_server_register_att_handlers(struct bt_gatt_server *server)
 
 	/* Find By Type Value */
 	server->find_by_type_value_id = bt_att_register(server->att,
-						BT_ATT_OP_FIND_BY_TYPE_VAL_REQ,
+						BT_ATT_OP_FIND_BY_TYPE_REQ,
 						find_by_type_val_cb,
 						server, NULL);
 
@@ -1418,19 +1490,11 @@ struct bt_gatt_server *bt_gatt_server_new(struct gatt_db *db,
 		return NULL;
 
 	server = new0(struct bt_gatt_server, 1);
-	if (!server)
-		return NULL;
-
 	server->db = gatt_db_ref(db);
 	server->att = bt_att_ref(att);
 	server->mtu = MAX(mtu, BT_ATT_DEFAULT_LE_MTU);
 	server->max_prep_queue_len = DEFAULT_MAX_PREP_QUEUE_LEN;
-
 	server->prep_queue = queue_new();
-	if (!server->prep_queue) {
-		bt_gatt_server_free(server);
-		return NULL;
-	}
 
 	if (!gatt_server_register_att_handlers(server)) {
 		bt_gatt_server_free(server);
@@ -1551,10 +1615,6 @@ bool bt_gatt_server_send_indication(struct bt_gatt_server *server,
 		return false;
 
 	data = new0(struct ind_data, 1);
-	if (!data) {
-		free(pdu);
-		return false;
-	}
 
 	data->callback = callback;
 	data->destroy = destroy;

@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.36)
+AC_INIT(bluez, 5.40)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -118,6 +118,20 @@ if (test -z "${path_dbussessionbusdir}"); then
 fi
 AC_SUBST(DBUS_SESSIONBUSDIR, [${path_dbussessionbusdir}])
 
+AC_ARG_ENABLE(backtrace, AC_HELP_STRING([--enable-backtrace],
+		[compile backtrace support]), [enable_backtrace=${enableval}])
+
+if (test "${enable_backtrace}" = "yes"); then
+	AC_CHECK_HEADER(elfutils/libdwfl.h, dummy=yes,
+			AC_MSG_ERROR(elfutils support is required))
+	AC_DEFINE(HAVE_BACKTRACE_SUPPORT, 1,
+			[Define to 1 if you have the backtrace support.])
+	BACKTRACE_CFLAGS=""
+	BACKTRACE_LIBS="-ldw"
+	AC_SUBST(BACKTRACE_CFLAGS)
+	AC_SUBST(BACKTRACE_LIBS)
+fi
+
 AC_ARG_ENABLE(library, AC_HELP_STRING([--enable-library],
 		[install Bluetooth library]), [enable_library=${enableval}])
 AM_CONDITIONAL(LIBRARY, test "${enable_library}" = "yes")
@@ -232,6 +246,11 @@ AC_ARG_ENABLE(experimental, AC_HELP_STRING([--enable-experimental],
 			[enable experimental plugins (SAP, NFC, ...)]),
 					[enable_experimental=${enableval}])
 AM_CONDITIONAL(EXPERIMENTAL, test "${enable_experimental}" = "yes")
+
+AC_ARG_ENABLE(deprecated, AC_HELP_STRING([--enable-deprecated],
+			[enable deprecated plugins (BLE services, ...)]),
+					[enable_deprecated=${enableval}])
+AM_CONDITIONAL(DEPRECATED, test "${enable_deprecated}" = "yes")
 
 AC_ARG_ENABLE(sixaxis, AC_HELP_STRING([--enable-sixaxis],
 		[enable sixaxis plugin]), [enable_sixaxis=${enableval}])
