@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 11:0:8
+lib_libbluetooth_la_LDFLAGS = -version-info 12:0:9
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -65,7 +65,8 @@ noinst_LTLIBRARIES += sbc/libsbc.la
 sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 			sbc/sbc_primitives.h sbc/sbc_primitives.c \
 			sbc/sbc_primitives_mmx.h sbc/sbc_primitives_mmx.c \
-			sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c
+			sbc/sbc_primitives_neon.h sbc/sbc_primitives_neon.c \
+			sbc/sbc_primitives_armv6.h sbc/sbc_primitives_armv6.c
 
 sbc_libsbc_la_CFLAGS = -finline-functions -fgcse-after-reload \
 					-funswitch-loops -funroll-loops
@@ -159,7 +160,6 @@ builtin_sources += network/main.c \
 			network/manager.h network/manager.c \
 			network/common.h network/common.c \
 			network/server.h network/server.c \
-			network/bridge.h network/bridge.c \
 			network/connection.h network/connection.c
 endif
 
@@ -176,6 +176,11 @@ builtin_sources += plugins/hal.c
 
 builtin_modules += storage
 builtin_sources += plugins/storage.c
+
+if MAEMO6PLUGIN
+builtin_modules += maemo6
+builtin_sources += plugins/maemo6.c
+endif
 
 sbin_PROGRAMS += src/bluetoothd
 
@@ -306,7 +311,7 @@ endif
 
 EXTRA_DIST += doc/manager-api.txt \
 		doc/adapter-api.txt doc/device-api.txt \
-		doc/service-api.txt doc/agent-api.txt \
+		doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
 		doc/serial-api.txt doc/network-api.txt \
 		doc/input-api.txt doc/audio-api.txt doc/control-api.txt
 

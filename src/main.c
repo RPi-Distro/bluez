@@ -302,6 +302,7 @@ static void sig_debug(int sig)
 
 static gchar *option_debug = NULL;
 static gboolean option_detach = TRUE;
+static gboolean option_version = FALSE;
 static gboolean option_udev = FALSE;
 
 static guint last_adapter_timeout = 0;
@@ -334,7 +335,8 @@ void btd_stop_exit_timer(void)
 	last_adapter_timeout = 0;
 }
 
-static gboolean parse_debug(const char *key, const char *value, gpointer user_data, GError **error)
+static gboolean parse_debug(const char *key, const char *value,
+				gpointer user_data, GError **error)
 {
 	if (value)
 		option_debug = g_strdup(value);
@@ -345,12 +347,14 @@ static gboolean parse_debug(const char *key, const char *value, gpointer user_da
 }
 
 static GOptionEntry options[] = {
-	{ "nodaemon", 'n', G_OPTION_FLAG_REVERSE,
-				G_OPTION_ARG_NONE, &option_detach,
-				"Don't run as daemon in background" },
 	{ "debug", 'd', G_OPTION_FLAG_OPTIONAL_ARG,
 				G_OPTION_ARG_CALLBACK, parse_debug,
-				"Enable debug information output", "DEBUG" },
+				"Specify debug options to enable", "DEBUG" },
+	{ "nodetach", 'n', G_OPTION_FLAG_REVERSE,
+				G_OPTION_ARG_NONE, &option_detach,
+				"Don't run as daemon in background" },
+	{ "version", 'v', 0, G_OPTION_ARG_NONE, &option_version,
+				"Show version information and exit" },
 	{ "udev", 'u', 0, G_OPTION_ARG_NONE, &option_udev,
 				"Run from udev mode of operation" },
 	{ NULL },
@@ -387,6 +391,13 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	g_option_context_free(context);
+
+	if (option_version == TRUE) {
+		printf("%s\n", VERSION);
+		exit(0);
+	}
+
 	if (option_udev == TRUE) {
 		int err;
 
@@ -398,8 +409,6 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 	}
-
-	g_option_context_free(context);
 
 	if (option_detach == TRUE && option_udev == FALSE) {
 		if (daemon(0, 0)) {

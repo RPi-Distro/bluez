@@ -171,8 +171,7 @@ static void handle_uuid(const char *uuidstr, struct audio_device *device)
 	uuid16 = uuid.value.uuid16;
 
 	if (!server_is_enabled(&device->src, uuid16)) {
-		DBG("audio handle_uuid: server not enabled for %s (0x%04x)",
-				uuidstr, uuid16);
+		DBG("server not enabled for %s (0x%04x)", uuidstr, uuid16);
 		return;
 	}
 
@@ -351,11 +350,17 @@ static sdp_record_t *hfp_ag_record(uint8_t ch, uint32_t feat)
 	sdp_data_t *channel, *features;
 	uint8_t netid = 0x01;
 	uint16_t sdpfeat;
-	sdp_data_t *network = sdp_data_alloc(SDP_UINT8, &netid);
+	sdp_data_t *network;
 
 	record = sdp_record_alloc();
 	if (!record)
 		return NULL;
+
+	network = sdp_data_alloc(SDP_UINT8, &netid);
+	if (!network) {
+		sdp_record_free(record);
+		return NULL;
+	}
 
 	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
 	root = sdp_list_append(0, &root_uuid);
@@ -770,7 +775,7 @@ static int audio_probe(struct btd_device *device, GSList *uuids)
 
 	audio_dev = manager_get_device(&src, &dst, TRUE);
 	if (!audio_dev) {
-		DBG("audio_probe: unable to get a device object");
+		DBG("unable to get a device object");
 		return -1;
 	}
 
@@ -800,7 +805,7 @@ static struct audio_adapter *audio_adapter_ref(struct audio_adapter *adp)
 {
 	adp->ref++;
 
-	DBG("audio_adapter_ref(%p): ref=%d", adp, adp->ref);
+	DBG("%p: ref=%d", adp, adp->ref);
 
 	return adp;
 }
@@ -809,7 +814,7 @@ static void audio_adapter_unref(struct audio_adapter *adp)
 {
 	adp->ref--;
 
-	DBG("audio_adapter_unref(%p): ref=%d", adp, adp->ref);
+	DBG("%p: ref=%d", adp, adp->ref);
 
 	if (adp->ref > 0)
 		return;

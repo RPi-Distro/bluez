@@ -105,6 +105,7 @@ struct btd_adapter {
 	uint8_t mode;			/* off, connectable, discoverable,
 					 * limited */
 	uint8_t global_mode;		/* last valid global mode */
+	struct session_req *pending_mode;
 	int state;			/* standard inq, periodic inq, name
 					 * resloving */
 	GSList *found_devices;
@@ -412,10 +413,47 @@ static void adapter_set_limited_discoverable(struct btd_adapter *adapter,
 		adapter->pending_cod = adapter->wanted_cod;
 }
 
-static int set_mode(struct btd_adapter *adapter, uint8_t new_mode)
+static struct session_req *session_ref(struct session_req *req)
+{
+	req->refcount++;
+
+	DBG("%p: ref=%d", req, req->refcount);
+
+	return req;
+}
+
+static struct session_req *create_session(struct btd_adapter *adapter,
+					DBusConnection *conn, DBusMessage *msg,
+					uint8_t mode, GDBusWatchFunction cb)
+{
+	const char *sender = dbus_message_get_sender(msg);
+	struct session_req *req;
+
+	req = g_new0(struct session_req, 1);
+	req->adapter = adapter;
+	req->conn = dbus_connection_ref(conn);
+	req->msg = dbus_message_ref(msg);
+	req->mode = mode;
+
+	if (cb == NULL)
+		return session_ref(req);
+
+	req->owner = g_strdup(sender);
+	req->id = g_dbus_add_disconnect_watch(conn, sender, cb, req, NULL);
+
+	info("%s session %p with %s activated",
+		req->mode ? "Mode" : "Discovery", req, sender);
+
+	return session_ref(req);
+}
+
+static int set_mode(struct btd_adapter *adapter, uint8_t new_mode,
+			DBusMessage *msg)
 {
 	int err;
-	const char *modestr;
+
+	if (adapter->pending_mode != NULL)
+		return -EALREADY;
 
 	if (!adapter->up && new_mode != MODE_OFF) {
 		err = adapter_ops->set_powered(adapter->dev_id, TRUE);
@@ -456,11 +494,18 @@ static int set_mode(struct btd_adapter *adapter, uint8_t new_mode)
 	}
 
 done:
-	modestr = mode2str(new_mode);
+	DBG("%s", mode2str(new_mode));
 
-	write_device_mode(&adapter->bdaddr, modestr);
-
-	adapter->mode = new_mode;
+	if (msg != NULL)
+		/* Wait for mode change to reply */
+		adapter->pending_mode = create_session(adapter, connection,
+							msg, new_mode, NULL);
+	else {
+		/* Nothing to reply just write the new mode */
+		const char *modestr = mode2str(new_mode);
+		adapter->mode = new_mode;
+		write_device_mode(&adapter->bdaddr, modestr);
+	}
 
 	return 0;
 }
@@ -477,7 +522,7 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	if (mode == adapter->mode)
 		return dbus_message_new_method_return(msg);
 
-	err = set_mode(adapter, mode);
+	err = set_mode(adapter, mode, NULL);
 	if (err < 0)
 		return failed_strerror(msg, -err);
 
@@ -501,11 +546,11 @@ static DBusMessage *set_discoverable(DBusConnection *conn, DBusMessage *msg,
 	if (mode == adapter->mode)
 		return dbus_message_new_method_return(msg);
 
-	err = set_mode(adapter, mode);
+	err = set_mode(adapter, mode, msg);
 	if (err < 0)
 		return failed_strerror(msg, -err);
 
-	return dbus_message_new_method_return(msg);
+	return 0;
 }
 
 static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
@@ -521,6 +566,19 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
 	if (pairable == adapter->pairable)
 		goto done;
 
+	if (!(adapter->scan_mode & SCAN_INQUIRY))
+		goto store;
+
+	mode = (pairable && adapter->discov_timeout > 0 &&
+				adapter->discov_timeout <= 60) ?
+					MODE_LIMITED : MODE_DISCOVERABLE;
+
+	err = set_mode(adapter, mode, NULL);
+	if (err < 0 && msg)
+		return failed_strerror(msg, -err);
+
+store:
+
 	adapter->pairable = pairable;
 
 	write_device_pairable(&adapter->bdaddr, pairable);
@@ -532,17 +590,6 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
 	if (pairable && adapter->pairable_timeout)
 		adapter_set_pairable_timeout(adapter,
 						adapter->pairable_timeout);
-
-	if (!(adapter->scan_mode & SCAN_INQUIRY))
-		goto done;
-
-	mode = (pairable && adapter->discov_timeout > 0 &&
-				adapter->discov_timeout <= 60) ?
-					MODE_LIMITED : MODE_DISCOVERABLE;
-
-	err = set_mode(adapter, mode);
-	if (err < 0 && msg)
-		return failed_strerror(msg, -err);
 
 done:
 	return msg ? dbus_message_new_method_return(msg) : NULL;
@@ -606,6 +653,13 @@ static void session_remove(struct session_req *req)
 {
 	struct btd_adapter *adapter = req->adapter;
 
+	/* Ignore set_mode session */
+	if (req->owner == NULL)
+		return;
+
+	DBG("%s session %p with %s deactivated",
+		req->mode ? "Mode" : "Discovery", req, req->owner);
+
 	if (req->mode) {
 		uint8_t mode;
 
@@ -619,7 +673,7 @@ static void session_remove(struct session_req *req)
 
 		DBG("Switching to '%s' mode", mode2str(mode));
 
-		set_mode(adapter, mode);
+		set_mode(adapter, mode, NULL);
 	} else {
 		adapter->disc_sessions = g_slist_remove(adapter->disc_sessions,
 							req);
@@ -647,9 +701,6 @@ static void session_remove(struct session_req *req)
 
 static void session_free(struct session_req *req)
 {
-	DBG("%s session %p with %s deactivated",
-		req->mode ? "Mode" : "Discovery", req, req->owner);
-
 	if (req->id)
 		g_dbus_remove_watch(req->conn, req->id);
 
@@ -672,49 +723,16 @@ static void session_owner_exit(DBusConnection *conn, void *user_data)
 	session_free(req);
 }
 
-static struct session_req *session_ref(struct session_req *req)
-{
-	req->refcount++;
-
-	DBG("session_ref(%p): ref=%d", req, req->refcount);
-
-	return req;
-}
-
 static void session_unref(struct session_req *req)
 {
 	req->refcount--;
 
-	DBG("session_unref(%p): ref=%d", req, req->refcount);
+	DBG("%p: ref=%d", req, req->refcount);
 
 	if (req->refcount)
 		return;
 
 	session_free(req);
-}
-
-static struct session_req *create_session(struct btd_adapter *adapter,
-					DBusConnection *conn, DBusMessage *msg,
-					uint8_t mode, GDBusWatchFunction cb)
-{
-	struct session_req *req;
-	const char *sender = dbus_message_get_sender(msg);
-
-	req = g_new0(struct session_req, 1);
-	req->adapter = adapter;
-	req->conn = dbus_connection_ref(conn);
-	req->msg = dbus_message_ref(msg);
-	req->owner = g_strdup(dbus_message_get_sender(msg));
-	req->mode = mode;
-
-	if (cb)
-		req->id = g_dbus_add_disconnect_watch(conn, sender, cb, req,
-							NULL);
-
-	info("%s session %p with %s activated",
-		req->mode ? "Mode" : "Discovery", req, sender);
-
-	return session_ref(req);
 }
 
 static void confirm_mode_cb(struct agent *agent, DBusError *derr, void *data)
@@ -731,7 +749,7 @@ static void confirm_mode_cb(struct agent *agent, DBusError *derr, void *data)
 		return;
 	}
 
-	err = set_mode(req->adapter, req->mode);
+	err = set_mode(req->adapter, req->mode, NULL);
 	if (err < 0)
 		reply = failed_strerror(req->msg, -err);
 	else
@@ -1118,7 +1136,7 @@ struct btd_device *adapter_create_device(DBusConnection *conn,
 	struct btd_device *device;
 	const char *path;
 
-	DBG("adapter_create_device(%s)", address);
+	DBG("%s", address);
 
 	device = device_create(conn, adapter, address);
 	if (!device)
@@ -1170,7 +1188,7 @@ struct btd_device *adapter_get_device(DBusConnection *conn,
 {
 	struct btd_device *device;
 
-	DBG("adapter_get_device(%s)", address);
+	DBG("%s", address);
 
 	if (!adapter)
 		return NULL;
@@ -1586,7 +1604,7 @@ static DBusMessage *create_device(DBusConnection *conn,
 				ERROR_INTERFACE ".AlreadyExists",
 				"Device already exists");
 
-	DBG("create_device(%s)", address);
+	DBG("%s", address);
 
 	device = adapter_create_device(conn, adapter, address);
 	if (!device)
@@ -2498,7 +2516,7 @@ static void adapter_free(gpointer user_data)
 	agent_free(adapter->agent);
 	adapter->agent = NULL;
 
-	DBG("adapter_free(%p)", adapter);
+	DBG("%p", adapter);
 
 	if (adapter->auth_idle_id)
 		g_source_remove(adapter->auth_idle_id);
@@ -2511,7 +2529,7 @@ struct btd_adapter *btd_adapter_ref(struct btd_adapter *adapter)
 {
 	adapter->ref++;
 
-	DBG("btd_adapter_ref(%p): ref=%d", adapter, adapter->ref);
+	DBG("%p: ref=%d", adapter, adapter->ref);
 
 	return adapter;
 }
@@ -2522,7 +2540,7 @@ void btd_adapter_unref(struct btd_adapter *adapter)
 
 	adapter->ref--;
 
-	DBG("btd_adapter_unref(%p): ref=%d", adapter, adapter->ref);
+	DBG("%p: ref=%d", adapter, adapter->ref);
 
 	if (adapter->ref > 0)
 		return;
@@ -2848,6 +2866,45 @@ void adapter_update_oor_devices(struct btd_adapter *adapter)
 	adapter->oor_devices = g_slist_copy(adapter->found_devices);
 }
 
+static void set_mode_complete(struct btd_adapter *adapter)
+{
+	struct session_req *pending;
+	const char *modestr;
+	int err;
+
+	if (adapter->pending_mode == NULL)
+		return;
+
+	pending = adapter->pending_mode;
+	adapter->pending_mode = NULL;
+
+	err = (pending->mode != adapter->mode) ? -EINVAL : 0;
+
+	if (pending->msg != NULL) {
+		DBusMessage *msg = pending->msg;
+		DBusMessage *reply;
+
+		if (err < 0)
+			reply = failed_strerror(msg, -err);
+		else
+			reply = g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+
+		g_dbus_send_message(connection, reply);
+	}
+
+	modestr = mode2str(adapter->mode);
+
+	DBG("%s", modestr);
+
+	/* Only store if the mode matches the pending */
+	if (err == 0)
+		write_device_mode(&adapter->bdaddr, modestr);
+	else
+		error("unable to set mode: %s", mode2str(pending->mode));
+
+	session_unref(pending);
+}
+
 void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
 {
 	const gchar *path = adapter_get_path(adapter);
@@ -2907,6 +2964,8 @@ void adapter_mode_changed(struct btd_adapter *adapter, uint8_t scan_mode)
 				DBUS_TYPE_BOOLEAN, &discoverable);
 
 	adapter->scan_mode = scan_mode;
+
+	set_mode_complete(adapter);
 }
 
 struct agent *adapter_get_agent(struct btd_adapter *adapter)
@@ -3195,6 +3254,17 @@ int btd_adapter_restore_powered(struct btd_adapter *adapter)
 	ba2str(&adapter->bdaddr, address);
 	if (read_device_mode(address, mode, sizeof(mode)) == 0 &&
 						g_str_equal(mode, "off"))
+		return 0;
+
+	return adapter_ops->set_powered(adapter->dev_id, TRUE);
+}
+
+int btd_adapter_switch_online(struct btd_adapter *adapter)
+{
+	if (!adapter_ops)
+		return -EINVAL;
+
+	if (adapter->up)
 		return 0;
 
 	return adapter_ops->set_powered(adapter->dev_id, TRUE);
