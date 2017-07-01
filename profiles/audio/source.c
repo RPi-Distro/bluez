@@ -227,6 +227,8 @@ static void discovery_complete(struct avdtp *session, GSList *seps, struct avdtp
 	struct source *source = user_data;
 	int id, perr;
 
+	source->connect_id = 0;
+
 	if (err) {
 		avdtp_unref(source->session);
 		source->session = NULL;
@@ -400,7 +402,7 @@ int source_disconnect(struct btd_service *service)
 	if (source->connect_id > 0) {
 		a2dp_cancel(source->connect_id);
 		source->connect_id = 0;
-		btd_service_connecting_complete(source->service, -ECANCELED);
+		btd_service_disconnecting_complete(source->service, 0);
 
 		avdtp_unref(source->session);
 		source->session = NULL;

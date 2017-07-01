@@ -43,6 +43,7 @@
 #include "gatt-database.h"
 #include "dbus-common.h"
 #include "profile.h"
+#include "service.h"
 
 #ifndef ATT_CID
 #define ATT_CID 4
@@ -383,6 +384,7 @@ static void profile_remove(void *data)
 	DBG("Removed \"%s\"", p->name);
 
 	adapter_foreach(adapter_remove_profile, p);
+	btd_profile_unregister(p);
 
 	g_free((void *) p->name);
 	g_free((void *) p->remote_uuid);
@@ -1073,7 +1075,7 @@ static void client_disconnect_cb(DBusConnection *conn, void *user_data)
 	service_remove_helper(user_data);
 }
 
-static void service_remove(void *data)
+static void remove_service(void *data)
 {
 	struct external_service *service = data;
 
@@ -1452,7 +1454,7 @@ static void proxy_removed_cb(GDBusProxy *proxy, void *user_data)
 
 	DBG("Proxy removed - removing service: %s", service->path);
 
-	service_remove(service);
+	remove_service(service);
 }
 
 static bool parse_uuid(GDBusProxy *proxy, bt_uuid_t *uuid)
@@ -1783,22 +1785,16 @@ static uint8_t ccc_write_cb(uint16_t value, void *user_data)
 		return 0;
 	}
 
-	/*
-	 * TODO: All of the errors below should fall into the so called
-	 * "Application Error" range. Since there is no well defined error for
-	 * these, we return a generic ATT protocol error for now.
-	 */
-
 	if (chrc->ntfy_cnt == UINT_MAX) {
 		/* Maximum number of per-device CCC descriptors configured */
-		return BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+		return BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
 	}
 
 	/* Don't support undefined CCC values yet */
 	if (value > 2 ||
 		(value == 1 && !(chrc->props & BT_GATT_CHRC_PROP_NOTIFY)) ||
 		(value == 2 && !(chrc->props & BT_GATT_CHRC_PROP_INDICATE)))
-		return BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+		return BT_ERROR_CCC_IMPROPERLY_CONFIGURED;
 
 	/*
 	 * Always call StartNotify for an incoming enable and ignore the return
@@ -1807,7 +1803,7 @@ static uint8_t ccc_write_cb(uint16_t value, void *user_data)
 	if (g_dbus_proxy_method_call(chrc->proxy,
 						"StartNotify", NULL, NULL,
 						NULL, NULL) == FALSE)
-		return BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+		return BT_ATT_ERROR_UNLIKELY;
 
 	__sync_fetch_and_add(&chrc->ntfy_cnt, 1);
 
@@ -2147,10 +2143,10 @@ reply:
 	service->reg = NULL;
 
 	if (fail)
-		service_remove(service);
+		remove_service(service);
 }
 
-static struct external_service *service_create(DBusConnection *conn,
+static struct external_service *create_service(DBusConnection *conn,
 					DBusMessage *msg, const char *path)
 {
 	struct external_service *service;
@@ -2228,7 +2224,7 @@ static DBusMessage *manager_register_service(DBusConnection *conn,
 	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_ARRAY)
 		return btd_error_invalid_args(msg);
 
-	service = service_create(conn, msg, path);
+	service = create_service(conn, msg, path);
 	if (!service)
 		return btd_error_failed(msg, "Failed to register service");
 
@@ -2284,6 +2280,22 @@ static void profile_exited(DBusConnection *conn, void *user_data)
 	profile_free(profile);
 }
 
+static int profile_device_probe(struct btd_service *service)
+{
+	struct btd_profile *p = btd_service_get_profile(service);
+
+	DBG("%s probed", p->name);
+
+	return 0;
+}
+
+static void profile_device_remove(struct btd_service *service)
+{
+	struct btd_profile *p = btd_service_get_profile(service);
+
+	DBG("%s removed", p->name);
+}
+
 static int profile_add(struct external_profile *profile, const char *uuid)
 {
 	struct btd_profile *p;
@@ -2307,7 +2319,10 @@ static int profile_add(struct external_profile *profile, const char *uuid)
 		return -ENOMEM;
 	}
 
+	p->device_probe = profile_device_probe;
+	p->device_remove = profile_device_remove;
 	p->auto_connect = true;
+	p->external = true;
 
 	queue_push_tail(profile->profiles, p);
 
@@ -2320,6 +2335,7 @@ static void add_profile(void *data, void *user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
+	btd_profile_register(data);
 	adapter_add_profile(adapter, data);
 }
 

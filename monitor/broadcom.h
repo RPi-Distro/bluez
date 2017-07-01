@@ -24,6 +24,9 @@
 
 #include <stdint.h>
 
-void lmp_packet(const void *data, uint8_t size, bool padded);
+struct vendor_ocf;
+struct vendor_evt;
 
-void lmp_todo(void);
+const struct vendor_ocf *broadcom_vendor_ocf(uint16_t ocf);
+const struct vendor_evt *broadcom_vendor_evt(uint8_t evt);
+void broadcom_lm_diag(const void *data, uint8_t size);

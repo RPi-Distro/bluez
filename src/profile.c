@@ -435,6 +435,9 @@
 		<attribute id=\"0x0317\">				\
 			<uint32 value=\"0x00000003\"/>			\
 		</attribute>						\
+		<attribute id=\"0x0200\">				\
+			<uint16 value=\"%u\" name=\"psm\"/>		\
+		</attribute>						\
 	</record>"
 
 #define MAS_RECORD							\
@@ -484,6 +487,9 @@
 		<attribute id=\"0x0317\">				\
 			<uint32 value=\"0x0000007f\"/>			\
 		</attribute>						\
+		<attribute id=\"0x0200\">				\
+			<uint16 value=\"%u\" name=\"psm\"/>		\
+		</attribute>						\
 	</record>"
 
 #define MNS_RECORD							\
@@ -524,11 +530,11 @@
 		<attribute id=\"0x0100\">				\
 			<text value=\"%s\"/>				\
 		</attribute>						\
-		<attribute id=\"0x0200\">				\
-			<uint16 value=\"%u\" name=\"psm\"/>		\
-		</attribute>						\
 		<attribute id=\"0x0317\">				\
 			<uint32 value=\"0x0000007f\"/>			\
+		</attribute>						\
+		<attribute id=\"0x0200\">				\
+			<uint16 value=\"%u\" name=\"psm\"/>		\
 		</attribute>						\
 	</record>"
 
@@ -713,13 +719,19 @@ void btd_profile_foreach(void (*func)(struct btd_profile *p, void *data),
 
 int btd_profile_register(struct btd_profile *profile)
 {
-	profiles = g_slist_append(profiles, profile);
+	if (profile->external)
+		ext_profiles = g_slist_append(ext_profiles, profile);
+	else
+		profiles = g_slist_append(profiles, profile);
 	return 0;
 }
 
 void btd_profile_unregister(struct btd_profile *profile)
 {
-	profiles = g_slist_remove(profiles, profile);
+	if (profile->external)
+		ext_profiles = g_slist_remove(ext_profiles, profile);
+	else
+		profiles = g_slist_remove(profiles, profile);
 }
 
 static struct ext_profile *find_ext_profile(const char *owner,
@@ -730,10 +742,14 @@ static struct ext_profile *find_ext_profile(const char *owner,
 	for (l = ext_profiles; l != NULL; l = g_slist_next(l)) {
 		struct ext_profile *ext = l->data;
 
-		if (!g_str_equal(ext->owner, owner))
+		/*
+		 * Owner and path can be NULL if profile was registered by a
+		 * plugin using external flag.
+		 */
+		if (g_strcmp0(ext->owner, owner))
 			continue;
 
-		if (g_str_equal(ext->path, path))
+		if (!g_strcmp0(ext->path, path))
 			return ext;
 	}
 
@@ -1792,15 +1808,29 @@ static char *get_pce_record(struct ext_profile *ext, struct ext_io *l2cap,
 static char *get_pse_record(struct ext_profile *ext, struct ext_io *l2cap,
 							struct ext_io *rfcomm)
 {
-	return g_strdup_printf(PSE_RECORD, rfcomm->chan, ext->version,
-								ext->name);
+	uint16_t psm = 0;
+	uint8_t chan = 0;
+
+	if (l2cap)
+		psm = l2cap->psm;
+	if (rfcomm)
+		chan = rfcomm->chan;
+
+	return g_strdup_printf(PSE_RECORD, chan, ext->version, ext->name, psm);
 }
 
 static char *get_mas_record(struct ext_profile *ext, struct ext_io *l2cap,
 							struct ext_io *rfcomm)
 {
-	return g_strdup_printf(MAS_RECORD, rfcomm->chan, ext->version,
-								ext->name);
+	uint16_t psm = 0;
+	uint8_t chan = 0;
+
+	if (l2cap)
+		psm = l2cap->psm;
+	if (rfcomm)
+		chan = rfcomm->chan;
+
+	return g_strdup_printf(MAS_RECORD, chan, ext->version, ext->name, psm);
 }
 
 static char *get_mns_record(struct ext_profile *ext, struct ext_io *l2cap,
@@ -2001,6 +2031,8 @@ static struct default_settings {
 		.uuid		= OBEX_PSE_UUID,
 		.name		= "Phone Book Access",
 		.channel	= PBAP_DEFAULT_CHANNEL,
+		.psm		= BTD_PROFILE_PSM_AUTO,
+		.mode		= BT_IO_MODE_ERTM,
 		.authorize	= true,
 		.get_record	= get_pse_record,
 		.version	= 0x0101,
@@ -2015,6 +2047,8 @@ static struct default_settings {
 		.uuid		= OBEX_MAS_UUID,
 		.name		= "Message Access",
 		.channel	= MAS_DEFAULT_CHANNEL,
+		.psm		= BTD_PROFILE_PSM_AUTO,
+		.mode		= BT_IO_MODE_ERTM,
 		.authorize	= true,
 		.get_record	= get_mas_record,
 		.version	= 0x0100
@@ -2267,6 +2301,7 @@ static struct ext_profile *create_ext(const char *owner, const char *path,
 	p->name = ext->name;
 	p->local_uuid = ext->service ? ext->service : ext->uuid;
 	p->remote_uuid = ext->remote_uuid;
+	p->external = true;
 
 	if (ext->enable_server) {
 		p->adapter_probe = ext_adapter_probe;

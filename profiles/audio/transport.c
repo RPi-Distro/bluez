@@ -653,6 +653,7 @@ static void set_volume(const GDBusPropertyTable *property,
 	struct media_transport *transport = data;
 	struct a2dp_transport *a2dp = transport->data;
 	uint16_t volume;
+	bool notify;
 
 	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16) {
 		g_dbus_pending_property_error(id,
@@ -670,12 +671,21 @@ static void set_volume(const GDBusPropertyTable *property,
 		return;
 	}
 
-	if (a2dp->volume != volume)
-		avrcp_set_volume(transport->device, volume);
+	g_dbus_pending_property_success(id);
+
+	if (a2dp->volume == volume)
+		return;
 
 	a2dp->volume = volume;
 
-	g_dbus_pending_property_success(id);
+	notify = transport->source_watch ? true : false;
+	if (notify)
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+						transport->path,
+						MEDIA_TRANSPORT_INTERFACE,
+						"Volume");
+
+	avrcp_set_volume(transport->device, volume, notify);
 }
 
 static const GDBusMethodTable transport_methods[] = {
@@ -817,7 +827,6 @@ static int media_transport_init_sink(struct media_transport *transport)
 	transport->destroy = destroy_a2dp;
 
 	a2dp->volume = 127;
-	avrcp_set_volume(transport->device, a2dp->volume);
 	transport->source_watch = source_add_state_cb(service,
 							source_state_changed,
 							transport);

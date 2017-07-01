@@ -99,7 +99,42 @@ struct bt_ll_reject_ind {
 	uint8_t  error;
 } __attribute__ ((packed));
 
+#define BT_LL_SLAVE_FEATURE_REQ	0x0e
+struct bt_ll_slave_feature_req {
+	uint8_t  features[8];
+} __attribute__ ((packed));
+
+#define BT_LL_CONN_PARAM_REQ	0x0f
+
+#define BT_LL_CONN_PARAM_RSP	0x10
+
+#define BT_LL_REJECT_IND_EXT	0x11
+struct bt_ll_reject_ind_ext {
+	uint8_t  opcode;
+	uint8_t  error;
+} __attribute__ ((packed));
+
+#define BT_LL_PING_REQ		0x12
+
+#define BT_LL_PING_RSP		0x13
+
+#define BT_LL_LENGTH_REQ	0x14
+
+#define BT_LL_LENGTH_RSP	0x15
+
 #define LMP_ESC4(x) ((127 << 8) | (x))
+
+#define BT_LMP_NAME_REQ			1
+struct bt_lmp_name_req {
+	uint8_t  offset;
+} __attribute__ ((packed));
+
+#define BT_LMP_NAME_RSP			2
+struct bt_lmp_name_rsp {
+	uint8_t  offset;
+	uint8_t  length;
+	uint8_t  fragment[14];
+} __attribute__ ((packed));
 
 #define BT_LMP_ACCEPTED			3
 struct bt_lmp_accepted {
@@ -113,6 +148,11 @@ struct bt_lmp_not_accepted {
 } __attribute__ ((packed));
 
 #define BT_LMP_CLKOFFSET_REQ		5
+
+#define BT_LMP_CLKOFFSET_RSP		6
+struct bt_lmp_clkoffset_rsp {
+	uint16_t offset;
+} __attribute__ ((packed));
 
 #define BT_LMP_DETACH			7
 struct bt_lmp_detach {
@@ -146,6 +186,11 @@ struct bt_lmp_start_encryption_req {
 
 #define BT_LMP_STOP_ENCRYPTION_REQ	18
 
+#define BT_LMP_SWITCH_REQ		19
+struct bt_lmp_switch_req {
+	uint32_t instant;
+} __attribute__ ((packed));
+
 #define BT_LMP_UNSNIFF_REQ		24
 
 #define BT_LMP_MAX_POWER		33
@@ -153,6 +198,11 @@ struct bt_lmp_start_encryption_req {
 #define BT_LMP_MIN_POWER		34
 
 #define BT_LMP_AUTO_RATE		35
+
+#define BT_LMP_PREFERRED_RATE		36
+struct bt_lmp_preferred_rate {
+	uint8_t  rate;
+} __attribute__ ((packed));
 
 #define BT_LMP_VERSION_REQ		37
 struct bt_lmp_version_req {
@@ -201,6 +251,12 @@ struct bt_lmp_timing_accuracy_res {
 #define BT_LMP_USE_SEMI_PERMANENT_KEY	50
 
 #define BT_LMP_HOST_CONNECTION_REQ	51
+
+#define BT_LMP_SLOT_OFFSET		52
+struct bt_lmp_slot_offset {
+	uint16_t offset;
+	uint8_t  bdaddr[6];
+} __attribute__ ((packed));
 
 #define BT_LMP_PAGE_SCAN_MODE_REQ	54
 struct bt_lmp_page_scan_mode_req {

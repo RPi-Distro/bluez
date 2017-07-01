@@ -32,7 +32,9 @@ monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
 				monitor/uuid.h monitor/uuid.c \
 				monitor/hwdb.h monitor/hwdb.c \
 				monitor/keys.h monitor/keys.c \
-				monitor/analyze.h monitor/analyze.c
+				monitor/analyze.h monitor/analyze.c \
+				monitor/intel.h monitor/intel.c \
+				monitor/broadcom.h monitor/broadcom.c
 monitor_btmon_LDADD = lib/libbluetooth-internal.la \
 				src/libshared-mainloop.la @UDEV_LIBS@
 endif
@@ -407,4 +409,5 @@ test_scripts += test/sap_client.py test/bluezutils.py \
 		test/test-heartrate test/test-alert test/test-hfp \
 		test/test-cyclingspeed test/opp-client test/ftp-client \
 		test/pbap-client test/map-client test/example-advertisement \
-		test/example-gatt-server test/example-gatt-client
+		test/example-gatt-server test/example-gatt-client \
+		test/test-gatt-profile

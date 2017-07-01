@@ -747,7 +747,8 @@ am__monitor_btmon_SOURCES_DIST = monitor/main.c monitor/bt.h \
 	monitor/rfcomm.h monitor/rfcomm.c monitor/bnep.h \
 	monitor/bnep.c monitor/uuid.h monitor/uuid.c monitor/hwdb.h \
 	monitor/hwdb.c monitor/keys.h monitor/keys.c monitor/analyze.h \
-	monitor/analyze.c
+	monitor/analyze.c monitor/intel.h monitor/intel.c \
+	monitor/broadcom.h monitor/broadcom.c
 @MONITOR_TRUE@am_monitor_btmon_OBJECTS = monitor/main.$(OBJEXT) \
 @MONITOR_TRUE@	monitor/display.$(OBJEXT) \
 @MONITOR_TRUE@	monitor/hcidump.$(OBJEXT) \
@@ -760,7 +761,9 @@ am__monitor_btmon_SOURCES_DIST = monitor/main.c monitor/bt.h \
 @MONITOR_TRUE@	monitor/avctp.$(OBJEXT) monitor/rfcomm.$(OBJEXT) \
 @MONITOR_TRUE@	monitor/bnep.$(OBJEXT) monitor/uuid.$(OBJEXT) \
 @MONITOR_TRUE@	monitor/hwdb.$(OBJEXT) monitor/keys.$(OBJEXT) \
-@MONITOR_TRUE@	monitor/analyze.$(OBJEXT)
+@MONITOR_TRUE@	monitor/analyze.$(OBJEXT) \
+@MONITOR_TRUE@	monitor/intel.$(OBJEXT) \
+@MONITOR_TRUE@	monitor/broadcom.$(OBJEXT)
 monitor_btmon_OBJECTS = $(am_monitor_btmon_OBJECTS)
 @MONITOR_TRUE@monitor_btmon_DEPENDENCIES =  \
 @MONITOR_TRUE@	lib/libbluetooth-internal.la \
@@ -2106,6 +2109,7 @@ docdir = @docdir@
 dvidir = @dvidir@
 enable_coverage = @enable_coverage@
 enable_dbus_run_session = @enable_dbus_run_session@
+enable_valgrind = @enable_valgrind@
 exec_prefix = @exec_prefix@
 host = @host@
 host_alias = @host_alias@
@@ -2205,8 +2209,8 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	doc/alert-api.txt doc/proximity-api.txt doc/heartrate-api.txt \
 	doc/thermometer-api.txt doc/cyclingspeed-api.txt \
 	doc/gatt-api.txt doc/advertising-api.txt doc/obex-api.txt \
-	doc/obex-agent-api.txt tools/magic.btsnoop \
-	$(manual_pages:.1=.txt)
+	doc/obex-agent-api.txt doc/pics-opp.txt doc/pixit-opp.txt \
+	doc/pts-opp.txt tools/magic.btsnoop $(manual_pages:.1=.txt)
 include_HEADERS = $(am__append_1)
 AM_CFLAGS = $(WARNING_CFLAGS) $(MISC_CFLAGS) $(am__append_29) \
 	@DBUS_CFLAGS@ @GLIB_CFLAGS@ $(am__empty)
@@ -2236,7 +2240,7 @@ extra_sources = lib/uuid.c
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 BUILT_SOURCES = $(local_headers) src/builtin.h obexd/src/builtin.h
 @LIBRARY_TRUE@lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:6:18
+@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:9:18
 @LIBRARY_TRUE@lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 lib_libbluetooth_internal_la_SOURCES = $(lib_headers) $(lib_sources) \
 					$(extra_headers) $(extra_sources)
@@ -2389,7 +2393,8 @@ test_scripts = test/sap_client.py test/bluezutils.py test/dbusdef.py \
 	test/test-alert test/test-hfp test/test-cyclingspeed \
 	test/opp-client test/ftp-client test/pbap-client \
 	test/map-client test/example-advertisement \
-	test/example-gatt-server test/example-gatt-client
+	test/example-gatt-server test/example-gatt-client \
+	test/test-gatt-profile
 unit_tests = $(am__append_32) unit/test-eir unit/test-uuid \
 	unit/test-textfile unit/test-crc unit/test-crypto \
 	unit/test-ecc unit/test-ringbuf unit/test-queue unit/test-mgmt \
@@ -2425,7 +2430,9 @@ unit_tests = $(am__append_32) unit/test-eir unit/test-uuid \
 @MONITOR_TRUE@				monitor/uuid.h monitor/uuid.c \
 @MONITOR_TRUE@				monitor/hwdb.h monitor/hwdb.c \
 @MONITOR_TRUE@				monitor/keys.h monitor/keys.c \
-@MONITOR_TRUE@				monitor/analyze.h monitor/analyze.c
+@MONITOR_TRUE@				monitor/analyze.h monitor/analyze.c \
+@MONITOR_TRUE@				monitor/intel.h monitor/intel.c \
+@MONITOR_TRUE@				monitor/broadcom.h monitor/broadcom.c
 
 @MONITOR_TRUE@monitor_btmon_LDADD = lib/libbluetooth-internal.la \
 @MONITOR_TRUE@				src/libshared-mainloop.la @UDEV_LIBS@
@@ -3059,6 +3066,10 @@ unit_test_gattrib_LDADD = lib/libbluetooth-internal.la \
 
 AM_TESTS_ENVIRONMENT = MALLOC_CHECK_=3 MALLOC_PERTURB_=69 \
 	$(am__append_35)
+@VALGRIND_TRUE@LOG_COMPILER = valgrind --error-exitcode=1 --num-callers=30
+@VALGRIND_TRUE@LOG_FLAGS = --trace-children=yes --leak-check=full --show-reachable=no \
+@VALGRIND_TRUE@		--suppressions=$(srcdir)/tools/valgrind.supp --quiet
+
 pkgconfigdir = $(libdir)/pkgconfig
 @LIBRARY_TRUE@pkgconfig_DATA = lib/bluez.pc
 manual_pages = doc/btmon.1
@@ -3992,6 +4003,10 @@ monitor/hwdb.$(OBJEXT): monitor/$(am__dirstamp) \
 monitor/keys.$(OBJEXT): monitor/$(am__dirstamp) \
 	monitor/$(DEPDIR)/$(am__dirstamp)
 monitor/analyze.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/intel.$(OBJEXT): monitor/$(am__dirstamp) \
+	monitor/$(DEPDIR)/$(am__dirstamp)
+monitor/broadcom.$(OBJEXT): monitor/$(am__dirstamp) \
 	monitor/$(DEPDIR)/$(am__dirstamp)
 
 monitor/btmon$(EXEEXT): $(monitor_btmon_OBJECTS) $(monitor_btmon_DEPENDENCIES) $(EXTRA_monitor_btmon_DEPENDENCIES) monitor/$(am__dirstamp)
@@ -5269,12 +5284,14 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/analyze.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/avctp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/bnep.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/broadcom.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/control.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/crc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/display.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/ellisys.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/hcidump.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/hwdb.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/intel.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/keys.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/l2cap.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@monitor/$(DEPDIR)/ll.Po@am__quote@

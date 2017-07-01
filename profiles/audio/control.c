@@ -59,6 +59,7 @@
 
 #include "avctp.h"
 #include "control.h"
+#include "player.h"
 
 static GSList *devices = NULL;
 
@@ -68,6 +69,7 @@ struct control {
 	struct btd_service *target;
 	struct btd_service *remote;
 	unsigned int avctp_id;
+	const char *player;
 };
 
 static void state_changed(struct btd_device *dev, avctp_state_t old_state,
@@ -81,9 +83,12 @@ static void state_changed(struct btd_device *dev, avctp_state_t old_state,
 	switch (new_state) {
 	case AVCTP_STATE_DISCONNECTED:
 		control->session = NULL;
+		control->player = NULL;
 
 		g_dbus_emit_property_changed(conn, path,
 					AUDIO_CONTROL_INTERFACE, "Connected");
+		g_dbus_emit_property_changed(conn, path,
+					AUDIO_CONTROL_INTERFACE, "Player");
 
 		break;
 	case AVCTP_STATE_CONNECTING:
@@ -215,21 +220,46 @@ static gboolean control_property_get_connected(
 	return TRUE;
 }
 
+static gboolean control_player_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct control *control = data;
+
+	return control->player != NULL;
+}
+
+static gboolean control_get_player(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct control *control = data;
+
+	if (!control->player)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH,
+							&control->player);
+
+	return TRUE;
+}
+
 static const GDBusMethodTable control_methods[] = {
-	{ GDBUS_METHOD("Play", NULL, NULL, control_play) },
-	{ GDBUS_METHOD("Pause", NULL, NULL, control_pause) },
-	{ GDBUS_METHOD("Stop", NULL, NULL, control_stop) },
-	{ GDBUS_METHOD("Next", NULL, NULL, control_next) },
-	{ GDBUS_METHOD("Previous", NULL, NULL, control_previous) },
-	{ GDBUS_METHOD("VolumeUp", NULL, NULL, control_volume_up) },
-	{ GDBUS_METHOD("VolumeDown", NULL, NULL, control_volume_down) },
-	{ GDBUS_METHOD("FastForward", NULL, NULL, control_fast_forward) },
-	{ GDBUS_METHOD("Rewind", NULL, NULL, control_rewind) },
+	{ GDBUS_DEPRECATED_METHOD("Play", NULL, NULL, control_play) },
+	{ GDBUS_DEPRECATED_METHOD("Pause", NULL, NULL, control_pause) },
+	{ GDBUS_DEPRECATED_METHOD("Stop", NULL, NULL, control_stop) },
+	{ GDBUS_DEPRECATED_METHOD("Next", NULL, NULL, control_next) },
+	{ GDBUS_DEPRECATED_METHOD("Previous", NULL, NULL, control_previous) },
+	{ GDBUS_DEPRECATED_METHOD("VolumeUp", NULL, NULL, control_volume_up) },
+	{ GDBUS_DEPRECATED_METHOD("VolumeDown", NULL, NULL,
+							control_volume_down) },
+	{ GDBUS_DEPRECATED_METHOD("FastForward", NULL, NULL,
+							control_fast_forward) },
+	{ GDBUS_DEPRECATED_METHOD("Rewind", NULL, NULL, control_rewind) },
 	{ }
 };
 
 static const GDBusPropertyTable control_properties[] = {
 	{ "Connected", "b", control_property_get_connected },
+	{ "Player", "o", control_get_player, NULL, control_player_exists },
 	{ }
 };
 
@@ -335,6 +365,25 @@ int control_init_remote(struct btd_service *service)
 	control->remote = btd_service_ref(service);
 
 	btd_service_set_user_data(service, control);
+
+	return 0;
+}
+
+int control_set_player(struct btd_service *service, const char *path)
+{
+	struct control *control = btd_service_get_user_data(service);
+
+	if (!control->session)
+		return -ENOTCONN;
+
+	if (g_strcmp0(control->player, path) == 0)
+		return -EALREADY;
+
+	control->player = path;
+
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+					device_get_path(control->dev),
+					AUDIO_CONTROL_INTERFACE, "Player");
 
 	return 0;
 }

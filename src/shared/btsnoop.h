@@ -43,6 +43,10 @@
 #define BTSNOOP_OPCODE_ACL_RX_PKT	5
 #define BTSNOOP_OPCODE_SCO_TX_PKT	6
 #define BTSNOOP_OPCODE_SCO_RX_PKT	7
+#define BTSNOOP_OPCODE_OPEN_INDEX	8
+#define BTSNOOP_OPCODE_CLOSE_INDEX	9
+#define BTSNOOP_OPCODE_INDEX_INFO	10
+#define BTSNOOP_OPCODE_VENDOR_DIAG	11
 
 #define BTSNOOP_MAX_PACKET_SIZE		(1486 + 4)
 
@@ -51,6 +55,11 @@ struct btsnoop_opcode_new_index {
 	uint8_t  bus;
 	uint8_t  bdaddr[6];
 	char     name[8];
+} __attribute__((packed));
+
+struct btsnoop_opcode_index_info {
+	uint8_t  bdaddr[6];
+	uint16_t manufacturer;
 } __attribute__((packed));
 
 struct btsnoop;
