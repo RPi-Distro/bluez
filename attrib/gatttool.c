@@ -34,13 +34,11 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 
 #include "att.h"
 #include "btio.h"
 #include "gattrib.h"
-#include "glib-helper.h"
 #include "gatt.h"
 #include "gatttool.h"
 
@@ -48,12 +46,13 @@ static gchar *opt_src = NULL;
 static gchar *opt_dst = NULL;
 static gchar *opt_value = NULL;
 static gchar *opt_sec_level = NULL;
-static uuid_t *opt_uuid = NULL;
+static bt_uuid_t *opt_uuid = NULL;
 static int opt_start = 0x0001;
 static int opt_end = 0xffff;
 static int opt_handle = -1;
 static int opt_mtu = 0;
 static int opt_psm = 0;
+static int opt_offset = 0;
 static gboolean opt_primary = FALSE;
 static gboolean opt_characteristics = FALSE;
 static gboolean opt_char_read = FALSE;
@@ -207,7 +206,8 @@ static gboolean characteristics(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
 
-	gatt_discover_char(attrib, opt_start, opt_end, char_discovered_cb, NULL);
+	gatt_discover_char(attrib, opt_start, opt_end, opt_uuid,
+						char_discovered_cb, NULL);
 
 	return FALSE;
 }
@@ -308,28 +308,9 @@ static gboolean characteristics_read(gpointer user_data)
 		return FALSE;
 	}
 
-	gatt_read_char(attrib, opt_handle, char_read_cb, attrib);
+	gatt_read_char(attrib, opt_handle, opt_offset, char_read_cb, attrib);
 
 	return FALSE;
-}
-
-static size_t attr_data_from_string(const char *str, uint8_t **data)
-{
-	char tmp[3];
-	size_t size, i;
-
-	size = strlen(str) / 2;
-	*data = g_try_malloc0(size);
-	if (*data == NULL)
-		return 0;
-
-	tmp[2] = '\0';
-	for (i = 0; i < size; i++) {
-		memcpy(tmp, str + (i * 2), 2);
-		(*data)[i] = (uint8_t) strtol(tmp, NULL, 16);
-	}
-
-	return size;
 }
 
 static void mainloop_quit(gpointer user_data)
@@ -356,7 +337,7 @@ static gboolean characteristics_write(gpointer user_data)
 		goto error;
 	}
 
-	len = attr_data_from_string(opt_value, &value);
+	len = gatt_attr_data_from_string(opt_value, &value);
 	if (len == 0) {
 		g_printerr("Invalid value\n");
 		goto error;
@@ -408,7 +389,7 @@ static gboolean characteristics_write_req(gpointer user_data)
 		goto error;
 	}
 
-	len = attr_data_from_string(opt_value, &value);
+	len = gatt_attr_data_from_string(opt_value, &value);
 	if (len == 0) {
 		g_printerr("Invalid value\n");
 		goto error;
@@ -445,17 +426,17 @@ static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		char uuidstr[MAX_LEN_UUID_STR];
 		uint16_t handle;
 		uint8_t *value;
-		uuid_t uuid;
+		bt_uuid_t uuid;
 
 		value = list->data[i];
 		handle = att_get_u16(value);
 
 		if (format == 0x01)
-			sdp_uuid16_create(&uuid, att_get_u16(&value[2]));
+			uuid = att_get_uuid16(&value[2]);
 		else
-			sdp_uuid128_create(&uuid, &value[2]);
+			uuid = att_get_uuid128(&value[2]);
 
-		sdp_uuid2strn(&uuid, uuidstr, MAX_LEN_UUID_STR);
+		bt_uuid_to_string(&uuid, uuidstr, MAX_LEN_UUID_STR);
 		g_print("handle = 0x%04x, uuid = %s\n", handle, uuidstr);
 	}
 
@@ -481,11 +462,11 @@ static gboolean parse_uuid(const char *key, const char *value,
 	if (!value)
 		return FALSE;
 
-	opt_uuid = g_try_malloc(sizeof(uuid_t));
+	opt_uuid = g_try_malloc(sizeof(bt_uuid_t));
 	if (opt_uuid == NULL)
 		return FALSE;
 
-	if (bt_string2uuid(opt_uuid, value) < 0)
+	if (bt_string_to_uuid(opt_uuid, value) < 0)
 		return FALSE;
 
 	return TRUE;
@@ -507,6 +488,8 @@ static GOptionEntry char_rw_options[] = {
 	{ "value", 'n' , 0, G_OPTION_ARG_STRING, &opt_value,
 		"Write characteristic value (required for write operation)",
 		"0x0001" },
+	{ "offset", 'o', 0, G_OPTION_ARG_INT, &opt_offset,
+		"Offset to long read characteristic by handle", "N"},
 	{NULL},
 };
 
@@ -554,7 +537,7 @@ int main(int argc, char *argv[])
 	GIOChannel *chan;
 	GSourceFunc callback;
 
-	opt_sec_level = strdup("low");
+	opt_sec_level = g_strdup("low");
 
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);
@@ -588,7 +571,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (opt_interactive) {
-		interactive(opt_dst, opt_psm);
+		interactive(opt_src, opt_dst, opt_psm);
 		goto done;
 	}
 
@@ -620,6 +603,7 @@ int main(int argc, char *argv[])
 	}
 
 	attrib = g_attrib_new(chan);
+	g_io_channel_unref(chan);
 
 	event_loop = g_main_loop_new(NULL, FALSE);
 
@@ -634,7 +618,6 @@ int main(int argc, char *argv[])
 
 	g_main_loop_unref(event_loop);
 
-	g_io_channel_unref(chan);
 	g_attrib_unref(attrib);
 
 done:

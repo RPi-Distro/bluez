@@ -43,8 +43,8 @@ plugin_LTLIBRARIES =
 
 
 lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h lib/mgmt.h \
-			lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h \
-				lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
+		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h lib/uuid.h \
+		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 
 include_HEADERS += $(lib_headers)
@@ -52,8 +52,8 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
-					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 13:5:10
+				lib/bluetooth.c lib/hci.c lib/sdp.c lib/uuid.c
+lib_libbluetooth_la_LDFLAGS = -version-info 14:0:11
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -143,6 +143,20 @@ audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
 				audio/telephony-maemo6.c
 endif
 
+if SAPPLUGIN
+builtin_modules += sap
+builtin_sources += sap/main.c \
+			sap/manager.h sap/manager.c \
+			sap/server.h sap/server.c \
+			sap/sap.h
+
+builtin_nodist += sap/sap.c
+
+noinst_LIBRARIES = sap/libsap.a
+
+sap_libsap_a_SOURCES = sap/sap.h sap/sap-dummy.c
+endif
+
 if INPUTPLUGIN
 builtin_modules += input
 builtin_sources += input/main.c \
@@ -223,6 +237,11 @@ builtin_modules += maemo6
 builtin_sources += plugins/maemo6.c
 endif
 
+if DBUSOOBPLUGIN
+builtin_modules += dbusoob
+builtin_sources += plugins/dbusoob.c
+endif
+
 sbin_PROGRAMS += src/bluetoothd
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
@@ -245,7 +264,8 @@ src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
 			src/adapter.h src/adapter.c \
 			src/device.h src/device.c \
 			src/dbus-common.c src/dbus-common.h \
-			src/event.h src/event.c
+			src/event.h src/event.c \
+			src/oob.h src/oob.c
 src_bluetoothd_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @DBUS_LIBS@ \
 							@CAPNG_LIBS@ -ldl -lrt
 src_bluetoothd_LDFLAGS = -Wl,--export-dynamic \
@@ -270,7 +290,7 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
 			audio/telephony-maemo5.c audio/telephony-ofono.c \
-			audio/telephony-maemo6.c
+			audio/telephony-maemo6.c sap/sap-dummy.c
 
 
 if ALSA
@@ -359,7 +379,8 @@ EXTRA_DIST += doc/manager-api.txt \
 		doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
 		doc/serial-api.txt doc/network-api.txt \
 		doc/input-api.txt doc/audio-api.txt doc/control-api.txt \
-		doc/hfp-api.txt doc/health-api.txt doc/assigned-numbers.txt
+		doc/hfp-api.txt doc/health-api.txt doc/sap-api.txt \
+		doc/media-api.txt doc/assigned-numbers.txt
 
 AM_YFLAGS = -d
 
@@ -392,6 +413,9 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
 audio/telephony.c: audio/@TELEPHONY_DRIVER@
+	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
+
+sap/sap.c: sap/@SAP_DRIVER@
 	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/$< $@
 
 scripts/%.rules:

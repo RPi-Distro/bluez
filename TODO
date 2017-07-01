@@ -17,6 +17,13 @@ Background
 General
 ==========
 
+- UUID handling: Use the new functions created for UUID handling in all parts
+  of BlueZ code.  Currently, the new bt_uuid_* functions are being used by
+  GATT-related code only.
+
+  Priority: high
+  Complexity: C4
+
 - Rename glib-helper file to a more convenient name. The ideia is try to keep
   only sdp helpers functions. bt_* prefix shall be also changed.
 
@@ -65,6 +72,33 @@ Low Energy
   Priority: Medium
   Complexity: C2
 
+- Add new property in the DeviceFound signal to report the device type:
+  BR/EDR, single mode or dual-mode.
+
+  Priority: Medium
+  Complexity: C1
+
+- Privacy: When privacy is enabled in the adapter, LE scanning/connection
+  should use a private address. StartDiscovery method shall be changed and
+  new adapter property shall be added.
+
+  Priority: Medium
+  Complexity: C1
+
+- Static random address setup and storage. Once this address is written
+  in the a given remote, the address can not be changed anymore.
+
+  Priority: Low
+  Complexity: C1
+
+- Reconnection address: Reconnection address is a non resolvable private
+  address that the central writes in the peripheral. BlueZ will support
+  multiple profiles, it is not clear how it needs to be implemented.
+  Further discussion is necessary.
+
+  Priority: Low
+  Complexity: C2
+
 - Device Name Characteristic is a GAP characteristic for Low Energy. This
   characteristic shall be integrated/used in the discovery procedure. The
   ideia is to report the value of this characteristic using DeviceFound signals.
@@ -80,30 +114,50 @@ Low Energy
 ATT/GATT
 ========
 
-- For BR/EDR, Discover All Primary Services shall be started after SDP if the
-  remote device exports a Generic Attribute Profile service record. It is
-  applied to CreateDevice and CreatePairedDevice.
+- For BR/EDR, primary services can be registered based on the information
+  extracted from the service records. UUIDs, start and end handles information
+  are available in the record, Discover All Primary Services procedure is not
+  necessary. If a GATT service doesn't export a service record means that
+  it should not be used over BR/EDR. Don't start this task before to move the
+  attribute client code to the bluetoothd core.
 
   Priority: Medium
   Complexity: C1
 
-- Add ATT/GATT parsing to hcidump
+- At the moment authentication and authorization is not supported at the
+  same time, read/write requirements in the attribute server needs to
+  be extended. According to Bluetooth Specification a server shall check
+  authentication and authorization requirements before any other check is
+  performed.
+
+  Priority: Medium
+  Complexity: C1
+
+- ATT/GATT parsing to hcidump. Partially implemented, missing to fix
+  multiple advertises in the same event and RSSI.
 
   Priority: Medium
   Complexity: C2
 
-- GATT server: fix MTU exchange
+- Implement ATT PDU validation. Malformed PDUs can cause division by zero
+  when decoding PDUs. A proper error PDU should be returned for this case.
+  See decoding function in att.c file.
 
   Priority: Medium
-  Complexity: C2
+  Complexity: C1
 
-- gatttool: add an interactive command prompt mode. Many LE devices
-  expect the connection to stay up a long time and disable advertising
-  after a disconnection so it's inconvenient to use gatttool in the
-  current "single operation at a time" mode.
+- Refactor read_by_group() and read_by_type() in src/attrib-server.c
+  (they've grown simply too big). First step could be to move out the
+  long for-loops to new functions called e.g. get_groups() and get_types().
 
-  Priority: Medium
-  Complexity: C2
+  Priority: Low
+  Complexity: C1
+
+- Agent for characteristics: Agent interface should be extended to support
+  authorization per characteristic if the remote is not in the trusted list.
+
+  Priority: Low
+  Complexity: C1
 
 - gatttool should have the ability to wait for req responses before
   quitting (some servers require a small sleep even with cmd's). Maybe a
@@ -155,16 +209,8 @@ ATT/GATT
   Priority: Low
   Complexity: C1
 
-- Long reads/writes don't work (consisting of multiple request packets)
-
-  Priority: Low
-  Complexity: C2
-
-- Implement Client Characteristic Configuration support in the attribute
-  server to manage indications and notications. This is a per client attribute
-  to control how the client wants to receive reports of changes in a given
-  characteristic value.
-  See Volume 3, Part G, section 3.3.3.3 for more information
+- Long write is not implemented. Attribute server, client and command line
+  tool shall be changed to support this feature.
 
   Priority: Low
   Complexity: C2
@@ -176,10 +222,33 @@ ATT/GATT
 
   Priority: Low
   Complexity: C2
+  Owner: Anderson Lizardo <anderson.lizardo@openbossa.org>
 
-- gattrib needs to be extended to handle Attribute Protocol Transactions
-  timeout. See Volume 3, Part F, section 3.3.3 and Part G, section 4.14
-  for more information.
+Management Interface
+====================
 
-  Priority: Low
+- Device discovery support (both for BR/EDR & LE)
+
+  Priority: High
+  Complexity: C3
+
+- EIR generation support
+
+  Priority: High
   Complexity: C2
+
+- Blacklist support
+
+  Priority: Medium
+  Complexity: C1
+
+- mgmt_set_fast_connectable
+
+  Priority: Medium
+  Complexity: C1
+
+- Whitelist support (initially only for LE)
+
+  Priority: Medium
+  Complexity: C2
+  Owner: Andre Guedes <andre.guedes@openbossa.org>

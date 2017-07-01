@@ -49,6 +49,10 @@
 /* Unofficial value, might still change */
 #define LE_LINK		0x03
 
+#define FLAGS_AD_TYPE 0x01
+#define FLAGS_LIMITED_MODE_BIT 0x01
+#define FLAGS_GENERAL_MODE_BIT 0x02
+
 #define for_each_opt(opt, long, short) while ((opt=getopt_long(argc, argv, short ? short:"+", long, NULL)) != -1)
 
 static void usage(void);
@@ -2287,7 +2291,62 @@ static void cmd_clock(int dev_id, int argc, char **argv)
 	hci_close_dev(dd);
 }
 
-static int print_advertising_devices(int dd)
+static int read_flags(uint8_t *flags, const uint8_t *data, size_t size)
+{
+	unsigned int offset;
+
+	if (!flags || !data)
+		return -EINVAL;
+
+	offset = 0;
+	while (offset < size) {
+		uint8_t len = data[offset];
+		uint8_t type = data[offset + 1];
+
+		/* Check if it is the end of the significant part */
+		if (len == 0)
+			break;
+
+		if (type == FLAGS_AD_TYPE) {
+			*flags = data[offset + 2];
+			return 0;
+		}
+
+		offset += 1 + len;
+	}
+
+	return -ENOENT;
+}
+
+static int check_report_filter(uint8_t procedure, le_advertising_info *info)
+{
+	uint8_t flags;
+
+	/* If no discovery procedure is set, all reports are treat as valid */
+	if (procedure == 0)
+		return 1;
+
+	/* Read flags AD type value from the advertising report if it exists */
+	if (read_flags(&flags, info->data, info->length))
+		return 0;
+
+	switch (procedure) {
+	case 'l': /* Limited Discovery Procedure */
+		if (flags & FLAGS_LIMITED_MODE_BIT)
+			return 1;
+		break;
+	case 'g': /* General Discovery Procedure */
+		if (flags & (FLAGS_LIMITED_MODE_BIT | FLAGS_GENERAL_MODE_BIT))
+			return 1;
+		break;
+	default:
+		fprintf(stderr, "Unknown discovery procedure\n");
+	}
+
+	return 0;
+}
+
+static int print_advertising_devices(int dd, uint8_t filter_type)
 {
 	unsigned char buf[HCI_MAX_EVENT_SIZE], *ptr;
 	struct hci_filter nf, of;
@@ -2334,8 +2393,10 @@ static int print_advertising_devices(int dd)
 
 		/* Ignoring multiple reports */
 		info = (le_advertising_info *) (meta->data + 1);
-		ba2str(&info->bdaddr, addr);
-		printf("%s\n", addr);
+		if (check_report_filter(filter_type, info)) {
+			ba2str(&info->bdaddr, addr);
+			printf("%s\n", addr);
+		}
 	}
 
 done:
@@ -2351,19 +2412,25 @@ static struct option lescan_options[] = {
 	{ "help",	0, 0, 'h' },
 	{ "privacy",	0, 0, 'p' },
 	{ "passive",	0, 0, 'P' },
+	{ "discovery",	1, 0, 'd' },
 	{ 0, 0, 0, 0 }
 };
 
 static const char *lescan_help =
 	"Usage:\n"
 	"\tlescan [--privacy] enable privacy\n"
-	"\tlescan [--passive] set scan type passive (default active)\n";
+	"\tlescan [--passive] set scan type passive (default active)\n"
+	"\tlescan [--discovery=g|l] enable general or limited discovery"
+		"procedure\n";
 
 static void cmd_lescan(int dev_id, int argc, char **argv)
 {
 	int err, opt, dd;
 	uint8_t own_type = 0x00;
 	uint8_t scan_type = 0x01;
+	uint8_t filter_type = 0;
+	uint16_t interval = htobs(0x0010);
+	uint16_t window = htobs(0x0010);
 
 	for_each_opt(opt, lescan_options, NULL) {
 		switch (opt) {
@@ -2372,6 +2439,16 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 			break;
 		case 'P':
 			scan_type = 0x00; /* Passive */
+			break;
+		case 'd':
+			filter_type = optarg[0];
+			if (filter_type != 'g' && filter_type != 'l') {
+				fprintf(stderr, "Unknown discovery procedure\n");
+				exit(1);
+			}
+
+			interval = htobs(0x0012);
+			window = htobs(0x0012);
 			break;
 		default:
 			printf("%s", lescan_help);
@@ -2389,14 +2466,14 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 		exit(1);
 	}
 
-	err = hci_le_set_scan_parameters(dd, scan_type, htobs(0x0010),
-					htobs(0x0010), own_type, 0x00);
+	err = hci_le_set_scan_parameters(dd, scan_type, interval, window,
+							own_type, 0x00, 1000);
 	if (err < 0) {
 		perror("Set scan parameters failed");
 		exit(1);
 	}
 
-	err = hci_le_set_scan_enable(dd, 0x01, 0x00);
+	err = hci_le_set_scan_enable(dd, 0x01, 0x00, 1000);
 	if (err < 0) {
 		perror("Enable scan failed");
 		exit(1);
@@ -2404,13 +2481,13 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 
 	printf("LE Scan ...\n");
 
-	err = print_advertising_devices(dd);
+	err = print_advertising_devices(dd, filter_type);
 	if (err < 0) {
 		perror("Could not receive advertising events");
 		exit(1);
 	}
 
-	err = hci_le_set_scan_enable(dd, 0x00, 0x00);
+	err = hci_le_set_scan_enable(dd, 0x00, 0x00, 1000);
 	if (err < 0) {
 		perror("Disable scan failed");
 		exit(1);
@@ -2422,12 +2499,14 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 static struct option lecc_options[] = {
 	{ "help",	0, 0, 'h' },
 	{ "random",	0, 0, 'r' },
+	{ "whitelist",	0, 0, 'w' },
 	{ 0, 0, 0, 0 }
 };
 
 static const char *lecc_help =
 	"Usage:\n"
-	"\tlecc [--random] <bdaddr>\n";
+	"\tlecc [--random] <bdaddr>\n"
+	"\tlecc --whitelist\n";
 
 static void cmd_lecc(int dev_id, int argc, char **argv)
 {
@@ -2437,19 +2516,23 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 	uint16_t min_interval, supervision_timeout, window, handle;
 	uint8_t initiator_filter, own_bdaddr_type, peer_bdaddr_type;
 
-	peer_bdaddr_type = 0x00; /* Public device address */
+	peer_bdaddr_type = LE_PUBLIC_ADDRESS;
+	initiator_filter = 0; /* Use peer address */
 
 	for_each_opt(opt, lecc_options, NULL) {
 		switch (opt) {
 		case 'r':
-			peer_bdaddr_type = 0x01; /* Random */
+			peer_bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
+		case 'w':
+			initiator_filter = 0x01; /* Use white list */
 			break;
 		default:
 			printf("%s", lecc_help);
 			return;
 		}
 	}
-	helper_arg(1, 1, &argc, &argv, lecc_help);
+	helper_arg(0, 1, &argc, &argv, lecc_help);
 
 	if (dev_id < 0)
 		dev_id = hci_get_route(NULL);
@@ -2460,11 +2543,12 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 		exit(1);
 	}
 
-	str2ba(argv[0], &bdaddr);
+	memset(&bdaddr, 0, sizeof(bdaddr_t));
+	if (argv[0])
+		str2ba(argv[0], &bdaddr);
 
 	interval = htobs(0x0004);
 	window = htobs(0x0004);
-	initiator_filter = 0x00;
 	own_bdaddr_type = 0x00;
 	min_interval = htobs(0x000F);
 	max_interval = htobs(0x000F);
@@ -2485,6 +2569,192 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 	printf("Connection handle %d\n", handle);
 
 	hci_close_dev(dd);
+}
+
+static struct option lewladd_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "random",	0, 0, 'r' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lewladd_help =
+	"Usage:\n"
+	"\tlewladd [--random] <bdaddr>\n";
+
+static void cmd_lewladd(int dev_id, int argc, char **argv)
+{
+	int err, opt, dd;
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type = LE_PUBLIC_ADDRESS;
+
+	for_each_opt(opt, lewladd_options, NULL) {
+		switch (opt) {
+		case 'r':
+			bdaddr_type = LE_RANDOM_ADDRESS;
+			break;
+		default:
+			printf("%s", lewladd_help);
+			return;
+		}
+	}
+
+	helper_arg(1, 1, &argc, &argv, lewladd_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	str2ba(argv[0], &bdaddr);
+
+	err = hci_le_add_white_list(dd, &bdaddr, bdaddr_type, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = errno;
+		fprintf(stderr, "Can't add to white list: %s(%d)\n",
+							strerror(err), err);
+		exit(1);
+	}
+}
+
+static struct option lewlrm_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lewlrm_help =
+	"Usage:\n"
+	"\tlewlrm <bdaddr>\n";
+
+static void cmd_lewlrm(int dev_id, int argc, char **argv)
+{
+	int err, opt, dd;
+	bdaddr_t bdaddr;
+
+	for_each_opt(opt, lewlrm_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lewlrm_help);
+			return;
+		}
+	}
+
+	helper_arg(1, 1, &argc, &argv, lewlrm_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	str2ba(argv[0], &bdaddr);
+
+	err = hci_le_rm_white_list(dd, &bdaddr, LE_PUBLIC_ADDRESS, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = errno;
+		fprintf(stderr, "Can't remove from white list: %s(%d)\n",
+							strerror(err), err);
+		exit(1);
+	}
+}
+
+static struct option lewlsz_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lewlsz_help =
+	"Usage:\n"
+	"\tlewlsz\n";
+
+static void cmd_lewlsz(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+	uint8_t size;
+
+	for_each_opt(opt, lewlsz_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lewlsz_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lewlsz_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_read_white_list_size(dd, &size, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = errno;
+		fprintf(stderr, "Can't read white list size: %s(%d)\n",
+							strerror(err), err);
+		exit(1);
+	}
+
+	printf("White list size: %d\n", size);
+}
+
+static struct option lewlclr_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lewlclr_help =
+	"Usage:\n"
+	"\tlewlclr\n";
+
+static void cmd_lewlclr(int dev_id, int argc, char **argv)
+{
+	int err, dd, opt;
+
+	for_each_opt(opt, lewlclr_options, NULL) {
+		switch (opt) {
+		default:
+			printf("%s", lewlclr_help);
+			return;
+		}
+	}
+
+	helper_arg(0, 0, &argc, &argv, lewlclr_help);
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		perror("Could not open device");
+		exit(1);
+	}
+
+	err = hci_le_clear_white_list(dd, 1000);
+	hci_close_dev(dd);
+
+	if (err < 0) {
+		err = errno;
+		fprintf(stderr, "Can't clear white list: %s(%d)\n",
+							strerror(err), err);
+		exit(1);
+	}
 }
 
 static struct option ledc_options[] = {
@@ -2533,38 +2803,128 @@ static void cmd_ledc(int dev_id, int argc, char **argv)
 	hci_close_dev(dd);
 }
 
+static struct option lecup_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "handle",	1, 0, 'H' },
+	{ "min",	1, 0, 'm' },
+	{ "max",	1, 0, 'M' },
+	{ "latency",	1, 0, 'l' },
+	{ "timeout",	1, 0, 't' },
+	{ 0, 0, 0, 0 }
+};
+
+static const char *lecup_help =
+	"Usage:\n"
+	"\tlecup <handle> <min> <max> <latency> <timeout>\n"
+	"\tOptions:\n"
+	"\t    -H, --handle <0xXXXX>  LE connection handle\n"
+	"\t    -m, --min <interval>   Range: 0x0006 to 0x0C80\n"
+	"\t    -M, --max <interval>   Range: 0x0006 to 0x0C80\n"
+	"\t    -l, --latency <range>  Slave latency. Range: 0x0000 to 0x03E8\n"
+	"\t    -t, --timeout  <time>  N * 10ms. Range: 0x000A to 0x0C80\n"
+	"\n\t min/max range: 7.5ms to 4s. Multiply factor: 1.25ms"
+	"\n\t timeout range: 100ms to 32.0s. Larger than max interval\n";
+
+static void cmd_lecup(int dev_id, int argc, char **argv)
+{
+	uint16_t handle = 0, min, max, latency, timeout;
+	int opt, dd, base;
+
+	/* Aleatory valid values */
+	min = 0x0C8;
+	max = 0x0960;
+	latency = 0x0007;
+	timeout = 0x0C80;
+
+	for_each_opt(opt, lecup_options, NULL) {
+		if (optarg && strncasecmp("0x", optarg, 2) == 0)
+			base = 16;
+		else
+			base = 10;
+
+		switch (opt) {
+		case 'H':
+			handle = strtoul(optarg, NULL, base);
+			break;
+		case 'm':
+			min = strtoul(optarg, NULL, base);
+			break;
+		case 'M':
+			max = strtoul(optarg, NULL, base);
+			break;
+		case 'l':
+			latency = strtoul(optarg, NULL, base);
+			break;
+		case 't':
+			timeout = strtoul(optarg, NULL, base);
+			break;
+		default:
+			printf("%s", lecup_help);
+			return;
+		}
+	}
+
+	if (handle == 0) {
+		printf("%s", lecup_help);
+		return;
+	}
+
+	if (dev_id < 0)
+		dev_id = hci_get_route(NULL);
+
+	dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+		fprintf(stderr, "HCI device open failed\n");
+		exit(1);
+	}
+
+	if (hci_le_conn_update(dd, htobs(handle), htobs(min), htobs(max),
+				htobs(latency), htobs(timeout), 5000) < 0) {
+		int err = errno;
+		fprintf(stderr, "Could not change connection params: %s(%d)\n",
+							strerror(err), err);
+	}
+
+	hci_close_dev(dd);
+}
+
 static struct {
 	char *cmd;
 	void (*func)(int dev_id, int argc, char **argv);
 	char *doc;
 } command[] = {
-	{ "dev",    cmd_dev,    "Display local devices"                },
-	{ "inq",    cmd_inq,    "Inquire remote devices"               },
-	{ "scan",   cmd_scan,   "Scan for remote devices"              },
-	{ "name",   cmd_name,   "Get name from remote device"          },
-	{ "info",   cmd_info,   "Get information from remote device"   },
-	{ "spinq",  cmd_spinq,  "Start periodic inquiry"               },
-	{ "epinq",  cmd_epinq,  "Exit periodic inquiry"                },
-	{ "cmd",    cmd_cmd,    "Submit arbitrary HCI commands"        },
-	{ "con",    cmd_con,    "Display active connections"           },
-	{ "cc",     cmd_cc,     "Create connection to remote device"   },
-	{ "dc",     cmd_dc,     "Disconnect from remote device"        },
-	{ "sr",     cmd_sr,     "Switch master/slave role"             },
-	{ "cpt",    cmd_cpt,    "Change connection packet type"        },
-	{ "rssi",   cmd_rssi,   "Display connection RSSI"              },
-	{ "lq",     cmd_lq,     "Display link quality"                 },
-	{ "tpl",    cmd_tpl,    "Display transmit power level"         },
-	{ "afh",    cmd_afh,    "Display AFH channel map"              },
-	{ "lp",     cmd_lp,     "Set/display link policy settings"     },
-	{ "lst",    cmd_lst,    "Set/display link supervision timeout" },
-	{ "auth",   cmd_auth,   "Request authentication"               },
-	{ "enc",    cmd_enc,    "Set connection encryption"            },
-	{ "key",    cmd_key,    "Change connection link key"           },
-	{ "clkoff", cmd_clkoff, "Read clock offset"                    },
-	{ "clock",  cmd_clock,  "Read local or remote clock"           },
-	{ "lescan", cmd_lescan, "Start LE scan"                        },
-	{ "lecc",   cmd_lecc,   "Create a LE Connection",              },
-	{ "ledc",   cmd_ledc,   "Disconnect a LE Connection",          },
+	{ "dev",      cmd_dev,     "Display local devices"                },
+	{ "inq",      cmd_inq,     "Inquire remote devices"               },
+	{ "scan",     cmd_scan,    "Scan for remote devices"              },
+	{ "name",     cmd_name,    "Get name from remote device"          },
+	{ "info",     cmd_info,    "Get information from remote device"   },
+	{ "spinq",    cmd_spinq,   "Start periodic inquiry"               },
+	{ "epinq",    cmd_epinq,   "Exit periodic inquiry"                },
+	{ "cmd",      cmd_cmd,     "Submit arbitrary HCI commands"        },
+	{ "con",      cmd_con,     "Display active connections"           },
+	{ "cc",       cmd_cc,      "Create connection to remote device"   },
+	{ "dc",       cmd_dc,      "Disconnect from remote device"        },
+	{ "sr",       cmd_sr,      "Switch master/slave role"             },
+	{ "cpt",      cmd_cpt,     "Change connection packet type"        },
+	{ "rssi",     cmd_rssi,    "Display connection RSSI"              },
+	{ "lq",       cmd_lq,      "Display link quality"                 },
+	{ "tpl",      cmd_tpl,     "Display transmit power level"         },
+	{ "afh",      cmd_afh,     "Display AFH channel map"              },
+	{ "lp",       cmd_lp,      "Set/display link policy settings"     },
+	{ "lst",      cmd_lst,     "Set/display link supervision timeout" },
+	{ "auth",     cmd_auth,    "Request authentication"               },
+	{ "enc",      cmd_enc,     "Set connection encryption"            },
+	{ "key",      cmd_key,     "Change connection link key"           },
+	{ "clkoff",   cmd_clkoff,  "Read clock offset"                    },
+	{ "clock",    cmd_clock,   "Read local or remote clock"           },
+	{ "lescan",   cmd_lescan,  "Start LE scan"                        },
+	{ "lewladd",  cmd_lewladd, "Add device to LE White List"          },
+	{ "lewlrm",   cmd_lewlrm,  "Remove device from LE White List"     },
+	{ "lewlsz",   cmd_lewlsz,  "Read size of LE White List"           },
+	{ "lewlclr",  cmd_lewlclr, "Clear LE White list"                  },
+	{ "lecc",     cmd_lecc,    "Create a LE Connection"               },
+	{ "ledc",     cmd_ledc,    "Disconnect a LE Connection"           },
+	{ "lecup",    cmd_lecup,   "LE Connection Update"                 },
 	{ NULL, NULL, 0 }
 };
 

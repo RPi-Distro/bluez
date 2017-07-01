@@ -32,15 +32,13 @@
 #include <glib.h>
 
 #include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 
 #include "adapter.h"
 #include "device.h"
 #include "log.h"
 #include "gdbus.h"
 #include "error.h"
-#include "glib-helper.h"
 #include "dbus-common.h"
 #include "btio.h"
 #include "storage.h"
@@ -59,6 +57,7 @@ struct gatt_service {
 	char *path;
 	GSList *primary;
 	GAttrib *attrib;
+	DBusMessage *msg;
 	int psm;
 	gboolean listen;
 };
@@ -96,6 +95,7 @@ struct characteristic {
 struct query_data {
 	struct primary *prim;
 	struct characteristic *chr;
+	DBusMessage *msg;
 	uint16_t handle;
 };
 
@@ -272,8 +272,16 @@ static void events_handler(const uint8_t *pdu, uint16_t len,
 	struct primary *prim;
 	GSList *lprim, *lchr;
 	uint8_t opdu[ATT_MAX_MTU];
-	guint handle = att_get_u16(&pdu[1]);
+	guint handle;
 	uint16_t olen;
+
+	if (len < 3) {
+		DBG("Malformed notification/indication packet (opcode 0x%02x)",
+									pdu[0]);
+		return;
+	}
+
+	handle = att_get_u16(&pdu[1]);
 
 	for (lprim = gatt->primary, prim = NULL, chr = NULL; lprim;
 						lprim = lprim->next) {
@@ -299,7 +307,7 @@ static void events_handler(const uint8_t *pdu, uint16_t len,
 						NULL, NULL, NULL);
 	case ATT_OP_HANDLE_NOTIFY:
 		if (characteristic_set_value(chr, &pdu[3], len - 3) < 0)
-			DBG("Can't change Characteristic %0x02x", handle);
+			DBG("Can't change Characteristic 0x%02x", handle);
 
 		g_slist_foreach(prim->watchers, update_watchers, chr);
 		break;
@@ -326,6 +334,12 @@ static void connect_cb(GIOChannel *chan, GError *gerr, gpointer user_data)
 	struct gatt_service *gatt = user_data;
 
 	if (gerr) {
+		if (gatt->msg) {
+			DBusMessage *reply = btd_error_failed(gatt->msg,
+							gerr->message);
+			g_dbus_send_message(connection, reply);
+		}
+
 		error("%s", gerr->message);
 		goto fail;
 	}
@@ -657,16 +671,14 @@ static void load_characteristics(gpointer data, gpointer user_data)
 static void store_attribute(struct gatt_service *gatt, uint16_t handle,
 				uint16_t type, uint8_t *value, gsize len)
 {
-	uuid_t uuid;
-	char *str, *uuidstr, *tmp;
+	bt_uuid_t uuid;
+	char *str, *tmp;
 	guint i;
 
 	str = g_malloc0(MAX_LEN_UUID_STR + len * 2 + 1);
 
-	sdp_uuid16_create(&uuid, type);
-	uuidstr = bt_uuid2string(&uuid);
-	strcpy(str, uuidstr);
-	g_free(uuidstr);
+	bt_uuid16_create(&uuid, type);
+	bt_uuid_to_string(&uuid, str, MAX_LEN_UUID_STR);
 
 	str[MAX_LEN_UUID_STR - 1] = '#';
 
@@ -701,7 +713,7 @@ static void update_char_desc(guint8 status, const guint8 *pdu, guint16 len,
 		if (bt_io_set(io, BT_IO_L2CAP, NULL,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_HIGH,
 				BT_IO_OPT_INVALID)) {
-			gatt_read_char(gatt->attrib, current->handle,
+			gatt_read_char(gatt->attrib, current->handle, 0,
 					update_char_desc, current);
 			return;
 		}
@@ -752,7 +764,7 @@ static void update_char_value(guint8 status, const guint8 *pdu,
 		if (bt_io_set(io, BT_IO_L2CAP, NULL,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_HIGH,
 				BT_IO_OPT_INVALID)) {
-			gatt_read_char(gatt->attrib, chr->handle,
+			gatt_read_char(gatt->attrib, chr->handle, 0,
 					update_char_value, current);
 			return;
 		}
@@ -762,13 +774,13 @@ static void update_char_value(guint8 status, const guint8 *pdu,
 	g_free(current);
 }
 
-static int uuid_desc16_cmp(uuid_t *uuid, guint16 desc)
+static int uuid_desc16_cmp(bt_uuid_t *uuid, guint16 desc)
 {
-	uuid_t u16;
+	bt_uuid_t u16;
 
-	sdp_uuid16_create(&u16, desc);
+	bt_uuid16_create(&u16, desc);
 
-	return sdp_uuid_cmp(uuid, &u16);
+	return bt_uuid_cmp(uuid, &u16);
 }
 
 static void descriptor_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -791,14 +803,14 @@ static void descriptor_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	for (i = 0; i < list->num; i++) {
 		guint16 handle;
-		uuid_t uuid;
+		bt_uuid_t uuid;
 		uint8_t *info = list->data[i];
 		struct query_data *qfmt;
 
 		handle = att_get_u16(info);
 
 		if (format == 0x01) {
-			sdp_uuid16_create(&uuid, att_get_u16(&info[2]));
+			uuid = att_get_uuid16(&info[2]);
 		} else {
 			/* Currently, only "user description" and "presentation
 			 * format" descriptors are used, and both have 16-bit
@@ -813,11 +825,11 @@ static void descriptor_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 		if (uuid_desc16_cmp(&uuid, GATT_CHARAC_USER_DESC_UUID) == 0) {
 			gatt->attrib = g_attrib_ref(gatt->attrib);
-			gatt_read_char(gatt->attrib, handle, update_char_desc,
+			gatt_read_char(gatt->attrib, handle, 0, update_char_desc,
 									qfmt);
 		} else if (uuid_desc16_cmp(&uuid, GATT_CHARAC_FMT_UUID) == 0) {
 			gatt->attrib = g_attrib_ref(gatt->attrib);
-			gatt_read_char(gatt->attrib, handle,
+			gatt_read_char(gatt->attrib, handle, 0,
 						update_char_format, qfmt);
 		} else
 			g_free(qfmt);
@@ -849,12 +861,14 @@ static void update_all_chars(gpointer data, gpointer user_data)
 	qvalue->chr = chr;
 
 	gatt->attrib = g_attrib_ref(gatt->attrib);
-	gatt_read_char(gatt->attrib, chr->handle, update_char_value, qvalue);
+	gatt_read_char(gatt->attrib, chr->handle, 0, update_char_value, qvalue);
 }
 
 static void char_discovered_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
+	DBusMessage *reply;
+	DBusMessageIter iter, array_iter;
 	struct query_data *current = user_data;
 	struct primary *prim = current->prim;
 	struct att_primary *att = prim->att;
@@ -863,8 +877,10 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 	GSList *l;
 
 	if (status != 0) {
-		DBG("Discover all characteristics failed: %s",
-						att_ecode2str(status));
+		const char *str = att_ecode2str(status);
+
+		DBG("Discover all characteristics failed: %s", str);
+		reply = btd_error_failed(current->msg, str);
 		goto fail;
 	}
 
@@ -901,9 +917,26 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 	store_characteristics(gatt, prim);
 	register_characteristics(prim);
 
+	reply = dbus_message_new_method_return(current->msg);
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+				DBUS_TYPE_OBJECT_PATH_AS_STRING, &array_iter);
+
+	for (l = prim->chars; l; l = l->next) {
+		struct characteristic *chr = l->data;
+
+		dbus_message_iter_append_basic(&array_iter,
+					DBUS_TYPE_OBJECT_PATH, &chr->path);
+	}
+
+	dbus_message_iter_close_container(&iter, &array_iter);
+
 	g_slist_foreach(prim->chars, update_all_chars, prim);
 
 fail:
+	g_dbus_send_message(connection, reply);
 	g_attrib_unref(gatt->attrib);
 	g_free(current);
 }
@@ -925,11 +958,12 @@ static DBusMessage *discover_char(DBusConnection *conn, DBusMessage *msg,
 
 	qchr = g_new0(struct query_data, 1);
 	qchr->prim = prim;
+	qchr->msg = dbus_message_ref(msg);
 
-	gatt_discover_char(gatt->attrib, att->start, att->end,
+	gatt_discover_char(gatt->attrib, att->start, att->end, NULL,
 						char_discovered_cb, qchr);
 
-	return dbus_message_new_method_return(msg);
+	return NULL;
 }
 
 static DBusMessage *prim_get_properties(DBusConnection *conn, DBusMessage *msg,
@@ -975,7 +1009,8 @@ static DBusMessage *prim_get_properties(DBusConnection *conn, DBusMessage *msg,
 }
 
 static GDBusMethodTable prim_methods[] = {
-	{ "Discover",		"",	"",		discover_char	},
+	{ "DiscoverCharacteristics",	"",	"ao",	discover_char,
+					G_DBUS_METHOD_FLAG_ASYNC	},
 	{ "RegisterCharacteristicsWatcher",	"o", "",
 						register_watcher	},
 	{ "UnregisterCharacteristicsWatcher",	"o", "",
