@@ -3,9 +3,6 @@
 /* Directory for the configuration files */
 #undef CONFIGDIR
 
-/* Define to 1 if you have capabilities library. */
-#undef HAVE_CAPNG
-
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
@@ -46,18 +43,6 @@
    */
 #undef LT_OBJDIR
 
-/* Define to 1 if you need the dbus_connection_can_send_type() function. */
-#undef NEED_DBUS_CONNECTION_CAN_SEND_TYPE
-
-/* Define to 1 if you need the dbus_watch_get_unix_fd() function. */
-#undef NEED_DBUS_WATCH_GET_UNIX_FD
-
-/* Define to 1 if you need g_list_free_full() function. */
-#undef NEED_G_LIST_FREE_FULL
-
-/* Define to 1 if you need g_slist_free_full() function. */
-#undef NEED_G_SLIST_FREE_FULL
-
 /* Define to 1 if you need the ppoll() function. */
 #undef NEED_PPOLL
 
@@ -87,6 +72,9 @@
 
 /* Define to the one symbol short name of this package. */
 #undef PACKAGE_TARNAME
+
+/* Define to the home page for this package. */
+#undef PACKAGE_URL
 
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION

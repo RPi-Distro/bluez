@@ -22,29 +22,6 @@
  *
  */
 
-/* GATT Profile Attribute types */
-#define GATT_PRIM_SVC_UUID		0x2800
-#define GATT_SND_SVC_UUID		0x2801
-#define GATT_INCLUDE_UUID		0x2802
-#define GATT_CHARAC_UUID		0x2803
-
-/* GATT Characteristic Types */
-#define GATT_CHARAC_DEVICE_NAME			0x2A00
-#define GATT_CHARAC_APPEARANCE			0x2A01
-#define GATT_CHARAC_PERIPHERAL_PRIV_FLAG	0x2A02
-#define GATT_CHARAC_RECONNECTION_ADDRESS	0x2A03
-#define GATT_CHARAC_PERIPHERAL_PREF_CONN	0x2A04
-#define GATT_CHARAC_SERVICE_CHANGED		0x2A05
-
-/* GATT Characteristic Descriptors */
-#define GATT_CHARAC_EXT_PROPER_UUID	0x2900
-#define GATT_CHARAC_USER_DESC_UUID	0x2901
-#define GATT_CLIENT_CHARAC_CFG_UUID	0x2902
-#define GATT_SERVER_CHARAC_CFG_UUID	0x2903
-#define GATT_CHARAC_FMT_UUID		0x2904
-#define GATT_CHARAC_AGREG_FMT_UUID	0x2905
-#define GATT_CHARAC_VALID_RANGE_UUID	0x2906
-
 /* Attribute Protocol Opcodes */
 #define ATT_OP_ERROR			0x01
 #define ATT_OP_MTU_REQ			0x02
@@ -94,7 +71,9 @@
 #define ATT_ECODE_UNSUPP_GRP_TYPE		0x10
 #define ATT_ECODE_INSUFF_RESOURCES		0x11
 /* Application error */
-#define ATT_ECODE_IO				0xFF
+#define ATT_ECODE_IO				0x80
+#define ATT_ECODE_TIMEOUT			0x81
+#define ATT_ECODE_ABORTED			0x82
 
 /* Characteristic Property bit field */
 #define ATT_CHAR_PROPER_BROADCAST		0x01
@@ -106,36 +85,12 @@
 #define ATT_CHAR_PROPER_AUTH			0x40
 #define ATT_CHAR_PROPER_EXT_PROPER		0x80
 
-/* Client Characteristic Configuration bit field */
-#define ATT_CLIENT_CHAR_CONF_NOTIFICATION	0x0001
-#define ATT_CLIENT_CHAR_CONF_INDICATION		0x0002
-
 #define ATT_MAX_MTU				256
 #define ATT_DEFAULT_L2CAP_MTU			48
 #define ATT_DEFAULT_LE_MTU			23
 
 #define ATT_CID					4
 #define ATT_PSM					31
-
-/* Requirements for read/write operations */
-enum {
-	ATT_NONE,		/* No restrictions */
-	ATT_AUTHENTICATION,	/* Authentication required */
-	ATT_AUTHORIZATION,	/* Authorization required */
-	ATT_NOT_PERMITTED,	/* Operation not permitted */
-};
-
-struct attribute {
-	uint16_t handle;
-	bt_uuid_t uuid;
-	int read_reqs;
-	int write_reqs;
-	uint8_t (*read_cb)(struct attribute *a, gpointer user_data);
-	uint8_t (*write_cb)(struct attribute *a, gpointer user_data);
-	gpointer cb_user_data;
-	int len;
-	uint8_t *data;
-};
 
 struct att_data_list {
 	uint16_t num;
@@ -146,19 +101,6 @@ struct att_data_list {
 struct att_range {
 	uint16_t start;
 	uint16_t end;
-};
-
-struct att_primary {
-	char uuid[MAX_LEN_UUID_STR + 1];
-	uint16_t start;
-	uint16_t end;
-};
-
-struct att_char {
-	char uuid[MAX_LEN_UUID_STR + 1];
-	uint16_t handle;
-	uint8_t properties;
-	uint16_t value_handle;
 };
 
 /* These functions do byte conversion */

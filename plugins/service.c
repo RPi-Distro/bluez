@@ -696,13 +696,22 @@ done:
 	return dbus_message_new_method_return(msg);
 }
 
-static GDBusMethodTable service_methods[] = {
-	{ "AddRecord",		"s",	"u",	add_service_record	},
-	{ "UpdateRecord",	"us",	"",	update_service_record	},
-	{ "RemoveRecord",	"u",	"",	remove_service_record	},
-	{ "RequestAuthorization","su",	"",	request_authorization,
-						G_DBUS_METHOD_FLAG_ASYNC},
-	{ "CancelAuthorization", "",	"",	cancel_authorization	},
+static const GDBusMethodTable service_methods[] = {
+	{ GDBUS_METHOD("AddRecord",
+		GDBUS_ARGS({ "record", "s" }),
+		GDBUS_ARGS({ "handle", "u" }),
+		add_service_record) },
+	{ GDBUS_METHOD("UpdateRecord",
+		GDBUS_ARGS({ "handle", "u" }, { "record", "s" }), NULL,
+		update_service_record) },
+	{ GDBUS_METHOD("RemoveRecord",
+		GDBUS_ARGS({ "handle", "u" }), NULL,
+		remove_service_record) },
+	{ GDBUS_ASYNC_METHOD("RequestAuthorization",
+		GDBUS_ARGS({ "address", "s" }, { "handle", "u"}), NULL,
+		request_authorization) },
+	{ GDBUS_METHOD("CancelAuthorization",
+		NULL, NULL, cancel_authorization) },
 	{ }
 };
 

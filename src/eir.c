@@ -35,7 +35,6 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/sdp.h>
 
-#include "glib-compat.h"
 #include "glib-helper.h"
 #include "eir.h"
 
@@ -115,11 +114,9 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 
 		len += field_len + 1;
 
-		/* Bail out if got incorrect length */
-		if (len > eir_len) {
-			eir_data_free(eir);
-			return -EINVAL;
-		}
+		/* Do not continue EIR Data parsing if got incorrect length */
+		if (len > eir_len)
+			break;
 
 		data_len = field_len - 1;
 
@@ -164,6 +161,13 @@ int eir_parse(struct eir_data *eir, uint8_t *eir_data, uint8_t eir_len)
 			if (data_len < 3)
 				break;
 			memcpy(eir->dev_class, data, 3);
+			break;
+
+		case EIR_GAP_APPEARANCE:
+			if (data_len < 2)
+				break;
+			eir->appearance = bt_get_le16(data);
+			break;
 		}
 
 		eir_data += field_len + 1;
@@ -232,7 +236,7 @@ static void eir_generate_uuid128(GSList *list, uint8_t *ptr, uint16_t *eir_len)
 
 void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 			uint16_t did_product, uint16_t did_version,
-			GSList *uuids, uint8_t *data)
+			uint16_t did_source, GSList *uuids, uint8_t *data)
 {
 	GSList *l;
 	uint8_t *ptr = data;
@@ -269,11 +273,10 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 	}
 
 	if (did_vendor != 0x0000) {
-		uint16_t source = 0x0002;
 		*ptr++ = 9;
 		*ptr++ = EIR_DEVICE_ID;
-		*ptr++ = (source & 0x00ff);
-		*ptr++ = (source & 0xff00) >> 8;
+		*ptr++ = (did_source & 0x00ff);
+		*ptr++ = (did_source & 0xff00) >> 8;
 		*ptr++ = (did_vendor & 0x00ff);
 		*ptr++ = (did_vendor & 0xff00) >> 8;
 		*ptr++ = (did_product & 0x00ff);
@@ -337,9 +340,9 @@ void eir_create(const char *name, int8_t tx_power, uint16_t did_vendor,
 gboolean eir_has_data_type(uint8_t *data, size_t len, uint8_t type)
 {
 	uint8_t field_len;
-	size_t parsed;
+	size_t parsed = 0;
 
-	for (parsed = 0; parsed < len - 1; parsed += field_len) {
+	while (parsed < len - 1) {
 		field_len = data[0];
 
 		if (field_len == 0)
@@ -373,9 +376,9 @@ size_t eir_append_data(uint8_t *eir, size_t eir_len, uint8_t type,
 size_t eir_length(uint8_t *eir, size_t maxlen)
 {
 	uint8_t field_len;
-	size_t parsed, length;
+	size_t parsed = 0, length = 0;
 
-	for (parsed = 0, length = 0; parsed < maxlen - 1; parsed += field_len) {
+	while (parsed < maxlen - 1) {
 		field_len = eir[0];
 
 		if (field_len == 0)

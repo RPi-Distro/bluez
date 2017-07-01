@@ -37,6 +37,8 @@
 #include "gattrib.h"
 #include "gatt-service.h"
 #include "att.h"
+#include "gatt.h"
+#include "att-database.h"
 #include "attrib-server.h"
 
 /* FIXME: Not defined by SIG? UUID128? */
@@ -92,7 +94,8 @@ static gint adapter_cmp(gconstpointer a, gconstpointer b)
 	return -1;
 }
 
-static uint8_t battery_state_read(struct attribute *a, gpointer user_data)
+static uint8_t battery_state_read(struct attribute *a,
+				  struct btd_device *device, gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 	uint8_t value;
@@ -560,8 +563,8 @@ static struct btd_adapter_driver gatt_example_adapter_driver = {
 
 static int gatt_example_init(void)
 {
-	if (!main_opts.attrib_server) {
-		DBG("Attribute server is disabled");
+	if (!main_opts.gatt_enabled) {
+		DBG("GATT is disabled");
 		return -ENOTSUP;
 	}
 
@@ -570,7 +573,7 @@ static int gatt_example_init(void)
 
 static void gatt_example_exit(void)
 {
-	if (!main_opts.attrib_server)
+	if (!main_opts.gatt_enabled)
 		return;
 
 	btd_unregister_adapter_driver(&gatt_example_adapter_driver);

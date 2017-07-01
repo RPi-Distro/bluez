@@ -53,7 +53,6 @@
 #include "error.h"
 #include "telephony.h"
 #include "headset.h"
-#include "glib-compat.h"
 #include "sdp-client.h"
 #include "btio.h"
 #include "dbus-common.h"
@@ -1299,7 +1298,7 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 	if (free_space < (size_t) bytes_read) {
 		/* Very likely that the HS is sending us garbage so
 		 * just ignore the data and disconnect */
-		error("Too much data to fit incomming buffer");
+		error("Too much data to fit incoming buffer");
 		goto failed;
 	}
 
@@ -1465,9 +1464,11 @@ static int headset_set_channel(struct headset *headset,
 
 	if (svc == HANDSFREE_SVCLASS_ID) {
 		headset->hfp_handle = record->handle;
+		headset->hsp_handle = 0;
 		DBG("Discovered Handsfree service on channel %d", ch);
 	} else {
 		headset->hsp_handle = record->handle;
+		headset->hfp_handle = 0;
 		DBG("Discovered Headset service on channel %d", ch);
 	}
 
@@ -2056,43 +2057,54 @@ static DBusMessage *hs_set_property(DBusConnection *conn,
 	return btd_error_invalid_args(msg);
 }
 
-static GDBusMethodTable headset_methods[] = {
-	{ "Connect",		"",	"",	hs_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	hs_disconnect },
-	{ "IsConnected",	"",	"b",	hs_is_connected },
-	{ "IndicateCall",	"",	"",	hs_ring },
-	{ "CancelCall",		"",	"",	hs_cancel_call },
-	{ "Play",		"",	"",	hs_play,
-						G_DBUS_METHOD_FLAG_ASYNC |
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "Stop",		"",	"",	hs_stop },
-	{ "IsPlaying",		"",	"b",	hs_is_playing,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetSpeakerGain",	"",	"q",	hs_get_speaker_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetMicrophoneGain",	"",	"q",	hs_get_mic_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "SetSpeakerGain",	"q",	"",	hs_set_speaker_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "SetMicrophoneGain",	"q",	"",	hs_set_mic_gain,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetProperties",	"",	"a{sv}",hs_get_properties },
-	{ "SetProperty",	"sv",	"",	hs_set_property },
-	{ NULL, NULL, NULL, NULL }
+static const GDBusMethodTable headset_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect", NULL, NULL, hs_connect) },
+	{ GDBUS_METHOD("Disconnect", NULL, NULL, hs_disconnect) },
+	{ GDBUS_METHOD("IsConnected",
+			NULL, GDBUS_ARGS({ "connected", "b" }),
+			hs_is_connected) },
+	{ GDBUS_METHOD("IndicateCall", NULL, NULL, hs_ring) },
+	{ GDBUS_METHOD("CancelCall", NULL, NULL, hs_cancel_call) },
+	{ GDBUS_DEPRECATED_ASYNC_METHOD("Play", NULL, NULL, hs_play) },
+	{ GDBUS_METHOD("Stop", NULL, NULL, hs_stop) },
+	{ GDBUS_DEPRECATED_METHOD("IsPlaying",
+					NULL, GDBUS_ARGS({ "playing", "b" }),
+					hs_is_playing) },
+	{ GDBUS_DEPRECATED_METHOD("GetSpeakerGain",
+					NULL, GDBUS_ARGS({ "gain", "q" }),
+					hs_get_speaker_gain) },
+	{ GDBUS_DEPRECATED_METHOD("GetMicrophoneGain",
+					NULL, GDBUS_ARGS({ "gain", "q" }),
+					hs_get_mic_gain) },
+	{ GDBUS_DEPRECATED_METHOD("SetSpeakerGain",
+					GDBUS_ARGS({ "gain", "q" }), NULL,
+					hs_set_speaker_gain) },
+	{ GDBUS_DEPRECATED_METHOD("SetMicrophoneGain",
+					GDBUS_ARGS({ "gain", "q" }), NULL,
+					hs_set_mic_gain) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			hs_get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			hs_set_property) },
+	{ }
 };
 
-static GDBusSignalTable headset_signals[] = {
-	{ "Connected",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Disconnected",		"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "AnswerRequested",		""	},
-	{ "Stopped",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Playing",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "SpeakerGainChanged",		"q",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "MicrophoneGainChanged",	"q",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "CallTerminated",		""	},
-	{ "PropertyChanged",		"sv"	},
-	{ NULL, NULL }
+static const GDBusSignalTable headset_signals[] = {
+	{ GDBUS_DEPRECATED_SIGNAL("Connected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Disconnected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("AnswerRequested", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Stopped", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Playing", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("SpeakerGainChanged",
+						GDBUS_ARGS({ "gain", "q" })) },
+	{ GDBUS_DEPRECATED_SIGNAL("MicrophoneGainChanged",
+						GDBUS_ARGS({ "gain", "q" })) },
+	{ GDBUS_SIGNAL("CallTerminated", NULL) },
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 void headset_update(struct audio_device *dev, uint16_t svc,

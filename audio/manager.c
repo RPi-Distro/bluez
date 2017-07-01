@@ -41,6 +41,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
+#include <bluetooth/uuid.h>
 
 #include <glib.h>
 #include <dbus/dbus.h>
@@ -69,10 +70,6 @@
 #include "sdpd.h"
 #include "telephony.h"
 #include "unix.h"
-
-#ifndef DBUS_TYPE_UNIX_FD
-#define DBUS_TYPE_UNIX_FD -1
-#endif
 
 typedef enum {
 	HEADSET	= 1 << 0,
@@ -578,8 +575,8 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 		return;
 	}
 
-	server_uuid = HFP_AG_UUID;
-	remote_uuid = HFP_HS_UUID;
+	server_uuid = HFP_HS_UUID;
+	remote_uuid = HFP_AG_UUID;
 
 	device = manager_get_device(&src, &dst, TRUE);
 	if (!device)
@@ -604,7 +601,7 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 	perr = audio_device_request_authorization(device, server_uuid,
 						gateway_auth_cb, device);
 	if (perr < 0) {
-		DBG("Authorization denied!");
+		DBG("Authorization denied: %s", strerror(-perr));
 		gateway_set_state(device, GATEWAY_STATE_DISCONNECTED);
 	}
 
@@ -755,20 +752,24 @@ static int gateway_server_init(struct audio_adapter *adapter)
 	record = hfp_hs_record(chan);
 	if (!record) {
 		error("Unable to allocate new service record");
-		return -1;
+		goto failed;
 	}
 
 	if (add_record_to_server(&src, record) < 0) {
 		error("Unable to register HFP HS service record");
 		sdp_record_free(record);
-		g_io_channel_unref(adapter->hfp_hs_server);
-		adapter->hfp_hs_server = NULL;
-		return -1;
+		goto failed;
 	}
 
 	adapter->hfp_hs_record_id = record->handle;
 
 	return 0;
+
+failed:
+	g_io_channel_shutdown(adapter->hfp_hs_server, TRUE, NULL);
+	g_io_channel_unref(adapter->hfp_hs_server);
+	adapter->hfp_hs_server = NULL;
+	return -1;
 }
 
 static int audio_probe(struct btd_device *device, GSList *uuids)
@@ -848,8 +849,6 @@ static struct audio_adapter *audio_adapter_get(struct btd_adapter *adapter)
 	adp = find_adapter(adapters, adapter);
 	if (!adp) {
 		adp = audio_adapter_create(adapter);
-		if (!adp)
-			return NULL;
 		adapters = g_slist_append(adapters, adp);
 	} else
 		audio_adapter_ref(adp);
@@ -912,13 +911,13 @@ static int headset_server_probe(struct btd_adapter *adapter)
 	if (!adp)
 		return -EINVAL;
 
-	btd_adapter_register_powered_callback(adapter, state_changed);
-
 	err = headset_server_init(adp);
 	if (err < 0) {
 		audio_adapter_unref(adp);
 		return err;
 	}
+
+	btd_adapter_register_powered_callback(adapter, state_changed);
 
 	return 0;
 }
@@ -929,6 +928,8 @@ static void headset_server_remove(struct btd_adapter *adapter)
 	const gchar *path = adapter_get_path(adapter);
 
 	DBG("path %s", path);
+
+	btd_adapter_unregister_powered_callback(adapter, state_changed);
 
 	adp = find_adapter(adapters, adapter);
 	if (!adp)
@@ -956,20 +957,23 @@ static void headset_server_remove(struct btd_adapter *adapter)
 		adp->hfp_ag_server = NULL;
 	}
 
-	btd_adapter_unregister_powered_callback(adapter, state_changed);
-
 	audio_adapter_unref(adp);
 }
 
 static int gateway_server_probe(struct btd_adapter *adapter)
 {
 	struct audio_adapter *adp;
+	int err;
 
 	adp = audio_adapter_get(adapter);
 	if (!adp)
 		return -EINVAL;
 
-	return gateway_server_init(adp);
+	err = gateway_server_init(adp);
+	if (err < 0)
+		audio_adapter_unref(adp);
+
+	return err;
 }
 
 static void gateway_server_remove(struct btd_adapter *adapter)
@@ -989,6 +993,7 @@ static void gateway_server_remove(struct btd_adapter *adapter)
 	}
 
 	if (adp->hfp_hs_server) {
+		g_io_channel_shutdown(adp->hfp_hs_server, TRUE, NULL);
 		g_io_channel_unref(adp->hfp_hs_server);
 		adp->hfp_hs_server = NULL;
 	}
@@ -1040,6 +1045,7 @@ static int avrcp_server_probe(struct btd_adapter *adapter)
 	struct audio_adapter *adp;
 	const gchar *path = adapter_get_path(adapter);
 	bdaddr_t src;
+	int err;
 
 	DBG("path %s", path);
 
@@ -1049,7 +1055,11 @@ static int avrcp_server_probe(struct btd_adapter *adapter)
 
 	adapter_get_address(adapter, &src);
 
-	return avrcp_register(connection, &src, config);
+	err = avrcp_register(connection, &src, config);
+	if (err < 0)
+		audio_adapter_unref(adp);
+
+	return err;
 }
 
 static void avrcp_server_remove(struct btd_adapter *adapter)
@@ -1074,6 +1084,7 @@ static int media_server_probe(struct btd_adapter *adapter)
 	struct audio_adapter *adp;
 	const gchar *path = adapter_get_path(adapter);
 	bdaddr_t src;
+	int err;
 
 	DBG("path %s", path);
 
@@ -1083,7 +1094,11 @@ static int media_server_probe(struct btd_adapter *adapter)
 
 	adapter_get_address(adapter, &src);
 
-	return media_register(connection, path, &src);
+	err = media_register(connection, path, &src);
+	if (err < 0)
+		audio_adapter_unref(adp);
+
+	return err;
 }
 
 static void media_server_remove(struct btd_adapter *adapter)
@@ -1280,12 +1295,13 @@ void audio_manager_exit(void)
 	btd_unregister_device_driver(&audio_driver);
 }
 
-struct audio_device *manager_find_device(const char *path,
+GSList *manager_find_devices(const char *path,
 					const bdaddr_t *src,
 					const bdaddr_t *dst,
 					const char *interface,
 					gboolean connected)
 {
+	GSList *result = NULL;
 	GSList *l;
 
 	for (l = devices; l != NULL; l = l->next) {
@@ -1323,10 +1339,28 @@ struct audio_device *manager_find_device(const char *path,
 		if (connected && !audio_device_is_active(dev, interface))
 			continue;
 
-		return dev;
+		result = g_slist_append(result, dev);
 	}
 
-	return NULL;
+	return result;
+}
+
+struct audio_device *manager_find_device(const char *path,
+					const bdaddr_t *src,
+					const bdaddr_t *dst,
+					const char *interface,
+					gboolean connected)
+{
+	struct audio_device *result;
+	GSList *l;
+
+	l = manager_find_devices(path, src, dst, interface, connected);
+	if (l == NULL)
+		return NULL;
+
+	result = l->data;
+	g_slist_free(l);
+	return result;
 }
 
 struct audio_device *manager_get_device(const bdaddr_t *src,

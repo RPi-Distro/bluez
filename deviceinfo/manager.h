@@ -2,8 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2004-2011  Marcel Holtmann <marcel@holtmann.org>
- *
+ *  Copyright (C) 2012 Texas Instruments, Inc.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,18 +20,5 @@
  *
  */
 
-#ifdef NEED_G_SLIST_FREE_FULL
-static inline void g_slist_free_full(GSList *list, GDestroyNotify free_func)
-{
-	g_slist_foreach(list, (GFunc) free_func, NULL);
-	g_slist_free(list);
-}
-#endif
-
-#ifdef NEED_G_LIST_FREE_FULL
-static inline void g_list_free_full(GList *list, GDestroyNotify free_func)
-{
-	g_list_foreach(list, (GFunc) free_func, NULL);
-	g_list_free(list);
-}
-#endif
+int deviceinfo_manager_init(void);
+void deviceinfo_manager_exit(void);

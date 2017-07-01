@@ -38,18 +38,18 @@ struct main_opts {
 	gboolean	reverse_sdp;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
-	gboolean	attrib_server;
+	gboolean	gatt_enabled;
 
 	uint8_t		mode;
-	uint8_t		discov_interval;
-	char		deviceid[15]; /* FIXME: */
+
+	uint16_t	did_source;
+	uint16_t	did_vendor;
+	uint16_t	did_product;
+	uint16_t	did_version;
 };
 
 enum {
-	HCID_SET_NAME,
-	HCID_SET_CLASS,
 	HCID_SET_PAGETO,
-	HCID_SET_DISCOVTO,
 };
 
 extern struct main_opts main_opts;

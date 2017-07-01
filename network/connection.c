@@ -38,7 +38,6 @@
 #include <gdbus.h>
 
 #include "log.h"
-#include "glib-compat.h"
 #include "btio.h"
 #include "dbus-common.h"
 #include "adapter.h"
@@ -553,16 +552,20 @@ static void path_unregister(void *data)
 	peer_free(peer);
 }
 
-static GDBusMethodTable connection_methods[] = {
-	{ "Connect",		"s",	"s",	connection_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	connection_disconnect	},
-	{ "GetProperties",	"",	"a{sv}",connection_get_properties },
+static const GDBusMethodTable connection_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect",
+			NULL, NULL, connection_connect) },
+	{ GDBUS_METHOD("Disconnect",
+			NULL, NULL, connection_disconnect) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			connection_get_properties) },
 	{ }
 };
 
-static GDBusSignalTable connection_signals[] = {
-	{ "PropertyChanged",	"sv"	},
+static const GDBusSignalTable connection_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
 	{ }
 };
 

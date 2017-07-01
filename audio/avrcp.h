@@ -73,7 +73,8 @@
 #define AVRCP_EVENT_TRACK_CHANGED	0x02
 #define AVRCP_EVENT_TRACK_REACHED_END	0x03
 #define AVRCP_EVENT_TRACK_REACHED_START	0x04
-#define AVRCP_EVENT_LAST		AVRCP_EVENT_TRACK_REACHED_START
+#define AVRCP_EVENT_VOLUME_CHANGED	0x0d
+#define AVRCP_EVENT_LAST		AVRCP_EVENT_VOLUME_CHANGED
 
 struct avrcp_player_cb {
 	int (*get_setting) (uint8_t attr, void *user_data);
@@ -83,6 +84,8 @@ struct avrcp_player_cb {
 	GList *(*list_metadata) (void *user_data);
 	uint8_t (*get_status) (void *user_data);
 	uint32_t (*get_position) (void *user_data);
+	void (*set_volume) (uint8_t volume, struct audio_device *dev,
+							void *user_data);
 };
 
 int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config);
@@ -90,6 +93,7 @@ void avrcp_unregister(const bdaddr_t *src);
 
 gboolean avrcp_connect(struct audio_device *dev);
 void avrcp_disconnect(struct audio_device *dev);
+int avrcp_set_volume(struct audio_device *dev, uint8_t volume);
 
 struct avrcp_player *avrcp_register_player(const bdaddr_t *src,
 						struct avrcp_player_cb *cb,
@@ -98,3 +102,6 @@ struct avrcp_player *avrcp_register_player(const bdaddr_t *src,
 void avrcp_unregister_player(struct avrcp_player *player);
 
 int avrcp_player_event(struct avrcp_player *player, uint8_t id, void *data);
+
+
+size_t avrcp_handle_vendor_reject(uint8_t *code, uint8_t *operands);

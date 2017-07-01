@@ -34,7 +34,6 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/uuid.h>
 
-#include "glib-compat.h"
 #include "adapter.h"
 #include "device.h"
 #include "log.h"
@@ -62,13 +61,12 @@ struct format {
 
 struct query {
 	DBusMessage *msg;
-	guint attioid;
 	GSList *list;
 };
 
 struct gatt_service {
 	struct btd_device *dev;
-	struct att_primary *prim;
+	struct gatt_primary *prim;
 	DBusConnection *conn;
 	GAttrib *attrib;
 	guint attioid;
@@ -141,15 +139,31 @@ static void gatt_service_free(struct gatt_service *gatt)
 	g_free(gatt);
 }
 
-static void gatt_get_address(struct gatt_service *gatt,
-				bdaddr_t *sba, bdaddr_t *dba)
+static void remove_attio(struct gatt_service *gatt)
+{
+	if (gatt->offline_chars || gatt->watchers || gatt->query)
+		return;
+
+	if (gatt->attioid) {
+		btd_device_remove_attio_callback(gatt->dev, gatt->attioid);
+		gatt->attioid = 0;
+	}
+
+	if (gatt->attrib) {
+		g_attrib_unref(gatt->attrib);
+		gatt->attrib = NULL;
+	}
+}
+
+static void gatt_get_address(struct gatt_service *gatt, bdaddr_t *sba,
+					bdaddr_t *dba, uint8_t *bdaddr_type)
 {
 	struct btd_device *device = gatt->dev;
 	struct btd_adapter *adapter;
 
 	adapter = device_get_adapter(device);
 	adapter_get_address(adapter, sba);
-	device_get_address(device, dba, NULL);
+	device_get_address(device, dba, bdaddr_type);
 }
 
 static int characteristic_handle_cmp(gconstpointer a, gconstpointer b)
@@ -212,6 +226,8 @@ static void watcher_exit(DBusConnection *conn, void *user_data)
 	DBG("%s watcher %s exited", gatt->path, watcher->name);
 
 	gatt->watchers = g_slist_remove(gatt->watchers, watcher);
+	g_dbus_remove_watch(gatt->conn, watcher->id);
+	remove_attio(gatt);
 }
 
 static int characteristic_set_value(struct characteristic *chr,
@@ -298,11 +314,7 @@ static void offline_char_written(gpointer user_data)
 
 	gatt->offline_chars = g_slist_remove(gatt->offline_chars, chr);
 
-	if (gatt->offline_chars || gatt->watchers)
-		return;
-
-	btd_device_remove_attio_callback(gatt->dev, gatt->attioid);
-	gatt->attioid = 0;
+	remove_attio(gatt);
 }
 
 static void offline_char_write(gpointer data, gpointer user_data)
@@ -313,6 +325,9 @@ static void offline_char_write(gpointer data, gpointer user_data)
 	gatt_write_cmd(attrib, chr->handle, chr->value, chr->vlen,
 						offline_char_written, chr);
 }
+
+static void char_discovered_cb(GSList *characteristics, guint8 status,
+							gpointer user_data);
 
 static void attio_connected(GAttrib *attrib, gpointer user_data)
 {
@@ -326,11 +341,35 @@ static void attio_connected(GAttrib *attrib, gpointer user_data)
 					events_handler, gatt, NULL);
 
 	g_slist_foreach(gatt->offline_chars, offline_char_write, attrib);
+
+	if (gatt->query) {
+		struct gatt_primary *prim = gatt->prim;
+		struct query_data *qchr;
+
+		qchr = g_slist_nth_data(gatt->query->list, 0);
+		gatt_discover_char(gatt->attrib, prim->range.start,
+						prim->range.end, NULL,
+						char_discovered_cb, qchr);
+	}
 }
 
 static void attio_disconnected(gpointer user_data)
 {
 	struct gatt_service *gatt = user_data;
+
+	if (gatt->query && gatt->query->msg) {
+		DBusMessage *reply;
+
+		reply = btd_error_failed(gatt->query->msg,
+					"ATT IO channel was disconnected");
+		g_dbus_send_message(gatt->conn, reply);
+		dbus_message_unref(gatt->query->msg);
+	}
+
+	if (gatt->query) {
+		g_slist_free_full(gatt->query->list, g_free);
+		gatt->query = NULL;
+	}
 
 	if (gatt->attrib) {
 		g_attrib_unref(gatt->attrib);
@@ -390,14 +429,9 @@ static DBusMessage *unregister_watcher(DBusConnection *conn,
 		return btd_error_not_authorized(msg);
 
 	watcher = l->data;
-	g_dbus_remove_watch(conn, watcher->id);
 	gatt->watchers = g_slist_remove(gatt->watchers, watcher);
-	watcher_free(watcher);
-
-	if (gatt->watchers == NULL && gatt->attioid) {
-		btd_device_remove_attio_callback(gatt->dev, gatt->attioid);
-		gatt->attioid = 0;
-	}
+	g_dbus_remove_watch(conn, watcher->id);
+	remove_attio(gatt);
 
 	return dbus_message_new_method_return(msg);
 }
@@ -481,10 +515,13 @@ static DBusMessage *set_property(DBusConnection *conn,
 	return btd_error_invalid_args(msg);
 }
 
-static GDBusMethodTable char_methods[] = {
-	{ "GetProperties",	"",	"a{sv}", get_properties },
-	{ "SetProperty",	"sv",	"",	set_property,
-						G_DBUS_METHOD_FLAG_ASYNC},
+static const GDBusMethodTable char_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_METHOD("SetProperty",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" }), NULL,
+			set_property) },
 	{ }
 };
 
@@ -511,13 +548,15 @@ static char *characteristic_list_to_string(GSList *chars)
 }
 
 static void store_characteristics(const bdaddr_t *sba, const bdaddr_t *dba,
-						uint16_t start, GSList *chars)
+					uint8_t bdaddr_type, uint16_t start,
+								GSList *chars)
 {
 	char *characteristics;
 
 	characteristics = characteristic_list_to_string(chars);
 
-	write_device_characteristics(sba, dba, start, characteristics);
+	write_device_characteristics(sba, dba, bdaddr_type, start,
+							characteristics);
 
 	g_free(characteristics);
 }
@@ -577,11 +616,12 @@ static GSList *load_characteristics(struct gatt_service *gatt, uint16_t start)
 {
 	GSList *chrs_list;
 	bdaddr_t sba, dba;
+	uint8_t bdaddr_type;
 	char *str;
 
-	gatt_get_address(gatt, &sba, &dba);
+	gatt_get_address(gatt, &sba, &dba, &bdaddr_type);
 
-	str = read_device_characteristics(&sba, &dba, start);
+	str = read_device_characteristics(&sba, &dba, bdaddr_type, start);
 	if (str == NULL)
 		return NULL;
 
@@ -595,7 +635,9 @@ static GSList *load_characteristics(struct gatt_service *gatt, uint16_t start)
 static void store_attribute(struct gatt_service *gatt, uint16_t handle,
 				uint16_t type, uint8_t *value, gsize len)
 {
+	struct btd_device *device = gatt->dev;
 	bdaddr_t sba, dba;
+	uint8_t bdaddr_type;
 	bt_uuid_t uuid;
 	char *str, *tmp;
 	guint i;
@@ -610,9 +652,11 @@ static void store_attribute(struct gatt_service *gatt, uint16_t handle,
 	for (i = 0, tmp = str + MAX_LEN_UUID_STR; i < len; i++, tmp += 2)
 		sprintf(tmp, "%02X", value[i]);
 
-	gatt_get_address(gatt, &sba, &dba);
+	gatt_get_address(gatt, &sba, &dba, NULL);
 
-	write_device_attribute(&sba, &dba, handle, str);
+	bdaddr_type = device_get_addr_type(device);
+
+	write_device_attribute(&sba, &dba, bdaddr_type, handle, str);
 
 	g_free(str);
 }
@@ -632,10 +676,10 @@ static void query_list_remove(struct gatt_service *gatt, struct query_data *data
 	if (query->list != NULL)
 		return;
 
-	btd_device_remove_attio_callback(gatt->dev, query->attioid);
 	g_free(query);
-
 	gatt->query = NULL;
+
+	remove_attio(gatt);
 }
 
 static void update_char_desc(guint8 status, const guint8 *pdu, guint16 len,
@@ -658,9 +702,17 @@ static void update_char_desc(guint8 status, const guint8 *pdu, guint16 len,
 				(void *) chr->desc, len);
 	} else if (status == ATT_ECODE_INSUFF_ENC) {
 		GIOChannel *io = g_attrib_get_channel(gatt->attrib);
+		BtIOSecLevel level = BT_IO_SEC_HIGH;
+
+		bt_io_get(io, BT_IO_L2CAP, NULL,
+				BT_IO_OPT_SEC_LEVEL, &level,
+				BT_IO_OPT_INVALID);
+
+		if (level < BT_IO_SEC_HIGH)
+			level++;
 
 		if (bt_io_set(io, BT_IO_L2CAP, NULL,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_HIGH,
+				BT_IO_OPT_SEC_LEVEL, level,
 				BT_IO_OPT_INVALID)) {
 			gatt_read_char(gatt->attrib, current->handle, 0,
 					update_char_desc, current);
@@ -814,17 +866,42 @@ static void update_all_chars(gpointer data, gpointer user_data)
 	gatt_read_char(gatt->attrib, chr->handle, 0, update_char_value, qvalue);
 }
 
+static DBusMessage *create_discover_char_reply(DBusMessage *msg, GSList *chars)
+{
+	DBusMessage *reply;
+	DBusMessageIter iter, array_iter;
+	GSList *l;
+
+	reply = dbus_message_new_method_return(msg);
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+				DBUS_TYPE_OBJECT_PATH_AS_STRING, &array_iter);
+
+	for (l = chars; l; l = l->next) {
+		struct characteristic *chr = l->data;
+
+		dbus_message_iter_append_basic(&array_iter,
+					DBUS_TYPE_OBJECT_PATH, &chr->path);
+	}
+
+	dbus_message_iter_close_container(&iter, &array_iter);
+
+	return reply;
+}
+
 static void char_discovered_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
 	DBusMessage *reply;
-	DBusMessageIter iter, array_iter;
 	struct query_data *current = user_data;
 	struct gatt_service *gatt = current->gatt;
-	struct att_primary *prim = gatt->prim;
+	struct gatt_primary *prim = gatt->prim;
 	uint16_t *previous_end = NULL;
 	GSList *l;
 	bdaddr_t sba, dba;
+	uint8_t bdaddr_type;
 
 	if (status != 0) {
 		const char *str = att_ecode2str(status);
@@ -835,7 +912,7 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 	}
 
 	for (l = characteristics; l; l = l->next) {
-		struct att_char *current_chr = l->data;
+		struct gatt_char *current_chr = l->data;
 		struct characteristic *chr;
 		guint handle = current_chr->value_handle;
 		GSList *lchr;
@@ -857,59 +934,27 @@ static void char_discovered_cb(GSList *characteristics, guint8 status,
 		previous_end = &chr->end;
 
 		gatt->chars = g_slist_append(gatt->chars, chr);
+		register_characteristic(chr, gatt->path);
 	}
 
 	if (previous_end)
-		*previous_end = prim->end;
+		*previous_end = prim->range.end;
 
-	gatt_get_address(gatt, &sba, &dba);
-	store_characteristics(&sba, &dba, prim->start, gatt->chars);
-
-	g_slist_foreach(gatt->chars, register_characteristic, gatt->path);
-
-	reply = dbus_message_new_method_return(gatt->query->msg);
-
-	dbus_message_iter_init_append(reply, &iter);
-
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
-				DBUS_TYPE_OBJECT_PATH_AS_STRING, &array_iter);
-
-	for (l = gatt->chars; l; l = l->next) {
-		struct characteristic *chr = l->data;
-
-		dbus_message_iter_append_basic(&array_iter,
-					DBUS_TYPE_OBJECT_PATH, &chr->path);
-	}
-
-	dbus_message_iter_close_container(&iter, &array_iter);
+	gatt_get_address(gatt, &sba, &dba, &bdaddr_type);
+	store_characteristics(&sba, &dba, bdaddr_type, prim->range.start,
+								gatt->chars);
 
 	g_slist_foreach(gatt->chars, update_all_chars, gatt);
 
+	reply = create_discover_char_reply(gatt->query->msg, gatt->chars);
+
 fail:
+	dbus_message_unref(gatt->query->msg);
+	gatt->query->msg = NULL;
+
 	g_dbus_send_message(gatt->conn, reply);
 	query_list_remove(gatt, current);
 	g_free(current);
-}
-
-static void send_discover(GAttrib *attrib, gpointer user_data)
-{
-	struct query_data *qchr = user_data;
-	struct gatt_service *gatt = qchr->gatt;
-	struct att_primary *prim = gatt->prim;
-
-	gatt->attrib = g_attrib_ref(attrib);
-
-	gatt_discover_char(gatt->attrib, prim->start, prim->end, NULL,
-						char_discovered_cb, qchr);
-}
-
-static void cancel_discover(gpointer user_data)
-{
-	struct query_data *qchr = user_data;
-	struct gatt_service *gatt = qchr->gatt;
-
-	g_attrib_unref(gatt->attrib);
-	gatt->attrib = NULL;
 }
 
 static DBusMessage *discover_char(DBusConnection *conn, DBusMessage *msg,
@@ -928,10 +973,18 @@ static DBusMessage *discover_char(DBusConnection *conn, DBusMessage *msg,
 	qchr->gatt = gatt;
 
 	query->msg = dbus_message_ref(msg);
-	query->attioid = btd_device_add_attio_callback(gatt->dev,
-							send_discover,
-							cancel_discover,
-							qchr);
+
+	if (gatt->attioid == 0) {
+		gatt->attioid = btd_device_add_attio_callback(gatt->dev,
+							attio_connected,
+							attio_disconnected,
+							gatt);
+	} else if (gatt->attrib) {
+		struct gatt_primary *prim = gatt->prim;
+		gatt_discover_char(gatt->attrib, prim->range.start,
+						prim->range.end, NULL,
+						char_discovered_cb, qchr);
+	}
 
 	gatt->query = query;
 
@@ -982,20 +1035,25 @@ static DBusMessage *prim_get_properties(DBusConnection *conn, DBusMessage *msg,
 	return reply;
 }
 
-static GDBusMethodTable prim_methods[] = {
-	{ "DiscoverCharacteristics",	"",	"ao",	discover_char,
-					G_DBUS_METHOD_FLAG_ASYNC	},
-	{ "RegisterCharacteristicsWatcher",	"o", "",
-						register_watcher	},
-	{ "UnregisterCharacteristicsWatcher",	"o", "",
-						unregister_watcher	},
-	{ "GetProperties",	"",	"a{sv}",prim_get_properties	},
+static const GDBusMethodTable prim_methods[] = {
+	{ GDBUS_ASYNC_METHOD("DiscoverCharacteristics",
+			NULL, GDBUS_ARGS({ "characteristics", "ao" }),
+			discover_char) },
+	{ GDBUS_METHOD("RegisterCharacteristicsWatcher",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			register_watcher) },
+	{ GDBUS_METHOD("UnregisterCharacteristicsWatcher",
+			GDBUS_ARGS({ "agent", "o" }), NULL,
+			unregister_watcher) },
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			prim_get_properties) },
 	{ }
 };
 
 static struct gatt_service *primary_register(DBusConnection *conn,
 						struct btd_device *device,
-						struct att_primary *prim,
+						struct gatt_primary *prim,
 						int psm)
 {
 	struct gatt_service *gatt;
@@ -1009,12 +1067,12 @@ static struct gatt_service *primary_register(DBusConnection *conn,
 	gatt->psm = psm;
 	gatt->conn = dbus_connection_ref(conn);
 	gatt->path = g_strdup_printf("%s/service%04x", device_path,
-								prim->start);
+								prim->range.start);
 
 	g_dbus_register_interface(gatt->conn, gatt->path,
 					CHAR_INTERFACE, prim_methods,
 					NULL, NULL, gatt, NULL);
-	gatt->chars = load_characteristics(gatt, prim->start);
+	gatt->chars = load_characteristics(gatt, prim->range.start);
 	g_slist_foreach(gatt->chars, register_characteristic, gatt->path);
 
 	return gatt;
@@ -1027,7 +1085,7 @@ GSList *attrib_client_register(DBusConnection *connection,
 	GSList *l, *services;
 
 	for (l = primaries, services = NULL; l; l = l->next) {
-		struct att_primary *prim = l->data;
+		struct gatt_primary *prim = l->data;
 		struct gatt_service *gatt;
 
 		gatt = primary_register(connection, device, prim, psm);
@@ -1046,9 +1104,6 @@ static void primary_unregister(struct gatt_service *gatt)
 {
 	GSList *l;
 
-	if (gatt->attioid)
-		btd_device_remove_attio_callback(gatt->dev, gatt->attioid);
-
 	for (l = gatt->chars; l; l = l->next) {
 		struct characteristic *chr = l->data;
 		g_dbus_unregister_interface(gatt->conn, chr->path,
@@ -1056,6 +1111,8 @@ static void primary_unregister(struct gatt_service *gatt)
 	}
 
 	g_dbus_unregister_interface(gatt->conn, gatt->path, CHAR_INTERFACE);
+
+	remove_attio(gatt);
 }
 
 static int path_cmp(gconstpointer data, gconstpointer user_data)

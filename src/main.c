@@ -55,10 +55,6 @@
 #include "agent.h"
 #include "manager.h"
 
-#ifdef HAVE_CAPNG
-#include <cap-ng.h>
-#endif
-
 #define BLUEZ_NAME "org.bluez"
 
 #define LAST_ADAPTER_EXIT_TIMEOUT 30
@@ -87,6 +83,36 @@ static GKeyFile *load_config(const char *file)
 	return keyfile;
 }
 
+static void parse_did(const char *did)
+{
+	int result;
+	uint16_t vendor, product, version , source;
+
+	/* version and source are optional */
+	version = 0x0000;
+	source = 0x0002;
+
+	result = sscanf(did, "bluetooth:%4hx:%4hx:%4hx", &vendor, &product, &version);
+	if (result != EOF && result >= 2) {
+		source = 0x0001;
+		goto done;
+	}
+
+	result = sscanf(did, "usb:%4hx:%4hx:%4hx", &vendor, &product, &version);
+	if (result != EOF && result >= 2)
+		goto done;
+
+	result = sscanf(did, "%4hx:%4hx:%4hx", &vendor, &product, &version);
+	if (result == EOF || result < 2)
+		return;
+
+done:
+	main_opts.did_source = source;
+	main_opts.did_vendor = vendor;
+	main_opts.did_product = product;
+	main_opts.did_version = version;
+}
+
 static void parse_config(GKeyFile *config)
 {
 	GError *err = NULL;
@@ -107,7 +133,6 @@ static void parse_config(GKeyFile *config)
 	} else {
 		DBG("discovto=%d", val);
 		main_opts.discovto = val;
-		main_opts.flags |= 1 << HCID_SET_DISCOVTO;
 	}
 
 	val = g_key_file_get_integer(config, "General",
@@ -148,7 +173,6 @@ static void parse_config(GKeyFile *config)
 		DBG("name=%s", str);
 		g_free(main_opts.name);
 		main_opts.name = g_strdup(str);
-		main_opts.flags |= 1 << HCID_SET_NAME;
 		g_free(str);
 	}
 
@@ -159,18 +183,7 @@ static void parse_config(GKeyFile *config)
 	} else {
 		DBG("class=%s", str);
 		main_opts.class = strtol(str, NULL, 16);
-		main_opts.flags |= 1 << HCID_SET_CLASS;
 		g_free(str);
-	}
-
-	val = g_key_file_get_integer(config, "General",
-					"DiscoverSchedulerInterval", &err);
-	if (err) {
-		DBG("%s", err->message);
-		g_clear_error(&err);
-	} else {
-		DBG("discov_interval=%d", val);
-		main_opts.discov_interval = val;
 	}
 
 	boolean = g_key_file_get_boolean(config, "General",
@@ -195,8 +208,7 @@ static void parse_config(GKeyFile *config)
 		g_clear_error(&err);
 	} else {
 		DBG("deviceid=%s", str);
-		strncpy(main_opts.deviceid, str,
-					sizeof(main_opts.deviceid) - 1);
+		parse_did(str);
 		g_free(str);
 	}
 
@@ -223,11 +235,11 @@ static void parse_config(GKeyFile *config)
 		main_opts.debug_keys = boolean;
 
 	boolean = g_key_file_get_boolean(config, "General",
-						"AttributeServer", &err);
+						"EnableGatt", &err);
 	if (err)
 		g_clear_error(&err);
 	else
-		main_opts.attrib_server = boolean;
+		main_opts.gatt_enabled = boolean;
 
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
@@ -446,15 +458,6 @@ int main(int argc, char *argv[])
 
 	init_defaults();
 
-#ifdef HAVE_CAPNG
-	/* Drop capabilities */
-	capng_clear(CAPNG_SELECT_BOTH);
-	capng_updatev(CAPNG_ADD, CAPNG_EFFECTIVE | CAPNG_PERMITTED,
-					CAP_NET_BIND_SERVICE, CAP_NET_ADMIN,
-						CAP_NET_RAW, CAP_IPC_LOCK, -1);
-	capng_apply(CAPNG_SELECT_BOTH);
-#endif
-
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);
 
@@ -519,7 +522,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	start_sdp_server(mtu, main_opts.deviceid, SDP_SERVER_COMPAT);
+	start_sdp_server(mtu, SDP_SERVER_COMPAT);
 
 	/* Loading plugins has to be done after D-Bus has been setup since
 	 * the plugins might wanna expose some paths on the bus. However the

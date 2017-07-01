@@ -175,12 +175,19 @@ static DBusMessage *remove_remote_data(DBusConnection *conn, DBusMessage *msg,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
-static GDBusMethodTable oob_methods[] = {
-	{"AddRemoteData",	"sayay",	"",	add_remote_data},
-	{"RemoveRemoteData",	"s",		"",	remove_remote_data},
-	{"ReadLocalData",	"",		"ayay",	read_local_data,
-						G_DBUS_METHOD_FLAG_ASYNC},
-	{}
+static const GDBusMethodTable oob_methods[] = {
+	{ GDBUS_METHOD("AddRemoteData",
+			GDBUS_ARGS({ "address", "s" }, { "hash", "ay" },
+					{ "randomizer", "ay" }), NULL,
+			add_remote_data) },
+	{ GDBUS_METHOD("RemoveRemoteData",
+			GDBUS_ARGS({ "address", "s" }), NULL,
+			remove_remote_data) },
+	{ GDBUS_ASYNC_METHOD("ReadLocalData",
+			NULL, GDBUS_ARGS({ "hash", "ay" },
+						{ "randomizer", "ay" }),
+			read_local_data) },
+	{ }
 };
 
 static int oob_probe(struct btd_adapter *adapter)

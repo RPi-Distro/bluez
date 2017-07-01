@@ -49,7 +49,6 @@
 #include "event.h"
 #include "oob.h"
 #include "eir.h"
-#include "glib-compat.h"
 
 #define MGMT_BUF_SIZE 1024
 
@@ -79,6 +78,7 @@ static struct controller_info {
 	uint8_t minor;
 
 	gboolean pending_powered;
+	gboolean pending_cod_change;
 } *controllers = NULL;
 
 static int mgmt_sock = -1;
@@ -350,6 +350,7 @@ static int mgmt_update_powered(struct btd_adapter *adapter,
 		info->pending_uuids = NULL;
 		info->pending_uuid = FALSE;
 		info->pending_class = FALSE;
+		info->pending_cod_change = FALSE;
 		return 0;
 	}
 
@@ -464,34 +465,6 @@ static void mgmt_new_link_key(int sk, uint16_t index, void *buf, size_t len)
 	bonding_complete(info, &ev->key.addr.bdaddr, 0);
 }
 
-static inline addr_type_t addr_type(uint8_t mgmt_addr_type)
-{
-	switch (mgmt_addr_type) {
-	case MGMT_ADDR_BREDR:
-		return ADDR_TYPE_BREDR;
-	case MGMT_ADDR_LE_PUBLIC:
-		return ADDR_TYPE_LE_PUBLIC;
-	case MGMT_ADDR_LE_RANDOM:
-		return ADDR_TYPE_LE_RANDOM;
-	default:
-		return ADDR_TYPE_BREDR;
-	}
-}
-
-static inline uint8_t mgmt_addr_type(addr_type_t addr_type)
-{
-	switch (addr_type) {
-	case ADDR_TYPE_BREDR:
-		return MGMT_ADDR_BREDR;
-	case ADDR_TYPE_LE_PUBLIC:
-		return MGMT_ADDR_LE_PUBLIC;
-	case ADDR_TYPE_LE_RANDOM:
-		return MGMT_ADDR_LE_RANDOM;
-	default:
-		return MGMT_ADDR_BREDR;
-	}
-}
-
 static void mgmt_device_connected(int sk, uint16_t index, void *buf, size_t len)
 {
 	struct mgmt_ev_device_connected *ev = buf;
@@ -527,7 +500,7 @@ static void mgmt_device_connected(int sk, uint16_t index, void *buf, size_t len)
 		eir_parse(&eir_data, ev->eir, eir_len);
 
 	btd_event_conn_complete(&info->bdaddr, &ev->addr.bdaddr,
-						addr_type(ev->addr.type),
+						ev->addr.type,
 						eir_data.name,
 						eir_data.dev_class);
 
@@ -610,7 +583,7 @@ static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin,
 
 		cp = (void *) &buf[sizeof(*hdr)];
 		bacpy(&cp->addr.bdaddr, bdaddr);
-		cp->addr.type = MGMT_ADDR_BREDR;
+		cp->addr.type = BDADDR_BREDR;
 
 		buf_len = sizeof(*hdr) + sizeof(*cp);
 	} else {
@@ -625,7 +598,7 @@ static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin,
 
 		cp = (void *) &buf[sizeof(*hdr)];
 		bacpy(&cp->addr.bdaddr, bdaddr);
-		cp->addr.type = MGMT_ADDR_BREDR;
+		cp->addr.type = BDADDR_BREDR;
 		cp->pin_len = pin_len;
 		memcpy(cp->pin_code, pin, pin_len);
 
@@ -669,7 +642,7 @@ static void mgmt_pin_code_request(int sk, uint16_t index, void *buf, size_t len)
 	}
 }
 
-static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
+static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type,
 							gboolean success)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_user_confirm_reply)];
@@ -692,7 +665,7 @@ static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
 
 	cp = (void *) &buf[sizeof(*hdr)];
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
 		return -errno;
@@ -700,7 +673,7 @@ static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
 	return 0;
 }
 
-static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
+static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type,
 							uint32_t passkey)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_user_passkey_reply)];
@@ -722,7 +695,7 @@ static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
 
 		cp = (void *) &buf[sizeof(*hdr)];
 		bacpy(&cp->addr.bdaddr, bdaddr);
-		cp->addr.type = mgmt_addr_type(type);
+		cp->addr.type = bdaddr_type;
 
 		buf_len = sizeof(*hdr) + sizeof(*cp);
 	} else {
@@ -733,7 +706,7 @@ static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, addr_type_t type,
 
 		cp = (void *) &buf[sizeof(*hdr)];
 		bacpy(&cp->addr.bdaddr, bdaddr);
-		cp->addr.type = mgmt_addr_type(type);
+		cp->addr.type = bdaddr_type;
 		cp->passkey = htobl(passkey);
 
 		buf_len = sizeof(*hdr) + sizeof(*cp);
@@ -1255,6 +1228,34 @@ static void read_local_oob_data_complete(int sk, uint16_t index, void *buf,
 		oob_read_local_data_complete(adapter, rp->hash, rp->randomizer);
 }
 
+static void start_discovery_complete(int sk, uint16_t index, uint8_t status,
+						     void *buf, size_t len)
+{
+	uint8_t *type = buf;
+	struct btd_adapter *adapter;
+
+	if (len != sizeof(*type)) {
+		error("start_discovery_complete event size mismatch "
+					"(%zu != %zu)", len, sizeof(*type));
+		return;
+	}
+
+	DBG("hci%u type %u status %u", index, *type, status);
+
+	if (index > max_index) {
+		error("Invalid index %u in start_discovery_complete", index);
+		return;
+	}
+
+	if (!status)
+		return;
+
+	adapter = manager_find_adapter_by_id(index);
+	if (adapter)
+		/* Start discovery failed, inform upper layers. */
+		adapter_set_discovering(adapter, FALSE);
+}
+
 static void read_local_oob_data_failed(int sk, uint16_t index)
 {
 	struct btd_adapter *adapter;
@@ -1273,18 +1274,12 @@ static void read_local_oob_data_failed(int sk, uint16_t index)
 		oob_read_local_data_complete(adapter, NULL, NULL);
 }
 
-static void mgmt_add_uuid_complete(int sk, uint16_t index, void *buf,
-								size_t len)
+static void handle_pending_uuids(uint16_t index)
 {
 	struct controller_info *info;
 	struct pending_uuid *pending;
 
-	DBG("add_uuid complete");
-
-	if (index > max_index) {
-		error("Unexpected index %u in add_uuid_complete event", index);
-		return;
-	}
+	DBG("index %d", index);
 
 	info = &controllers[index];
 
@@ -1310,6 +1305,19 @@ static void mgmt_add_uuid_complete(int sk, uint16_t index, void *buf,
 
 	info->pending_uuids = g_slist_remove(info->pending_uuids, pending);
 	g_free(pending);
+}
+
+static void mgmt_add_uuid_complete(int sk, uint16_t index, void *buf,
+								size_t len)
+{
+	DBG("index %d", index);
+
+	if (index > max_index) {
+		error("Unexpected index %u in add_uuid_complete event", index);
+		return;
+	}
+
+	handle_pending_uuids(index);
 }
 
 static void mgmt_cmd_complete(int sk, uint16_t index, void *buf, size_t len)
@@ -1421,15 +1429,28 @@ static void mgmt_cmd_complete(int sk, uint16_t index, void *buf, size_t len)
 		DBG("set_fast_connectable complete");
 		break;
 	case MGMT_OP_START_DISCOVERY:
-		DBG("start_discovery complete");
+		start_discovery_complete(sk, index, ev->status, ev->data, len);
 		break;
 	case MGMT_OP_STOP_DISCOVERY:
 		DBG("stop_discovery complete");
+		break;
+	case MGMT_OP_SET_DEVICE_ID:
+		DBG("set_did complete");
 		break;
 	default:
 		error("Unknown command complete for opcode %u", opcode);
 		break;
 	}
+}
+
+static void mgmt_add_uuid_busy(int sk, uint16_t index)
+{
+	struct controller_info *info;
+
+	DBG("index %d", index);
+
+	info = &controllers[index];
+	info->pending_cod_change = TRUE;
 }
 
 static void mgmt_cmd_status(int sk, uint16_t index, void *buf, size_t len)
@@ -1444,15 +1465,27 @@ static void mgmt_cmd_status(int sk, uint16_t index, void *buf, size_t len)
 
 	opcode = btohs(bt_get_unaligned(&ev->opcode));
 
-	error("hci%u: %s (0x%04x) failed: %s (0x%02x)", index,
-			mgmt_opstr(opcode), opcode, mgmt_errstr(ev->status),
-			ev->status);
+	if (!ev->status) {
+		DBG("%s (0x%04x) cmd_status %u", mgmt_opstr(opcode), opcode,
+								ev->status);
+		return;
+	}
 
 	switch (opcode) {
 	case MGMT_OP_READ_LOCAL_OOB_DATA:
 		read_local_oob_data_failed(sk, index);
 		break;
+	case MGMT_OP_ADD_UUID:
+		if (ev->status == MGMT_STATUS_BUSY) {
+			mgmt_add_uuid_busy(sk, index);
+			return;
+		}
+		break;
 	}
+
+	error("hci%u: %s (0x%04x) failed: %s (0x%02x)", index,
+			mgmt_opstr(opcode), opcode, mgmt_errstr(ev->status),
+			ev->status);
 }
 
 static void mgmt_controller_error(int sk, uint16_t index, void *buf, size_t len)
@@ -1548,7 +1581,7 @@ static void mgmt_device_found(int sk, uint16_t index, void *buf, size_t len)
 	else
 		eir = ev->eir;
 
-	flags = btohs(ev->flags);
+	flags = btohl(ev->flags);
 
 	ba2str(&ev->addr.bdaddr, addr);
 	DBG("hci%u addr %s, rssi %d flags 0x%04x eir_len %u",
@@ -1564,7 +1597,7 @@ static void mgmt_device_found(int sk, uint16_t index, void *buf, size_t len)
 	confirm_name = (flags & MGMT_DEV_FOUND_CONFIRM_NAME);
 
 	btd_event_device_found(&info->bdaddr, &ev->addr.bdaddr,
-						addr_type(ev->addr.type),
+						ev->addr.type,
 						ev->rssi, confirm_name,
 						eir, eir_len);
 }
@@ -1692,13 +1725,32 @@ static void mgmt_new_ltk(int sk, uint16_t index, void *buf, size_t len)
 
 	if (ev->store_hint) {
 		btd_event_ltk_notify(&info->bdaddr, &ev->key.addr.bdaddr,
-				ev->key.addr.type, ev->key.val,
+				ev->key.addr.type, ev->key.val, ev->key.master,
 				ev->key.authenticated, ev->key.enc_size,
-				ev->key.master, ev->key.ediv, ev->key.rand);
+				ev->key.ediv, ev->key.rand);
 	}
 
 	if (ev->key.master)
 		bonding_complete(info, &ev->key.addr.bdaddr, 0);
+}
+
+static void mgmt_cod_changed(int sk, uint16_t index)
+{
+	struct controller_info *info;
+
+	DBG("index %d", index);
+
+	if (index > max_index) {
+		error("Unexpected index %u in mgmt_cod_changed event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	if (info->pending_cod_change) {
+		info->pending_cod_change = FALSE;
+		handle_pending_uuids(index);
+	}
 }
 
 static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data)
@@ -1764,7 +1816,7 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 		mgmt_new_settings(sk, index, buf + MGMT_HDR_SIZE, len);
 		break;
 	case MGMT_EV_CLASS_OF_DEV_CHANGED:
-		DBG("hci%u Class of Device changed", index);
+		mgmt_cod_changed(sk, index);
 		break;
 	case MGMT_EV_NEW_LINK_KEY:
 		mgmt_new_link_key(sk, index, buf + MGMT_HDR_SIZE, len);
@@ -1894,11 +1946,11 @@ static int mgmt_start_discovery(int index)
 	info->discov_type = 0;
 
 	if (mgmt_bredr(info->current_settings))
-		hci_set_bit(MGMT_ADDR_BREDR, &info->discov_type);
+		hci_set_bit(BDADDR_BREDR, &info->discov_type);
 
 	if (mgmt_low_energy(info->current_settings)) {
-		hci_set_bit(MGMT_ADDR_LE_PUBLIC, &info->discov_type);
-		hci_set_bit(MGMT_ADDR_LE_RANDOM, &info->discov_type);
+		hci_set_bit(BDADDR_LE_PUBLIC, &info->discov_type);
+		hci_set_bit(BDADDR_LE_RANDOM, &info->discov_type);
 	}
 
 	memset(buf, 0, sizeof(buf));
@@ -1985,7 +2037,7 @@ static int mgmt_read_bdaddr(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
-static int mgmt_block_device(int index, bdaddr_t *bdaddr, addr_type_t type)
+static int mgmt_block_device(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_block_device)];
 	struct mgmt_hdr *hdr = (void *) buf;
@@ -2004,7 +2056,7 @@ static int mgmt_block_device(int index, bdaddr_t *bdaddr, addr_type_t type)
 
 	cp = (void *) &buf[sizeof(*hdr)];
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 
 	buf_len = sizeof(*hdr) + sizeof(*cp);
 
@@ -2014,7 +2066,8 @@ static int mgmt_block_device(int index, bdaddr_t *bdaddr, addr_type_t type)
 	return 0;
 }
 
-static int mgmt_unblock_device(int index, bdaddr_t *bdaddr, addr_type_t type)
+static int mgmt_unblock_device(int index, bdaddr_t *bdaddr,
+							uint8_t bdaddr_type)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_unblock_device)];
 	struct mgmt_hdr *hdr = (void *) buf;
@@ -2033,7 +2086,7 @@ static int mgmt_unblock_device(int index, bdaddr_t *bdaddr, addr_type_t type)
 
 	cp = (void *) &buf[sizeof(*hdr)];
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 
 	buf_len = sizeof(*hdr) + sizeof(*cp);
 
@@ -2055,7 +2108,7 @@ static int mgmt_get_conn_list(int index, GSList **conns)
 	return 0;
 }
 
-static int mgmt_disconnect(int index, bdaddr_t *bdaddr, addr_type_t type)
+static int mgmt_disconnect(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_disconnect)];
 	struct mgmt_hdr *hdr = (void *) buf;
@@ -2071,7 +2124,7 @@ static int mgmt_disconnect(int index, bdaddr_t *bdaddr, addr_type_t type)
 	hdr->index = htobs(index);
 
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
 		error("write: %s (%d)", strerror(errno), errno);
@@ -2079,7 +2132,7 @@ static int mgmt_disconnect(int index, bdaddr_t *bdaddr, addr_type_t type)
 	return 0;
 }
 
-static int mgmt_unpair_device(int index, bdaddr_t *bdaddr, addr_type_t type)
+static int mgmt_unpair_device(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_unpair_device)];
 	struct mgmt_hdr *hdr = (void *) buf;
@@ -2095,7 +2148,7 @@ static int mgmt_unpair_device(int index, bdaddr_t *bdaddr, addr_type_t type)
 	hdr->index = htobs(index);
 
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 	cp->disconnect = 1;
 
 	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
@@ -2116,11 +2169,29 @@ static int mgmt_encrypt_link(int index, bdaddr_t *dst, bt_hci_result_t cb,
 }
 
 static int mgmt_set_did(int index, uint16_t vendor, uint16_t product,
-							uint16_t version)
+					uint16_t version, uint16_t source)
 {
-	DBG("index %d vendor %u product %u version %u",
-					index, vendor, product, version);
-	return -ENOSYS;
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_set_device_id)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_set_device_id *cp = (void *) &buf[sizeof(*hdr)];
+
+	DBG("index %d source %x vendor %x product %x version %x",
+				index, source, vendor, product, version);
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_SET_DEVICE_ID);
+	hdr->len = htobs(sizeof(*cp));
+	hdr->index = htobs(index);
+
+	cp->source = htobs(source);
+	cp->vendor = htobs(vendor);
+	cp->product = htobs(product);
+	cp->version = htobs(version);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static int mgmt_disable_cod_cache(int index)
@@ -2170,7 +2241,7 @@ static int mgmt_load_link_keys(int index, GSList *keys, gboolean debug_keys)
 		struct link_key_info *info = l->data;
 
 		bacpy(&key->addr.bdaddr, &info->bdaddr);
-		key->addr.type = MGMT_ADDR_BREDR;
+		key->addr.type = BDADDR_BREDR;
 		key->type = info->type;
 		memcpy(key->val, info->key, 16);
 		key->pin_len = info->pin_len;
@@ -2322,7 +2393,7 @@ static int mgmt_remove_remote_oob_data(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
-static int mgmt_confirm_name(int index, bdaddr_t *bdaddr, addr_type_t type,
+static int mgmt_confirm_name(int index, bdaddr_t *bdaddr, uint8_t bdaddr_type,
 							gboolean name_known)
 {
 	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_confirm_name)];
@@ -2340,7 +2411,7 @@ static int mgmt_confirm_name(int index, bdaddr_t *bdaddr, addr_type_t type,
 	hdr->len = htobs(sizeof(*cp));
 
 	bacpy(&cp->addr.bdaddr, bdaddr);
-	cp->addr.type = mgmt_addr_type(type);
+	cp->addr.type = bdaddr_type;
 	cp->name_known = name_known;
 
 	if (write(mgmt_sock, &buf, sizeof(buf)) < 0)
@@ -2381,7 +2452,7 @@ static int mgmtops_load_ltks(int index, GSList *keys)
 		struct smp_ltk_info *info = l->data;
 
 		bacpy(&key->addr.bdaddr, &info->bdaddr);
-		key->addr.type = info->addr_type;
+		key->addr.type = info->bdaddr_type;
 		memcpy(key->val, info->val, sizeof(info->val));
 		memcpy(key->rand, info->rand, sizeof(info->rand));
 		memcpy(&key->ediv, &info->ediv, sizeof(key->ediv));

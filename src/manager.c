@@ -196,20 +196,32 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static GDBusMethodTable manager_methods[] = {
-	{ "GetProperties",	"",	"a{sv}",get_properties	},
-	{ "DefaultAdapter",	"",	"o",	default_adapter	},
-	{ "FindAdapter",	"s",	"o",	find_adapter	},
-	{ "ListAdapters",	"",	"ao",	list_adapters,
-						G_DBUS_METHOD_FLAG_DEPRECATED},
+static const GDBusMethodTable manager_methods[] = {
+	{ GDBUS_METHOD("GetProperties",
+			NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+			get_properties) },
+	{ GDBUS_METHOD("DefaultAdapter",
+			NULL, GDBUS_ARGS({ "adapter", "o" }),
+			default_adapter) },
+	{ GDBUS_METHOD("FindAdapter",
+			GDBUS_ARGS({ "pattern", "s" }),
+			GDBUS_ARGS({ "adapter", "o" }),
+			find_adapter) },
+	{ GDBUS_ASYNC_METHOD("ListAdapters",
+			NULL, GDBUS_ARGS({ "adapters", "ao" }),
+			list_adapters) },
 	{ }
 };
 
-static GDBusSignalTable manager_signals[] = {
-	{ "PropertyChanged",		"sv"	},
-	{ "AdapterAdded",		"o"	},
-	{ "AdapterRemoved",		"o"	},
-	{ "DefaultAdapterChanged",	"o"	},
+static const GDBusSignalTable manager_signals[] = {
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ GDBUS_SIGNAL("AdapterAdded",
+			GDBUS_ARGS({ "adapter", "o" })) },
+	{ GDBUS_SIGNAL("AdapterRemoved",
+			GDBUS_ARGS({ "adapter", "o" })) },
+	{ GDBUS_SIGNAL("DefaultAdapterChanged",
+			GDBUS_ARGS({ "adapter", "o" })) },
 	{ }
 };
 
@@ -413,6 +425,12 @@ struct btd_adapter *btd_manager_register_adapter(int id, gboolean up)
 	if (default_adapter_id < 0)
 		manager_set_default_adapter(id);
 
+	if (main_opts.did_source)
+		btd_adapter_set_did(adapter, main_opts.did_vendor,
+						main_opts.did_product,
+						main_opts.did_version,
+						main_opts.did_source);
+
 	DBG("Adapter %s registered", path);
 
 	return btd_adapter_ref(adapter);
@@ -434,15 +452,4 @@ int btd_manager_unregister_adapter(int id)
 	manager_remove_adapter(adapter);
 
 	return 0;
-}
-
-void btd_manager_set_did(uint16_t vendor, uint16_t product, uint16_t version)
-{
-	GSList *l;
-
-	for (l = adapters; l != NULL; l = g_slist_next(l)) {
-		struct btd_adapter *adapter = l->data;
-
-		btd_adapter_set_did(adapter, vendor, product, version);
-	}
 }

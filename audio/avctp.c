@@ -40,6 +40,7 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
+#include <bluetooth/uuid.h>
 
 #include <glib.h>
 
@@ -53,6 +54,7 @@
 #include "manager.h"
 #include "device.h"
 #include "avctp.h"
+#include "avrcp.h"
 
 #define QUIRK_NO_RELEASE 1 << 0
 
@@ -120,6 +122,12 @@ struct avctp_server {
 	GSList *sessions;
 };
 
+struct avctp_rsp_handler {
+	uint8_t id;
+	avctp_rsp_cb func;
+	void *user_data;
+};
+
 struct avctp {
 	struct avctp_server *server;
 	bdaddr_t dst;
@@ -134,6 +142,7 @@ struct avctp {
 	uint16_t mtu;
 
 	uint8_t key_quirks[256];
+	GSList *handlers;
 };
 
 struct avctp_pdu_handler {
@@ -161,6 +170,7 @@ static struct {
 static GSList *callbacks = NULL;
 static GSList *servers = NULL;
 static GSList *handlers = NULL;
+static uint8_t id = 0;
 
 static void auth_cb(DBusError *derr, void *user_data);
 
@@ -235,9 +245,12 @@ static size_t handle_panel_passthrough(struct avctp *session,
 		break;
 	}
 
-	if (key_map[i].name == NULL)
+	if (key_map[i].name == NULL) {
 		DBG("AV/C: unknown button 0x%02X %s",
 						operands[0] & 0x7F, status);
+		*code = AVC_CTYPE_NOT_IMPLEMENTED;
+		return 0;
+	}
 
 done:
 	*code = AVC_CTYPE_ACCEPTED;
@@ -267,7 +280,7 @@ static size_t handle_unit_info(struct avctp *session,
 
 	DBG("reply to AVC_OP_UNITINFO");
 
-	return 0;
+	return operand_count;
 }
 
 static size_t handle_subunit_info(struct avctp *session,
@@ -291,7 +304,7 @@ static size_t handle_subunit_info(struct avctp *session,
 
 	DBG("reply to AVC_OP_SUBUNITINFO");
 
-	return 0;
+	return operand_count;
 }
 
 static struct avctp_pdu_handler *find_handler(GSList *list, uint8_t opcode)
@@ -308,7 +321,7 @@ static struct avctp_pdu_handler *find_handler(GSList *list, uint8_t opcode)
 
 static void avctp_disconnected(struct avctp *session)
 {
-	struct avctp_server *server = session->server;
+	struct avctp_server *server;
 
 	if (!session)
 		return;
@@ -344,7 +357,9 @@ static void avctp_disconnected(struct avctp *session)
 		session->uinput = -1;
 	}
 
+	server = session->server;
 	server->sessions = g_slist_remove(server->sessions, session);
+	g_slist_free_full(session->handlers, g_free);
 	g_free(session);
 }
 
@@ -388,6 +403,31 @@ static void avctp_set_state(struct avctp *session, avctp_state_t new_state)
 		break;
 	default:
 		error("Invalid AVCTP state %d", new_state);
+		return;
+	}
+}
+
+static void handle_response(struct avctp *session, struct avctp_header *avctp,
+				struct avc_header *avc, uint8_t *operands,
+				size_t operand_count)
+{
+	GSList *l;
+
+	for (l = session->handlers; l; l = l->next) {
+		struct avctp_rsp_handler *handler = l->data;
+
+		if (handler->id != avctp->transaction)
+			continue;
+
+		if (handler->func && handler->func(session, avc->code,
+						avc->subunit_type,
+						operands, operand_count,
+						handler->user_data))
+			return;
+
+		session->handlers = g_slist_remove(session->handlers, handler);
+		g_free(handler);
+
 		return;
 	}
 }
@@ -444,8 +484,10 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 			avc->code, avc->subunit_type, avc->subunit_id,
 			avc->opcode, operand_count);
 
-	if (avctp->cr == AVCTP_RESPONSE)
+	if (avctp->cr == AVCTP_RESPONSE) {
+		handle_response(session, avctp, avc, operands, operand_count);
 		return TRUE;
+	}
 
 	packet_size = AVCTP_HEADER_LENGTH + AVC_HEADER_LENGTH;
 	avctp->cr = AVCTP_RESPONSE;
@@ -464,7 +506,8 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 	handler = find_handler(handlers, avc->opcode);
 	if (!handler) {
 		DBG("handler not found for 0x%02x", avc->opcode);
-		avc->code = AVC_CTYPE_REJECTED;
+		packet_size += avrcp_handle_vendor_reject(&code, operands);
+		avc->code = code;
 		goto done;
 	}
 
@@ -851,14 +894,13 @@ int avctp_send_passthrough(struct avctp *session, uint8_t op)
 	struct avc_header *avc = (void *) &buf[AVCTP_HEADER_LENGTH];
 	uint8_t *operands = &buf[AVCTP_HEADER_LENGTH + AVC_HEADER_LENGTH];
 	int sk;
-	static uint8_t transaction = 0;
 
 	if (session->state != AVCTP_STATE_CONNECTED)
 		return -ENOTCONN;
 
 	memset(buf, 0, sizeof(buf));
 
-	avctp->transaction = transaction++;
+	avctp->transaction = id++;
 	avctp->packet_type = AVCTP_PACKET_SINGLE;
 	avctp->cr = AVCTP_COMMAND;
 	avctp->pid = htons(AV_REMOTE_SVCLASS_ID);
@@ -876,7 +918,7 @@ int avctp_send_passthrough(struct avctp *session, uint8_t op)
 		return -errno;
 
 	/* Button release */
-	avctp->transaction = transaction++;
+	avctp->transaction = id++;
 	operands[0] |= 0x80;
 
 	if (write(sk, buf, sizeof(buf)) < 0)
@@ -885,8 +927,8 @@ int avctp_send_passthrough(struct avctp *session, uint8_t op)
 	return 0;
 }
 
-int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
-				uint8_t code, uint8_t subunit,
+static int avctp_send(struct avctp *session, uint8_t transaction, uint8_t cr,
+				uint8_t code, uint8_t subunit, uint8_t opcode,
 				uint8_t *operands, size_t operand_count)
 {
 	uint8_t *buf;
@@ -909,12 +951,12 @@ int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
 
 	avctp->transaction = transaction;
 	avctp->packet_type = AVCTP_PACKET_SINGLE;
-	avctp->cr = AVCTP_RESPONSE;
+	avctp->cr = cr;
 	avctp->pid = htons(AV_REMOTE_SVCLASS_ID);
 
 	avc->code = code;
 	avc->subunit_type = subunit;
-	avc->opcode = AVC_OP_VENDORDEP;
+	avc->opcode = opcode;
 
 	memcpy(pdu, operands, operand_count);
 
@@ -923,6 +965,39 @@ int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
 
 	g_free(buf);
 	return err;
+}
+
+int avctp_send_vendordep(struct avctp *session, uint8_t transaction,
+				uint8_t code, uint8_t subunit,
+				uint8_t *operands, size_t operand_count)
+{
+	return avctp_send(session, transaction, AVCTP_RESPONSE, code, subunit,
+					AVC_OP_VENDORDEP, operands, operand_count);
+}
+
+int avctp_send_vendordep_req(struct avctp *session, uint8_t code,
+					uint8_t subunit, uint8_t *operands,
+					size_t operand_count,
+					avctp_rsp_cb func, void *user_data)
+{
+	struct avctp_rsp_handler *handler;
+	int err;
+
+	err = avctp_send(session, id, AVCTP_COMMAND, code, subunit,
+				AVC_OP_VENDORDEP, operands, operand_count);
+	if (err < 0)
+		return err;
+
+	handler = g_new0(struct avctp_rsp_handler, 1);
+	handler->id = id;
+	handler->func = func;
+	handler->user_data = user_data;
+
+	session->handlers = g_slist_prepend(session->handlers, handler);
+
+	id++;
+
+	return 0;
 }
 
 unsigned int avctp_add_state_cb(avctp_state_cb cb, void *user_data)

@@ -555,24 +555,26 @@ static DBusMessage *sink_get_properties(DBusConnection *conn,
 	return reply;
 }
 
-static GDBusMethodTable sink_methods[] = {
-	{ "Connect",		"",	"",	sink_connect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "Disconnect",		"",	"",	sink_disconnect,
-						G_DBUS_METHOD_FLAG_ASYNC },
-	{ "IsConnected",	"",	"b",	sink_is_connected,
-						G_DBUS_METHOD_FLAG_DEPRECATED },
-	{ "GetProperties",	"",	"a{sv}",sink_get_properties },
-	{ NULL, NULL, NULL, NULL }
+static const GDBusMethodTable sink_methods[] = {
+	{ GDBUS_ASYNC_METHOD("Connect", NULL, NULL, sink_connect) },
+	{ GDBUS_ASYNC_METHOD("Disconnect", NULL, NULL, sink_disconnect) },
+	{ GDBUS_DEPRECATED_METHOD("IsConnected",
+			NULL, GDBUS_ARGS({ "connected", "b" }),
+			sink_is_connected) },
+	{ GDBUS_METHOD("GetProperties",
+				NULL, GDBUS_ARGS({ "properties", "a{sv}" }),
+				sink_get_properties) },
+	{ }
 };
 
-static GDBusSignalTable sink_signals[] = {
-	{ "Connected",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Disconnected",		"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Playing",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "Stopped",			"",	G_DBUS_SIGNAL_FLAG_DEPRECATED },
-	{ "PropertyChanged",		"sv"	},
-	{ NULL, NULL }
+static const GDBusSignalTable sink_signals[] = {
+	{ GDBUS_DEPRECATED_SIGNAL("Connected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Disconnected", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Playing", NULL) },
+	{ GDBUS_DEPRECATED_SIGNAL("Stopped", NULL) },
+	{ GDBUS_SIGNAL("PropertyChanged",
+			GDBUS_ARGS({ "name", "s" }, { "value", "v" })) },
+	{ }
 };
 
 static void sink_free(struct audio_device *dev)
