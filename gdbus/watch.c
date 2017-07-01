@@ -307,6 +307,91 @@ static DBusHandlerResult name_exit_filter(DBusConnection *connection,
 	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
+struct service_data {
+	DBusConnection *conn;
+	GDBusWatchFunction conn_func;
+	void *user_data;
+};
+
+static void service_reply(DBusPendingCall *call, void *user_data)
+{
+	struct service_data *data = user_data;
+	DBusMessage *reply;
+	DBusError error;
+	dbus_bool_t has_owner;
+
+	reply = dbus_pending_call_steal_reply(call);
+	if (reply == NULL)
+		return;
+
+	dbus_error_init(&error);
+
+	if (dbus_message_get_args(reply, &error,
+					DBUS_TYPE_BOOLEAN, &has_owner,
+						DBUS_TYPE_INVALID) == FALSE) {
+		if (dbus_error_is_set(&error) == TRUE) {
+			error("%s", error.message);
+			dbus_error_free(&error);
+		} else {
+			error("Wrong arguments for NameHasOwner reply");
+		}
+		goto done;
+	}
+
+	if (has_owner && data->conn_func)
+		data->conn_func(data->conn, data->user_data);
+
+done:
+	dbus_message_unref(reply);
+}
+
+static void check_service(DBusConnection *connection, const char *name,
+				GDBusWatchFunction connect, void *user_data)
+{
+	DBusMessage *message;
+	DBusPendingCall *call;
+	struct service_data *data;
+
+	data = g_try_malloc0(sizeof(*data));
+	if (data == NULL) {
+		error("Can't allocate data structure");
+		return;
+	}
+
+	data->conn = connection;
+	data->conn_func = connect;
+	data->user_data = user_data;
+
+	message = dbus_message_new_method_call(DBUS_SERVICE_DBUS,
+			DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS, "NameHasOwner");
+	if (message == NULL) {
+		error("Can't allocate new message");
+		g_free(data);
+		return;
+	}
+
+	dbus_message_append_args(message, DBUS_TYPE_STRING, &name,
+							DBUS_TYPE_INVALID);
+
+	if (dbus_connection_send_with_reply(connection, message,
+							&call, -1) == FALSE) {
+		error("Failed to execute method call");
+		g_free(data);
+		goto done;
+	}
+
+	if (call == NULL) {
+		error("D-Bus connection not available");
+		g_free(data);
+		goto done;
+	}
+
+	dbus_pending_call_set_notify(call, service_reply, data, NULL);
+
+done:
+	dbus_message_unref(message);
+}
+
 guint g_dbus_add_service_watch(DBusConnection *connection, const char *name,
 				GDBusWatchFunction connect,
 				GDBusWatchFunction disconnect,
@@ -328,7 +413,7 @@ guint g_dbus_add_service_watch(DBusConnection *connection, const char *name,
 	/* The filter is already added if this is not the first callback
 	 * registration for the name */
 	if (!first)
-		return listener_id;
+		goto done;
 
 	if (name) {
 		debug("name_listener_add(%s)", name);
@@ -338,6 +423,10 @@ guint g_dbus_add_service_watch(DBusConnection *connection, const char *name,
 			return 0;
 		}
 	}
+
+done:
+	if (connect)
+		check_service(connection, name, connect, user_data);
 
 	return listener_id;
 }

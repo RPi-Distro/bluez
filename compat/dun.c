@@ -86,6 +86,7 @@ static int for_each_port(int (*func)(struct rfcomm_dev_info *, unsigned long), u
 	}
 
 	close(sk);
+	free(dl);
 	return r;
 }
 
@@ -106,8 +107,10 @@ static int uses_rfcomm(char *path, char *dev)
 		int  len = readlink(de->d_name, link, sizeof(link));
 		if (len > 0) {
 			link[len] = 0;
-			if (strstr(link, dev))
+			if (strstr(link, dev)) {
+				closedir(dir);
 				return 1;
+			}
 		}
 	}
 

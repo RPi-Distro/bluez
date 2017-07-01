@@ -102,6 +102,8 @@
 #define FORWARD_OP		0x4b
 #define BACKWARD_OP		0x4c
 
+#define QUIRK_NO_RELEASE	1 << 0
+
 static DBusConnection *connection = NULL;
 
 static GSList *servers = NULL;
@@ -176,6 +178,8 @@ struct control {
 	uint16_t mtu;
 
 	gboolean target;
+
+	uint8_t key_quirks[256];
 };
 
 static struct {
@@ -195,6 +199,8 @@ static struct {
 
 static GSList *avctp_callbacks = NULL;
 
+static void auth_cb(DBusError *derr, void *user_data);
+
 static sdp_record_t *avrcp_ct_record()
 {
 	sdp_list_t *svclass_id, *pfseq, *apseq, *root;
@@ -203,7 +209,8 @@ static sdp_record_t *avrcp_ct_record()
 	sdp_list_t *aproto, *proto[2];
 	sdp_record_t *record;
 	sdp_data_t *psm, *version, *features;
-	uint16_t lp = AVCTP_PSM, ver = 0x0100, feat = 0x000f;
+	uint16_t lp = AVCTP_PSM;
+	uint16_t avrcp_ver = 0x0100, avctp_ver = 0x0103, feat = 0x000f;
 
 	record = sdp_record_alloc();
 	if (!record)
@@ -227,7 +234,7 @@ static sdp_record_t *avrcp_ct_record()
 
 	sdp_uuid16_create(&avctp, AVCTP_UUID);
 	proto[1] = sdp_list_append(0, &avctp);
-	version = sdp_data_alloc(SDP_UINT16, &ver);
+	version = sdp_data_alloc(SDP_UINT16, &avctp_ver);
 	proto[1] = sdp_list_append(proto[1], version);
 	apseq = sdp_list_append(apseq, proto[1]);
 
@@ -236,7 +243,7 @@ static sdp_record_t *avrcp_ct_record()
 
 	/* Bluetooth Profile Descriptor List */
 	sdp_uuid16_create(&profile[0].uuid, AV_REMOTE_PROFILE_ID);
-	profile[0].version = ver;
+	profile[0].version = avrcp_ver;
 	pfseq = sdp_list_append(0, &profile[0]);
 	sdp_set_profile_descs(record, pfseq);
 
@@ -266,7 +273,8 @@ static sdp_record_t *avrcp_tg_record()
 	sdp_list_t *aproto, *proto[2];
 	sdp_record_t *record;
 	sdp_data_t *psm, *version, *features;
-	uint16_t lp = AVCTP_PSM, ver = 0x0100, feat = 0x000f;
+	uint16_t lp = AVCTP_PSM;
+	uint16_t avrcp_ver = 0x0100, avctp_ver = 0x0103, feat = 0x000f;
 
 	record = sdp_record_alloc();
 	if (!record)
@@ -290,7 +298,7 @@ static sdp_record_t *avrcp_tg_record()
 
 	sdp_uuid16_create(&avctp, AVCTP_UUID);
 	proto[1] = sdp_list_append(0, &avctp);
-	version = sdp_data_alloc(SDP_UINT16, &ver);
+	version = sdp_data_alloc(SDP_UINT16, &avctp_ver);
 	proto[1] = sdp_list_append(proto[1], version);
 	apseq = sdp_list_append(apseq, proto[1]);
 
@@ -299,7 +307,7 @@ static sdp_record_t *avrcp_tg_record()
 
 	/* Bluetooth Profile Descriptor List */
 	sdp_uuid16_create(&profile[0].uuid, AV_REMOTE_PROFILE_ID);
-	profile[0].version = ver;
+	profile[0].version = avrcp_ver;
 	pfseq = sdp_list_append(0, &profile[0]);
 	sdp_set_profile_descs(record, pfseq);
 
@@ -361,11 +369,29 @@ static void handle_panel_passthrough(struct control *control,
 	}
 
 	for (i = 0; key_map[i].name != NULL; i++) {
-		if ((operands[0] & 0x7F) == key_map[i].avrcp) {
-			debug("AVRCP: %s %s", key_map[i].name, status);
-			send_key(control->uinput, key_map[i].uinput, pressed);
+		uint8_t key_quirks;
+
+		if ((operands[0] & 0x7F) != key_map[i].avrcp)
+			continue;
+
+		debug("AVRCP: %s %s", key_map[i].name, status);
+
+		key_quirks = control->key_quirks[key_map[i].avrcp];
+
+		if (key_quirks & QUIRK_NO_RELEASE) {
+			if (!pressed) {
+				debug("AVRCP: Ignoring release");
+				break;
+			}
+
+			debug("AVRCP: treating key press as press + release");
+			send_key(control->uinput, key_map[i].uinput, 1);
+			send_key(control->uinput, key_map[i].uinput, 0);
 			break;
 		}
+
+		send_key(control->uinput, key_map[i].uinput, pressed);
+		break;
 	}
 
 	if (key_map[i].name == NULL)
@@ -389,9 +415,18 @@ static void avctp_disconnected(struct audio_device *dev)
 	if (control->io_id) {
 		g_source_remove(control->io_id);
 		control->io_id = 0;
+
+		if (control->state == AVCTP_STATE_CONNECTING)
+			audio_device_cancel_authorization(dev, auth_cb,
+								control);
 	}
 
 	if (control->uinput >= 0) {
+		char address[18];
+
+		ba2str(&dev->dst, address);
+		debug("AVRCP: closing uinput for %s", address);
+
 		ioctl(control->uinput, UI_DEV_DESTROY);
 		close(control->uinput);
 		control->uinput = -1;
@@ -407,6 +442,8 @@ static void avctp_set_state(struct control *control, avctp_state_t new_state)
 
 	switch (new_state) {
 	case AVCTP_STATE_DISCONNECTED:
+		debug("AVCTP Disconnected");
+
 		avctp_disconnected(control->dev);
 
 		if (old_state != AVCTP_STATE_CONNECTED)
@@ -419,10 +456,16 @@ static void avctp_set_state(struct control *control, avctp_state_t new_state)
 		emit_property_changed(dev->conn, dev->path,
 					AUDIO_CONTROL_INTERFACE, "Connected",
 					DBUS_TYPE_BOOLEAN, &value);
+
+		if (!audio_device_is_active(dev, NULL))
+			audio_device_set_authorized(dev, FALSE);
+
 		break;
 	case AVCTP_STATE_CONNECTING:
+		debug("AVCTP Connecting");
 		break;
 	case AVCTP_STATE_CONNECTED:
+		debug("AVCTP Connected");
 		value = TRUE;
 		g_dbus_emit_signal(control->dev->conn, control->dev->path,
 				AUDIO_CONTROL_INTERFACE, "Connected",
@@ -453,7 +496,7 @@ static gboolean control_cb(GIOChannel *chan, GIOCondition cond,
 	struct avrcp_header *avrcp;
 	int ret, packet_size, operand_count, sock;
 
-	if (!(cond | G_IO_IN))
+	if (cond & (G_IO_ERR | G_IO_HUP | G_IO_NVAL))
 		goto failed;
 
 	sock = g_io_channel_unix_get_fd(control->io);
@@ -562,7 +605,7 @@ static int uinput_create(char *name)
 
 	memset(&dev, 0, sizeof(dev));
 	if (name)
-		strncpy(dev.name, name, UINPUT_MAX_NAME_SIZE);
+		strncpy(dev.name, name, UINPUT_MAX_NAME_SIZE - 1);
 
 	dev.id.bustype = BUS_BLUETOOTH;
 	dev.id.vendor  = 0x0000;
@@ -600,9 +643,16 @@ static int uinput_create(char *name)
 
 static void init_uinput(struct control *control)
 {
-	char address[18];
+	struct audio_device *dev = control->dev;
+	char address[18], name[248 + 1];
 
-	ba2str(&control->dev->dst, address);
+	device_get_name(dev->btd_dev, name, sizeof(name));
+	if (g_str_equal(name, "Nokia CK-20W")) {
+		control->key_quirks[FORWARD_OP] |= QUIRK_NO_RELEASE;
+		control->key_quirks[BACKWARD_OP] |= QUIRK_NO_RELEASE;
+	}
+
+	ba2str(&dev->dst, address);
 
 	control->uinput = uinput_create(address);
 	if (control->uinput < 0)
@@ -653,6 +703,11 @@ static void auth_cb(DBusError *derr, void *user_data)
 {
 	struct control *control = user_data;
 	GError *err = NULL;
+
+	if (control->io_id) {
+		g_source_remove(control->io_id);
+		control->io_id = 0;
+	}
 
 	if (derr && dbus_error_is_set(derr)) {
 		error("Access denied: %s", derr->message);
@@ -710,14 +765,12 @@ static void avctp_confirm_cb(GIOChannel *chan, gpointer data)
 	avctp_set_state(control, AVCTP_STATE_CONNECTING);
 	control->io = g_io_channel_ref(chan);
 
-	if (avdtp_is_connected(&src, &dst)) {
-		if (!bt_io_accept(chan, avctp_connect_cb, dev->control,
-								NULL, NULL))
-			goto drop;
-	} else if (audio_device_request_authorization(dev, AVRCP_TARGET_UUID,
-			auth_cb, dev->control) < 0)
+	if (audio_device_request_authorization(dev, AVRCP_TARGET_UUID,
+						auth_cb, dev->control) < 0)
 		goto drop;
 
+	control->io_id = g_io_add_watch(chan, G_IO_ERR | G_IO_HUP | G_IO_NVAL,
+							control_cb, control);
 	return;
 
 drop:
@@ -812,11 +865,13 @@ int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	record = avrcp_tg_record();
 	if (!record) {
 		error("Unable to allocate new service record");
+		g_free(server);
 		return -1;
 	}
 
 	if (add_record_to_server(src, record) < 0) {
 		error("Unable to register AVRCP target service record");
+		g_free(server);
 		sdp_record_free(record);
 		return -1;
 	}
@@ -825,12 +880,14 @@ int avrcp_register(DBusConnection *conn, const bdaddr_t *src, GKeyFile *config)
 	record = avrcp_ct_record();
 	if (!record) {
 		error("Unable to allocate new service record");
+		g_free(server);
 		return -1;
 	}
 
 	if (add_record_to_server(src, record) < 0) {
 		error("Unable to register AVRCP controller service record");
 		sdp_record_free(record);
+		g_free(server);
 		return -1;
 	}
 	server->ct_record_id = record->handle;

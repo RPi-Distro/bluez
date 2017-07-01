@@ -203,7 +203,7 @@ int read_on_mode(const char *src, char *mode, int length)
 	return 0;
 }
 
-int write_local_name(bdaddr_t *bdaddr, char *name)
+int write_local_name(bdaddr_t *bdaddr, const char *name)
 {
 	char filename[PATH_MAX + 1], str[249];
 	int i;
@@ -569,6 +569,11 @@ int read_link_key(bdaddr_t *local, bdaddr_t *peer, unsigned char *key, uint8_t *
 	str = textfile_get(filename, addr);
 	if (!str)
 		return -ENOENT;
+
+	if (!key) {
+		free(str);
+		return 0;
+	}
 
 	memset(tmp, 0, sizeof(tmp));
 	for (i = 0; i < 16; i++) {

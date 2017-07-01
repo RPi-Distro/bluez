@@ -12,7 +12,7 @@ AC_DEFUN([AC_PROG_CC_PIE], [
 
 AC_DEFUN([COMPILER_FLAGS], [
 	if (test "${CFLAGS}" = ""); then
-		CFLAGS="-Wall -O2 -D_FORTIFY_SOURCE=2"
+		CFLAGS="-Wall -O2"
 	fi
 	if (test "$USE_MAINTAINER_MODE" = "yes"); then
 		CFLAGS+=" -Werror -Wextra"
@@ -23,34 +23,6 @@ AC_DEFUN([COMPILER_FLAGS], [
 		CFLAGS+=" -Wredundant-decls"
 		CFLAGS+=" -Wcast-align"
 	fi
-])
-
-AC_DEFUN([GTK_DOC_CHECK], [
-	AC_ARG_WITH([html-dir],
-		AS_HELP_STRING([--with-html-dir=PATH], [path to installed docs]),,
-					[with_html_dir='${datadir}/gtk-doc/html'])
-	HTML_DIR="$with_html_dir"
-	AC_SUBST([HTML_DIR])
-
-	AC_ARG_ENABLE([gtk-doc],
-		AS_HELP_STRING([--enable-gtk-doc], [use gtk-doc to build documentation [[default=no]]]),,
-					[enable_gtk_doc=no])
-
-	if test x$enable_gtk_doc = xyes; then
-		ifelse([$1],[],
-			[PKG_CHECK_EXISTS([gtk-doc],,
-				AC_MSG_ERROR([gtk-doc not installed and --enable-gtk-doc requested]))],
-			[PKG_CHECK_EXISTS([gtk-doc >= $1],,
-				AC_MSG_ERROR([You need to have gtk-doc >= $1 installed to build gtk-doc]))])
-	fi
-
-	AC_MSG_CHECKING([whether to build gtk-doc documentation])
-	AC_MSG_RESULT($enable_gtk_doc)
-
-	AC_PATH_PROGS(GTKDOC_CHECK,gtkdoc-check,)
-
-	AM_CONDITIONAL([ENABLE_GTK_DOC], [test x$enable_gtk_doc = xyes])
-	AM_CONDITIONAL([GTK_DOC_USE_LIBTOOL], [test -n "$LIBTOOL"])
 ])
 
 AC_DEFUN([AC_FUNC_PPOLL], [
@@ -107,6 +79,17 @@ AC_DEFUN([AC_INIT_BLUEZ], [
 				[Directory for the configuration files])
 	AC_DEFINE_UNQUOTED(STORAGEDIR, "${storagedir}",
 				[Directory for the storage files])
+
+	AC_SUBST(CONFIGDIR, "${configdir}")
+	AC_SUBST(STORAGEDIR, "${storagedir}")
+
+	UDEV_DATADIR="`$PKG_CONFIG --variable=udevdir udev`"
+	if (test -z "${UDEV_DATADIR}"); then
+		UDEV_DATADIR="${sysconfdir}/udev/rules.d"
+	else
+		UDEV_DATADIR="${UDEV_DATADIR}/rules.d"
+	fi
+	AC_SUBST(UDEV_DATADIR)
 ])
 
 AC_DEFUN([AC_PATH_DBUS], [
@@ -165,6 +148,12 @@ AC_DEFUN([AC_PATH_NETLINK], [
 	AC_SUBST(NETLINK_LIBS)
 ])
 
+AC_DEFUN([AC_PATH_CAPNG], [
+        PKG_CHECK_MODULES(CAPNG, libcap-ng, capng_found=yes, capng_found=no)
+        AC_SUBST(CAPNG_CFLAGS)
+        AC_SUBST(CAPNG_LIBS)
+])
+
 AC_DEFUN([AC_PATH_SNDFILE], [
 	PKG_CHECK_MODULES(SNDFILE, sndfile, sndfile_found=yes, sndfile_found=no)
 	AC_SUBST(SNDFILE_CFLAGS)
@@ -173,8 +162,10 @@ AC_DEFUN([AC_PATH_SNDFILE], [
 
 AC_DEFUN([AC_ARG_BLUEZ], [
 	debug_enable=no
+	optimization_enable=yes
 	fortify_enable=yes
 	pie_enable=yes
+	capng_enable=${capng_found}
 	sndfile_enable=${sndfile_found}
 	netlink_enable=no
 	hal_enable=${hal_found}
@@ -193,13 +184,16 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	cups_enable=no
 	test_enable=no
 	bccmd_enable=no
+	pcmcia_enable=no
 	hid2hci_enable=no
 	dfutool_enable=no
-	manpages_enable=yes
+	udevrules_enable=yes
 	configfiles_enable=yes
-	initscripts_enable=no
-	pcmciarules_enable=no
 	telephony_driver=dummy
+
+	AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization], [disable code optimization]), [
+		optimization_enable=${enableval}
+	])
 
 	AC_ARG_ENABLE(fortify, AC_HELP_STRING([--disable-fortify], [disable compile time buffer checks]), [
 		fortify_enable=${enableval}
@@ -207,6 +201,10 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 
 	AC_ARG_ENABLE(pie, AC_HELP_STRING([--disable-pie], [disable position independent executables flag]), [
 		pie_enable=${enableval}
+	])
+
+	AC_ARG_ENABLE(capng, AC_HELP_STRING([--disable-capng], [disable capabilities dropping]), [
+		capng_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(network, AC_HELP_STRING([--disable-network], [disable network plugin]), [
@@ -253,6 +251,10 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		bccmd_enable=${enableval}
 	])
 
+	AC_ARG_ENABLE(pcmcia, AC_HELP_STRING([--enable-pcmcia], [install PCMCIA serial script]), [
+		pcmcia_enable=${enableval}
+	])
+
 	AC_ARG_ENABLE(hid2hci, AC_HELP_STRING([--enable-hid2hci], [install HID mode switching utility]), [
 		hid2hci_enable=${enableval}
 	])
@@ -281,20 +283,12 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 		test_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(manpages, AC_HELP_STRING([--enable-manpages], [install Bluetooth manual pages]), [
-		manpages_enable=${enableval}
+	AC_ARG_ENABLE(udevrules, AC_HELP_STRING([--enable-udevrules], [install Bluetooth udev rules]), [
+		udevrules_enable=${enableval}
 	])
 
-	AC_ARG_ENABLE(configfiles, AC_HELP_STRING([--enable-configfiles], [install Bluetooth config files]), [
+	AC_ARG_ENABLE(configfiles, AC_HELP_STRING([--enable-configfiles], [install Bluetooth configuration files]), [
 		configfiles_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(initscripts, AC_HELP_STRING([--enable-initscripts], [install Bluetooth boot scripts]), [
-		initscripts_enable=${enableval}
-	])
-
-	AC_ARG_ENABLE(pcmciarules, AC_HELP_STRING([--enable-pcmciarules], [install PCMCIA udev rules]), [
-		pcmciarules_enable=${enableval}
 	])
 
 	AC_ARG_ENABLE(debug, AC_HELP_STRING([--enable-debug], [enable compiling with debugging information]), [
@@ -317,21 +311,20 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	fi
 
 	if (test "${debug_enable}" = "yes" && test "${ac_cv_prog_cc_g}" = "yes"); then
-		CFLAGS="$CFLAGS -g -O0"
+		CFLAGS="$CFLAGS -g"
+	fi
+
+	if (test "${optimization_enable}" = "no"); then
+		CFLAGS="$CFLAGS -O0"
 	fi
 
 	if (test "${usb_enable}" = "yes" && test "${usb_found}" = "yes"); then
 		AC_DEFINE(HAVE_LIBUSB, 1, [Define to 1 if you have USB library.])
 	fi
 
-	AC_SUBST([BLUEZ_CFLAGS], ['-I$(top_builddir)/include'])
-	AC_SUBST([BLUEZ_LIBS], ['$(top_builddir)/lib/libbluetooth.la'])
-
-	AC_SUBST([GDBUS_CFLAGS], ['-I$(top_srcdir)/gdbus'])
-	AC_SUBST([GDBUS_LIBS], ['$(top_builddir)/gdbus/libgdbus.la'])
-
-	AC_SUBST([SBC_CFLAGS], ['-I$(top_srcdir)/sbc'])
-	AC_SUBST([SBC_LIBS], ['$(top_builddir)/sbc/libsbc.la'])
+	if (test "${capng_enable}" = "yes" && test "${capng_found}" = "yes"); then
+		AC_DEFINE(HAVE_CAPNG, 1, [Define to 1 if you have capabilities library.])
+	fi
 
 	AM_CONDITIONAL(SNDFILE, test "${sndfile_enable}" = "yes" && test "${sndfile_found}" = "yes")
 	AM_CONDITIONAL(NETLINK, test "${netlink_enable}" = "yes" && test "${netlink_found}" = "yes")
@@ -344,6 +337,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(SERIALPLUGIN, test "${serial_enable}" = "yes")
 	AM_CONDITIONAL(NETWORKPLUGIN, test "${network_enable}" = "yes")
 	AM_CONDITIONAL(SERVICEPLUGIN, test "${service_enable}" = "yes")
+	AM_CONDITIONAL(ECHOPLUGIN, test "no" = "yes")
 	AM_CONDITIONAL(HIDD, test "${hidd_enable}" = "yes")
 	AM_CONDITIONAL(PAND, test "${pand_enable}" = "yes")
 	AM_CONDITIONAL(DUND, test "${dund_enable}" = "yes")
@@ -351,10 +345,9 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(TEST, test "${test_enable}" = "yes")
 	AM_CONDITIONAL(TOOLS, test "${tools_enable}" = "yes")
 	AM_CONDITIONAL(BCCMD, test "${bccmd_enable}" = "yes")
+	AM_CONDITIONAL(PCMCIA, test "${pcmcia_enable}" = "yes")
 	AM_CONDITIONAL(HID2HCI, test "${hid2hci_enable}" = "yes" && test "${usb_found}" = "yes")
 	AM_CONDITIONAL(DFUTOOL, test "${dfutool_enable}" = "yes" && test "${usb_found}" = "yes")
-	AM_CONDITIONAL(MANPAGES, test "${manpages_enable}" = "yes")
+	AM_CONDITIONAL(UDEVRULES, test "${udevrules_enable}" = "yes")
 	AM_CONDITIONAL(CONFIGFILES, test "${configfiles_enable}" = "yes")
-	AM_CONDITIONAL(INITSCRIPTS, test "${initscripts_enable}" = "yes")
-	AM_CONDITIONAL(PCMCIARULES, test "${pcmciarules_enable}" = "yes")
 ])

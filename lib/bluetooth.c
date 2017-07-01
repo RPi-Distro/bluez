@@ -35,8 +35,8 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
+#include "bluetooth.h"
+#include "hci.h"
 
 void baswap(bdaddr_t *dst, const bdaddr_t *src)
 {
@@ -462,6 +462,8 @@ char *bt_compidtostr(int compid)
 		return "Sony Ericsson Mobile Communications";
 	case 87:
 		return "Harman International Industries, Inc.";
+	case 88:
+		return "Vizio, Inc.";
 	case 65535:
 		return "internal use";
 	default:

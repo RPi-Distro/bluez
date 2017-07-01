@@ -560,28 +560,34 @@ int main(int argc, char *argv[])
 
 	/* The rest is pppd options */
 	if (argc > 0) {
-		for (opt = 3; argc && opt < DUN_MAX_PPP_OPTS; argc--, opt++)
+		for (opt = 3; argc && opt < DUN_MAX_PPP_OPTS - 1;
+							argc--, opt++)
 			pppd_opts[opt] = *argv++;
 		pppd_opts[opt] = NULL;
 	}
 
 	io_init();
 
-	if (dun_init())
+	if (dun_init()) {
+		free(dst);
 		return -1;
+	}
 
 	/* Check non daemon modes first */
 	switch (mode) {
 	case SHOW:
 		do_show();
+		free(dst);
 		return 0;
 
 	case KILL:
 		do_kill(dst);
+		free(dst);
 		return 0;
 
 	case NONE:
 		printf(main_help, VERSION);
+		free(dst);
 		return 0;
 	}
 
@@ -611,6 +617,7 @@ int main(int argc, char *argv[])
 		src_dev = hci_devid(src);
 		if (src_dev < 0 || hci_devba(src_dev, &src_addr) < 0) {
 			syslog(LOG_ERR, "Invalid source. %s(%d)", strerror(errno), errno);
+			free(dst);
 			return -1;
 		}
 	}
@@ -633,5 +640,6 @@ int main(int argc, char *argv[])
 		break;
 	}
 
+	free(dst);
 	return 0;
 }

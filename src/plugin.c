@@ -86,6 +86,9 @@ static gboolean is_disabled(const char *name, char **list)
 {
 	int i;
 
+	if (list == NULL)
+		return FALSE;
+
 	for (i = 0; list[i] != NULL; i++) {
 		char *str;
 		gboolean equal;
@@ -116,9 +119,6 @@ gboolean plugin_init(GKeyFile *config)
 	gchar **disabled;
 	unsigned int i;
 
-	if (strlen(PLUGINDIR) == 0)
-		return FALSE;
-
 	/* Make a call to BtIO API so its symbols got resolved before the
 	 * plugins are loaded. */
 	bt_io_error_quark();
@@ -133,11 +133,15 @@ gboolean plugin_init(GKeyFile *config)
 	debug("Loading builtin plugins");
 
 	for (i = 0; __bluetooth_builtin[i]; i++) {
-		if (disabled && is_disabled(__bluetooth_builtin[i]->name,
-								disabled))
+		if (is_disabled(__bluetooth_builtin[i]->name, disabled))
 			continue;
 
 		add_plugin(NULL,  __bluetooth_builtin[i]);
+	}
+
+	if (strlen(PLUGINDIR) == 0) {
+		g_strfreev(disabled);
+		goto start;
 	}
 
 	debug("Loading plugins %s", PLUGINDIR);
@@ -145,30 +149,22 @@ gboolean plugin_init(GKeyFile *config)
 	dir = g_dir_open(PLUGINDIR, 0, NULL);
 	if (!dir) {
 		g_strfreev(disabled);
-		return FALSE;
+		goto start;
 	}
 
 	while ((file = g_dir_read_name(dir)) != NULL) {
 		struct bluetooth_plugin_desc *desc;
 		void *handle;
 		gchar *filename;
-		struct stat st;
 
 		if (g_str_has_prefix(file, "lib") == TRUE ||
 				g_str_has_suffix(file, ".so") == FALSE)
 			continue;
 
-		if (disabled && is_disabled(file, disabled))
+		if (is_disabled(file, disabled))
 			continue;
 
 		filename = g_build_filename(PLUGINDIR, file, NULL);
-
-		if (stat(filename, &st) < 0) {
-			error("Can't find plugin %s: %s", filename,
-							strerror(errno));
-			g_free(filename);
-			continue;
-		}
 
 		handle = dlopen(filename, RTLD_NOW);
 		if (handle == NULL) {
@@ -195,11 +191,14 @@ gboolean plugin_init(GKeyFile *config)
 
 	g_strfreev(disabled);
 
+start:
 	for (list = plugins; list; list = list->next) {
 		struct bluetooth_plugin *plugin = list->data;
 
-		if (plugin->desc->init() < 0)
+		if (plugin->desc->init() < 0) {
+			error("Failed to init %s plugin", plugin->desc->name);
 			continue;
+		}
 
 		plugin->active = TRUE;
 	}
