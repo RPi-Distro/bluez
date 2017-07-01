@@ -60,35 +60,29 @@ Properties	boolean Connected [readonly]
 			Indicates the connection role when available.
 
 
-Network Hub/Peer/Router hierarchy
-=================
+Network server hierarchy
+========================
 
 Service		org.bluez
-Interface	org.bluez.network.{Hub, Peer, Router}
+Interface	org.bluez.NetworkServer
 Object path	/org/bluez/{hci0,hci1,...}
 
-Methods		dict GetProperties()
+Methods		void Register(string uuid, string bridge)
 
-			Returns all properties for the GN/PANU/NAP server. See the
-			properties section for available properties.
+			Register server for the provided UUID. Every new
+			connection to this server will be added the bridge
+			interface.
 
-		void SetProperty(string name, variant value)
+			Valid UUIDs are "gn", "panu" or "nap".
 
-			Changes the value of the specified property. Only
-			properties that are listed a read-write are changeable.
-			On success this will emit a PropertyChanged signal.
+			Initially no network server SDP is provided. Only
+			after this method a SDP record will be available
+			and the BNEP server will be ready for incoming
+			connections.
 
-			Possible Errors: org.bluez.Error.DoesNotExist
-					 org.bluez.Error.InvalidArguments
+		void Unregister(string uuid)
 
-Properties	string Name[readwrite]
+			Unregister the server for provided UUID.
 
-			The Bluetooth network server name.
-
-		boolean Enable[readwrite]
-
-			Indicates if the server is Enabled/Disabled.
-
-		string Uuid[readonly]
-
-			The Bluetooth network server UUID 128 identification.
+			All servers will be automatically unregistered when
+			the calling application terminates.

@@ -1093,6 +1093,7 @@ int hci_send_req(int dd, struct hci_request *r, int to)
 	hci_filter_set_ptype(HCI_EVENT_PKT,  &nf);
 	hci_filter_set_event(EVT_CMD_STATUS, &nf);
 	hci_filter_set_event(EVT_CMD_COMPLETE, &nf);
+	hci_filter_set_event(EVT_LE_META_EVENT, &nf);
 	hci_filter_set_event(r->event, &nf);
 	hci_filter_set_opcode(opcode, &nf);
 	if (setsockopt(dd, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0)
@@ -1106,6 +1107,7 @@ int hci_send_req(int dd, struct hci_request *r, int to)
 		evt_cmd_complete *cc;
 		evt_cmd_status *cs;
 		evt_remote_name_req_complete *rn;
+		evt_le_meta_event *me;
 		remote_name_req_cp *cp;
 		int len;
 
@@ -1184,6 +1186,17 @@ int hci_send_req(int dd, struct hci_request *r, int to)
 
 			r->rlen = MIN(len, r->rlen);
 			memcpy(r->rparam, ptr, r->rlen);
+			goto done;
+
+		case EVT_LE_META_EVENT:
+			me = (void *) ptr;
+
+			if (me->subevent != r->event)
+				continue;
+
+			len -= 1;
+			r->rlen = MIN(len, r->rlen);
+			memcpy(r->rparam, me->data, r->rlen);
 			goto done;
 
 		default:
@@ -2589,5 +2602,145 @@ int hci_read_clock(int dd, uint16_t handle, uint8_t which, uint32_t *clock, uint
 
 	*clock    = rp.clock;
 	*accuracy = rp.accuracy;
+	return 0;
+}
+
+int hci_le_set_scan_enable(int dd, uint8_t enable, uint8_t filter_dup)
+{
+	struct hci_request rq;
+	le_set_scan_enable_cp scan_cp;
+	uint8_t status;
+
+	memset(&scan_cp, 0, sizeof(scan_cp));
+	scan_cp.enable = enable;
+	scan_cp.filter_dup = filter_dup;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_SCAN_ENABLE;
+	rq.cparam = &scan_cp;
+	rq.clen = LE_SET_SCAN_ENABLE_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, 100) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_set_scan_parameters(int dd, uint8_t type,
+					uint16_t interval, uint16_t window,
+					uint8_t own_type, uint8_t filter)
+{
+	struct hci_request rq;
+	le_set_scan_parameters_cp param_cp;
+	uint8_t status;
+
+	memset(&param_cp, 0, sizeof(param_cp));
+	param_cp.type = type;
+	param_cp.interval = interval;
+	param_cp.window = window;
+	param_cp.own_bdaddr_type = own_type;
+	param_cp.filter = filter;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_SCAN_PARAMETERS;
+	rq.cparam = &param_cp;
+	rq.clen = LE_SET_SCAN_PARAMETERS_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, 100) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_set_advertise_enable(int dd, uint8_t enable)
+{
+	struct hci_request rq;
+	le_set_advertise_enable_cp adv_cp;
+	uint8_t status;
+
+	memset(&adv_cp, 0, sizeof(adv_cp));
+	adv_cp.enable = enable;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_ADVERTISE_ENABLE;
+	rq.cparam = &adv_cp;
+	rq.clen = LE_SET_ADVERTISE_ENABLE_CP_SIZE;
+	rq.rparam = &status;
+	rq.rlen = 1;
+
+	if (hci_send_req(dd, &rq, 100) < 0)
+		return -1;
+
+	if (status) {
+		errno = EIO;
+		return -1;
+	}
+
+	return 0;
+}
+
+int hci_le_create_conn(int dd, uint16_t interval, uint16_t window,
+		uint8_t initiator_filter, uint8_t peer_bdaddr_type,
+		bdaddr_t peer_bdaddr, uint8_t own_bdaddr_type,
+		uint16_t min_interval, 	uint16_t max_interval,
+		uint16_t latency, uint16_t supervision_timeout,
+		uint16_t min_ce_length, uint16_t max_ce_length,
+		uint16_t *handle, int to)
+{
+	struct hci_request rq;
+	le_create_connection_cp create_conn_cp;
+	evt_le_connection_complete conn_complete_rp;
+
+	memset(&create_conn_cp, 0, sizeof(create_conn_cp));
+	create_conn_cp.interval = interval;
+	create_conn_cp.window = window;
+	create_conn_cp.initiator_filter = initiator_filter;
+	create_conn_cp.peer_bdaddr_type = peer_bdaddr_type;
+	create_conn_cp.peer_bdaddr = peer_bdaddr;
+	create_conn_cp.own_bdaddr_type = own_bdaddr_type;
+	create_conn_cp.min_interval = min_interval;
+	create_conn_cp.max_interval = max_interval;
+	create_conn_cp.latency = latency;
+	create_conn_cp.supervision_timeout = supervision_timeout;
+	create_conn_cp.min_ce_length = min_ce_length;
+	create_conn_cp.max_ce_length = max_ce_length;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_CREATE_CONN;
+	rq.event = EVT_LE_CONN_COMPLETE;
+	rq.cparam = &create_conn_cp;
+	rq.clen = LE_CREATE_CONN_CP_SIZE;
+	rq.rparam = &conn_complete_rp;
+	rq.rlen = EVT_CONN_COMPLETE_SIZE;
+
+	if (hci_send_req(dd, &rq, to) < 0)
+		return -1;
+
+	if (conn_complete_rp.status) {
+		errno = EIO;
+		return -1;
+	}
+
+	if (handle)
+		*handle = conn_complete_rp.handle;
+
 	return 0;
 }
