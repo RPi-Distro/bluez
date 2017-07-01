@@ -80,7 +80,7 @@ include_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:9:17
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 20:10:17
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -98,7 +98,8 @@ gdbus_libgdbus_internal_la_SOURCES = gdbus/gdbus.h \
 attrib_sources = attrib/att.h attrib/att-database.h attrib/att.c \
 		attrib/gatt.h attrib/gatt.c \
 		attrib/gattrib.h attrib/gattrib.c \
-		attrib/gatt-service.h attrib/gatt-service.c
+		attrib/gatt-service.h attrib/gatt-service.c \
+		src/shared/crypto.h src/shared/crypto.c
 
 btio_sources = btio/btio.h btio/btio.c
 
@@ -226,7 +227,8 @@ AM_CFLAGS += @DBUS_CFLAGS@ @GLIB_CFLAGS@
 AM_CPPFLAGS = -I$(builddir)/lib -I$(srcdir)/gdbus
 
 
-unit_tests += unit/test-eir unit/test-uuid unit/test-textfile unit/test-crc
+unit_tests += unit/test-eir unit/test-uuid unit/test-textfile unit/test-crc \
+							 unit/test-crypto
 
 unit_test_eir_SOURCES = unit/test-eir.c src/eir.c src/uuid-helper.c
 unit_test_eir_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
@@ -239,6 +241,10 @@ unit_test_textfile_LDADD = @GLIB_LIBS@
 
 unit_test_crc_SOURCES = unit/test-crc.c monitor/crc.h monitor/crc.c
 unit_test_crc_LDADD = @GLIB_LIBS@
+
+unit_test_crypto_SOURCES = unit/test-crypto.c \
+				src/shared/crypto.h src/shared/crypto.c
+unit_test_crypto_LDADD = @GLIB_LIBS@
 
 unit_tests += unit/test-ringbuf unit/test-queue
 
@@ -260,6 +266,15 @@ unit_test_mgmt_SOURCES = unit/test-mgmt.c \
 				src/shared/util.h src/shared/util.c \
 				src/shared/mgmt.h src/shared/mgmt.c
 unit_test_mgmt_LDADD = @GLIB_LIBS@
+
+unit_tests += unit/test-uhid
+
+unit_test_uhid_SOURCES = unit/test-uhid.c \
+				src/shared/uhid.h src/shared/uhid.c \
+				src/shared/io.h src/shared/io-glib.c \
+				src/shared/util.h src/shared/util.c \
+				src/shared/queue.h src/shared/queue.c
+unit_test_uhid_LDADD = @GLIB_LIBS@
 
 unit_tests += unit/test-sdp
 

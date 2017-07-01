@@ -70,6 +70,7 @@ struct bt_crypto {
 	int ref_count;
 	int ecb_aes;
 	int urandom;
+	int cmac_aes;
 };
 
 static int urandom_setup(void)
@@ -105,6 +106,28 @@ static int ecb_aes_setup(void)
 	return fd;
 }
 
+static int cmac_aes_setup(void)
+{
+	struct sockaddr_alg salg;
+	int fd;
+
+	fd = socket(PF_ALG, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	if (fd < 0)
+		return -1;
+
+	memset(&salg, 0, sizeof(salg));
+	salg.salg_family = AF_ALG;
+	strcpy((char *) salg.salg_type, "hash");
+	strcpy((char *) salg.salg_name, "cmac(aes)");
+
+	if (bind(fd, (struct sockaddr *) &salg, sizeof(salg)) < 0) {
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
 struct bt_crypto *bt_crypto_new(void)
 {
 	struct bt_crypto *crypto;
@@ -121,6 +144,14 @@ struct bt_crypto *bt_crypto_new(void)
 
 	crypto->urandom = urandom_setup();
 	if (crypto->urandom < 0) {
+		close(crypto->ecb_aes);
+		free(crypto);
+		return NULL;
+	}
+
+	crypto->cmac_aes = cmac_aes_setup();
+	if (crypto->cmac_aes < 0) {
+		close(crypto->urandom);
 		close(crypto->ecb_aes);
 		free(crypto);
 		return NULL;
@@ -149,6 +180,7 @@ void bt_crypto_unref(struct bt_crypto *crypto)
 
 	close(crypto->urandom);
 	close(crypto->ecb_aes);
+	close(crypto->cmac_aes);
 
 	free(crypto);
 }
@@ -216,14 +248,74 @@ static bool alg_encrypt(int fd, const void *inbuf, size_t inlen,
 	return true;
 }
 
-static inline void swap128(const uint8_t src[16], uint8_t dst[16])
+static inline void swap_buf(const uint8_t *src, uint8_t *dst, uint16_t len)
 {
 	int i;
 
-	for (i = 0; i < 16; i++)
-		dst[15 - i] = src[i];
+	for (i = 0; i < len; i++)
+		dst[len - 1 - i] = src[i];
 }
 
+bool bt_crypto_sign_att(struct bt_crypto *crypto, const uint8_t key[16],
+				const uint8_t *m, uint16_t m_len,
+				uint32_t sign_cnt, uint8_t signature[12])
+{
+	int fd;
+	int len;
+	uint8_t tmp[16], out[16];
+	uint16_t msg_len = m_len + sizeof(uint32_t);
+	uint8_t msg[msg_len];
+	uint8_t msg_s[msg_len];
+
+	if (!crypto)
+		return false;
+
+	memset(msg, 0, msg_len);
+	memcpy(msg, m, m_len);
+
+	/* Add sign_counter to the message */
+	put_le32(sign_cnt, msg + m_len);
+
+	/* The most significant octet of key corresponds to key[0] */
+	swap_buf(key, tmp, 16);
+
+	fd = alg_new(crypto->cmac_aes, tmp, 16);
+	if (fd < 0)
+		return false;
+
+	/* Swap msg before signing */
+	swap_buf(msg, msg_s, msg_len);
+
+	len = send(fd, msg_s, msg_len, 0);
+	if (len < 0) {
+		close(fd);
+		return false;
+	}
+
+	len = read(fd, out, 16);
+	if (len < 0) {
+		close(fd);
+		return false;
+	}
+
+	close(fd);
+
+	/*
+	 * As to BT spec. 4.1 Vol[3], Part C, chapter 10.4.1 sign counter should
+	 * be placed in the signature
+	 */
+	put_be32(sign_cnt, out + 8);
+
+	/*
+	 * The most significant octet of hash corresponds to out[0]  - swap it.
+	 * Then truncate in most significant bit first order to a length of
+	 * 12 octets
+	 */
+	swap_buf(out, tmp, 16);
+	memcpy(signature, tmp + 4, 12);
+
+	return true;
+}
 /*
  * Security function e
  *
@@ -247,7 +339,7 @@ bool bt_crypto_e(struct bt_crypto *crypto, const uint8_t key[16],
 		return false;
 
 	/* The most significant octet of key corresponds to key[0] */
-	swap128(key, tmp);
+	swap_buf(key, tmp, 16);
 
 	fd = alg_new(crypto->ecb_aes, tmp, 16);
 	if (fd < 0)
@@ -255,7 +347,7 @@ bool bt_crypto_e(struct bt_crypto *crypto, const uint8_t key[16],
 
 
 	/* Most significant octet of plaintextData corresponds to in[0] */
-	swap128(plaintext, in);
+	swap_buf(plaintext, in, 16);
 
 	if (!alg_encrypt(fd, in, 16, out, 16)) {
 		close(fd);
@@ -263,7 +355,7 @@ bool bt_crypto_e(struct bt_crypto *crypto, const uint8_t key[16],
 	}
 
 	/* Most significant octet of encryptedData corresponds to out[0] */
-	swap128(out, encrypted);
+	swap_buf(out, encrypted, 16);
 
 	close(fd);
 

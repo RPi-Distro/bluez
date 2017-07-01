@@ -52,7 +52,7 @@ static const bt_callbacks_t *bt_hal_cbacks = NULL;
 	*hal_len = 1; \
 } while (0)
 
-static void handle_adapter_state_changed(void *buf, uint16_t len)
+static void handle_adapter_state_changed(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_adapter_state_changed *ev = buf;
 
@@ -197,7 +197,7 @@ static void device_props_to_hal(bt_property_t *send_props,
 	exit(EXIT_FAILURE);
 }
 
-static void handle_adapter_props_changed(void *buf, uint16_t len)
+static void handle_adapter_props_changed(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_adapter_props_changed *ev = buf;
 	bt_property_t props[ev->num_props];
@@ -213,7 +213,7 @@ static void handle_adapter_props_changed(void *buf, uint16_t len)
 	bt_hal_cbacks->adapter_properties_cb(ev->status, ev->num_props, props);
 }
 
-static void handle_bond_state_change(void *buf, uint16_t len)
+static void handle_bond_state_change(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_bond_state_changed *ev = buf;
 	bt_bdaddr_t *addr = (bt_bdaddr_t *) ev->bdaddr;
@@ -225,7 +225,7 @@ static void handle_bond_state_change(void *buf, uint16_t len)
 								ev->state);
 }
 
-static void handle_pin_request(void *buf, uint16_t len)
+static void handle_pin_request(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_pin_request *ev = buf;
 	/* Those are declared as packed, so it's safe to assign pointers */
@@ -238,7 +238,7 @@ static void handle_pin_request(void *buf, uint16_t len)
 		bt_hal_cbacks->pin_request_cb(addr, name, ev->class_of_dev);
 }
 
-static void handle_ssp_request(void *buf, uint16_t len)
+static void handle_ssp_request(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_ssp_request *ev = buf;
 	/* Those are declared as packed, so it's safe to assign pointers */
@@ -270,7 +270,7 @@ static bool interface_ready(void)
 	return bt_hal_cbacks != NULL;
 }
 
-static void handle_discovery_state_changed(void *buf, uint16_t len)
+static void handle_discovery_state_changed(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_discovery_state_changed *ev = buf;
 
@@ -280,7 +280,7 @@ static void handle_discovery_state_changed(void *buf, uint16_t len)
 		bt_hal_cbacks->discovery_state_changed_cb(ev->state);
 }
 
-static void handle_device_found(void *buf, uint16_t len)
+static void handle_device_found(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_device_found *ev = buf;
 	bt_property_t props[ev->num_props];
@@ -296,7 +296,7 @@ static void handle_device_found(void *buf, uint16_t len)
 	bt_hal_cbacks->device_found_cb(ev->num_props, props);
 }
 
-static void handle_device_state_changed(void *buf, uint16_t len)
+static void handle_device_state_changed(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_remote_device_props *ev = buf;
 	bt_property_t props[ev->num_props];
@@ -314,7 +314,7 @@ static void handle_device_state_changed(void *buf, uint16_t len)
 						ev->num_props, props);
 }
 
-static void handle_acl_state_changed(void *buf, uint16_t len)
+static void handle_acl_state_changed(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_acl_state_changed *ev = buf;
 	bt_bdaddr_t *addr = (bt_bdaddr_t *) ev->bdaddr;
@@ -326,7 +326,7 @@ static void handle_acl_state_changed(void *buf, uint16_t len)
 								ev->state);
 }
 
-static void handle_dut_mode_receive(void *buf, uint16_t len)
+static void handle_dut_mode_receive(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_dut_mode_receive *ev = buf;
 
@@ -341,7 +341,7 @@ static void handle_dut_mode_receive(void *buf, uint16_t len)
 		bt_hal_cbacks->dut_mode_recv_cb(ev->opcode, ev->data, ev->len);
 }
 
-static void handle_le_test_mode(void *buf, uint16_t len)
+static void handle_le_test_mode(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_le_test_mode *ev = buf;
 
@@ -356,64 +356,38 @@ static void handle_le_test_mode(void *buf, uint16_t len)
  * index in table equals to 'opcode - HAL_MINIMUM_EVENT'
  */
 static const struct hal_ipc_handler ev_handlers[] = {
-	{	/* HAL_EV_ADAPTER_STATE_CHANGED */
-		.handler = handle_adapter_state_changed,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_adapter_state_changed)
-	},
-	{	/* HAL_EV_ADAPTER_PROPS_CHANGED */
-		.handler = handle_adapter_props_changed,
-		.var_len = true,
-		.data_len = sizeof(struct hal_ev_adapter_props_changed) +
-						sizeof(struct hal_property),
-	},
-	{	/* HAL_EV_REMOTE_DEVICE_PROPS */
-		.handler = handle_device_state_changed,
-		.var_len = true,
-		.data_len = sizeof(struct hal_ev_remote_device_props) +
-						sizeof(struct hal_property),
-	},
-	{	/* HAL_EV_DEVICE_FOUND */
-		.handler = handle_device_found,
-		.var_len = true,
-		.data_len = sizeof(struct hal_ev_device_found) +
-						sizeof(struct hal_property),
-	},
-	{	/* HAL_EV_DISCOVERY_STATE_CHANGED */
-		.handler = handle_discovery_state_changed,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_discovery_state_changed),
-	},
-	{	/* HAL_EV_PIN_REQUEST */
-		.handler = handle_pin_request,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_pin_request),
-	},
-	{	/* HAL_EV_SSP_REQUEST */
-		.handler = handle_ssp_request,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_ssp_request),
-	},
-	{	/* HAL_EV_BOND_STATE_CHANGED */
-		.handler = handle_bond_state_change,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_bond_state_changed),
-	},
-	{	/* HAL_EV_ACL_STATE_CHANGED */
-		.handler = handle_acl_state_changed,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_acl_state_changed),
-	},
-	{	/* HAL_EV_DUT_MODE_RECEIVE */
-		.handler = handle_dut_mode_receive,
-		.var_len = true,
-		.data_len = sizeof(struct hal_ev_dut_mode_receive),
-	},
-	{	/* HAL_EV_LE_TEST_MODE */
-		.handler = handle_le_test_mode,
-		.var_len = false,
-		.data_len = sizeof(struct hal_ev_le_test_mode),
-	}
+	/* HAL_EV_ADAPTER_STATE_CHANGED */
+	{ handle_adapter_state_changed, false,
+				sizeof(struct hal_ev_adapter_state_changed) },
+	/* HAL_EV_ADAPTER_PROPS_CHANGED */
+	{ handle_adapter_props_changed, true,
+				sizeof(struct hal_ev_adapter_props_changed) +
+				sizeof(struct hal_property) },
+	/* HAL_EV_REMOTE_DEVICE_PROPS */
+	{ handle_device_state_changed, true,
+				sizeof(struct hal_ev_remote_device_props) +
+				sizeof(struct hal_property) },
+	/* HAL_EV_DEVICE_FOUND */
+	{ handle_device_found, true, sizeof(struct hal_ev_device_found) +
+				sizeof(struct hal_property) },
+	/* HAL_EV_DISCOVERY_STATE_CHANGED */
+	{ handle_discovery_state_changed, false,
+				sizeof(struct hal_ev_discovery_state_changed) },
+	/* HAL_EV_PIN_REQUEST */
+	{ handle_pin_request, false, sizeof(struct hal_ev_pin_request) },
+	/* HAL_EV_SSP_REQUEST */
+	{ handle_ssp_request, false, sizeof(struct hal_ev_ssp_request) },
+	/* HAL_EV_BOND_STATE_CHANGED */
+	{ handle_bond_state_change, false,
+				sizeof(struct hal_ev_bond_state_changed) },
+	/* HAL_EV_ACL_STATE_CHANGED */
+	{ handle_acl_state_changed, false,
+				sizeof(struct hal_ev_acl_state_changed) },
+	/* HAL_EV_DUT_MODE_RECEIVE */
+	{ handle_dut_mode_receive, true,
+				sizeof(struct hal_ev_dut_mode_receive) },
+	/* HAL_EV_LE_TEST_MODE */
+	{ handle_le_test_mode, false, sizeof(struct hal_ev_le_test_mode) },
 };
 
 static uint8_t get_mode(void)
@@ -441,12 +415,24 @@ static int init(bt_callbacks_t *callbacks)
 	if (interface_ready())
 		return BT_STATUS_DONE;
 
-	bt_hal_cbacks = callbacks;
-
 	hal_ipc_register(HAL_SERVICE_ID_BLUETOOTH, ev_handlers,
 				sizeof(ev_handlers)/sizeof(ev_handlers[0]));
 
-	if (!hal_ipc_init()) {
+	if (!hal_ipc_init(BLUEZ_HAL_SK_PATH, sizeof(BLUEZ_HAL_SK_PATH)))
+		return BT_STATUS_FAIL;
+
+	bt_hal_cbacks = callbacks;
+
+	/* Start Android Bluetooth daemon service */
+	if (property_set("bluetooth.start", "daemon") < 0) {
+		error("Failed to set bluetooth.start=daemon");
+		hal_ipc_cleanup();
+		bt_hal_cbacks = NULL;
+		return BT_STATUS_FAIL;
+	}
+
+	if (!hal_ipc_accept()) {
+		hal_ipc_cleanup();
 		bt_hal_cbacks = NULL;
 		return BT_STATUS_FAIL;
 	}

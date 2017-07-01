@@ -48,7 +48,7 @@ struct gatt_db {
 struct gatt_db_attribute {
 	uint16_t handle;
 	bt_uuid_t uuid;
-	uint8_t permissions;
+	uint32_t permissions;
 	uint16_t value_len;
 	uint8_t *value;
 
@@ -95,10 +95,8 @@ static struct gatt_db_attribute *new_attribute(const bt_uuid_t *type,
 	return attribute;
 }
 
-static void attribute_destroy(void *data)
+static void attribute_destroy(struct gatt_db_attribute *attribute)
 {
-	struct gatt_db_attribute *attribute = data;
-
 	/* Attribute was not initialized by user */
 	if (!attribute)
 		return;
@@ -258,7 +256,7 @@ static uint16_t update_attribute_handle(struct gatt_db_service *service,
 static void set_attribute_data(struct gatt_db_attribute *attribute,
 						gatt_db_read_t read_func,
 						gatt_db_write_t write_func,
-						uint8_t permissions,
+						uint32_t permissions,
 						void *user_data)
 {
 	attribute->permissions = permissions;
@@ -269,7 +267,7 @@ static void set_attribute_data(struct gatt_db_attribute *attribute,
 
 uint16_t gatt_db_add_characteristic(struct gatt_db *db, uint16_t handle,
 						const bt_uuid_t *uuid,
-						uint8_t permissions,
+						uint32_t permissions,
 						uint8_t properties,
 						gatt_db_read_t read_func,
 						gatt_db_write_t write_func,
@@ -317,7 +315,7 @@ uint16_t gatt_db_add_characteristic(struct gatt_db *db, uint16_t handle,
 
 uint16_t gatt_db_add_char_descriptor(struct gatt_db *db, uint16_t handle,
 						const bt_uuid_t *uuid,
-						uint8_t permissions,
+						uint32_t permissions,
 						gatt_db_read_t read_func,
 						gatt_db_write_t write_func,
 						void *user_data)
@@ -732,4 +730,32 @@ uint16_t gatt_db_get_end_handle(struct gatt_db *db, uint16_t handle)
 		return 0;
 
 	return service->attributes[0]->handle + service->num_handles - 1;
+}
+
+bool gatt_db_get_attribute_permissions(struct gatt_db *db, uint16_t handle,
+							uint32_t *permissions)
+{
+	struct gatt_db_attribute *attribute;
+	struct gatt_db_service *service;
+	uint16_t service_handle;
+
+	service = queue_find(db->services, find_service_for_handle,
+							INT_TO_PTR(handle));
+	if (!service)
+		return false;
+
+	service_handle = service->attributes[0]->handle;
+
+	/*
+	 * We can safely get attribute from attributes array with offset,
+	 * because find_service_for_handle() check if given handle is
+	 * in service range.
+	 */
+	attribute = service->attributes[handle - service_handle];
+	if (!attribute)
+		return false;
+
+	*permissions = attribute->permissions;
+	return true;
+
 }

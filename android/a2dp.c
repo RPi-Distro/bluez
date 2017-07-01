@@ -325,15 +325,101 @@ static int sbc_check_config(void *caps, uint8_t caps_len, void *conf,
 	return 0;
 }
 
+static int aac_check_config(void *caps, uint8_t caps_len, void *conf,
+							uint8_t conf_len)
+{
+	a2dp_aac_t *cap, *config;
+
+	if (conf_len != caps_len || conf_len != sizeof(a2dp_aac_t)) {
+		error("AAC: Invalid configuration size (%u)", conf_len);
+		return -EINVAL;
+	}
+
+	cap = caps;
+	config = conf;
+
+	if (!(cap->object_type & config->object_type)) {
+		error("AAC: Unsupported object type (%u) by endpoint",
+							config->object_type);
+		return -EINVAL;
+	}
+
+	if (!(AAC_GET_FREQUENCY(*cap) & AAC_GET_FREQUENCY(*config))) {
+		error("AAC: Unsupported frequency (%u) by endpoint",
+						AAC_GET_FREQUENCY(*config));
+		return -EINVAL;
+	}
+
+	if (!(cap->channels & config->channels)) {
+		error("AAC: Unsupported channels (%u) by endpoint",
+							config->channels);
+		return -EINVAL;
+	}
+
+	/* VBR support in SNK is mandatory but let's make sure we don't try to
+	 * have VBR on remote which for some reason does not support it
+	 */
+	if (!cap->vbr && config->vbr) {
+		error("AAC: Unsupported VBR (%u) by endpoint",
+							config->vbr);
+		return -EINVAL;
+	}
+
+	if (AAC_GET_BITRATE(*cap) < AAC_GET_BITRATE(*config))
+		return -ERANGE;
+
+	return 0;
+}
+
+static int aptx_check_config(void *caps, uint8_t caps_len, void *conf,
+							uint8_t conf_len)
+{
+	a2dp_aptx_t *cap, *config;
+
+	if (conf_len != caps_len || conf_len != sizeof(a2dp_aptx_t)) {
+		error("APTX: Invalid configuration size (%u)", conf_len);
+		return -EINVAL;
+	}
+
+	cap = caps;
+	config = conf;
+
+	if (!(cap->frequency & config->frequency)) {
+		error("APTX: Unsupported frequenct (%u) by endpoint",
+							config->frequency);
+		return -EINVAL;
+	}
+
+	if (!(cap->channel_mode & config->channel_mode)) {
+		error("APTX: Unsupported channel mode (%u) by endpoint",
+							config->channel_mode);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int check_capabilities(struct a2dp_preset *preset,
 				struct avdtp_media_codec_capability *codec,
 				uint8_t codec_len)
 {
+	a2dp_vendor_codec_t *vndcodec;
+
 	/* Codec specific */
 	switch (codec->media_codec_type) {
 	case A2DP_CODEC_SBC:
 		return sbc_check_config(codec->data, codec_len, preset->data,
 								preset->len);
+	case A2DP_CODEC_MPEG24:
+		return aac_check_config(codec->data, codec_len, preset->data,
+								preset->len);
+	case A2DP_CODEC_VENDOR:
+		vndcodec = (void *) codec->data;
+		if (btohl(vndcodec->vendor_id) == APTX_VENDOR_ID &&
+				btohs(vndcodec->codec_id) == APTX_CODEC_ID)
+			return aptx_check_config(codec->data, codec_len,
+						preset->data, preset->len);
+		return -EINVAL;
 	default:
 		return -EINVAL;
 	}
@@ -358,6 +444,26 @@ static struct a2dp_preset *sbc_select_range(void *caps, uint8_t caps_len,
 	return p;
 }
 
+static struct a2dp_preset *aac_select_range(void *caps, uint8_t caps_len,
+						void *conf, uint8_t conf_len)
+{
+	struct a2dp_preset *p;
+	a2dp_aac_t *cap, *config;
+	uint32_t bitrate;
+
+	cap = caps;
+	config = conf;
+
+	bitrate = MIN(AAC_GET_BITRATE(*cap), AAC_GET_BITRATE(*config));
+	AAC_SET_BITRATE(*config, bitrate);
+
+	p = g_new0(struct a2dp_preset, 1);
+	p->len = conf_len;
+	p->data = g_memdup(conf, p->len);
+
+	return p;
+}
+
 static struct a2dp_preset *select_preset_range(struct a2dp_preset *preset,
 				struct avdtp_media_codec_capability *codec,
 				uint8_t codec_len)
@@ -366,6 +472,9 @@ static struct a2dp_preset *select_preset_range(struct a2dp_preset *preset,
 	switch (codec->media_codec_type) {
 	case A2DP_CODEC_SBC:
 		return sbc_select_range(codec->data, codec_len, preset->data,
+								preset->len);
+	case A2DP_CODEC_MPEG24:
+		return aac_select_range(codec->data, codec_len, preset->data,
 								preset->len);
 	default:
 		return NULL;
@@ -541,14 +650,12 @@ static void signaling_connect_cb(GIOChannel *chan, GError *err,
 
 	avdtp_add_disconnect_cb(dev->session, disconnect_cb, dev);
 
+	/* Proceed to stream setup if initiator */
 	if (dev->io) {
+		int perr;
+
 		g_io_channel_unref(dev->io);
 		dev->io = NULL;
-	}
-
-	/* Proceed to stream setup if initiator */
-	if (dev->state == HAL_A2DP_STATE_CONNECTING) {
-		int perr;
 
 		perr = avdtp_discover(dev->session, discover_cb, dev);
 		if (perr < 0) {
@@ -739,6 +846,7 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	}
 
 	dev = a2dp_device_new(&dst);
+	bt_a2dp_notify_state(dev, HAL_A2DP_STATE_CONNECTING);
 	signaling_connect_cb(chan, err, dev);
 }
 
@@ -1227,6 +1335,14 @@ static uint8_t register_endpoint(const uint8_t *uuid, uint8_t codec,
 	endpoint->caps = presets->data;
 	endpoint->presets = g_slist_copy(g_slist_nth(presets, 1));
 
+	if (endpoint->codec == A2DP_CODEC_VENDOR) {
+		a2dp_vendor_codec_t *vndcodec = (void *) endpoint->caps->data;
+
+		avdtp_sep_set_vendor_codec(endpoint->sep,
+						btohl(vndcodec->vendor_id),
+						btohs(vndcodec->codec_id));
+	}
+
 	endpoints = g_slist_append(endpoints, endpoint);
 
 	return endpoint->id;
@@ -1354,7 +1470,10 @@ static void bt_stream_open(const void *buf, uint16_t len)
 
 	DBG("");
 
-	setup = find_setup(cmd->id);
+	if (cmd->id)
+		setup = find_setup(cmd->id);
+	else
+		setup = setups ? setups->data : NULL;
 	if (!setup) {
 		error("Unable to find stream for endpoint %u", cmd->id);
 		ipc_send_rsp(audio_ipc, AUDIO_SERVICE_ID, AUDIO_OP_OPEN_STREAM,
@@ -1373,6 +1492,7 @@ static void bt_stream_open(const void *buf, uint16_t len)
 	len = sizeof(struct audio_rsp_open_stream) +
 			sizeof(struct audio_preset) + setup->preset->len;
 	rsp = g_malloc0(len);
+	rsp->id = setup->endpoint->id;
 	rsp->mtu = omtu;
 	rsp->preset->len = setup->preset->len;
 	memcpy(rsp->preset->data, setup->preset->data, setup->preset->len);

@@ -538,12 +538,12 @@ static void confirm_rsp(uint8_t status, uint16_t len, const void *param,
 }
 
 static int mgmt_confirm_reply(struct mgmt *mgmt, uint16_t index,
-							const bdaddr_t *bdaddr)
+					const struct mgmt_addr_info *addr)
 {
 	struct mgmt_cp_user_confirm_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.addr.bdaddr, bdaddr);
+	memcpy(&cp.addr, addr, sizeof(*addr));
 
 	return mgmt_reply(mgmt, MGMT_OP_USER_CONFIRM_REPLY, index,
 				sizeof(cp), &cp, confirm_rsp, NULL, NULL);
@@ -564,12 +564,12 @@ static void confirm_neg_rsp(uint8_t status, uint16_t len, const void *param,
 }
 
 static int mgmt_confirm_neg_reply(struct mgmt *mgmt, uint16_t index,
-							const bdaddr_t *bdaddr)
+					const struct mgmt_addr_info *addr)
 {
 	struct mgmt_cp_user_confirm_reply cp;
 
 	memset(&cp, 0, sizeof(cp));
-	bacpy(&cp.addr.bdaddr, bdaddr);
+	memcpy(&cp.addr, addr, sizeof(*addr));
 
 	return mgmt_reply(mgmt, MGMT_OP_USER_CONFIRM_NEG_REPLY, index,
 				sizeof(cp), &cp, confirm_neg_rsp, NULL, NULL);
@@ -609,7 +609,7 @@ static void user_confirm(uint16_t index, uint16_t len, const void *param,
 	memset(rsp, 0, sizeof(rsp));
 
 	if (fgets(rsp, sizeof(rsp), stdin) == NULL || rsp[0] == '\n') {
-		mgmt_confirm_neg_reply(mgmt, index, &ev->addr.bdaddr);
+		mgmt_confirm_neg_reply(mgmt, index, &ev->addr);
 		return;
 	}
 
@@ -618,9 +618,124 @@ static void user_confirm(uint16_t index, uint16_t len, const void *param,
 		rsp[rsp_len - 1] = '\0';
 
 	if (rsp[0] == 'y' || rsp[0] == 'Y')
-		mgmt_confirm_reply(mgmt, index, &ev->addr.bdaddr);
+		mgmt_confirm_reply(mgmt, index, &ev->addr);
 	else
-		mgmt_confirm_neg_reply(mgmt, index, &ev->addr.bdaddr);
+		mgmt_confirm_neg_reply(mgmt, index, &ev->addr);
+}
+
+static void passkey_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0) {
+		fprintf(stderr,
+			"User Passkey reply failed. status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+		mainloop_quit();
+		return;
+	}
+
+	printf("User Passkey Reply successful\n");
+}
+
+static int mgmt_passkey_reply(struct mgmt *mgmt, uint16_t index,
+					const struct mgmt_addr_info *addr,
+					uint32_t passkey)
+{
+	struct mgmt_cp_user_passkey_reply cp;
+
+	memset(&cp, 0, sizeof(cp));
+	memcpy(&cp.addr, addr, sizeof(*addr));
+	put_le32(passkey, &cp.passkey);
+
+	return mgmt_reply(mgmt, MGMT_OP_USER_PASSKEY_REPLY, index,
+				sizeof(cp), &cp, passkey_rsp, NULL, NULL);
+}
+
+static void passkey_neg_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0) {
+		fprintf(stderr,
+			"Passkey Neg reply failed. status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+		mainloop_quit();
+		return;
+	}
+
+	printf("User Passkey Negative Reply successful\n");
+}
+
+static int mgmt_passkey_neg_reply(struct mgmt *mgmt, uint16_t index,
+					const struct mgmt_addr_info *addr)
+{
+	struct mgmt_cp_user_passkey_reply cp;
+
+	memset(&cp, 0, sizeof(cp));
+	memcpy(&cp.addr, addr, sizeof(*addr));
+
+	return mgmt_reply(mgmt, MGMT_OP_USER_PASSKEY_NEG_REPLY, index,
+				sizeof(cp), &cp, passkey_neg_rsp, NULL, NULL);
+}
+
+
+static void request_passkey(uint16_t index, uint16_t len, const void *param,
+							void *user_data)
+{
+	const struct mgmt_ev_user_passkey_request *ev = param;
+	struct mgmt *mgmt = user_data;
+	char passkey[7];
+
+	if (len != sizeof(*ev)) {
+		fprintf(stderr,
+			"Invalid passkey request length (%u bytes)\n", len);
+		return;
+	}
+
+	if (monitor) {
+		char addr[18];
+		ba2str(&ev->addr.bdaddr, addr);
+		printf("hci%u %s request passkey\n", index, addr);
+	}
+
+	printf("Passkey Request (press enter to reject) >> ");
+	fflush(stdout);
+
+	memset(passkey, 0, sizeof(passkey));
+
+	if (fgets(passkey, sizeof(passkey), stdin) == NULL ||
+							passkey[0] == '\n') {
+		mgmt_passkey_neg_reply(mgmt, index, &ev->addr);
+		return;
+	}
+
+	len = strlen(passkey);
+	if (passkey[len - 1] == '\n') {
+		passkey[len - 1] = '\0';
+		len--;
+	}
+
+	mgmt_passkey_reply(mgmt, index, &ev->addr, atoi(passkey));
+}
+
+static void passkey_notify(uint16_t index, uint16_t len, const void *param,
+							void *user_data)
+{
+	const struct mgmt_ev_passkey_notify *ev = param;
+
+	if (len != sizeof(*ev)) {
+		fprintf(stderr,
+			"Invalid passkey request length (%u bytes)\n", len);
+		return;
+	}
+
+	if (monitor) {
+		char addr[18];
+		ba2str(&ev->addr.bdaddr, addr);
+		printf("hci%u %s request passkey\n", index, addr);
+	}
+
+	printf("Passkey Notify: %06u (entered %u)\n", get_le32(&ev->passkey),
+								ev->entered);
 }
 
 static void cmd_monitor(struct mgmt *mgmt, uint16_t index, int argc,
@@ -2225,6 +2340,89 @@ static void cmd_conn_info(struct mgmt *mgmt, uint16_t index,
 	}
 }
 
+static void io_cap_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0)
+		fprintf(stderr, "Could not set IO Capability with "
+						"status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+	else
+		printf("IO Capabilities successfully set\n");
+
+	mainloop_quit();
+}
+
+static void io_cap_usage(void)
+{
+	printf("Usage: btmgmt io-cap <cap>\n");
+}
+
+static void cmd_io_cap(struct mgmt *mgmt, uint16_t index,
+						int argc, char **argv)
+{
+	struct mgmt_cp_set_io_capability cp;
+	uint8_t cap;
+
+	if (argc < 2) {
+		io_cap_usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	cap = strtol(argv[1], NULL, 0);
+	memset(&cp, 0, sizeof(cp));
+	cp.io_capability = cap;
+
+	if (mgmt_send(mgmt, MGMT_OP_SET_IO_CAPABILITY, index, sizeof(cp), &cp,
+					io_cap_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send set-io-cap cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void scan_params_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0)
+		fprintf(stderr, "Set scan parameters failed with status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+	else
+		printf("Scan parameters successfully set\n");
+
+	mainloop_quit();
+}
+
+static void scan_params_usage(void)
+{
+	printf("Usage: btmgmt scan-params <interval> <window>\n");
+}
+
+static void cmd_scan_params(struct mgmt *mgmt, uint16_t index,
+							int argc, char **argv)
+{
+	struct mgmt_cp_set_scan_params cp;
+
+	if (argc < 3) {
+		scan_params_usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	cp.interval = strtol(argv[1], NULL, 0);
+	cp.window = strtol(argv[2], NULL, 0);
+
+	if (mgmt_send(mgmt, MGMT_OP_SET_SCAN_PARAMS, index, sizeof(cp), &cp,
+					scan_params_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send set_scan_params cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
 static struct {
 	char *cmd;
 	void (*func)(struct mgmt *mgmt, uint16_t index, int argc, char **argv);
@@ -2245,7 +2443,7 @@ static struct {
 	{ "hs",		cmd_hs,		"Toggle HS support"		},
 	{ "le",		cmd_le,		"Toggle LE support"		},
 	{ "advertising",cmd_advertising,"Toggle LE advertising",	},
-	{ "bredr",      cmd_bredr,      "Toggle BR/EDR support",	},
+	{ "bredr",	cmd_bredr,	"Toggle BR/EDR support",	},
 	{ "privacy",	cmd_privacy,	"Toggle privacy support"	},
 	{ "class",	cmd_class,	"Set device major/minor class"	},
 	{ "disconnect", cmd_disconnect, "Disconnect device"		},
@@ -2268,6 +2466,8 @@ static struct {
 	{ "static-addr",cmd_static_addr,"Set static address"		},
 	{ "debug-keys",	cmd_debug_keys,	"Toogle debug keys"		},
 	{ "conn-info",	cmd_conn_info,	"Get connection information"	},
+	{ "io-cap",	cmd_io_cap,	"Set IO Capability"		},
+	{ "scan-params",cmd_scan_params,"Set Scan Parameters"		},
 	{ }
 };
 
@@ -2386,6 +2586,10 @@ int main(int argc, char *argv[])
 								mgmt, NULL);
 	mgmt_register(mgmt, MGMT_EV_USER_CONFIRM_REQUEST, index, user_confirm,
 								mgmt, NULL);
+	mgmt_register(mgmt, MGMT_EV_USER_PASSKEY_REQUEST, index,
+						request_passkey, mgmt, NULL);
+	mgmt_register(mgmt, MGMT_EV_PASSKEY_NOTIFY, index,
+						passkey_notify, mgmt, NULL);
 
 	exit_status = mainloop_run();
 

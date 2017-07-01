@@ -1065,6 +1065,27 @@ guint gatt_write_cmd(GAttrib *attrib, uint16_t handle, const uint8_t *value,
 	return g_attrib_send(attrib, 0, buf, plen, NULL, user_data, notify);
 }
 
+guint gatt_signed_write_cmd(GAttrib *attrib, uint16_t handle,
+						const uint8_t *value, int vlen,
+						struct bt_crypto *crypto,
+						const uint8_t csrk[16],
+						uint32_t sign_cnt,
+						GDestroyNotify notify,
+						gpointer user_data)
+{
+	uint8_t *buf;
+	size_t buflen;
+	guint16 plen;
+
+	buf = g_attrib_get_buffer(attrib, &buflen);
+	plen = enc_signed_write_cmd(handle, value, vlen, crypto, csrk, sign_cnt,
+								buf, buflen);
+	if (plen == 0)
+		return 0;
+
+	return g_attrib_send(attrib, 0, buf, plen, NULL, user_data, notify);
+}
+
 static sdp_data_t *proto_seq_find(sdp_list_t *proto_list)
 {
 	sdp_list_t *list;

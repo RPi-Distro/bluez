@@ -3,12 +3,15 @@ LOCAL_PATH := external/bluetooth
 # Retrieve BlueZ version from configure.ac file
 BLUEZ_VERSION := `grep "^AC_INIT" $(LOCAL_PATH)/bluez/configure.ac | sed -e "s/.*,.\(.*\))/\1/"`
 
+ANDROID_VERSION := `echo $(PLATFORM_VERSION) | awk -F. '{ printf "0x%02d%02d%02d",$$1,$$2,$$3 }'`
+
 # Specify pathmap for glib and sbc
 pathmap_INCL += glib:external/bluetooth/glib \
 		sbc:external/bluetooth/sbc \
 
 # Specify common compiler flags
 BLUEZ_COMMON_CFLAGS := -DVERSION=\"$(BLUEZ_VERSION)\" \
+			-DANDROID_VERSION=$(ANDROID_VERSION) \
 			-DANDROID_STORAGEDIR=\"/data/misc/bluetooth\" \
 
 # Enable warnings enabled in autotools build
@@ -32,6 +35,7 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := \
 	bluez/android/main.c \
 	bluez/android/bluetooth.c \
+	bluez/android/hog.c \
 	bluez/android/hidhost.c \
 	bluez/android/socket.c \
 	bluez/android/ipc.c \
@@ -53,6 +57,8 @@ LOCAL_SRC_FILES := \
 	bluez/src/shared/hfp.c \
 	bluez/src/shared/gatt-db.c \
 	bluez/src/shared/io-glib.c \
+	bluez/src/shared/crypto.c \
+	bluez/src/shared/uhid.c \
 	bluez/src/sdpd-database.c \
 	bluez/src/sdpd-service.c \
 	bluez/src/sdpd-request.c \
@@ -252,9 +258,14 @@ include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := bluez/android/hal-audio.c
+LOCAL_SRC_FILES := \
+	bluez/src/shared/queue.c \
+	bluez/android/hal-audio.c \
+	bluez/android/hal-audio-sbc.c \
+	bluez/android/hal-audio-aptx.c \
 
 LOCAL_C_INCLUDES = \
+	$(LOCAL_PATH)/bluez \
 	$(call include-path-for, system-core) \
 	$(call include-path-for, libhardware) \
 	$(call include-path-for, sbc) \
@@ -264,6 +275,7 @@ LOCAL_SHARED_LIBRARIES := \
 	libsbc \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+LOCAL_LDFLAGS := -ldl
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
@@ -581,3 +593,30 @@ $(foreach file,$(include_files),$(shell cp -u $(file) $(include_path)/bluetooth)
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(include_path)
 
 include $(BUILD_STATIC_LIBRARY)
+
+#
+# avtest
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	bluez/tools/avinfo.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE := avinfo
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
+
+include $(BUILD_EXECUTABLE)
