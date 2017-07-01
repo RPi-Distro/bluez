@@ -18,7 +18,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
+#include <cutils/properties.h>
+
+#include "hal.h"
 #include "hal-utils.h"
 
 /*
@@ -113,6 +117,24 @@ INTMAP(bt_ssp_variant_t, -1, "(unknown)")
 	DELEMENT(BT_SSP_VARIANT_PASSKEY_NOTIFICATION),
 ENDMAP
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+INTMAP(bt_property_type_t, -1, "(unknown)")
+	DELEMENT(BT_PROPERTY_BDNAME),
+	DELEMENT(BT_PROPERTY_BDADDR),
+	DELEMENT(BT_PROPERTY_UUIDS),
+	DELEMENT(BT_PROPERTY_CLASS_OF_DEVICE),
+	DELEMENT(BT_PROPERTY_TYPE_OF_DEVICE),
+	DELEMENT(BT_PROPERTY_SERVICE_RECORD),
+	DELEMENT(BT_PROPERTY_ADAPTER_SCAN_MODE),
+	DELEMENT(BT_PROPERTY_ADAPTER_BONDED_DEVICES),
+	DELEMENT(BT_PROPERTY_ADAPTER_DISCOVERY_TIMEOUT),
+	DELEMENT(BT_PROPERTY_REMOTE_FRIENDLY_NAME),
+	DELEMENT(BT_PROPERTY_REMOTE_RSSI),
+	DELEMENT(BT_PROPERTY_REMOTE_VERSION_INFO),
+	DELEMENT(BT_PROPERTY_LOCAL_LE_FEATURES),
+	DELEMENT(BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP),
+ENDMAP
+#else
 INTMAP(bt_property_type_t, -1, "(unknown)")
 	DELEMENT(BT_PROPERTY_BDNAME),
 	DELEMENT(BT_PROPERTY_BDADDR),
@@ -128,6 +150,7 @@ INTMAP(bt_property_type_t, -1, "(unknown)")
 	DELEMENT(BT_PROPERTY_REMOTE_VERSION_INFO),
 	DELEMENT(BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP),
 ENDMAP
+#endif
 
 INTMAP(bt_cb_thread_evt, -1, "(unknown)")
 	DELEMENT(ASSOCIATE_JVM),
@@ -166,10 +189,12 @@ int int2str_findstr(const char *str, const struct int2str m[])
  */
 const char *bt_bdaddr_t2str(const bt_bdaddr_t *bd_addr, char *buf)
 {
-	const uint8_t *p = bd_addr->address;
+	const uint8_t *p;
 
 	if (!bd_addr)
 		return strcpy(buf, "NULL");
+
+	p = bd_addr->address;
 
 	snprintf(buf, MAX_ADDR_STR_LEN, "%02x:%02x:%02x:%02x:%02x:%02x",
 					p[0], p[1], p[2], p[3], p[4], p[5]);
@@ -233,8 +258,77 @@ const char *bdaddr2str(const bt_bdaddr_t *bd_addr)
 	return bt_bdaddr_t2str(bd_addr, buf);
 }
 
+static void bonded_devices2string(char *str, void *prop, int prop_len)
+{
+	int count = prop_len / sizeof(bt_bdaddr_t);
+	bt_bdaddr_t *addr = prop;
+
+	strcat(str, "{");
+
+	while (count--) {
+		strcat(str, bdaddr2str(addr));
+		if (count)
+			strcat(str, ", ");
+		addr++;
+	}
+
+	strcat(str, "}");
+}
+
+static void uuids2string(char *str, void *prop, int prop_len)
+{
+	int count = prop_len / sizeof(bt_uuid_t);
+	bt_uuid_t *uuid = prop;
+
+	strcat(str, "{");
+
+	while (count--) {
+		strcat(str, btuuid2str(uuid->uu));
+		if (count)
+			strcat(str, ", ");
+		uuid++;
+	}
+
+	strcat(str, "}");
+}
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static void local_le_feat2string(char *str, const bt_local_le_features_t *f)
+{
+	uint16_t scan_num;
+
+	str += sprintf(str, "{\n");
+
+	str += sprintf(str, "Privacy supported: %s,\n",
+				f->local_privacy_enabled ? "TRUE" : "FALSE");
+
+	str += sprintf(str, "Num of advertising instances: %u,\n",
+							f->max_adv_instance);
+
+	str += sprintf(str, "PRA offloading support: %s,\n",
+				f->rpa_offload_supported ? "TRUE" : "FALSE");
+
+	str += sprintf(str, "Num of offloaded IRKs: %u,\n",
+							f->max_irk_list_size);
+
+	str += sprintf(str, "Num of offloaded scan filters: %u,\n",
+						f->max_adv_filter_supported);
+
+	scan_num = (f->scan_result_storage_size_hibyte << 8) +
+					f->scan_result_storage_size_lobyte;
+
+	str += sprintf(str, "Num of offloaded scan results: %u,\n", scan_num);
+
+	str += sprintf(str, "Activity & energy report support: %s\n",
+			f->activity_energy_info_supported ? "TRUE" : "FALSE");
+
+	sprintf(str, "}");
+}
+#endif
+
 const char *btproperty2str(const bt_property_t *property)
 {
+	bt_service_record_t *rec;
 	static char buf[4096];
 	char *p;
 
@@ -248,83 +342,77 @@ const char *btproperty2str(const bt_property_t *property)
 		snprintf(p, property->len + 1, "%s",
 					((bt_bdname_t *) property->val)->name);
 		break;
-
 	case BT_PROPERTY_BDADDR:
 		sprintf(p, "%s", bdaddr2str((bt_bdaddr_t *) property->val));
 		break;
-
 	case BT_PROPERTY_CLASS_OF_DEVICE:
 		sprintf(p, "%06x", *((int *) property->val));
 		break;
-
 	case BT_PROPERTY_TYPE_OF_DEVICE:
 		sprintf(p, "%s", bt_device_type_t2str(
-				*((bt_device_type_t *) property->val)));
+					*((bt_device_type_t *) property->val)));
 		break;
-
 	case BT_PROPERTY_REMOTE_RSSI:
 		sprintf(p, "%d", *((char *) property->val));
 		break;
-
 	case BT_PROPERTY_ADAPTER_SCAN_MODE:
 		sprintf(p, "%s",
 			bt_scan_mode_t2str(*((bt_scan_mode_t *) property->val)));
 		break;
-
 	case BT_PROPERTY_ADAPTER_DISCOVERY_TIMEOUT:
 		sprintf(p, "%d", *((int *) property->val));
 		break;
-
 	case BT_PROPERTY_ADAPTER_BONDED_DEVICES:
-		{
-			int count = property->len / sizeof(bt_bdaddr_t);
-			char *ptr = property->val;
-
-			strcat(p, "{");
-
-			while (count--) {
-				strcat(p, bdaddr2str((bt_bdaddr_t *) ptr));
-				if (count)
-					strcat(p, ", ");
-				ptr += sizeof(bt_bdaddr_t);
-			}
-
-			strcat(p, "}");
-
-		}
+		bonded_devices2string(p, property->val, property->len);
 		break;
-
 	case BT_PROPERTY_UUIDS:
-		{
-			int count = property->len / sizeof(bt_uuid_t);
-			uint8_t *ptr = property->val;
-
-			strcat(p, "{");
-
-			while (count--) {
-				strcat(p, btuuid2str(ptr));
-				if (count)
-					strcat(p, ", ");
-				ptr += sizeof(bt_uuid_t);
-			}
-
-			strcat(p, "}");
-
-		}
+		uuids2string(p, property->val, property->len);
 		break;
-
 	case BT_PROPERTY_SERVICE_RECORD:
-		{
-			bt_service_record_t *rec = property->val;
-
-			sprintf(p, "{%s, %d, %s}", btuuid2str(rec->uuid.uu),
+		rec = property->val;
+		sprintf(p, "{%s, %d, %s}", btuuid2str(rec->uuid.uu),
 						rec->channel, rec->name);
-		}
 		break;
-
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	case BT_PROPERTY_LOCAL_LE_FEATURES:
+		local_le_feat2string(p, property->val);
+		break;
+#endif
+	case BT_PROPERTY_REMOTE_VERSION_INFO:
+	case BT_PROPERTY_REMOTE_DEVICE_TIMESTAMP:
 	default:
 		sprintf(p, "%p", property->val);
+		break;
 	}
 
 	return buf;
+}
+
+#define PROP_PREFIX "persist.sys.bluetooth."
+#define PROP_PREFIX_RO "ro.bluetooth."
+
+int get_config(const char *config_key, char *value, const char *fallback)
+{
+	char key[PROPERTY_KEY_MAX];
+	int ret;
+
+	if (strlen(config_key) + sizeof(PROP_PREFIX) > sizeof(key))
+		return 0;
+
+	snprintf(key, sizeof(key), PROP_PREFIX"%s", config_key);
+
+	ret = property_get(key, value, "");
+	if (ret > 0)
+		return ret;
+
+	snprintf(key, sizeof(key), PROP_PREFIX_RO"%s", config_key);
+
+	ret = property_get(key, value, "");
+	if (ret > 0)
+		return ret;
+
+	if (!fallback)
+		return 0;
+
+	return property_get(fallback, value, "");
 }

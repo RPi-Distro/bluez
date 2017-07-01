@@ -31,6 +31,7 @@
 #include "monitor/bt.h"
 #include "src/shared/hci.h"
 #include "src/shared/util.h"
+#include "src/shared/ecc.h"
 #include "src/shared/tester.h"
 
 struct user_data {
@@ -44,6 +45,24 @@ struct user_data {
 	uint8_t bdaddr_lt[6];
 	uint16_t handle_ut;
 };
+
+struct le_keys {
+	uint8_t remote_sk[32];
+	uint8_t local_pk[64];
+} key_test_data;
+
+static void swap_buf(const uint8_t *src, uint8_t *dst, uint16_t len)
+{
+	int i;
+
+	for (i = 0; i < len; i++)
+		dst[len - 1 - i] = src[i];
+}
+
+static void test_debug(const char *str, void *user_data)
+{
+	tester_debug("%s", str);
+}
 
 static void test_pre_setup_lt_address(const void *data, uint8_t size,
 							void *user_data)
@@ -337,6 +356,258 @@ static void test_le_read_white_list_size(const void *test_data)
 static void test_le_clear_white_list(const void *test_data)
 {
 	test_command(BT_HCI_CMD_LE_CLEAR_WHITE_LIST);
+}
+
+static void test_le_encrypt_complete(const void *data, uint8_t size,
+								void *user_data)
+{
+	const struct bt_hci_rsp_le_encrypt *rsp = data;
+	uint8_t sample[16] = {
+		0x7d, 0xf7, 0x6b, 0x0c, 0x1a, 0xb8, 0x99, 0xb3,
+		0x3e, 0x42, 0xf0, 0x47, 0xb9, 0x1b, 0x54, 0x6f
+	};
+	uint8_t enc_data[16];
+
+	if (rsp->status) {
+		tester_warn("Failed HCI LE Encrypt (0x%02x)", rsp->status);
+		tester_test_failed();
+		return;
+	}
+
+	swap_buf(rsp->data, enc_data, 16);
+	util_hexdump('>', enc_data, 16, test_debug, NULL);
+
+	if (!memcmp(sample, enc_data, 16))
+		tester_test_passed();
+	else
+		tester_test_failed();
+}
+
+/* Data are taken from RFC 4493 Test Vectors */
+static void test_le_encrypt(const void *test_data)
+{
+	struct user_data *user = tester_get_data();
+	struct bt_hci_cmd_le_encrypt cmd;
+	uint8_t key[16] = {
+		0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+		0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
+	};
+	uint8_t plaintext[16] = { 0 };
+
+	/* Swap bytes since our interface has LE interface, opposed to
+	 * common crypto interface
+	 */
+	swap_buf(key, cmd.key, 16);
+	swap_buf(plaintext, cmd.plaintext, 16);
+
+	util_hexdump('<', cmd.key, 16, test_debug, NULL);
+	util_hexdump('<', cmd.plaintext, 16, test_debug, NULL);
+
+	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_LE_ENCRYPT, &cmd, sizeof(cmd),
+					test_le_encrypt_complete, NULL, NULL)) {
+		tester_warn("Failed to send HCI LE Encrypt command");
+		tester_test_failed();
+		return;
+	}
+
+}
+
+static void test_le_rand(const void *test_data)
+{
+	test_command(BT_HCI_CMD_LE_RAND);
+}
+
+static void test_le_read_local_pk_complete(const void *data, uint8_t size,
+								void *user_data)
+{
+	const uint8_t *event = data;
+	const struct bt_hci_evt_le_read_local_pk256_complete *evt;
+	struct le_keys *keys = user_data;
+
+	if (*event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
+		tester_warn("Failed Read Local PK256 command");
+		tester_test_failed();
+		return;
+	}
+
+	evt = (void *)(event + 1);
+	if (evt->status) {
+		tester_warn("HCI Read Local PK complete failed (0x%02x)",
+								evt->status);
+		tester_test_failed();
+		return;
+	}
+
+	memcpy(keys->local_pk, evt->local_pk256, 64);
+
+	util_hexdump('>', evt->local_pk256, 64, test_debug, NULL);
+
+	tester_test_passed();
+}
+
+static void test_le_read_local_pk_status(const void *data, uint8_t size,
+							void *user_data)
+{
+	uint8_t status = *((uint8_t *) data);
+
+	if (status) {
+		tester_warn("Failed to send DHKey gen cmd (0x%02x)", status);
+		tester_test_failed();
+		return;
+	}
+}
+
+static void test_le_read_local_pk(const void *test_data)
+{
+	struct user_data *user = tester_get_data();
+
+	bt_hci_register(user->hci_ut, BT_HCI_EVT_LE_META_EVENT,
+				test_le_read_local_pk_complete,
+				(void *)test_data, NULL);
+
+	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_LE_READ_LOCAL_PK256, NULL,
+				0, test_le_read_local_pk_status,
+				NULL, NULL)) {
+		tester_warn("Failed to send HCI LE Read Local PK256 command");
+		tester_test_failed();
+		return;
+	}
+}
+
+static void setup_le_read_local_pk_complete(const void *data, uint8_t size,
+								void *user_data)
+{
+	const uint8_t *event = data;
+	const struct bt_hci_evt_le_read_local_pk256_complete *evt;
+	struct le_keys *keys = user_data;
+
+	if (*event != BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE) {
+		tester_warn("Failed Read Local PK256 command");
+		tester_setup_failed();
+		return;
+	}
+
+	evt = (void *)(event + 1);
+	if (evt->status) {
+		tester_warn("HCI Read Local PK complete failed (0x%02x)",
+								evt->status);
+		tester_setup_failed();
+		return;
+	}
+
+	memcpy(keys->local_pk, evt->local_pk256, 64);
+
+	util_hexdump('>', evt->local_pk256, 64, test_debug, NULL);
+
+	tester_setup_complete();
+}
+
+static void setup_le_read_local_pk_status(const void *data, uint8_t size,
+							void *user_data)
+{
+	uint8_t status = *((uint8_t *) data);
+
+	if (status) {
+		tester_warn("Failed to send DHKey gen cmd (0x%02x)", status);
+		tester_setup_failed();
+		return;
+	}
+}
+
+static void setup_le_generate_dhkey(const void *test_data)
+{
+	struct user_data *user = tester_get_data();
+
+	bt_hci_register(user->hci_ut, BT_HCI_EVT_LE_META_EVENT,
+				setup_le_read_local_pk_complete,
+				(void *)test_data, NULL);
+
+	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_LE_READ_LOCAL_PK256, NULL,
+				0, setup_le_read_local_pk_status,
+				NULL, NULL)) {
+		tester_warn("Failed to send HCI LE Read Local PK256 command");
+		tester_setup_failed();
+		return;
+	}
+}
+
+static void test_le_generate_dhkey_complete(const void *data, uint8_t size,
+								void *user_data)
+{
+	const uint8_t *event = data;
+	const struct bt_hci_evt_le_generate_dhkey_complete *evt;
+	struct le_keys *keys = user_data;
+	uint8_t dhkey[32];
+
+	if (*event != BT_HCI_EVT_LE_GENERATE_DHKEY_COMPLETE) {
+		tester_warn("Failed DHKey generation command");
+		tester_test_failed();
+		return;
+	}
+
+	evt = (void *)(event + 1);
+	if (evt->status) {
+		tester_warn("HCI Generate DHKey complete failed (0x%02x)",
+								evt->status);
+		tester_test_failed();
+		return;
+	}
+
+	util_hexdump('>', evt->dhkey, 32, test_debug, NULL);
+
+
+	util_hexdump('S', keys->remote_sk, 32, test_debug, NULL);
+	util_hexdump('P', keys->local_pk, 64, test_debug, NULL);
+
+	/* Generate DHKey ourself with local public key and remote
+	 * private key we got when generated public / private key
+	 * pair for BT_HCI_CMD_LE_GENERATE_DHKEY argument.
+	 */
+	ecdh_shared_secret(keys->local_pk, keys->remote_sk, dhkey);
+
+	util_hexdump('D', dhkey, 32, test_debug, NULL);
+
+	if (!memcmp(dhkey, evt->dhkey, 32))
+		tester_test_passed();
+	else
+		tester_test_failed();
+}
+
+static void test_le_generate_dhkey_status(const void *data, uint8_t size,
+							void *user_data)
+{
+	uint8_t status = *((uint8_t *) data);
+
+	if (status) {
+		tester_warn("Failed to send DHKey gen cmd (0x%02x)", status);
+		tester_test_failed();
+		return;
+	}
+}
+
+static void test_le_generate_dhkey(const void *test_data)
+{
+	struct user_data *user = tester_get_data();
+	struct bt_hci_cmd_le_generate_dhkey cmd;
+	struct le_keys *keys = (void *)test_data;
+
+	ecc_make_key(cmd.remote_pk256, keys->remote_sk);
+
+	/* Unregister handler for META event */
+	bt_hci_unregister(user->hci_ut, 1);
+
+	bt_hci_register(user->hci_ut, BT_HCI_EVT_LE_META_EVENT,
+				test_le_generate_dhkey_complete, keys,
+				NULL);
+
+	if (!bt_hci_send(user->hci_ut, BT_HCI_CMD_LE_GENERATE_DHKEY, &cmd,
+				sizeof(cmd), test_le_generate_dhkey_status,
+				NULL, NULL)) {
+		tester_warn("Failed to send HCI LE Encrypt command");
+		tester_test_failed();
+		return;
+	}
+
 }
 
 static void test_inquiry_complete(const void *data, uint8_t size,
@@ -657,6 +928,15 @@ int main(int argc, char *argv[])
 				test_le_read_white_list_size);
 	test_hci_local("LE Clear White List", NULL, NULL,
 				test_le_clear_white_list);
+	test_hci_local("LE Encrypt", NULL, NULL,
+				test_le_encrypt);
+	test_hci_local("LE Rand", NULL, NULL,
+				test_le_rand);
+	test_hci_local("LE Read Local PK", &key_test_data, NULL,
+				test_le_read_local_pk);
+	test_hci_local("LE Generate DHKey", &key_test_data,
+				setup_le_generate_dhkey,
+				test_le_generate_dhkey);
 
 	test_hci_local("Inquiry (LIAC)", NULL, NULL, test_inquiry_liac);
 

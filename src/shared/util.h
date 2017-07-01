@@ -57,18 +57,18 @@
 #endif
 
 #define get_unaligned(ptr)			\
-({						\
+__extension__ ({				\
 	struct __attribute__((packed)) {	\
-		typeof(*(ptr)) __v;		\
-	} *__p = (typeof(__p)) (ptr);		\
+		__typeof__(*(ptr)) __v;		\
+	} *__p = (__typeof__(__p)) (ptr);	\
 	__p->__v;				\
 })
 
 #define put_unaligned(val, ptr)			\
 do {						\
 	struct __attribute__((packed)) {	\
-		typeof(*(ptr)) __v;		\
-	} *__p = (typeof(__p)) (ptr);		\
+		__typeof__(*(ptr)) __v;		\
+	} *__p = (__typeof__(__p)) (ptr);	\
 	__p->__v = (val);			\
 } while (0)
 
@@ -93,15 +93,8 @@ void util_hexdump(const char dir, const unsigned char *buf, size_t len,
 
 unsigned char util_get_dt(const char *parent, const char *name);
 
-static inline void bswap_128(const void *src, void *dst)
-{
-	const uint8_t *s = src;
-	uint8_t *d = dst;
-	int i;
-
-	for (i = 0; i < 16; i++)
-		d[15 - i] = s[i];
-}
+uint8_t util_get_uid(unsigned int *bitmap, uint8_t max);
+void util_clear_uid(unsigned int *bitmap, uint8_t id);
 
 static inline uint16_t get_le16(const void *ptr)
 {

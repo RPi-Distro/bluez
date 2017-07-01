@@ -32,17 +32,17 @@
 #include <string.h>
 #include <getopt.h>
 #include <signal.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-#include <bluetooth/cmtp.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/l2cap.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
+#include "lib/cmtp.h"
 
 static volatile sig_atomic_t __io_canceled = 0;
 

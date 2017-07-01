@@ -28,11 +28,10 @@
 #include <errno.h>
 #include <string.h>
 
-#include <gdbus/gdbus.h>
+#include "gdbus/gdbus.h"
 
+#include "obexd/src/log.h"
 #include "dbus.h"
-#include "log.h"
-
 #include "transfer.h"
 #include "session.h"
 #include "driver.h"

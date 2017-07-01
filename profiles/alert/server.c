@@ -28,11 +28,21 @@
 
 #include <stdbool.h>
 #include <errno.h>
-#include <gdbus/gdbus.h>
-#include <glib.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
+#include <glib.h>
+
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
+
 #include "src/plugin.h"
 #include "src/dbus-common.h"
 #include "attrib/att.h"
@@ -403,6 +413,7 @@ static void attio_connected_cb(GAttrib *attrib, gpointer user_data)
 		len = enc_notification(al_adapter->hnd_value[type],
 					nd->value, nd->len, pdu, len);
 		break;
+	case NOTIFY_SIZE:
 	default:
 		DBG("Unknown type, could not send notification");
 		goto end;

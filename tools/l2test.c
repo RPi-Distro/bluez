@@ -38,14 +38,14 @@
 #include <syslog.h>
 #include <signal.h>
 #include <sys/time.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/l2cap.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/l2cap.h"
 
 #include "src/shared/util.h"
 
@@ -108,7 +108,13 @@ static unsigned long send_delay = 0;
 /* Default delay before receiving */
 static unsigned long recv_delay = 0;
 
-static char *filename = NULL;
+/* Default delay before disconnecting */
+static unsigned long disc_delay = 0;
+
+/* Initial sequence value when sending frames */
+static int seq_start = 0;
+
+static const char *filename = NULL;
 
 static int rfcmode = 0;
 static int master = 0;
@@ -638,7 +644,6 @@ static void do_listen(void (*handler)(int sk))
 			continue;
 		}
 		/* Child */
-		close(sk);
 
 		/* Set receive buffer size */
 		if (rcvbuf && setsockopt(nsk, SOL_SOCKET, SO_RCVBUF, &rcvbuf,
@@ -763,6 +768,7 @@ static void do_listen(void (*handler)(int sk))
 		}
 
 		handler(nsk);
+		close(sk);
 
 		syslog(LOG_INFO, "Disconnect: %m");
 		exit(0);
@@ -968,13 +974,18 @@ static void do_send(int sk)
 			sent += len;
 			size -= len;
 		}
+
+		close(fd);
 		return;
 	} else {
 		for (i = 6; i < data_size; i++)
 			buf[i] = 0x7f;
 	}
 
-	seq = 0;
+	if (!count && send_delay)
+		usleep(send_delay);
+
+	seq = seq_start;
 	while ((num_frames == -1) || (num_frames-- > 0)) {
 		put_le32(seq, buf);
 		put_le16(data_size, buf + 4);
@@ -997,7 +1008,8 @@ static void do_send(int sk)
 			size -= len;
 		}
 
-		if (num_frames && send_delay && count && !(seq % count))
+		if (num_frames && send_delay && count &&
+						!(seq % (count + seq_start)))
 			usleep(send_delay);
 	}
 }
@@ -1005,6 +1017,9 @@ static void do_send(int sk)
 static void send_mode(int sk)
 {
 	do_send(sk);
+
+	if (disc_delay)
+		usleep(disc_delay);
 
 	syslog(LOG_INFO, "Closing channel ...");
 	if (shutdown(sk, SHUT_RDWR) < 0)
@@ -1310,6 +1325,7 @@ static void usage(void)
 		"\t[-C num] send num frames before delay (default = 1)\n"
 		"\t[-D milliseconds] delay after sending num frames (default = 0)\n"
 		"\t[-K milliseconds] delay before receiving (default = 0)\n"
+		"\t[-g milliseconds] delay before disconnecting (default = 0)\n"
 		"\t[-X mode] l2cap mode (help for list, default = basic)\n"
 		"\t[-a policy] chan policy (help for list, default = bredr)\n"
 		"\t[-F fcs] use CRC16 check (default = 1)\n"
@@ -1325,7 +1341,8 @@ static void usage(void)
 		"\t[-S] secure connection\n"
 		"\t[-M] become master\n"
 		"\t[-T] enable timestamps\n"
-		"\t[-V type] address type (help for list, default = bredr)\n");
+		"\t[-V type] address type (help for list, default = bredr)\n"
+		"\t[-e seq] initial sequence value (default = 0)\n");
 }
 
 int main(int argc, char *argv[])
@@ -1335,8 +1352,8 @@ int main(int argc, char *argv[])
 
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt = getopt(argc, argv, "rdscuwmntqxyzpb:a:"
-		"i:P:I:O:J:B:N:L:W:C:D:X:F:Q:Z:Y:H:K:V:RUGAESMT")) != EOF) {
+	while ((opt = getopt(argc, argv, "a:b:cde:g:i:mnpqrstuwxyz"
+		"AB:C:D:EF:GH:I:J:K:L:MN:O:P:Q:RSTUV:W:X:Y:Z:")) != EOF) {
 		switch (opt) {
 		case 'r':
 			mode = RECV;
@@ -1434,7 +1451,7 @@ int main(int argc, char *argv[])
 			break;
 
 		case 'B':
-			filename = strdup(optarg);
+			filename = optarg;
 			break;
 
 		case 'N':
@@ -1540,6 +1557,14 @@ int main(int argc, char *argv[])
 				exit(1);
 			}
 
+			break;
+
+		case 'e':
+			seq_start = atoi(optarg);
+			break;
+
+		case 'g':
+			disc_delay = atoi(optarg) * 1000;
 			break;
 
 		default:

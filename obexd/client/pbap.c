@@ -29,13 +29,16 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
-#include <bluetooth/bluetooth.h>
-#include <gobex/gobex-apparam.h>
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 
-#include "log.h"
+#include "gobex/gobex-apparam.h"
+#include "gdbus/gdbus.h"
+
+#include "obexd/src/log.h"
 
 #include "transfer.h"
 #include "session.h"
@@ -72,6 +75,21 @@
 #define FORMAT_TAG		0X07
 #define PHONEBOOKSIZE_TAG	0X08
 #define NEWMISSEDCALLS_TAG	0X09
+#define PRIMARY_COUNTER_TAG	0X0A
+#define SECONDARY_COUNTER_TAG	0X0B
+#define DATABASEID_TAG		0X0D
+#define SUPPORTED_FEATURES_TAG  0x10
+
+#define DOWNLOAD_FEATURE	0x00000001
+#define BROWSE_FEATURE		0x00000002
+#define DATABASEID_FEATURE	0x00000004
+#define FOLDER_VERSION_FEATURE	0x00000008
+#define VCARD_SELECTING_FEATURE	0x00000010
+#define ENHANCED_CALLS_FEATURE	0x00000020
+#define UCI_FEATURE		0x00000040
+#define UID_FEATURE		0x00000080
+#define REFERENCING_FEATURE	0x00000100
+#define DEFAULT_IMAGE_FEATURE	0x00000200
 
 static const char *filter_list[] = {
 	"VERSION",
@@ -103,6 +121,9 @@ static const char *filter_list[] = {
 	"CLASS",
 	"SORT-STRING",
 	"X-IRMC-CALL-DATETIME",
+	"X-BT-SPEEDDIALKEY",
+	"X-BT-UCI",
+	"X-BT-UID",
 	NULL
 };
 
@@ -116,6 +137,11 @@ static const char *filter_list[] = {
 struct pbap_data {
 	struct obc_session *session;
 	char *path;
+	uint16_t version;
+	uint32_t supported_features;
+	uint8_t databaseid[16];
+	uint8_t primary[16];
+	uint8_t secondary[16];
 };
 
 struct pending_request {
@@ -180,14 +206,17 @@ static const GMarkupParser listing_parser = {
 	NULL,
 	NULL
 };
+
 static char *build_phonebook_path(const char *location, const char *item)
 {
 	char *path = NULL, *tmp, *tmp1;
+	gboolean internal = FALSE;
 
 	if (!g_ascii_strcasecmp(location, "int") ||
-			!g_ascii_strcasecmp(location, "internal"))
+			!g_ascii_strcasecmp(location, "internal")) {
 		path = g_strdup("/telecom");
-	else if (!g_ascii_strncasecmp(location, "sim", 3)) {
+		internal = TRUE;
+	} else if (!g_ascii_strncasecmp(location, "sim", 3)) {
 		if (strlen(location) == 3)
 			tmp = g_strdup("sim1");
 		else
@@ -202,7 +231,9 @@ static char *build_phonebook_path(const char *location, const char *item)
 		!g_ascii_strcasecmp(item, "ich") ||
 		!g_ascii_strcasecmp(item, "och") ||
 		!g_ascii_strcasecmp(item, "mch") ||
-		!g_ascii_strcasecmp(item, "cch")) {
+		!g_ascii_strcasecmp(item, "cch") ||
+		(internal && !g_ascii_strcasecmp(item, "spd")) ||
+		(internal && !g_ascii_strcasecmp(item, "fav"))) {
 		tmp = path;
 		tmp1 = g_ascii_strdown(item, -1);
 		path = g_build_filename(tmp, tmp1, NULL);
@@ -234,6 +265,10 @@ static void pbap_setpath_cb(struct obc_session *session,
 
 	if (err != NULL)
 		pbap_reset_path(pbap);
+	else
+		g_dbus_emit_property_changed(conn,
+					obc_session_get_path(pbap->session),
+					PBAP_INTERFACE, "Folder");
 
 	if (err) {
 		DBusMessage *reply = g_dbus_create_error(request->msg,
@@ -246,8 +281,71 @@ static void pbap_setpath_cb(struct obc_session *session,
 	pending_request_free(request);
 }
 
+static void read_version(struct pbap_data *pbap, GObexApparam *apparam)
+{
+	const guint8 *data;
+	uint8_t value[16];
+	gsize len;
+
+	if (!(pbap->supported_features & FOLDER_VERSION_FEATURE))
+		return;
+
+	if (!g_obex_apparam_get_bytes(apparam, PRIMARY_COUNTER_TAG, &data,
+								&len)) {
+		len = sizeof(value);
+		memset(value, 0, len);
+		data = value;
+	}
+
+	if (memcmp(pbap->primary, data, len)) {
+		memcpy(pbap->primary, data, len);
+		g_dbus_emit_property_changed(conn,
+					obc_session_get_path(pbap->session),
+					PBAP_INTERFACE, "PrimaryCounter");
+	}
+
+	if (!g_obex_apparam_get_bytes(apparam, SECONDARY_COUNTER_TAG, &data,
+								&len)) {
+		len = sizeof(value);
+		memset(value, 0, len);
+		data = value;
+	}
+
+	if (memcmp(pbap->secondary, data, len)) {
+		memcpy(pbap->secondary, data, len);
+		g_dbus_emit_property_changed(conn,
+					obc_session_get_path(pbap->session),
+					PBAP_INTERFACE, "SecondaryCounter");
+	}
+}
+
+static void read_databaseid(struct pbap_data *pbap, GObexApparam *apparam)
+{
+	const guint8 *data;
+	guint8 value[16];
+	gsize len;
+
+	if (!(pbap->supported_features & DATABASEID_FEATURE))
+		return;
+
+	if (!g_obex_apparam_get_bytes(apparam, DATABASEID_TAG, &data, &len)) {
+		len = sizeof(value);
+		memset(value, 0, len);
+		data = value;
+	}
+
+	if (memcmp(data, pbap->databaseid, len)) {
+		memcpy(pbap->databaseid, data, len);
+		g_dbus_emit_property_changed(conn,
+					obc_session_get_path(pbap->session),
+					PBAP_INTERFACE, "DatabaseIdentifier");
+	}
+}
+
 static void read_return_apparam(struct obc_transfer *transfer,
-				guint16 *phone_book_size, guint8 *new_missed_calls)
+					struct pbap_data *pbap,
+					guint16 *phone_book_size,
+					guint8 *new_missed_calls)
 {
 	GObexApparam *apparam;
 
@@ -262,6 +360,9 @@ static void read_return_apparam(struct obc_transfer *transfer,
 							phone_book_size);
 	g_obex_apparam_get_uint8(apparam, NEWMISSEDCALLS_TAG,
 							new_missed_calls);
+
+	read_version(pbap, apparam);
+	read_databaseid(pbap, apparam);
 }
 
 static void phonebook_size_callback(struct obc_session *session,
@@ -282,11 +383,14 @@ static void phonebook_size_callback(struct obc_session *session,
 
 	reply = dbus_message_new_method_return(request->msg);
 
-	read_return_apparam(transfer, &phone_book_size, &new_missed_calls);
+	read_return_apparam(transfer, request->pbap, &phone_book_size,
+							&new_missed_calls);
 
-	dbus_message_append_args(reply,
-			DBUS_TYPE_UINT16, &phone_book_size,
-			DBUS_TYPE_INVALID);
+	if (dbus_message_is_method_call(request->msg, PBAP_INTERFACE,
+								"GetSize"))
+		dbus_message_append_args(reply,
+					DBUS_TYPE_UINT16, &phone_book_size,
+					DBUS_TYPE_INVALID);
 
 send:
 	g_dbus_send_message(conn, reply);
@@ -915,6 +1019,19 @@ static DBusMessage *pbap_list_filter_fields(DBusConnection *connection,
 	return reply;
 }
 
+static DBusMessage *pbap_update_version(DBusConnection *connection,
+					DBusMessage *message, void *user_data)
+{
+	struct pbap_data *pbap = user_data;
+
+	if (!(pbap->supported_features & FOLDER_VERSION_FEATURE))
+		return g_dbus_create_error(message,
+					ERROR_INTERFACE ".NotSupported",
+					"Operation is not supported");
+
+	return pbap_get_size(connection, message, user_data);
+}
+
 static const GDBusMethodTable pbap_methods[] = {
 	{ GDBUS_ASYNC_METHOD("Select",
 			GDBUS_ARGS({ "location", "s" }, { "phonebook", "s" }),
@@ -946,6 +1063,126 @@ static const GDBusMethodTable pbap_methods[] = {
 	{ GDBUS_METHOD("ListFilterFields",
 				NULL, GDBUS_ARGS({ "fields", "as" }),
 				pbap_list_filter_fields) },
+	{ GDBUS_ASYNC_METHOD("UpdateVersion", NULL, NULL,
+				pbap_update_version) },
+	{ }
+};
+
+static gboolean folder_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct pbap_data *pbap = data;
+
+	return pbap->path != NULL;
+}
+
+static gboolean get_folder(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct pbap_data *pbap = data;
+
+	if (!pbap->path)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &pbap->path);
+
+	return TRUE;
+}
+
+static gboolean databaseid_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct pbap_data *pbap = data;
+
+	return pbap->supported_features & DATABASEID_FEATURE;
+}
+
+static int u128_to_string(uint8_t *data, char *str, size_t len)
+{
+	return snprintf(str, len, "%02X%02X%02X%02X%02X%02X%02X%02X"
+					"%02X%02X%02X%02X%02X%02X%02X%02X",
+					data[0], data[1], data[2], data[3],
+					data[3], data[5], data[6], data[7],
+					data[8], data[9], data[10], data[11],
+					data[12], data[13], data[14], data[15]);
+}
+
+static gboolean get_databaseid(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct pbap_data *pbap = data;
+	char value[33];
+	const char *pvalue = value;
+
+	if (u128_to_string(pbap->databaseid, value, sizeof(value)) < 0)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &pvalue);
+
+	return TRUE;
+}
+
+static gboolean version_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct pbap_data *pbap = data;
+
+	return pbap->supported_features & FOLDER_VERSION_FEATURE;
+}
+
+static gboolean get_primary(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct pbap_data *pbap = data;
+	char value[33];
+	const char *pvalue = value;
+
+	if (u128_to_string(pbap->primary, value, sizeof(value)) < 0)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &pvalue);
+
+	return TRUE;
+}
+
+static gboolean get_secondary(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct pbap_data *pbap = data;
+	char value[33];
+	const char *pvalue = value;
+
+	if (u128_to_string(pbap->secondary, value, sizeof(value)) < 0)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &pvalue);
+
+	return TRUE;
+}
+
+static gboolean image_size_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct pbap_data *pbap = data;
+
+	return pbap->supported_features & DEFAULT_IMAGE_FEATURE;
+}
+
+static gboolean get_image_size(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	dbus_bool_t value = TRUE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &value);
+
+	return TRUE;
+}
+
+static const GDBusPropertyTable pbap_properties[] = {
+	{ "Folder", "s", get_folder, NULL, folder_exists },
+	{ "DatabaseIdentifier", "s", get_databaseid, NULL, databaseid_exists },
+	{ "PrimaryCounter", "s", get_primary, NULL, version_exists },
+	{ "SecondaryCounter", "s", get_secondary, NULL, version_exists },
+	{ "FixedImageSize", "b", get_image_size, NULL, image_size_exists },
 	{ }
 };
 
@@ -956,6 +1193,69 @@ static void pbap_free(void *data)
 	obc_session_unref(pbap->session);
 	g_free(pbap->path);
 	g_free(pbap);
+}
+
+static void parse_service_record(struct pbap_data *pbap)
+{
+	const void *data;
+
+	/* Version */
+	data = obc_session_get_attribute(pbap->session,
+						SDP_ATTR_PFILE_DESC_LIST);
+	if (!data)
+		return;
+
+	pbap->version = GPOINTER_TO_UINT(data);
+
+	/*
+	 * If the PbapSupportedFeatures attribute is not present
+	 * 0x00000003 shall be assumed for a remote PSE.
+	 */
+	pbap->supported_features = 0x00000003;
+
+	if (pbap->version < 0x0102)
+		return;
+
+	/* Supported Feature Bits */
+	data = obc_session_get_attribute(pbap->session,
+					SDP_ATTR_PBAP_SUPPORTED_FEATURES);
+	if (data)
+		pbap->supported_features = *(uint32_t *) data;
+
+}
+
+static void *pbap_supported_features(struct obc_session *session)
+{
+	const void *data;
+	uint16_t version;
+
+	/* Version */
+	data = obc_session_get_attribute(session, SDP_ATTR_PFILE_DESC_LIST);
+	if (!data)
+		return NULL;
+
+	version = GPOINTER_TO_UINT(data);
+
+	if (version < 0x0102)
+		return NULL;
+
+	/* Supported Feature Bits */
+	data = obc_session_get_attribute(session,
+					SDP_ATTR_PBAP_SUPPORTED_FEATURES);
+	if (!data)
+		return NULL;
+
+	return g_obex_apparam_set_uint32(NULL, SUPPORTED_FEATURES_TAG,
+						DOWNLOAD_FEATURE |
+						BROWSE_FEATURE |
+						DATABASEID_FEATURE |
+						FOLDER_VERSION_FEATURE |
+						VCARD_SELECTING_FEATURE |
+						ENHANCED_CALLS_FEATURE |
+						UCI_FEATURE |
+						UID_FEATURE |
+						REFERENCING_FEATURE |
+						DEFAULT_IMAGE_FEATURE);
 }
 
 static int pbap_probe(struct obc_session *session)
@@ -973,8 +1273,14 @@ static int pbap_probe(struct obc_session *session)
 
 	pbap->session = obc_session_ref(session);
 
+	parse_service_record(pbap);
+
+	DBG("%s, version 0x%04x supported features 0x%08x", path, pbap->version,
+						pbap->supported_features);
+
 	if (!g_dbus_register_interface(conn, path, PBAP_INTERFACE, pbap_methods,
-						NULL, NULL, pbap, pbap_free)) {
+						NULL, pbap_properties, pbap,
+						pbap_free)) {
 		pbap_free(pbap);
 		return -ENOMEM;
 	}
@@ -996,6 +1302,7 @@ static struct obc_driver pbap = {
 	.uuid = PBAP_UUID,
 	.target = OBEX_PBAP_UUID,
 	.target_len = OBEX_PBAP_UUID_LEN,
+	.supported_features = pbap_supported_features,
 	.probe = pbap_probe,
 	.remove = pbap_remove
 };

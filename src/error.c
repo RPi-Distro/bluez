@@ -27,14 +27,20 @@
 #include <config.h>
 #endif
 
-#include <gdbus/gdbus.h>
+#include "gdbus/gdbus.h"
 
 #include "error.h"
 
 DBusMessage *btd_error_invalid_args(DBusMessage *msg)
 {
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".InvalidArguments",
+	return btd_error_invalid_args_str(msg,
 					"Invalid arguments in method call");
+}
+
+DBusMessage *btd_error_invalid_args_str(DBusMessage *msg, const char *str)
+{
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".InvalidArguments",
+					"%s", str);
 }
 
 DBusMessage *btd_error_busy(DBusMessage *msg)
@@ -88,7 +94,13 @@ DBusMessage *btd_error_does_not_exist(DBusMessage *msg)
 DBusMessage *btd_error_not_authorized(DBusMessage *msg)
 {
 	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotAuthorized",
-					"Operation Not Authorized");
+						"Operation Not Authorized");
+}
+
+DBusMessage *btd_error_not_permitted(DBusMessage *msg, const char *str)
+{
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotPermitted",
+					"%s", str);
 }
 
 DBusMessage *btd_error_no_such_adapter(DBusMessage *msg)

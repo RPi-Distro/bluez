@@ -21,7 +21,9 @@ Linux kernel v3.9	Version 1.3
 Linux kernel v3.13	Version 1.4
 Linux kernel v3.15	Version 1.5
 Linux kernel v3.16	Version 1.6
-Linux kernel v3.17	Version 1.7	(not yet released)
+Linux kernel v3.17	Version 1.7
+Linux kernel v3.19	Version 1.8
+Linux kernel v4.1	Version 1.9
 
 Version 1.1 introduces Set Device ID command.
 
@@ -49,6 +51,21 @@ commands. It also introduces Device Added, Device Removed, New Connection
 Parameter, Unconfigured Index Added, Unconfigured Index Removed and New
 Configuration Options events. The existing Set Debug Keys command gained
 an extra setting for enabling SSP debug mode.
+
+Version 1.8 introduces Start Service Discovery command. It also adds new
+Long Term Key types for LE Secure Connection feature.
+
+Version 1.9 introduces Read Local Out Of Band Extended, Data, Read Extended
+Controller Index List, Read Advertising Features, Add Advertising and Remove
+Advertising commands. It also introduces Extended Index Added, Extended Index
+Removed, Local Out Of Band Extended Data Updated, Advertising Added and
+Advertising Removed events. The existing Set Advertising command gained an
+extra setting for enabling undirected connectable advertising. It provides
+support for a new static address setting and allows the usage of Set Fast
+Connectable when controller is powered off.
+
+Version 1.10 does not introduce any new command or event. It extends the
+advertising feature to support 5 parallel advertising instances.
 
 
 Example
@@ -138,6 +155,16 @@ and Command Complete events:
 0x0F	Not Powered
 0x10	Cancelled
 0x11	Invalid Index
+0x12	RFKilled
+0x13	Already Paired
+0x14	Permission Denied
+
+As a general rule all commands generate the events as specified below,
+however invalid lengths or unknown commands will always generate a
+Command Status response (with Unknown Command or Invalid Parameters
+status). Sending a command with an invalid Controller Index value will
+also always generate a Command Status event with the Invalid Index
+status code.
 
 
 Read Management Version Information Command
@@ -235,6 +262,10 @@ Read Controller Information Command
 	then the configured static address will be used as identity
 	address.
 
+	In the case of a dual-mode controller with public address that
+	is configured as Low Energy only device (BR/EDR switched off),
+	the static address is used when set and public address otherwise.
+
 	If no short name is set the Short_Name parameter will be empty
 	(begin with a nul byte).
 
@@ -256,6 +287,7 @@ Read Controller Information Command
 		12	Debug Keys
 		13	Privacy
 		14	Controller Configuration
+		15	Static Address
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
@@ -279,6 +311,15 @@ Set Powered Command
 	If discoverable setting is activated with a timeout, then
 	switching the controller off will expire this timeout and
 	disable discoverable.
+
+	Settings programmed via Set Advertising and Add/Remove
+	Advertising while the controller was powered off will be activated
+	when powering the controller on.
+
+	Switching the controller off will permanently cancel and remove
+	all advertising instances with a timeout set, i.e. time limited
+	advertising instances are not being remembered across power cycles.
+	Advertising Removed events will be issued accordingly.
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
@@ -352,7 +393,7 @@ Set Connectable Command
 	and for LE controllers it changes the advertising type. For
 	dual mode controllers it affects both settings.
 
-	For LE capable controllers the connectable setting takes affect
+	For LE capable controllers the connectable setting takes effect
 	when advertising is enabled (peripheral) or when directed
 	advertising events are received (central).
 
@@ -399,21 +440,18 @@ Set Fast Connectable Command
 	(e.g. not for single-mode LE ones). It will return Not Supported
 	otherwise.
 
-	This command can only be used when the controller is powered on
-	and will return Not Powerd otherwise.
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
 
-	If connectable is not set, then this command will fail with
-	Rejected error.
+	The setting will be remembered during power down/up toggles.
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
 
 	Possible errors:	Failed
 				Busy
-				Rejected
 				Not Supported
 				Invalid Parameters
-				Not Powered
 				Invalid Index
 
 
@@ -563,6 +601,10 @@ Set Low Energy Command
 	In case the kernel subsystem does not support Low Energy or the
 	controller does not either, the command will fail regardless.
 
+	Disabling LE support will permanently disable and remove all
+	advertising instances configured with the Add Advertising
+	command. Advertising Removed events will be issued accordingly.
+
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
 
@@ -647,10 +689,10 @@ Add UUID Command
 				SVC_Hint (1 Octet)
 	Return Parameters:	Class_Of_Device (3 Octets)
 
-	This command is used to add a UUID to be published in EIR
-	and/or AD data. The accompanied SVC_Hint parameter is used to
-	tell the kernel whether the service class bits of the Class of
-	Device value need modifying due to this UUID.
+	This command is used to add a UUID to be published in EIR data.
+	The accompanied SVC_Hint parameter is used to tell the kernel
+	whether the service class bits of the Class of Device value need
+	modifying due to this UUID.
 
 	This command can be used when the controller is not powered and
 	all settings will be programmed once powered.
@@ -852,7 +894,7 @@ Get Connections Command
 				Address2 { }
 				...
 
-	This command is used to retreive a list of currently connected
+	This command is used to retrieve a list of currently connected
 	devices.
 
 	Possible values for the Address_Type parameter:
@@ -1004,7 +1046,7 @@ Pair Device Command
 
 	To allow tracking of which resolvable random address changed
 	into which identity address, the New Identity Resolving Key
-	event will be send before receiving Command Complete event
+	event will be sent before receiving Command Complete event
 	for this command.
 
 	This command can only be used when the controller is powered.
@@ -1012,11 +1054,19 @@ Pair Device Command
 	This command generates a Command Complete event on success
 	or failure.
 
-	Possible errors:	Connect Failed
+	Reject status is used when requested transport is not enabled.
+
+	Not Supported status is used if controller is not capable with
+	requested transport.
+
+	Possible errors:	Rejected
+				Not Supported
+				Connect Failed
 				Busy
 				Invalid Parameters
 				Not Powered
 				Invalid Index
+				Already Paired
 
 
 Cancel Pair Device Command
@@ -1225,6 +1275,10 @@ Read Local Out Of Band Data Command
 	will return P-192 versions of hash and randomizer as well as
 	P-256 versions of both.
 
+	Values returned by this command become invalid when the controller
+	is powered down. After each power-cycle it is required to call
+	this command again to get updated values.
+
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
 
@@ -1272,6 +1326,22 @@ Add Remote Out Of Band Data Command
 	Secure Connections is disabled, then of course this is the
 	same as not providing any data at all.
 
+	When providing data for remote LE devices, then the Hash_192 and
+	and Randomizer_192 fields are not used and shell be set to zero.
+
+	The Hash_256 and Randomizer_256 fields can be used for LE secure
+	connections Out Of Band data. If only LE secure connections data
+	is provided the Hash_P192 and Randomizer_P192 fields can be set
+	to zero. Currently there is no support for providing the Security
+	Manager TK Value for LE legacy pairing.
+
+	If Secure Connections Only mode has been enabled, then providing
+	Hash_P192 and Randomizer_P192 is not allowed. They are required
+	to be set to zero values.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
 	This command generates a Command Complete event on success
 	or failure.
 
@@ -1298,6 +1368,12 @@ Remove Remote Out Of Band Data Command
 		0	BR/EDR
 		1	LE Public
 		2	LE Random
+
+	When the Address parameter is 00:00:00:00:00:00, then all
+	previously added data will be removed.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
 
 	This command generates a Command Complete event on success
 	or failure.
@@ -1411,7 +1487,7 @@ Block Device Command
 				Address_Type (1 Octet)
 
 	This command is used to add a device to the list of devices
-	which should be blocked from being connect to the local
+	which should be blocked from being connected to the local
 	controller.
 
 	Possible values for the Address_Type parameter:
@@ -1419,7 +1495,7 @@ Block Device Command
 		1	LE Public
 		2	LE Random
 
-	For Low Energy devices, the blocking of a device take presedence
+	For Low Energy devices, the blocking of a device takes precedence
 	over auto-connection actions provided by Add Device. Blocked
 	devices will not be auto-connected or even reported when found
 	during background scanning. If the controller is connectable
@@ -1489,9 +1565,9 @@ Set Device ID Command
 		0x0001	Bluetooth SIG
 		0x0002	USB Implementer’s Forum
 
-	The information are put into the EIR data. If the controller does
+	The information is put into the EIR data. If the controller does
 	not support EIR or if SSP is disabled, this command will still
-	succeed. The information are stored for later use and will survive
+	succeed. The information is stored for later use and will survive
 	toggling SSP on and off.
 
 	This command generates a Command Complete event on success or
@@ -1510,12 +1586,41 @@ Set Advertising Command
 	Return Parameters:	Current_Settings (4 Octets)
 
 	This command is used to enable LE advertising on a controller
-	that supports it. The allowed values for the Advertising
-	command parameter are 0x00 and 0x01. All other values will
-	return Invalid Parameters.
+	that supports it. The allowed values for the Advertising command
+	parameter are 0x00, 0x01 and 0x02. All other values will return
+	Invalid Parameters.
 
-	A pre-requisite is that LE is already enabled, otherwise
-	this command will return a "rejected" response.
+	The value 0x00 disables advertising, the value 0x01 enables
+	advertising with considering of connectable setting and the
+	value 0x02 enables advertising in connectable mode.
+
+	Using value 0x01 means that when connectable setting is disabled,
+	the advertising happens with undirected non-connectable advertising
+	packets and a non-resovable random address is used. If connectable
+	setting is enabled, then undirected connectable advertising packets
+	and the identity address or resolvable private address are used.
+
+	LE Devices configured via Add Device command with Action 0x01
+	have no effect when using Advertising value 0x01 since only the
+	connectable setting is taken into account.
+
+	To utilize undirected connectable advertising without changing the
+	connectable setting, the value 0x02 can be utilized. It makes the
+	device connectable via LE without the requirement for being
+	connectable on BR/EDR (and/or LE).
+
+	The value 0x02 should be the preferred mode of operation when
+	implementing peripheral mode.
+
+	Using this command will temporarily deactivate any configuration
+	made by the Add Advertising command. This command takes precedence.
+	Once a Set Advertising command with value 0x00 is issued any
+	previously made configurations via Add/Remove Advertising, including
+	such changes made while Set Advertising was active, will be re-
+	enabled.
+
+	A pre-requisite is that LE is already enabled, otherwise this
+	command will return a "rejected" response.
 
 	This command generates a Command Complete event on success or a
 	Command Status event on failure.
@@ -1563,7 +1668,7 @@ Set Static Address Command
 	Command Code:		0x002B
 	Controller Index:	<controller id>
 	Command Parameters:	Address (6 Octets)
-	Return Parameters:
+	Return Parameters:	Current_Settings (4 Octets)
 
 	This command allows for setting the static random address. It is
 	only supported on controllers with LE support. The static random
@@ -1576,13 +1681,18 @@ Set Static Address Command
 	to disable the static address.
 
 	When a controller has a public address (which is required for
-	all dual-mode controllers), this address is not used. Only when
+	all dual-mode controllers), this address is not used. If a dual-mode
+	controller is configured as Low Energy only devices (BR/EDR has
+	been switched off), then the static address is used. Only when
 	the controller information reports BDADDR_ANY (00:00:00:00:00:00),
 	it is required to configure a static address first.
 
 	If privacy mode is enabled and the controller is single mode
 	LE only without a public address, the static random address is
 	used as identity address.
+
+	The Static Address flag from the current settings can also be used
+	to determine if the configured static address is in use or not.
 
 	This command generates a Command Complete event on success or a
 	Command Status event on failure.
@@ -1632,9 +1742,9 @@ Set Secure Connections Command
 	enables Secure Connections and the value 0x02 enables Secure
 	Connections Only mode.
 
-	This command is only available for BR/EDR capable controllers
-	supporting the core specification version 4.1 or greater
-	(e.g. not for single-mode LE controllers or pre-4.1 ones).
+	This command is only available for LE capable controllers as
+	well as controllers supporting the core specification version
+	4.1 or greater.
 
 	This command can be used when the controller is not powered and
 	all settings will be programmed once powered.
@@ -1800,7 +1910,7 @@ Get Connection Information Command
 		2	LE Random
 
 	TX_Power and Max_TX_Power can be set to 127 if values are invalid or
-	unknown.
+	unknown. A value of 127 for RSSI indicates that it is not available.
 
 	This command generates a Command Complete event on success and
 	on failure. In case of failure only Address and Address_Type fields
@@ -1876,17 +1986,17 @@ Add Device Command
 		2	Auto-connect remote device
 
 	With the Action 0, when the device is found, a new Device Found
-	event will be send indicating this device is available. This
+	event will be sent indicating this device is available. This
 	action is only valid for LE Public and LE Random address types.
 
 	With the Action 1, the device is allowed to connect. For BR/EDR
 	address type this means an incoming connection. For LE Public
 	and LE Random address types, a connection will be established
 	to devices using directed advertising. If successful a Device
-	Connected event will be send.
+	Connected event will be sent.
 
 	With the Action 2, when the device is found, it will be connected
-	and if successful a Device Connected event will be send. This
+	and if successful a Device Connected event will be sent. This
 	action is only valid for LE Public and LE Random address types.
 
 	When a device is blocked using Block Device command, then it is
@@ -2117,8 +2227,8 @@ Set Public Address Command
 
 	For a fully configured controller, the current controller index
 	will become invalid and an Unconfigured Index Removed event will
-	be send. Once the address has been successfully changed an Index
-	Added event will be send. There is no guarantee that the controller
+	be sent. Once the address has been successfully changed an Index
+	Added event will be sent. There is no guarantee that the controller
 	index stays the same.
 
 	All previous configured parameters and settings are lost when
@@ -2132,6 +2242,517 @@ Set Public Address Command
 	Possible errors:	Rejected
 				Not Supported
 				Invalid Parameters
+				Invalid Index
+
+
+Start Service Discovery Command
+===============================
+
+	Command Code:		0x003a
+	Controller Index:	<controller id>
+	Command Parameters:	Address_Type (1 Octet)
+				RSSI_Threshold (1 Octet)
+				UUID_Count (1 Octet)
+				UUID[i] (16 Octets)
+	Return Parameters:	Address_Type (1 Octet)
+
+	This command is used to start the process of discovering remote
+	devices with a specific UUID. A Device Found event will be sent
+	for each discovered device.
+
+	Possible values for the Address_Type parameter are a bit-wise or
+	of the following bits:
+
+		0	BR/EDR
+		1	LE Public
+		2	LE Random
+
+	By combining these e.g. the following values are possible:
+
+		1	BR/EDR
+		6	LE (public & random)
+		7	BR/EDR/LE (interleaved discovery)
+
+	The service discovery uses active scanning for Low Energy scanning
+	and will search for UUID in both advertising data and scan response
+	data.
+
+	Found devices that have a RSSI value smaller than RSSI_Threshold
+	are not reported via DeviceFound event. Setting a value of 127
+	will cause all devices to be reported.
+
+	The list of UUIDs identifies a logical OR. Only one of the UUIDs
+	have to match to cause a DeviceFound event. Providing an empty
+	list of UUIDs with Num_UUID set to 0 which means that DeviceFound
+	events are send out for all devices above the RSSI_Threshold.
+
+	In case RSSI_Threshold is set to 127 and UUID_Count is 0, then
+	this command behaves exactly the same as Start Discovery.
+
+	When the discovery procedure starts the Discovery event will
+	notify this similar to Start Discovery.
+
+	This command can only be used when the controller is powered.
+
+	This command generates a Command Complete event on success
+	or failure.
+
+	Possible errors:	Busy
+				Not Supported
+				Invalid Parameters
+				Not Powered
+				Invalid Index
+
+
+Read Local Out Of Band Extended Data Command
+============================================
+
+	Command Code:		0x003b
+	Controller Index:	<controller id>
+	Command Parameters:	Address_Type (1 Octet)
+	Return Parameters:	Address_Type (1 Octet)
+				EIR_Data_Length (2 Octets)
+				EIR_Data (0-65535 Octets)
+
+	This command is used to read the local Out of Band data
+	information and provide them encoded as extended inquiry
+	response information or advertising data.
+
+	Possible values for the Address_Type parameter are a bit-wise or
+	of the following bits:
+
+		0	BR/EDR
+		1	LE Public
+		2	LE Random
+
+	By combining these e.g. the following values are possible:
+
+		1	BR/EDR
+		6	LE (public & random)
+		7	Reserved (not in use)
+
+	For BR/EDR controller (Address_Type 1) the returned information
+	will contain the following information:
+
+		Class of Device
+		Simple Pairing Hash C-192 (optional)
+		Simple Pairing Randomizer R-192 (optional)
+		Simple Pairing Hash C-256 (optional)
+		Simple Pairing Randomizer R-256 (optional)
+		Service Class UUID (optional)
+		Bluetooth Local Name (optional)
+
+	The Simple Pairing Hash C-256 and Simple Pairing Randomizer R-256
+	fields are only included when secure connections has been enabled.
+
+	The Device Address (BD_ADDR) is not included in the EIR_Data and
+	needs to be taken from controller information.
+
+	For LE controller (Address_Type 6) the returned information
+	will contain the following information:
+
+		LE Bluetooth Device Address
+		LE Role
+		LE Secure Connections Confirmation Value (optional)
+		LE Secure Connections Random Value (optional)
+		Appearance (optional)
+		Local Name (optional)
+		Flags
+
+	The LE Secure Connections Confirmation Value and LE Secure Connections
+	Random Value fields are only included when secure connections has been
+	enabled.
+
+	The Security Manager TK Value from the Bluetooth specification can
+	not be provided by this command. The Out Of Band information here are
+	for asymmetric exchanges based on Diffie-Hellman key exchange. The
+	Security Manager TK Value is a symmetric random number that has to
+	be acquired and agreed upon differently.
+
+	The returned information from BR/EDR controller and LE controller
+	types are not related to each other. Once they have been used
+	over an Out Of Band link, a new set of information shall be
+	requested.
+
+	When Secure Connections Only mode has been enabled, then the fields
+	for Simple Pairing Hash C-192 and Simple Pairing Randomizer R-192
+	are not returned. Only the fields for the strong secure connections
+	pairing are included.
+
+	This command can only be used when the controller is powered.
+
+	Values returned by this command become invalid when the controller
+	is powered down. After each power-cycle it is required to call
+	this command again to get updated information.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Not Supported
+				Busy
+				Invalid Parameters
+				Not Powered
+				Invalid Index
+
+
+Read Extended Controller Index List Command
+===========================================
+
+	Command Code:		0x003c
+	Controller Index:	<non-controller>
+	Command Parameters:
+	Return Parameters:	Num_Controllers (2 Octets)
+				Controller_Index[i] (2 Octets)
+				Controller_Type[i] (1 Octet)
+				Controller_Bus[i] (1 Octet)
+
+	This command returns the list of currently known controllers. It
+	includes configured, unconfigured and alternate controllers.
+
+	Controllers added or removed after calling this command can be
+	be monitored using the Extended Index Added and Extended Index
+	Removed events.
+
+	The existing Index Added, Index Removed, Unconfigured Index Added
+	and Unconfigured Index Removed are no longer sent after this command
+	has been used at least once.
+
+	Instead of calling Read Controller Index List and Read Unconfigured
+	Controller Index List, this command combines all the information
+	and can be used to retrieve the controller list.
+
+	The Controller_Type parameter has these values:
+
+		0x00	Primary Controller (BR/EDR and/or LE)
+		0x01	Unconfigured Controller (BR/EDR and/or LE)
+		0x02	Alternate MAC/PHY Controller (AMP)
+
+	The 0x00 and 0x01 types indiciate a primary BR/EDR and/or LE
+	controller. The difference is just if they need extra configuration
+	or if they are fully configured.
+
+	Controllers in configured state will be listed as 0x00 and controllers
+	in unconfigured state will be listed as 0x01. A controller that is
+	fully configured and supports configuration changes will be listed
+	as 0x00.
+
+	Alternate MAC/PHY controllers will be listed as 0x02. They do not
+	support the difference between configured and unconfigured state.
+
+	The Controller_Bus parameter has these values:
+
+		0x00	Virtual
+		0x01	USB
+		0x02	PCMCIA
+		0x03	UART
+		0x04	RS232
+		0x05	PCI
+		0x06	SDIO
+
+	Controllers marked as RAW only operation are currently not listed
+	by this command.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+
+Read Advertising Features Command
+=================================
+
+	Command Code:		0x003d
+	Controller Index:	<controller id>
+	Command Parameters:
+	Return Parameters:	Supported_Flags (4 Octets)
+				Max_Adv_Data_Len (1 Octet)
+				Max_Scan_Rsp_Len (1 Octet)
+				Max_Instances (1 Octet)
+				Num_Instances (1 Octet)
+				Instance[i] (1 Octet)
+
+	This command is used to read the advertising features supported
+	by the controller and stack.
+
+	With the Supported_Flags field the possible values for the Flags
+	field in Add Advertising command provided:
+
+		0	Switch into Connectable mode
+		1	Advertise as Discoverable
+		2	Advertise as Limited Discoverable
+		3	Add Flags field to Adv_Data
+		4	Add TX Power field to Adv_Data
+		5	Add Appearance field to Scan_Rsp
+		6	Add Local Name in Scan_Rsp
+
+	The Flags bit 0 indicates support for connectable advertising
+	and for switching to connectable advertising independent of the
+	connectable global setting. When this flag is not supported, then
+	the global connectable setting determines if undirected connectable,
+	undirected scannable or undirected non-connectable advertising is
+	used. It also determines the use of non-resolvable random address
+	versus identity address or resolvable private address.
+
+	The Flags bit 1 indicates support for advertising with discoverable
+	mode enabled. Users of this flag will decrease the Max_Adv_Data_Len
+	by 3 octets. In this case the advertising data flags are managed
+	and added in front of the provided advertising data.
+
+	The Flags bit 2 indicates support for advertising with limited
+	discoverable mode enabled. Users of this flag will decrease the
+	Max_Adv_Data_Len by 3 octets. In this case the advertising data
+	flags are managed and added in front of the provided advertising
+	data.
+
+	The Flags bit 3 indicates support for automatically keeping the
+	Flags field of the advertising data updated. Users of this flag
+	will decrease the Max_Adv_Data_Len by 3 octets and need to keep
+	that in mind. The Flags field will be added in front of the
+	advertising data provided by the user. Note that with Flags bit 1
+	and Flags bit 2, this one will be implicitly used even if it is
+	not marked as supported.
+
+	The Flags bit 4 indicates support for automatically adding the
+	TX Power value to the advertising data. Users of this flag will
+	decrease the Max_Adv_Data_Len by 3 octets. The TX Power field will
+	be added at the end of the user provided advertising data. If the
+	controller does not support TX Power information, then this bit will
+	not be set.
+
+	The Flags bit 5 indicates support for automatically adding the
+	Apperance value to the scan response data. Users of this flag
+	will decrease the Max_Scan_Rsp_len by 4 octets. The Appearance
+	field will be added in front of the scan response data provided
+	by the user. If the appearance value is not supported, then this
+	bit will not be set.
+
+	The Flags bit 6 indicates support for automatically adding the
+	Local Name value to the scan response data. This flag indicates
+	an opportunistic approach for the Local Name. If enough space
+	in the scan response data is available, it will be added. If the
+	space is limited a short version or no name information. The
+	Local Name will be added at the end of the scan response data.
+
+	The valid range for Instance identifiers is 1-254. The value 0
+	is reserved for internal use and the value 255 is reserved for
+	future extensions. However the Max_Instances value for indicating
+	the number of supported Instances can be also 0 if the controller
+	does not support any advertising.
+
+	The Max_Adv_Data_Len and Max_Scan_Rsp_Len provides extra
+	information about the maximum length of the data fields. For
+	now this will always return the value 31. Different flags
+	however might decrease the actual available length in these
+	data fields.
+
+	With Num_Instances and Instance array the currently occupied
+	Instance identifiers can be retrieved.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Add Advertising Command
+=======================
+
+	Command Code:		0x003e
+	Controller Index:	<controller id>
+	Command Parameters:	Instance (1 Octet)
+				Flags (4 Octets)
+				Duration (2 Octets)
+				Timeout (2 Octets)
+				Adv_Data_Len (1 Octet)
+				Scan_Rsp_len (1 Octet)
+				Adv_Data (0-255 Octets)
+				Scan_Rsp (0-255 Octets)
+	Return Parameters:	Instance (1 Octet)
+
+	This command is used to configure an advertising instance that
+	can be used to switch a Bluetooth Low Energy controller into
+	advertising mode.
+
+	Added advertising information with this command will not be visible
+	immediately if advertising is enabled via the Set Advertising
+	command. The usage of the Set Advertising command takes precedence
+	over this command. Instance information is stored and will be
+	advertised once advertising via Set Advertising has been disabled.
+
+	The Instance identifier is a value between 1 and the number of
+	supported instances. The value 0 is reserved.
+
+	With the Flags value the type of advertising is controlled and
+	the following flags are defined:
+
+		0	Switch into Connectable mode
+		1	Advertise as Discoverable
+		2	Advertise as Limited Discoverable
+		3	Add Flags field to Adv_Data
+		4	Add TX Power field to Adv_Data
+		5	Add Appearance field to Scan_Rsp
+		6	Add Local Name in Scan_Rsp
+
+	When the connectable flag is set, then the controller will use
+	undirected connectable advertising. The value of the connectable
+	setting can be overwritten this way. This is useful to switch a
+	controller into connectable mode only for LE operation. This is
+	similar to the mode 0x02 from the Set Advertising command.
+
+	When the connectable flag is not set, then the controller will
+	use advertising based on the connectable setting. When using
+	non-connectable or scannable advertising, the controller will
+	be programmed with a non-resolvable random address. When the
+	system is connectable, then the identity address or resolvable
+	private address will be used.
+
+	Using the connectable flag is useful for peripheral mode support
+	where BR/EDR (and/or LE) is controlled by Add Device. This allows
+	making the peripheral connectable without having to interfere
+	with the global connectable setting.
+
+	If Scan_Rsp_Len is zero and connectable flag is not set and
+	the global connectable setting is off, then non-connectable
+	advertising is used. If Scan_Rsp_Len is larger than zero and
+	connectable flag is not set and the global advertising is off,
+	then scannable advertising is used. This small difference is
+	supported to provide less air traffic for devices implementing
+	broadcaster role.
+
+	The Duration parameter configures the length of an Instance. The
+	value is in seconds.
+
+	A value of 0 indicates a default value is chosen for the
+	Duration. The default is 2 seconds.
+
+	If only one advertising Instance has been added, then the Duration
+	value will be ignored. It only applies for the case where multiple
+	Instances are configured. In that case every Instance will be
+	available for the Duration time and after that it switches to
+	the next one. This is a simple round-robin based approach.
+
+	The Timeout parameter configures the life-time of an Instance. In
+	case the value 0 is used it indicates no expiration time. If a
+	timeout value is provided, then the advertising Instance will be
+	automatically removed when the timeout passes. The value for the
+	timeout is in seconds. Powering down a controller will invalidate
+	all advertising Instances and it is not possible to add a new
+	Instance with a timeout when the controller is powered down.
+
+	When a Timeout is provided, then the Duration subtracts from
+	the actual Timeout value of that Instance. For example an Instance
+	with Timeout of 5 and Duration of 2 will be scheduled exactly 3
+	times, twice with 2 seconds and once with one second. Other
+	Instances have no influence on the Timeout.
+
+	Re-adding an already existing instance (i.e. issuing the Add
+	Advertising command with an Instance identifier of an existing
+	instance) will update that instance's configuration.
+
+	An instance being added or changed while another instance is
+	being advertised will not be visible immediately but only when
+	the new/changed instance is being scheduled by the round robin
+	advertising algorithm.
+
+	Changes to an instance that is currently being advertised will
+	cancel that instance and switch to the next instance. The changes
+	will be visible the next time the instance is scheduled for
+	advertising. In case a single instance is active, this means
+	that changes will be visible right away.
+
+	A pre-requisite is that LE is already enabled, otherwise this
+	command will return a "rejected" response.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
+	This command generates a Command Complete event on success or a
+	Command Status event on failure.
+
+	Possible errors:	Failed
+				Rejected
+				Not Supported
+				Invalid Parameters
+				Invalid Index
+
+
+Remove Advertising Command
+==========================
+
+	Command Code:		0x003f
+	Controller Index:	<controller id>
+	Command Parameters:	Instance (1 Octet)
+	Return Parameters:	Instance (1 Octet)
+
+	This command is used to remove an advertising instance that
+	can be used to switch a Bluetooth Low Energy controller into
+	advertising mode.
+
+	When the Instance parameter is zero, then all previously added
+	advertising Instances will be removed.
+
+	Removing advertising information with this command will not be
+	visible as long as advertising is enabled via the Set Advertising
+	command. The usage of the Set Advertising command takes precedence
+	over this command. Changes to Instance information are stored and
+	will be advertised once advertising via Set Advertising has been
+	disabled.
+
+	Removing an instance while it is being advertised will immediately
+	cancel the instance, even when it has been advertised less then its
+	configured Timeout or Duration.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Start Limited Discovery Command
+===============================
+
+	Command Code:		0x0040
+	Controller Index:	<controller id>
+	Command Parameters:	Address_Type (1 Octet)
+	Return Parameters:	Address_Type (1 Octet)
+
+	This command is used to start the process of discovering remote
+	devices using the limited discovery procedure. A Device Found event
+	will be sent for each discovered device.
+
+	Possible values for the Address_Type parameter are a bit-wise or
+	of the following bits:
+
+		0	BR/EDR
+		1	LE Public
+		2	LE Random
+
+	By combining these e.g. the following values are possible:
+
+		1	BR/EDR
+		6	LE (public & random)
+		7	BR/EDR/LE (interleaved discovery)
+
+	The limited discovery uses active scanning for Low Energy scanning
+	and will search for devices with the limited discoverabilty flag
+	configured. On BR/EDR it uses LIAC and filters on the limited
+	discoverabilty flag of the class of device.
+
+	When the discovery procedure starts the Discovery event will
+	notify this similar to Start Discovery.
+
+	This command can only be used when the controller is powered.
+
+	This command generates a Command Complete event on success
+	or failure.
+
+	Possible errors:	Busy
+				Not Supported
+				Invalid Parameters
+				Not Powered
 				Invalid Index
 
 
@@ -2188,6 +2809,10 @@ Index Added Event
 	system. It is usually followed by a Read Controller Information
 	command.
 
+	Once the Read Extended Controller Index List command has been
+	used at least once, the Extended Index Added event will be
+	send instead of this one.
+
 
 Index Removed Event
 ===================
@@ -2198,6 +2823,10 @@ Index Removed Event
 
 	This event indicates that a controller has been removed from the
 	system.
+
+	Once the Read Extended Controller Index List command has been
+	used at least once, the Extended Index Removed event will be
+	send instead of this one.
 
 
 New Settings Event
@@ -2317,8 +2946,11 @@ New Long Term Key Event
 
 	Currently defined Key_Type values are:
 
-		0x00	Unauthenticated key
-		0x01	Authenticated key
+		0x00	Unauthenticated legacy key
+		0x01	Authenticated legacy key
+		0x02	Unauthenticated key from P-256
+		0x03	Authenticated key from P-256
+		0x04	Debug key from P-256
 
 	Receiving this event indicates that a pairing procecure has
 	been completed.
@@ -2527,6 +3159,10 @@ Device Found Event
 		1	Legacy Pairing
 		2	Not Connectable
 
+	For the RSSI field a value of 127 indicates that the RSSI is
+	not available. That can happen with Bluetooth 1.1 and earlier
+	controllers or with bad radio conditions.
+
 	The Confirm name flag indicates that the kernel wants to know
 	whether user space knows the name for this device or not. If
 	this flag is set user space should respond to it using the
@@ -2555,7 +3191,9 @@ Discovering Event
 
 	This event indicates that the controller has started discovering
 	devices. This discovering state can come and go multiple times
-	between a StartDiscover and a StopDiscovery command.
+	between a Start Discovery and a Stop Discovery commands.
+
+	The Start Service Discovery command will also trigger this event.
 
 	The valid values for the Discovering parameter are 0x01
 	(enabled) and 0x00 (disabled).
@@ -2711,7 +3349,7 @@ New Signature Resolving Key Event
 				Key {
 					Address (6 Octets)
 					Address_Type (1 Octet)
-					Master (1 Octet)
+					Type (1 Octet)
 					Value (16 Octets)
 				}
 
@@ -2721,17 +3359,20 @@ New Signature Resolving Key Event
 	The Store_Hint parameter indicates whether the host is expected
 	to store the key persistently or not.
 
-	When the Master parameter is set to 0x01, then the signature
-	resolving key from the remote peer device is provided. It is
-	the key that is used for signature verification.
+	The Type parameter has the following possible values:
 
-	When the Master parameter is set to 0x00, then it is the local
-	signature resolving key that is used to sign data. The remote
-	peer device will be using it for signature verification.
+		0x00	Unauthenticated local CSRK
+		0x01	Unauthenticated remote CSRK
+		0x02	Authenticated local CSRK
+		0x03	Authenticated remote CSRK
+
+	The local keys are used for signing data to be sent to the
+	remote device, whereas the remote keys are used to verify
+	signatures received from the remote device.
 
 	The local signature resolving key will be generated with each
-	pairing request. Only after receiving this event with Master
-	parameter set to 0x00 it is possible to use ATT Signed Write
+	pairing request. Only after receiving this event with the Type
+	indicating a local key is it possible to use ATT Signed Write
 	procedures.
 
 	Possible values for the Address_Type parameter:
@@ -2830,6 +3471,10 @@ Unconfigured Index Added Event
 	be announced with this event. If it supports configuration, but
 	does not require it, then an Index Added event will be used.
 
+	Once the Read Extended Controller Index List command has been
+	used at least once, the Extended Index Added event will be
+	send instead of this one.
+
 
 Unconfigured Index Removed Event
 ================================
@@ -2841,6 +3486,10 @@ Unconfigured Index Removed Event
 	This event indicates that an unconfigured controller has been
 	removed from the system.
 
+	Once the Read Extended Controller Index List command has been
+	used at least once, the Extended Index Removed event will be
+	send instead of this one.
+
 
 New Configuration Options Event
 ===============================
@@ -2851,3 +3500,103 @@ New Configuration Options Event
 
 	This event indicates that one or more of the options for the
 	controller configuration has changed.
+
+
+Extended Index Added Event
+==========================
+
+	Event Code:		0x0020
+	Controller Index:	<controller id>
+	Event Parameters:	Controller_Type (1 Octet)
+				Controller_Bus (1 Octet)
+
+	This event indicates that a new controller index has been
+	added to the system.
+
+	This event will only be used after Read Extended Controller Index
+	List has been used at least once. If it has not been used, then
+	Index Added and Unconfigured Index Added are sent instead.
+
+
+Extended Index Removed Event
+============================
+
+	Event Code:		0x0021
+	Controller Index:	<controller id>
+	Event Parameters:	Controller_Type (1 Octet)
+				Controller_Bus (1 Octet)
+
+	This event indicates that an existing controller index has been
+	removed from the system.
+
+	This event will only be used after Read Extended Controller Index
+	List has been used at least once. If it has not been used, then
+	Index Removed and Unconfigured Index Removed are sent instead.
+
+
+Local Out Of Band Extended Data Updated Event
+=============================================
+
+	Event Code:		0x0022
+	Controller Index:	<controller id>
+	Event Parameters:	Address_Type (1 Octet)
+				EIR_Data_Length (2 Octets)
+				EIR_Data (0-65535 Octets)
+
+	This event is used when the Read Local Out Of Band Extended Data
+	command has been used and some other user requested a new set
+	of local out-of-band data. This allows for the original caller
+	to adjust the data.
+
+	Possible values for the Address_Type parameter are a bit-wise or
+	of the following bits:
+
+		0	BR/EDR
+		1	LE Public
+		2	LE Random
+
+	By combining these e.g. the following values are possible:
+
+		1	BR/EDR
+		6	LE (public & random)
+		7	Reserved (not in use)
+
+	The value for EIR_Data_Length and content for EIR_Data is the
+	same as described in Read Local Out Of Band Extended Data command.
+
+	When LE Privacy is used and LE Secure Connections out-of-band
+	data has been requested, then this event will be emitted every
+	time the Resolvable Private Address (RPA) gets changed. The new
+	RPA will be included in the EIR_Data.
+
+	The event will only be sent to management sockets other than the
+	one through which the command was sent. It will additionally also
+	only be sent to sockets that have used the command at least once.
+
+
+Advertising Added Event
+=======================
+
+	Event Code:		0x0023
+	Controller Index:	<controller id>
+	Event Parameters:	Instance (1 Octet)
+
+	This event indicates that an advertising instance has been added
+	using the Add Advertising command.
+
+	The event will only be sent to management sockets other than the
+	one through which the command was sent.
+
+
+Advertising Removed Event
+=========================
+
+	Event Code:		0x0024
+	Controller Index:	<controller id>
+	Event Parameters:	Instance (1 Octet)
+
+	This event indicates that an advertising instance has been removed
+	using the Remove Advertising command.
+
+	The event will only be sent to management sockets other than the
+	one through which the command was sent.

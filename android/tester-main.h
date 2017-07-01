@@ -21,28 +21,7 @@
  *
  */
 
-#include <stdlib.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <limits.h>
-
 #include <glib.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/wait.h>
-#include <libgen.h>
-#include <sys/signalfd.h>
-
-#include "lib/bluetooth.h"
-#include "lib/mgmt.h"
-
-#include "src/shared/tester.h"
-#include "src/shared/hciemu.h"
-#include "src/shared/mgmt.h"
-#include "src/shared/queue.h"
-
-#include <hardware/hardware.h>
 #include <hardware/audio.h>
 #include <hardware/bluetooth.h>
 #include <hardware/bt_sock.h>
@@ -52,8 +31,24 @@
 #include <hardware/bt_av.h>
 #include <hardware/bt_rc.h>
 #include <hardware/bt_gatt.h>
-#include <hardware/bt_gatt_client.h>
-#include <hardware/bt_gatt_server.h>
+
+#include "emulator/hciemu.h"
+#include <hardware/bt_mce.h>
+
+struct pdu_set {
+	struct iovec req;
+	struct iovec rsp;
+};
+
+#define raw_data(args...) ((unsigned char[]) { args })
+
+#define raw_pdu(args...)					\
+	{							\
+		.iov_base = raw_data(args),			\
+		.iov_len = sizeof(raw_data(args)),		\
+	}
+
+#define end_pdu { .iov_base = NULL }
 
 #define TEST_CASE_BREDR(text, ...) { \
 		HCIEMU_TYPE_BREDR, \
@@ -67,6 +62,22 @@
 		text, \
 		sizeof((struct step[]) {__VA_ARGS__}) / sizeof(struct step), \
 		(struct step[]) {__VA_ARGS__}, \
+	}
+
+#define MODIFY_DATA(status, modif_fun, from, to, len) { \
+		.action_status = status, \
+		.action = modif_fun, \
+		.set_data = from, \
+		.set_data_2 = to, \
+		.set_data_len = len, \
+	}
+
+#define PROCESS_DATA(status, proc_fun, data1, data2, data3) { \
+		.action_status = status, \
+		.action = proc_fun, \
+		.set_data = data1, \
+		.set_data_2 = data2, \
+		.set_data_3 = data3, \
 	}
 
 #define ACTION(status, act_fun, data_set) { \
@@ -93,6 +104,11 @@
 #define CALLBACK_STATUS(cb, cb_res) { \
 		.callback = cb, \
 		.callback_result.status = cb_res, \
+	}
+
+#define CALLBACK_ERROR(cb, cb_err) { \
+		.callback = cb, \
+		.callback_result.error = cb_err, \
 	}
 
 #define CALLBACK_ADAPTER_PROPS(props, prop_cnt) { \
@@ -132,7 +148,7 @@
 		.callback_result.properties = cb_prop, \
 		.callback_result.num_properties = 1, \
 		.callback_result.conn_id = cb_conn_id, \
-		.callback_result.client_id = cb_client_id, \
+		.callback_result.gatt_app_id = cb_client_id, \
 	}
 
 #define CALLBACK_GATTC_SEARCH_RESULT(cb_conn_id, cb_service) { \
@@ -155,13 +171,198 @@
 		.callback_result.char_prop = cb_char_prop \
 	}
 
+#define CALLBACK_GATTC_GET_DESCRIPTOR(cb_res, cb_conn_id, cb_service, \
+						cb_char, cb_desc) { \
+		.callback = CB_GATTC_GET_DESCRIPTOR, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.service = cb_service, \
+		.callback_result.characteristic = cb_char, \
+		.callback_result.descriptor = cb_desc \
+	}
+
+#define CALLBACK_GATTC_GET_INCLUDED(cb_res, cb_conn_id, cb_service, \
+							cb_incl) { \
+		.callback = CB_GATTC_GET_INCLUDED_SERVICE, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.service = cb_service, \
+		.callback_result.included = cb_incl, \
+	}
+
+#define CALLBACK_GATTC_READ_CHARACTERISTIC(cb_res, cb_conn_id, cb_read_data) { \
+		.callback = CB_GATTC_READ_CHARACTERISTIC, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.read_params = cb_read_data, \
+	}
+
+#define CALLBACK_GATTC_READ_DESCRIPTOR(cb_res, cb_conn_id, cb_read_data) { \
+		.callback = CB_GATTC_READ_DESCRIPTOR, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.read_params = cb_read_data, \
+	}
+
+#define CALLBACK_GATTC_WRITE_DESCRIPTOR(cb_res, cb_conn_id, cb_write_data) { \
+		.callback = CB_GATTC_WRITE_DESCRIPTOR, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.write_params = cb_write_data, \
+	}
+
+#define CALLBACK_GATTC_WRITE_CHARACTERISTIC(cb_res, cb_conn_id, \
+							cb_write_data) { \
+		.callback = CB_GATTC_WRITE_CHARACTERISTIC, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.write_params = cb_write_data, \
+	}
+
+#define CALLBACK_GATTC_REGISTER_FOR_NOTIF(cb_res, cb_conn_id, cb_char,\
+						cb_service, cb_registered) { \
+		.callback = CB_GATTC_REGISTER_FOR_NOTIFICATION, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_res, \
+		.callback_result.service = cb_service, \
+		.callback_result.characteristic = cb_char, \
+		.callback_result.notification_registered = cb_registered \
+	}
+
+#define CALLBACK_GATTC_NOTIFY(cb_conn_id, cb_notify) { \
+		.callback = CB_GATTC_NOTIFY, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.notify_params = cb_notify \
+	}
+
 #define CALLBACK_GATTC_DISCONNECT(cb_res, cb_prop, cb_conn_id, cb_client_id) { \
 		.callback = CB_GATTC_CLOSE, \
 		.callback_result.status = cb_res, \
 		.callback_result.properties = cb_prop, \
 		.callback_result.num_properties = 1, \
 		.callback_result.conn_id = cb_conn_id, \
-		.callback_result.client_id = cb_client_id, \
+		.callback_result.gatt_app_id = cb_client_id, \
+	}
+
+#define CALLBACK_GATTS_CONNECTION(cb_res, cb_prop, cb_conn_id, cb_server_id) { \
+		.callback = CB_GATTS_CONNECTION, \
+		.callback_result.connected = cb_res, \
+		.callback_result.properties = cb_prop, \
+		.callback_result.num_properties = 1, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.gatt_app_id = cb_server_id, \
+	}
+
+#define CALLBACK_GATTS_NOTIF_CONF(cb_conn_id, cb_status) { \
+		.callback = CB_GATTS_INDICATION_SEND, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.status = cb_status, \
+	}
+
+#define CALLBACK_GATTS_SERVICE_ADDED(cb_res, cb_server_id, cb_service, \
+						cb_srvc_handle, \
+						cb_store_srvc_handle) { \
+		.callback = CB_GATTS_SERVICE_ADDED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.service = cb_service, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+		.store_srvc_handle = cb_store_srvc_handle, \
+	}
+
+#define CALLBACK_GATTS_INC_SERVICE_ADDED(cb_res, cb_server_id, cb_srvc_handle, \
+							cb_inc_srvc_handle) { \
+		.callback = CB_GATTS_INCLUDED_SERVICE_ADDED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+		.callback_result.inc_srvc_handle = cb_inc_srvc_handle, \
+	}
+
+#define CALLBACK_GATTS_CHARACTERISTIC_ADDED(cb_res, cb_server_id, cb_uuid, \
+						cb_srvc_handle, \
+						cb_char_handle, \
+						cb_store_char_handle) { \
+		.callback = CB_GATTS_CHARACTERISTIC_ADDED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.uuid = cb_uuid, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+		.callback_result.char_handle = cb_char_handle, \
+		.store_char_handle = cb_store_char_handle, \
+	}
+
+#define CALLBACK_GATTS_DESCRIPTOR_ADDED(cb_res, cb_server_id, cb_uuid, \
+					cb_srvc_handle, cb_desc_handle, \
+					cb_store_desc_handle) { \
+		.callback = CB_GATTS_DESCRIPTOR_ADDED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.uuid = cb_uuid, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+		.callback_result.desc_handle = cb_desc_handle, \
+		.store_desc_handle = cb_store_desc_handle, \
+	}
+
+#define CALLBACK_GATTS_SERVICE_STARTED(cb_res, cb_server_id, cb_srvc_handle) { \
+		.callback = CB_GATTS_SERVICE_STARTED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+	}
+
+#define CALLBACK_GATTS_SERVICE_STOPPED(cb_res, cb_server_id, cb_srvc_handle) { \
+		.callback = CB_GATTS_SERVICE_STOPPED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+	}
+
+#define CALLBACK_GATTS_SERVICE_DELETED(cb_res, cb_server_id, cb_srvc_handle) { \
+		.callback = CB_GATTS_SERVICE_DELETED, \
+		.callback_result.status = cb_res, \
+		.callback_result.gatt_app_id = cb_server_id, \
+		.callback_result.srvc_handle = cb_srvc_handle, \
+	}
+
+#define CALLBACK_GATTS_REQUEST_READ(cb_conn_id, cb_trans_id, cb_prop, \
+						cb_attr_handle, cb_offset, \
+						cb_is_long) { \
+		.callback = CB_GATTS_REQUEST_READ, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.trans_id = cb_trans_id, \
+		.callback_result.properties = cb_prop, \
+		.callback_result.num_properties = 1, \
+		.callback_result.attr_handle = cb_attr_handle, \
+		.callback_result.offset = cb_offset, \
+		.callback_result.is_long = cb_is_long, \
+	}
+
+#define CALLBACK_GATTS_REQUEST_WRITE(cb_conn_id, cb_trans_id, cb_prop, \
+						cb_attr_handle, cb_offset, \
+						cb_length, cb_need_rsp, \
+						cb_is_prep, cb_value) { \
+		.callback = CB_GATTS_REQUEST_WRITE, \
+		.callback_result.conn_id = cb_conn_id, \
+		.callback_result.trans_id = cb_trans_id, \
+		.callback_result.properties = cb_prop, \
+		.callback_result.num_properties = 1, \
+		.callback_result.attr_handle = cb_attr_handle, \
+		.callback_result.offset = cb_offset, \
+		.callback_result.length = cb_length, \
+		.callback_result.need_rsp = cb_need_rsp, \
+		.callback_result.is_prep = cb_is_prep, \
+		.callback_result.value = cb_value, \
+	}
+
+#define CALLBACK_MAP_CLIENT_REMOTE_MAS_INSTANCE(cb_status, cb_prop, \
+						cb_num_inst, cb_instances) { \
+		.callback = CB_MAP_CLIENT_REMOTE_MAS_INSTANCES, \
+		.callback_result.properties = cb_prop, \
+		.callback_result.num_properties = 1, \
+		.callback_result.status = cb_status, \
+		.callback_result.num_mas_instances = cb_num_inst, \
+		.callback_result.mas_instances = cb_instances, \
 	}
 
 #define CALLBACK_PAN_CTRL_STATE(cb, cb_res, cb_state, cb_local_role) { \
@@ -195,14 +396,42 @@
 		.callback_result.channel_state = cb_state, \
 	}
 
-#define CALLBACK_AV_CONN_STATE(cb, cb_state) { \
+#define CALLBACK_AV_CONN_STATE(cb, cb_av_conn_state) { \
 		.callback = cb, \
-		.callback_result.state = cb_state, \
+		.callback_result.av_conn_state = cb_av_conn_state, \
 	}
 
-#define CALLBACK_AV_AUDIO_STATE(cb, cb_state) { \
+#define CALLBACK_AV_AUDIO_STATE(cb, cb_av_audio_state) { \
 		.callback = cb, \
-		.callback_result.state = cb_state, \
+		.callback_result.av_audio_state = cb_av_audio_state, \
+	}
+
+#define CALLBACK_RC_PLAY_STATUS(cb, cb_length, cb_position, cb_status) { \
+		.callback = cb, \
+		.callback_result.song_length = cb_length, \
+		.callback_result.song_position = cb_position, \
+		.callback_result.play_status = cb_status, \
+	}
+
+#define CALLBACK_RC_REG_NOTIF_TRACK_CHANGED(cb, cb_index) { \
+		.callback = cb, \
+		.callback_result.rc_index = cb_index, \
+	}
+
+#define CALLBACK_RC_REG_NOTIF_POSITION_CHANGED(cb, cb_position) { \
+		.callback = cb, \
+		.callback_result.song_position = cb_position, \
+	}
+
+#define CALLBACK_RC_REG_NOTIF_STATUS_CHANGED(cb, cb_status) { \
+		.callback = cb, \
+		.callback_result.play_status = cb_status, \
+	}
+
+#define CALLBACK_RC_GET_ELEMENT_ATTRIBUTES(cb, cb_num_of_attrs, cb_attrs) { \
+		.callback = cb, \
+		.callback_result.num_of_attrs = cb_num_of_attrs, \
+		.callback_result.attrs = cb_attrs, \
 	}
 
 #define CALLBACK_DEVICE_PROPS(props, prop_cnt) \
@@ -233,13 +462,16 @@
 		.callback_result.num_properties = prop_cnt, \
 	}
 
+#define DBG_CB(cb) { cb, #cb }
+
 /*
  * NOTICE:
  * Callback enum sections should be
  * updated while adding new HAL to tester.
  */
 typedef enum {
-	CB_BT_ADAPTER_STATE_CHANGED = 1,
+	CB_BT_NONE,
+	CB_BT_ADAPTER_STATE_CHANGED,
 	CB_BT_ADAPTER_PROPERTIES,
 	CB_BT_REMOTE_DEVICE_PROPERTIES,
 	CB_BT_DEVICE_FOUND,
@@ -271,6 +503,14 @@ typedef enum {
 	/* A2DP cb */
 	CB_A2DP_CONN_STATE,
 	CB_A2DP_AUDIO_STATE,
+
+	/* AVRCP */
+	CB_AVRCP_PLAY_STATUS_REQ,
+	CB_AVRCP_PLAY_STATUS_RSP,
+	CB_AVRCP_REG_NOTIF_REQ,
+	CB_AVRCP_REG_NOTIF_RSP,
+	CB_AVRCP_GET_ATTR_REQ,
+	CB_AVRCP_GET_ATTR_RSP,
 
 	/* Gatt client */
 	CB_GATTC_REGISTER_CLIENT,
@@ -306,6 +546,21 @@ typedef enum {
 	CB_GATTS_REQUEST_WRITE,
 	CB_GATTS_REQUEST_EXEC_WRITE,
 	CB_GATTS_RESPONSE_CONFIRMATION,
+	CB_GATTS_INDICATION_SEND,
+
+	/* Map client */
+	CB_MAP_CLIENT_REMOTE_MAS_INSTANCES,
+
+	/* Emulator callbacks */
+	CB_EMU_CONFIRM_SEND_DATA,
+	CB_EMU_ENCRYPTION_ENABLED,
+	CB_EMU_ENCRYPTION_DISABLED,
+	CB_EMU_CONNECTION_REJECTED,
+	CB_EMU_VALUE_INDICATION,
+	CB_EMU_VALUE_NOTIFICATION,
+	CB_EMU_READ_RESPONSE,
+	CB_EMU_WRITE_RESPONSE,
+	CB_EMU_ATT_ERROR,
 } expected_bt_callback_t;
 
 struct test_data {
@@ -324,6 +579,7 @@ struct test_data {
 	struct audio_stream_out *if_stream;
 	const btrc_interface_t *if_avrcp;
 	const btgatt_interface_t *if_gatt;
+	const btmce_interface_t *if_map_client;
 
 	const void *test_data;
 	struct queue *steps;
@@ -365,6 +621,7 @@ struct bt_action_data {
 
 	/*Connection params*/
 	const uint8_t bearer_type;
+	const uint8_t transport_type;
 };
 
 /* bthost's l2cap server setup parameters */
@@ -372,6 +629,22 @@ struct emu_set_l2cap_data {
 	const uint16_t psm;
 	const bthost_l2cap_connect_cb func;
 	void *user_data;
+};
+
+struct emu_l2cap_cid_data {
+	const struct pdu_set *pdu;
+
+	uint16_t handle;
+	uint16_t cid;
+	bool is_sdp;
+};
+
+struct map_inst_data {
+	int32_t id;
+	int32_t scn;
+	int32_t msg_types;
+	int32_t name_len;
+	uint8_t *name;
 };
 
 /*
@@ -384,6 +657,7 @@ struct bt_callback_data {
 	bt_status_t status;
 	int num_properties;
 	bt_property_t *properties;
+	bt_uuid_t *uuid;
 
 	bt_ssp_variant_t pairing_variant;
 
@@ -392,11 +666,31 @@ struct bt_callback_data {
 
 	bool adv_data;
 
-	int client_id;
+	int gatt_app_id;
 	int conn_id;
+	int trans_id;
+	int offset;
+	bool is_long;
+	int connected;
+	uint16_t *attr_handle;
+	uint16_t *srvc_handle;
+	uint16_t *inc_srvc_handle;
+	uint16_t *char_handle;
+	uint16_t *desc_handle;
 	btgatt_srvc_id_t *service;
 	btgatt_gatt_id_t *characteristic;
+	btgatt_gatt_id_t *descriptor;
+	btgatt_srvc_id_t *included;
+	btgatt_read_params_t *read_params;
+	btgatt_write_params_t *write_params;
+	btgatt_notify_params_t *notify_params;
+	int notification_registered;
 	int char_prop;
+	int length;
+	uint8_t *value;
+	bool need_rsp;
+	bool is_prep;
+	uint8_t error;
 
 	btpan_control_state_t ctrl_state;
 	btpan_connection_state_t conn_state;
@@ -408,6 +702,18 @@ struct bt_callback_data {
 	int mdep_cfg_index;
 	bthl_app_reg_state_t app_state;
 	bthl_channel_state_t channel_state;
+
+	btav_connection_state_t av_conn_state;
+	btav_audio_state_t av_audio_state;
+	uint32_t song_length;
+	uint32_t song_position;
+	btrc_play_status_t play_status;
+	uint64_t rc_index;
+	uint8_t num_of_attrs;
+	btrc_element_attr_val_t *attrs;
+
+	int num_mas_instances;
+	btmce_mas_instance_t *mas_instances;
 };
 
 /*
@@ -422,7 +728,13 @@ struct step {
 	struct bt_callback_data callback_result;
 
 	void *set_data;
+	void *set_data_2;
+	void *set_data_3;
 	int set_data_len;
+
+	uint16_t *store_srvc_handle;
+	uint16_t *store_char_handle;
+	uint16_t *store_desc_handle;
 };
 
 struct test_case {
@@ -431,6 +743,9 @@ struct test_case {
 	const uint16_t step_num;
 	const struct step *step;
 };
+
+void tester_handle_l2cap_data_exchange(struct emu_l2cap_cid_data *cid_data);
+void tester_generic_connect_cb(uint16_t handle, uint16_t cid, void *user_data);
 
 /* Get, remove test cases API */
 struct queue *get_bluetooth_tests(void);
@@ -449,9 +764,12 @@ struct queue *get_avrcp_tests(void);
 void remove_avrcp_tests(void);
 struct queue *get_gatt_tests(void);
 void remove_gatt_tests(void);
+struct queue *get_map_client_tests(void);
+void remove_map_client_tests(void);
 
 /* Generic tester API */
 void schedule_action_verification(struct step *step);
+void schedule_callback_verification(struct step *step);
 
 /* Emulator actions */
 void emu_setup_powered_remote_action(void);

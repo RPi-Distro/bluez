@@ -34,16 +34,16 @@
 #include <getopt.h>
 #include <signal.h>
 #include <termios.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
-#include <bluetooth/rfcomm.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
+#include "lib/rfcomm.h"
 
 static int rfcomm_raw_tty = 0;
 static int auth = 0;

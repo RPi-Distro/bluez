@@ -29,11 +29,11 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
-#include <gdbus/gdbus.h>
 #include <sys/socket.h>
 #include <inttypes.h>
 
-#include <gobex/gobex.h>
+#include "gdbus/gdbus.h"
+#include "gobex/gobex.h"
 
 #include "btio/btio.h"
 #include "obexd.h"
@@ -521,8 +521,7 @@ void manager_cleanup(void)
 
 	/* FIXME: Release agent? */
 
-	if (agent)
-		agent_free(agent);
+	agent_free(agent);
 
 	g_dbus_detach_object_manager(connection);
 
@@ -672,7 +671,7 @@ static gboolean auth_error(GIOChannel *io, GIOCondition cond, void *user_data)
 	return FALSE;
 }
 
-int manager_request_authorization(struct obex_transfer *transfer, int32_t time,
+int manager_request_authorization(struct obex_transfer *transfer,
 					char **new_folder, char **new_name)
 {
 	struct obex_session *os = transfer->session;

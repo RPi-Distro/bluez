@@ -33,14 +33,18 @@
 #include "src/shared/queue.h"
 #include "src/shared/util.h"
 #include "src/shared/timeout.h"
+#include "lib/bluetooth.h"
 #include "lib/uuid.h"
 #include "src/shared/att.h"
-#include "src/shared/att-types.h"
+#include "src/shared/crypto.h"
 
 #define ATT_MIN_PDU_LEN			1  /* At least 1 byte for the opcode. */
 #define ATT_OP_CMD_MASK			0x40
 #define ATT_OP_SIGNED_MASK		0x80
 #define ATT_TIMEOUT_INTERVAL		30000  /* 30000 ms */
+
+/* Length of signature in write signed packet */
+#define BT_ATT_SIGNATURE_LEN		12
 
 struct att_send_op;
 
@@ -48,6 +52,8 @@ struct bt_att {
 	int ref_count;
 	int fd;
 	struct io *io;
+	bool io_on_l2cap;
+	int io_sec_level;		/* Only used for non-L2CAP */
 
 	struct queue *req_queue;	/* Queued ATT protocol requests */
 	struct att_send_op *pending_req;
@@ -57,12 +63,9 @@ struct bt_att {
 	bool writer_active;
 
 	struct queue *notify_list;	/* List of registered callbacks */
-	bool in_notify;
-	bool need_notify_cleanup;
-
 	struct queue *disconn_list;	/* List of disconnect handlers */
-	bool in_disconn;
-	bool need_disconn_cleanup;
+
+	bool in_req;			/* There's a pending incoming request */
 
 	uint8_t *buf;
 	uint16_t mtu;
@@ -77,6 +80,18 @@ struct bt_att {
 	bt_att_debug_func_t debug_callback;
 	bt_att_destroy_func_t debug_destroy;
 	void *debug_data;
+
+	struct bt_crypto *crypto;
+	bool ext_signed;
+
+	struct sign_info *local_sign;
+	struct sign_info *remote_sign;
+};
+
+struct sign_info {
+	uint8_t key[16];
+	bt_att_counter_func_t counter;
+	void *user_data;
 };
 
 enum att_op_type {
@@ -192,10 +207,19 @@ static void destroy_att_send_op(void *data)
 	free(op);
 }
 
+static void cancel_att_send_op(struct att_send_op *op)
+{
+	if (op->destroy)
+		op->destroy(op->user_data);
+
+	op->user_data = NULL;
+	op->callback = NULL;
+	op->destroy = NULL;
+}
+
 struct att_notify {
 	unsigned int id;
 	uint16_t opcode;
-	bool removed;
 	bt_att_notify_func_t callback;
 	bt_att_destroy_func_t destroy;
 	void *user_data;
@@ -217,20 +241,6 @@ static bool match_notify_id(const void *a, const void *b)
 	unsigned int id = PTR_TO_UINT(b);
 
 	return notify->id == id;
-}
-
-static bool match_notify_removed(const void *a, const void *b)
-{
-	const struct att_notify *notify = a;
-
-	return notify->removed;
-}
-
-static void mark_notify_removed(void *data, void *user_data)
-{
-	struct att_notify *notify = data;
-
-	notify->removed = true;
 }
 
 struct att_disconn {
@@ -259,29 +269,20 @@ static bool match_disconn_id(const void *a, const void *b)
 	return disconn->id == id;
 }
 
-static bool match_disconn_removed(const void *a, const void *b)
-{
-	const struct att_disconn *disconn = a;
-
-	return disconn->removed;
-}
-
-static void mark_disconn_removed(void *data, void *user_data)
-{
-	struct att_disconn *disconn = data;
-
-	disconn->removed = true;
-}
-
-static bool encode_pdu(struct att_send_op *op, const void *pdu,
-						uint16_t length, uint16_t mtu)
+static bool encode_pdu(struct bt_att *att, struct att_send_op *op,
+					const void *pdu, uint16_t length)
 {
 	uint16_t pdu_len = 1;
+	struct sign_info *sign = att->local_sign;
+	uint32_t sign_cnt;
+
+	if (sign && (op->opcode & ATT_OP_SIGNED_MASK))
+		pdu_len += BT_ATT_SIGNATURE_LEN;
 
 	if (length && pdu)
 		pdu_len += length;
 
-	if (pdu_len > mtu)
+	if (pdu_len > att->mtu)
 		return false;
 
 	op->len = pdu_len;
@@ -293,11 +294,28 @@ static bool encode_pdu(struct att_send_op *op, const void *pdu,
 	if (pdu_len > 1)
 		memcpy(op->pdu + 1, pdu, length);
 
-	return true;
+	if (!sign || !(op->opcode & ATT_OP_SIGNED_MASK))
+		return true;
+
+	if (!sign->counter(&sign_cnt, sign->user_data))
+		goto fail;
+
+	if ((bt_crypto_sign_att(att->crypto, sign->key, op->pdu, 1 + length,
+				sign_cnt, &((uint8_t *) op->pdu)[1 + length])))
+		return true;
+
+	util_debug(att->debug_callback, att->debug_data,
+					"ATT unable to generate signature");
+
+fail:
+	free(op->pdu);
+	return false;
 }
 
-static struct att_send_op *create_att_send_op(uint8_t opcode, const void *pdu,
-						uint16_t length, uint16_t mtu,
+static struct att_send_op *create_att_send_op(struct bt_att *att,
+						uint8_t opcode,
+						const void *pdu,
+						uint16_t length,
 						bt_att_response_func_t callback,
 						void *user_data,
 						bt_att_destroy_func_t destroy)
@@ -335,7 +353,7 @@ static struct att_send_op *create_att_send_op(uint8_t opcode, const void *pdu,
 	op->destroy = destroy;
 	op->user_data = user_data;
 
-	if (!encode_pdu(op, pdu, length, mtu)) {
+	if (!encode_pdu(att, op, pdu, length)) {
 		free(op);
 		return NULL;
 	}
@@ -395,9 +413,6 @@ static bool timeout_cb(void *user_data)
 	if (!op)
 		return false;
 
-	io_destroy(att->io);
-	att->io = NULL;
-
 	util_debug(att->debug_callback, att->debug_data,
 				"Operation timed out: 0x%02x", op->opcode);
 
@@ -406,6 +421,13 @@ static bool timeout_cb(void *user_data)
 
 	op->timeout_id = 0;
 	destroy_att_send_op(op);
+
+	/*
+	 * Directly terminate the connection as required by the ATT protocol.
+	 * This should trigger an io disconnect event which will clean up the
+	 * io and notify the upper layer.
+	 */
+	io_shutdown(att->io);
 
 	return false;
 }
@@ -422,16 +444,20 @@ static bool can_write_data(struct io *io, void *user_data)
 	struct bt_att *att = user_data;
 	struct att_send_op *op;
 	struct timeout_data *timeout;
-	ssize_t bytes_written;
+	ssize_t ret;
+	struct iovec iov;
 
 	op = pick_next_send_op(att);
 	if (!op)
 		return false;
 
-	bytes_written = write(att->fd, op->pdu, op->len);
-	if (bytes_written < 0) {
+	iov.iov_base = op->pdu;
+	iov.iov_len = op->len;
+
+	ret = io_send(io, &iov, 1);
+	if (ret < 0) {
 		util_debug(att->debug_callback, att->debug_data,
-					"write failed: %s", strerror(errno));
+					"write failed: %s", strerror(-ret));
 		if (op->callback)
 			op->callback(BT_ATT_OP_ERROR_RSP, NULL, 0,
 							op->user_data);
@@ -443,8 +469,7 @@ static bool can_write_data(struct io *io, void *user_data)
 	util_debug(att->debug_callback, att->debug_data,
 					"ATT op 0x%02x", op->opcode);
 
-	util_hexdump('<', op->pdu, bytes_written,
-					att->debug_callback, att->debug_data);
+	util_hexdump('<', op->pdu, ret, att->debug_callback, att->debug_data);
 
 	/* Based on the operation type, set either the pending request or the
 	 * pending indication. If it came from the write queue, then there is
@@ -457,6 +482,15 @@ static bool can_write_data(struct io *io, void *user_data)
 	case ATT_OP_TYPE_IND:
 		att->pending_ind = op;
 		break;
+	case ATT_OP_TYPE_RSP:
+		/* Set in_req to false to indicate that no request is pending */
+		att->in_req = false;
+
+		/* Fall through to the next case */
+	case ATT_OP_TYPE_CMD:
+	case ATT_OP_TYPE_NOT:
+	case ATT_OP_TYPE_CONF:
+	case ATT_OP_TYPE_UNKNOWN:
 	default:
 		destroy_att_send_op(op);
 		return true;
@@ -496,6 +530,100 @@ static void wakeup_writer(struct bt_att *att)
 	att->writer_active = true;
 }
 
+static void disconn_handler(void *data, void *user_data)
+{
+	struct att_disconn *disconn = data;
+	int err = PTR_TO_INT(user_data);
+
+	if (disconn->removed)
+		return;
+
+	if (disconn->callback)
+		disconn->callback(err, disconn->user_data);
+}
+
+static bool disconnect_cb(struct io *io, void *user_data)
+{
+	struct bt_att *att = user_data;
+	int err;
+	socklen_t len;
+
+	len = sizeof(err);
+
+	if (getsockopt(att->fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0) {
+		util_debug(att->debug_callback, att->debug_data,
+					"Failed to obtain disconnect error: %s",
+					strerror(errno));
+		err = 0;
+	}
+
+	util_debug(att->debug_callback, att->debug_data,
+					"Physical link disconnected: %s",
+					strerror(err));
+
+	io_destroy(att->io);
+	att->io = NULL;
+
+	bt_att_cancel_all(att);
+
+	bt_att_ref(att);
+
+	queue_foreach(att->disconn_list, disconn_handler, INT_TO_PTR(err));
+
+	bt_att_unregister_all(att);
+	bt_att_unref(att);
+
+	return false;
+}
+
+static bool change_security(struct bt_att *att, uint8_t ecode)
+{
+	int security;
+
+	security = bt_att_get_security(att);
+	if (security != BT_ATT_SECURITY_AUTO)
+		return false;
+
+	if (ecode == BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION &&
+					security < BT_ATT_SECURITY_MEDIUM)
+		security = BT_ATT_SECURITY_MEDIUM;
+	else if (ecode == BT_ATT_ERROR_AUTHENTICATION &&
+					security < BT_ATT_SECURITY_HIGH)
+		security = BT_ATT_SECURITY_HIGH;
+	else
+		return false;
+
+	return bt_att_set_security(att, security);
+}
+
+static bool handle_error_rsp(struct bt_att *att, uint8_t *pdu,
+					ssize_t pdu_len, uint8_t *opcode)
+{
+	const struct bt_att_pdu_error_rsp *rsp;
+	struct att_send_op *op = att->pending_req;
+
+	if (pdu_len != sizeof(*rsp)) {
+		*opcode = 0;
+		return false;
+	}
+
+	rsp = (void *) pdu;
+
+	*opcode = rsp->opcode;
+
+	/* Attempt to change security */
+	if (!change_security(att, rsp->ecode))
+		return false;
+
+	util_debug(att->debug_callback, att->debug_data,
+						"Retrying operation %p", op);
+
+	att->pending_req = NULL;
+
+	/* Push operation back to request queue */
+	return queue_push_head(att->req_queue, op);
+}
+
 static void handle_rsp(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 								ssize_t pdu_len)
 {
@@ -505,20 +633,27 @@ static void handle_rsp(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 	uint8_t *rsp_pdu = NULL;
 	uint16_t rsp_pdu_len = 0;
 
-	/* If no request is pending, then the response is unexpected. */
+	/*
+	 * If no request is pending, then the response is unexpected. Disconnect
+	 * the bearer.
+	 */
 	if (!op) {
-		wakeup_writer(att);
+		util_debug(att->debug_callback, att->debug_data,
+					"Received unexpected ATT response");
+		io_shutdown(att->io);
 		return;
 	}
 
-	/* If the received response doesn't match the pending request, or if
+	/*
+	 * If the received response doesn't match the pending request, or if
 	 * the request is malformed, end the current request with failure.
 	 */
 	if (opcode == BT_ATT_OP_ERROR_RSP) {
-		if (pdu_len != 4)
-			goto fail;
-
-		req_opcode = pdu[0];
+		/* Return if error response cause a retry */
+		if (handle_error_rsp(att, pdu, pdu_len, &req_opcode)) {
+			wakeup_writer(att);
+			return;
+		}
 	} else if (!(req_opcode = get_req_opcode(opcode)))
 		goto fail;
 
@@ -550,53 +685,139 @@ done:
 	wakeup_writer(att);
 }
 
+static void handle_conf(struct bt_att *att, uint8_t *pdu, ssize_t pdu_len)
+{
+	struct att_send_op *op = att->pending_ind;
+
+	/*
+	 * Disconnect the bearer if the confirmation is unexpected or the PDU is
+	 * invalid.
+	 */
+	if (!op || pdu_len) {
+		util_debug(att->debug_callback, att->debug_data,
+				"Received unexpected/invalid ATT confirmation");
+		io_shutdown(att->io);
+		return;
+	}
+
+	if (op->callback)
+		op->callback(BT_ATT_OP_HANDLE_VAL_CONF, NULL, 0, op->user_data);
+
+	destroy_att_send_op(op);
+	att->pending_ind = NULL;
+
+	wakeup_writer(att);
+}
+
 struct notify_data {
 	uint8_t opcode;
 	uint8_t *pdu;
 	ssize_t pdu_len;
+	bool handler_found;
 };
 
-static void notify_handler(void *data, void *user_data)
+static bool opcode_match(uint8_t opcode, uint8_t test_opcode)
 {
-	struct att_notify *notify = data;
-	struct notify_data *not_data = user_data;
+	enum att_op_type op_type = get_op_type(test_opcode);
 
-	if (notify->removed)
-		return;
+	if (opcode == BT_ATT_ALL_REQUESTS && (op_type == ATT_OP_TYPE_REQ ||
+						op_type == ATT_OP_TYPE_CMD))
+		return true;
 
-	if (notify->opcode != not_data->opcode)
-		return;
+	return opcode == test_opcode;
+}
 
-	if (notify->callback)
-		notify->callback(not_data->opcode, not_data->pdu,
-					not_data->pdu_len, notify->user_data);
+static void respond_not_supported(struct bt_att *att, uint8_t opcode)
+{
+	struct bt_att_pdu_error_rsp pdu;
+
+	pdu.opcode = opcode;
+	pdu.handle = 0x0000;
+	pdu.ecode = BT_ATT_ERROR_REQUEST_NOT_SUPPORTED;
+
+	bt_att_send(att, BT_ATT_OP_ERROR_RSP, &pdu, sizeof(pdu), NULL, NULL,
+									NULL);
+}
+
+static bool handle_signed(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
+								ssize_t pdu_len)
+{
+	uint8_t *signature;
+	uint32_t sign_cnt;
+	struct sign_info *sign;
+
+	/* Check if there is enough data for a signature */
+	if (pdu_len < 2 + BT_ATT_SIGNATURE_LEN)
+		goto fail;
+
+	sign = att->remote_sign;
+	if (!sign)
+		goto fail;
+
+	signature = pdu + (pdu_len - BT_ATT_SIGNATURE_LEN);
+	sign_cnt = get_le32(signature);
+
+	/* Validate counter */
+	if (!sign->counter(&sign_cnt, sign->user_data))
+		goto fail;
+
+	/* Generate signature and verify it */
+	if (!bt_crypto_sign_att(att->crypto, sign->key, pdu,
+				pdu_len - BT_ATT_SIGNATURE_LEN, sign_cnt,
+				signature))
+		goto fail;
+
+	return true;
+
+fail:
+	util_debug(att->debug_callback, att->debug_data,
+			"ATT failed to verify signature: 0x%02x", opcode);
+
+	return false;
 }
 
 static void handle_notify(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 								ssize_t pdu_len)
 {
-	struct notify_data data;
+	const struct queue_entry *entry;
+	bool found;
+
+	if ((opcode & ATT_OP_SIGNED_MASK) && !att->ext_signed) {
+		if (!handle_signed(att, opcode, pdu, pdu_len))
+			return;
+		pdu_len -= BT_ATT_SIGNATURE_LEN;
+	}
 
 	bt_att_ref(att);
-	att->in_notify = true;
 
-	memset(&data, 0, sizeof(data));
-	data.opcode = opcode;
+	found = false;
+	entry = queue_get_entries(att->notify_list);
 
-	if (pdu_len > 0) {
-		data.pdu = pdu;
-		data.pdu_len = pdu_len;
+	while (entry) {
+		struct att_notify *notify = entry->data;
+
+		entry = entry->next;
+
+		if (!opcode_match(notify->opcode, opcode))
+			continue;
+
+		found = true;
+
+		if (notify->callback)
+			notify->callback(opcode, pdu, pdu_len,
+							notify->user_data);
+
+		/* callback could remove all entries from notify list */
+		if (queue_isempty(att->notify_list))
+			break;
 	}
 
-	queue_foreach(att->notify_list, notify_handler, &data);
-
-	att->in_notify = false;
-
-	if (att->need_notify_cleanup) {
-		queue_remove_all(att->notify_list, match_notify_removed, NULL,
-							destroy_att_notify);
-		att->need_notify_cleanup = false;
-	}
+	/*
+	 * If this was a request and no handler was registered for it, respond
+	 * with "Not Supported"
+	 */
+	if (!found && get_op_type(opcode) == ATT_OP_TYPE_REQ)
+		respond_not_supported(att, opcode);
 
 	bt_att_unref(att);
 }
@@ -621,6 +842,8 @@ static bool can_read_data(struct io *io, void *user_data)
 	pdu = att->buf;
 	opcode = pdu[0];
 
+	bt_att_ref(att);
+
 	/* Act on the received PDU based on the opcode type */
 	switch (get_op_type(opcode)) {
 	case ATT_OP_TYPE_RSP:
@@ -630,8 +853,32 @@ static bool can_read_data(struct io *io, void *user_data)
 		break;
 	case ATT_OP_TYPE_CONF:
 		util_debug(att->debug_callback, att->debug_data,
-				"ATT opcode cannot be handled: 0x%02x", opcode);
+				"ATT confirmation received: 0x%02x", opcode);
+		handle_conf(att, pdu + 1, bytes_read - 1);
 		break;
+	case ATT_OP_TYPE_REQ:
+		/*
+		 * If a request is currently pending, then the sequential
+		 * protocol was violated. Disconnect the bearer, which will
+		 * promptly notify the upper layer via disconnect handlers.
+		 */
+		if (att->in_req) {
+			util_debug(att->debug_callback, att->debug_data,
+					"Received request while another is "
+					"pending: 0x%02x", opcode);
+			io_shutdown(att->io);
+			bt_att_unref(att);
+
+			return false;
+		}
+
+		att->in_req = true;
+
+		/* Fall through to the next case */
+	case ATT_OP_TYPE_CMD:
+	case ATT_OP_TYPE_NOT:
+	case ATT_OP_TYPE_UNKNOWN:
+	case ATT_OP_TYPE_IND:
 	default:
 		/* For all other opcodes notify the upper layer of the PDU and
 		 * let them act on it.
@@ -642,50 +889,68 @@ static bool can_read_data(struct io *io, void *user_data)
 		break;
 	}
 
+	bt_att_unref(att);
+
 	return true;
 }
 
-static void disconn_handler(void *data, void *user_data)
+static bool is_io_l2cap_based(int fd)
 {
-	struct att_disconn *disconn = data;
+	int domain;
+	int proto;
+	int err;
+	socklen_t len;
 
-	if (disconn->removed)
-		return;
+	domain = 0;
+	len = sizeof(domain);
+	err = getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &len);
+	if (err < 0)
+		return false;
 
-	if (disconn->callback)
-		disconn->callback(disconn->user_data);
+	if (domain != AF_BLUETOOTH)
+		return false;
+
+	proto = 0;
+	len = sizeof(proto);
+	err = getsockopt(fd, SOL_SOCKET, SO_PROTOCOL, &proto, &len);
+	if (err < 0)
+		return false;
+
+	return proto == BTPROTO_L2CAP;
 }
 
-static bool disconnect_cb(struct io *io, void *user_data)
+static void bt_att_free(struct bt_att *att)
 {
-	struct bt_att *att = user_data;
+	if (att->pending_req)
+		destroy_att_send_op(att->pending_req);
+
+	if (att->pending_ind)
+		destroy_att_send_op(att->pending_ind);
 
 	io_destroy(att->io);
-	att->io = NULL;
+	bt_crypto_unref(att->crypto);
 
-	util_debug(att->debug_callback, att->debug_data,
-						"Physical link disconnected");
+	queue_destroy(att->req_queue, NULL);
+	queue_destroy(att->ind_queue, NULL);
+	queue_destroy(att->write_queue, NULL);
+	queue_destroy(att->notify_list, NULL);
+	queue_destroy(att->disconn_list, NULL);
 
-	bt_att_ref(att);
-	att->in_disconn = true;
-	queue_foreach(att->disconn_list, disconn_handler, NULL);
-	att->in_disconn = false;
+	if (att->timeout_destroy)
+		att->timeout_destroy(att->timeout_data);
 
-	if (att->need_disconn_cleanup) {
-		queue_remove_all(att->disconn_list, match_disconn_removed, NULL,
-							destroy_att_disconn);
-		att->need_disconn_cleanup = false;
-	}
+	if (att->debug_destroy)
+		att->debug_destroy(att->debug_data);
 
-	bt_att_cancel_all(att);
-	bt_att_unregister_all(att);
+	free(att->local_sign);
+	free(att->remote_sign);
 
-	bt_att_unref(att);
+	free(att->buf);
 
-	return false;
+	free(att);
 }
 
-struct bt_att *bt_att_new(int fd)
+struct bt_att *bt_att_new(int fd, bool ext_signed)
 {
 	struct bt_att *att;
 
@@ -697,7 +962,7 @@ struct bt_att *bt_att_new(int fd)
 		return NULL;
 
 	att->fd = fd;
-
+	att->ext_signed = ext_signed;
 	att->mtu = BT_ATT_DEFAULT_LE_MTU;
 	att->buf = malloc(att->mtu);
 	if (!att->buf)
@@ -706,6 +971,10 @@ struct bt_att *bt_att_new(int fd)
 	att->io = io_new(fd);
 	if (!att->io)
 		goto fail;
+
+	/* crypto is optional, if not available leave it NULL */
+	if (!ext_signed)
+		att->crypto = bt_crypto_new();
 
 	att->req_queue = queue_new();
 	if (!att->req_queue)
@@ -733,17 +1002,14 @@ struct bt_att *bt_att_new(int fd)
 	if (!io_set_disconnect_handler(att->io, disconnect_cb, att, NULL))
 		goto fail;
 
+	att->io_on_l2cap = is_io_l2cap_based(att->fd);
+	if (!att->io_on_l2cap)
+		att->io_sec_level = BT_SECURITY_LOW;
+
 	return bt_att_ref(att);
 
 fail:
-	queue_destroy(att->req_queue, NULL);
-	queue_destroy(att->ind_queue, NULL);
-	queue_destroy(att->write_queue, NULL);
-	queue_destroy(att->notify_list, NULL);
-	queue_destroy(att->disconn_list, NULL);
-	io_destroy(att->io);
-	free(att->buf);
-	free(att);
+	bt_att_free(att);
 
 	return NULL;
 }
@@ -769,29 +1035,7 @@ void bt_att_unref(struct bt_att *att)
 	bt_att_unregister_all(att);
 	bt_att_cancel_all(att);
 
-	io_destroy(att->io);
-	att->io = NULL;
-
-	queue_destroy(att->req_queue, NULL);
-	queue_destroy(att->ind_queue, NULL);
-	queue_destroy(att->write_queue, NULL);
-	queue_destroy(att->notify_list, NULL);
-	queue_destroy(att->disconn_list, NULL);
-	att->req_queue = NULL;
-	att->ind_queue = NULL;
-	att->write_queue = NULL;
-	att->notify_list = NULL;
-
-	if (att->timeout_destroy)
-		att->timeout_destroy(att->timeout_data);
-
-	if (att->debug_destroy)
-		att->debug_destroy(att->debug_data);
-
-	free(att->buf);
-	att->buf = NULL;
-
-	free(att);
+	bt_att_free(att);
 }
 
 bool bt_att_set_close_on_unref(struct bt_att *att, bool do_close)
@@ -800,6 +1044,14 @@ bool bt_att_set_close_on_unref(struct bt_att *att, bool do_close)
 		return false;
 
 	return io_set_close_on_destroy(att->io, do_close);
+}
+
+int bt_att_get_fd(struct bt_att *att)
+{
+	if (!att)
+		return -1;
+
+	return att->fd;
 }
 
 bool bt_att_set_debug(struct bt_att *att, bt_att_debug_func_t callback,
@@ -903,20 +1155,12 @@ bool bt_att_unregister_disconnect(struct bt_att *att, unsigned int id)
 	if (!att || !id)
 		return false;
 
-	disconn = queue_find(att->disconn_list, match_disconn_id,
+	disconn = queue_remove_if(att->disconn_list, match_disconn_id,
 							UINT_TO_PTR(id));
 	if (!disconn)
 		return false;
 
-	if (!att->in_disconn) {
-		queue_remove(att->disconn_list, disconn);
-		destroy_att_disconn(disconn);
-		return true;
-	}
-
-	disconn->removed = true;
-	att->need_disconn_cleanup = true;
-
+	destroy_att_disconn(disconn);
 	return true;
 }
 
@@ -931,8 +1175,8 @@ unsigned int bt_att_send(struct bt_att *att, uint8_t opcode,
 	if (!att || !att->io)
 		return 0;
 
-	op = create_att_send_op(opcode, pdu, length, att->mtu, callback,
-							user_data, destroy);
+	op = create_att_send_op(att, opcode, pdu, length, callback, user_data,
+								destroy);
 	if (!op)
 		return 0;
 
@@ -949,6 +1193,11 @@ unsigned int bt_att_send(struct bt_att *att, uint8_t opcode,
 	case ATT_OP_TYPE_IND:
 		result = queue_push_tail(att->ind_queue, op);
 		break;
+	case ATT_OP_TYPE_CMD:
+	case ATT_OP_TYPE_NOT:
+	case ATT_OP_TYPE_UNKNOWN:
+	case ATT_OP_TYPE_RSP:
+	case ATT_OP_TYPE_CONF:
 	default:
 		result = queue_push_tail(att->write_queue, op);
 		break;
@@ -981,15 +1230,15 @@ bool bt_att_cancel(struct bt_att *att, unsigned int id)
 		return false;
 
 	if (att->pending_req && att->pending_req->id == id) {
-		op = att->pending_req;
-		att->pending_req = NULL;
-		goto done;
+		/* Don't cancel the pending request; remove it's handlers */
+		cancel_att_send_op(att->pending_req);
+		return true;
 	}
 
 	if (att->pending_ind && att->pending_ind->id == id) {
-		op = att->pending_ind;
-		att->pending_ind = NULL;
-		goto done;
+		/* Don't cancel the pending indication; remove it's handlers */
+		cancel_att_send_op(att->pending_ind);
+		return true;
 	}
 
 	op = queue_remove_if(att->req_queue, match_op_id, UINT_TO_PTR(id));
@@ -1024,17 +1273,64 @@ bool bt_att_cancel_all(struct bt_att *att)
 	queue_remove_all(att->ind_queue, NULL, NULL, destroy_att_send_op);
 	queue_remove_all(att->write_queue, NULL, NULL, destroy_att_send_op);
 
-	if (att->pending_req) {
-		destroy_att_send_op(att->pending_req);
-		att->pending_req = NULL;
-	}
+	if (att->pending_req)
+		/* Don't cancel the pending request; remove it's handlers */
+		cancel_att_send_op(att->pending_req);
 
-	if (att->pending_ind) {
-		destroy_att_send_op(att->pending_ind);
-		att->pending_ind = NULL;
-	}
+	if (att->pending_ind)
+		/* Don't cancel the pending request; remove it's handlers */
+		cancel_att_send_op(att->pending_ind);
 
 	return true;
+}
+
+static uint8_t att_ecode_from_error(int err)
+{
+	/*
+	 * If the error fits in a single byte, treat it as an ATT protocol
+	 * error as is. Since "0" is not a valid ATT protocol error code, we map
+	 * that to UNLIKELY below.
+	 */
+	if (err > 0 && err < UINT8_MAX)
+		return err;
+
+	/*
+	 * Since we allow UNIX errnos, map them to appropriate ATT protocol
+	 * and "Common Profile and Service" error codes.
+	 */
+	switch (err) {
+	case -ENOENT:
+		return BT_ATT_ERROR_INVALID_HANDLE;
+	case -ENOMEM:
+		return BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
+	case -EALREADY:
+		return BT_ERROR_ALREADY_IN_PROGRESS;
+	case -EOVERFLOW:
+		return BT_ERROR_OUT_OF_RANGE;
+	}
+
+	return BT_ATT_ERROR_UNLIKELY;
+}
+
+unsigned int bt_att_send_error_rsp(struct bt_att *att, uint8_t opcode,
+						uint16_t handle, int error)
+{
+	struct bt_att_pdu_error_rsp pdu;
+	uint8_t ecode;
+
+	if (!att || !opcode)
+		return 0;
+
+	ecode = att_ecode_from_error(error);
+
+	memset(&pdu, 0, sizeof(pdu));
+
+	pdu.opcode = opcode;
+	put_le16(handle, &pdu.handle);
+	pdu.ecode = ecode;
+
+	return bt_att_send(att, BT_ATT_OP_ERROR_RSP, &pdu, sizeof(pdu),
+							NULL, NULL, NULL);
 }
 
 unsigned int bt_att_register(struct bt_att *att, uint8_t opcode,
@@ -1044,7 +1340,7 @@ unsigned int bt_att_register(struct bt_att *att, uint8_t opcode,
 {
 	struct att_notify *notify;
 
-	if (!att || !opcode || !callback || !att->io)
+	if (!att || !callback || !att->io)
 		return 0;
 
 	notify = new0(struct att_notify, 1);
@@ -1076,20 +1372,12 @@ bool bt_att_unregister(struct bt_att *att, unsigned int id)
 	if (!att || !id)
 		return false;
 
-	notify = queue_find(att->notify_list, match_notify_id,
+	notify = queue_remove_if(att->notify_list, match_notify_id,
 							UINT_TO_PTR(id));
 	if (!notify)
 		return false;
 
-	if (!att->in_notify) {
-		queue_remove(att->notify_list, notify);
-		destroy_att_notify(notify);
-		return true;
-	}
-
-	notify->removed = true;
-	att->need_notify_cleanup = true;
-
+	destroy_att_notify(notify);
 	return true;
 }
 
@@ -1098,21 +1386,92 @@ bool bt_att_unregister_all(struct bt_att *att)
 	if (!att)
 		return false;
 
-	if (att->in_notify) {
-		queue_foreach(att->notify_list, mark_notify_removed, NULL);
-		att->need_notify_cleanup = true;
-	} else {
-		queue_remove_all(att->notify_list, NULL, NULL,
-							destroy_att_notify);
-	}
-
-	if (att->in_disconn) {
-		queue_foreach(att->disconn_list, mark_disconn_removed, NULL);
-		att->need_disconn_cleanup = true;
-	} else {
-		queue_remove_all(att->disconn_list, NULL, NULL,
-							destroy_att_disconn);
-	}
+	queue_remove_all(att->notify_list, NULL, NULL, destroy_att_notify);
+	queue_remove_all(att->disconn_list, NULL, NULL, destroy_att_disconn);
 
 	return true;
+}
+
+int bt_att_get_security(struct bt_att *att)
+{
+	struct bt_security sec;
+	socklen_t len;
+
+	if (!att)
+		return -EINVAL;
+
+	if (!att->io_on_l2cap)
+		return att->io_sec_level;
+
+	memset(&sec, 0, sizeof(sec));
+	len = sizeof(sec);
+	if (getsockopt(att->fd, SOL_BLUETOOTH, BT_SECURITY, &sec, &len) < 0)
+		return -EIO;
+
+	return sec.level;
+}
+
+bool bt_att_set_security(struct bt_att *att, int level)
+{
+	struct bt_security sec;
+
+	if (!att || level < BT_ATT_SECURITY_AUTO ||
+						level > BT_ATT_SECURITY_HIGH)
+		return false;
+
+	if (!att->io_on_l2cap) {
+		att->io_sec_level = level;
+		return true;
+	}
+
+	memset(&sec, 0, sizeof(sec));
+	sec.level = level;
+
+	if (setsockopt(att->fd, SOL_BLUETOOTH, BT_SECURITY, &sec,
+							sizeof(sec)) < 0)
+		return false;
+
+	return true;
+}
+
+static bool sign_set_key(struct sign_info **sign, uint8_t key[16],
+				bt_att_counter_func_t func, void *user_data)
+{
+	if (!(*sign)) {
+		*sign = new0(struct sign_info, 1);
+		if (!(*sign))
+			return false;
+	}
+
+	(*sign)->counter = func;
+	(*sign)->user_data = user_data;
+	memcpy((*sign)->key, key, 16);
+
+	return true;
+}
+
+bool bt_att_set_local_key(struct bt_att *att, uint8_t sign_key[16],
+				bt_att_counter_func_t func, void *user_data)
+{
+	if (!att)
+		return false;
+
+	return sign_set_key(&att->local_sign, sign_key, func, user_data);
+}
+
+bool bt_att_set_remote_key(struct bt_att *att, uint8_t sign_key[16],
+				bt_att_counter_func_t func, void *user_data)
+{
+	if (!att)
+		return false;
+
+	return sign_set_key(&att->remote_sign, sign_key, func, user_data);
+}
+
+bool bt_att_has_crypto(struct bt_att *att)
+{
+	if (!att)
+		return false;
+
+	return att->crypto ? true : false;
 }

@@ -77,7 +77,7 @@ static void handle_scan_result(void *buf, uint16_t len, int fd)
 	struct hal_ev_gatt_client_scan_result *ev = buf;
 	uint8_t ad[62];
 
-	if (len != sizeof(*ev) + ev->len ) {
+	if (len != sizeof(*ev) + ev->len) {
 		error("gatt: invalid scan result event, aborting");
 		exit(EXIT_FAILURE);
 	}
@@ -196,7 +196,7 @@ static void handle_notify(void *buf, uint16_t len, int fd)
 	struct hal_ev_gatt_client_notify *ev = buf;
 	btgatt_notify_params_t params;
 
-	if (len != sizeof(*ev) + ev->len ) {
+	if (len != sizeof(*ev) + ev->len) {
 		error("gatt: invalid notify event, aborting");
 		exit(EXIT_FAILURE);
 	}
@@ -220,7 +220,7 @@ static void handle_read_characteristic(void *buf, uint16_t len, int fd)
 	struct hal_ev_gatt_client_read_characteristic *ev = buf;
 	btgatt_read_params_t params;
 
-	if (len != sizeof(*ev) + ev->data.len ) {
+	if (len != sizeof(*ev) + ev->data.len) {
 		error("gatt: invalid read characteristic event, aborting");
 		exit(EXIT_FAILURE);
 	}
@@ -265,7 +265,7 @@ static void handle_read_descriptor(void *buf, uint16_t len, int fd)
 	struct hal_ev_gatt_client_read_descriptor *ev = buf;
 	btgatt_read_params_t params;
 
-	if (len != sizeof(*ev) + ev->data.len ) {
+	if (len != sizeof(*ev) + ev->data.len) {
 		error("gatt: invalid read descriptor event, aborting");
 		exit(EXIT_FAILURE);
 	}
@@ -439,7 +439,7 @@ static void handle_request_write(void *buf, uint16_t len, int fd)
 {
 	struct hal_ev_gatt_server_request_write *ev = buf;
 
-	if (len != sizeof(*ev) + ev->length ) {
+	if (len != sizeof(*ev) + ev->length) {
 		error("gatt: invalid request write event, aborting");
 		exit(EXIT_FAILURE);
 	}
@@ -468,6 +468,187 @@ static void handle_response_confirmation(void *buf, uint16_t len, int fd)
 
 	if (cbs->server->response_confirmation_cb)
 		cbs->server->response_confirmation_cb(ev->status, ev->handle);
+}
+
+static void handle_configure_mtu(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_configure_mtu *ev = buf;
+
+	if (cbs->client->configure_mtu_cb)
+		cbs->client->configure_mtu_cb(ev->conn_id, ev->status, ev->mtu);
+#endif
+}
+
+static void handle_filter_config(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_filter_config *ev = buf;
+
+	if (cbs->client->scan_filter_cfg_cb)
+		cbs->client->scan_filter_cfg_cb(ev->action, ev->client_if,
+						ev->status, ev->type,
+						ev->space);
+#endif
+}
+
+static void handle_filter_params(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_filter_params *ev = buf;
+
+	if (cbs->client->scan_filter_param_cb)
+		cbs->client->scan_filter_param_cb(ev->action, ev->client_if,
+							ev->status, ev->space);
+#endif
+}
+
+static void handle_filter_status(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_filter_status *ev = buf;
+
+	if (cbs->client->scan_filter_status_cb)
+		cbs->client->scan_filter_status_cb(ev->enable, ev->client_if,
+								ev->status);
+#endif
+}
+
+static void handle__multi_adv_enable(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_multi_adv_enable *ev = buf;
+
+	if (cbs->client->multi_adv_enable_cb)
+		cbs->client->multi_adv_enable_cb(ev->client_if, ev->status);
+#endif
+}
+
+static void handle_multi_adv_update(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_multi_adv_update *ev = buf;
+
+	if (cbs->client->multi_adv_update_cb)
+		cbs->client->multi_adv_update_cb(ev->client_if, ev->status);
+#endif
+}
+
+static void handle_multi_adv_data(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_multi_adv_data *ev = buf;
+
+	if (cbs->client->multi_adv_data_cb)
+		cbs->client->multi_adv_data_cb(ev->client_if, ev->status);
+#endif
+}
+
+static void handle_multi_adv_disable(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_multi_adv_disable *ev = buf;
+
+	if (cbs->client->multi_adv_disable_cb)
+		cbs->client->multi_adv_disable_cb(ev->client_if, ev->status);
+#endif
+}
+
+static void handle_client_congestion(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_congestion *ev = buf;
+
+	if (cbs->client->congestion_cb)
+		cbs->client->congestion_cb(ev->conn_id, ev->congested);
+#endif
+}
+
+static void handle_config_batchscan(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_config_batchscan *ev = buf;
+
+	if (cbs->client->batchscan_cfg_storage_cb)
+		cbs->client->batchscan_cfg_storage_cb(ev->client_if,
+								ev->status);
+#endif
+}
+
+static void handle_enable_batchscan(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_enable_batchscan *ev = buf;
+
+	if (cbs->client->batchscan_enb_disable_cb)
+		cbs->client->batchscan_enb_disable_cb(ev->action, ev->client_if,
+								ev->status);
+#endif
+}
+
+static void handle_client_batchscan_reports(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_batchscan_reports *ev = buf;
+
+	if (cbs->client->batchscan_reports_cb)
+		cbs->client->batchscan_reports_cb(ev->client_if, ev->status,
+							ev->format, ev->num,
+							ev->data_len, ev->data);
+#endif
+}
+
+static void handle_batchscan_threshold(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_batchscan_threshold *ev = buf;
+
+	if (cbs->client->batchscan_threshold_cb)
+		cbs->client->batchscan_threshold_cb(ev->client_if);
+#endif
+}
+
+static void handle_track_adv(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_client_track_adv *ev = buf;
+
+	if (cbs->client->track_adv_event_cb)
+		cbs->client->track_adv_event_cb(ev->client_if, ev->filetr_index,
+						ev->address_type,
+						(bt_bdaddr_t *) ev->address,
+						ev->state);
+#endif
+}
+
+static void handle_indication_send(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_server_indication_sent *ev = buf;
+
+	if (cbs->server->indication_sent_cb)
+		cbs->server->indication_sent_cb(ev->conn_id, ev->status);
+#endif
+}
+
+static void handle_server_congestion(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	struct hal_ev_gatt_server_congestion *ev = buf;
+
+	if (cbs->server->congestion_cb)
+		cbs->server->congestion_cb(ev->conn_id, ev->congested);
+#endif
+}
+
+static void handle_server_mtu_changed(void *buf, uint16_t len, int fd)
+{
+#if ANDROID_VERSION >= PLATFORM_VER(5, 1, 0)
+	struct hal_ev_gatt_server_mtu_changed *ev = buf;
+
+	if (cbs->server->mtu_changed_cb)
+		cbs->server->mtu_changed_cb(ev->conn_id, ev->mtu);
+#endif
 }
 
 /*
@@ -565,7 +746,58 @@ static const struct hal_ipc_handler ev_handlers[] = {
 	/* HAL_EV_GATT_SERVER_RSP_CONFIRMATION */
 	{ handle_response_confirmation, false,
 		sizeof(struct hal_ev_gatt_server_rsp_confirmation) },
-};
+	/* HAL_EV_GATT_CLIENT_CONFIGURE_MTU */
+	{ handle_configure_mtu, false,
+		sizeof(struct hal_ev_gatt_client_configure_mtu) },
+	/* HAL_EV_GATT_CLIENT_FILTER_CONFIG */
+	{ handle_filter_config, false,
+		sizeof(struct hal_ev_gatt_client_filter_config) },
+	/* HAL_EV_GATT_CLIENT_FILTER_PARAMS */
+	{ handle_filter_params, false,
+		sizeof(struct hal_ev_gatt_client_filter_params) },
+	/* HAL_EV_GATT_CLIENT_FILTER_STATUS */
+	{ handle_filter_status, false,
+		sizeof(struct hal_ev_gatt_client_filter_status) },
+	/* HAL_EV_GATT_CLIENT_MULTI_ADV_ENABLE */
+	{ handle__multi_adv_enable, false,
+		sizeof(struct hal_ev_gatt_client_multi_adv_enable) },
+	/* HAL_EV_GATT_CLIENT_MULTI_ADV_UPDATE */
+	{ handle_multi_adv_update, false,
+		sizeof(struct hal_ev_gatt_client_multi_adv_update) },
+	/* HAL_EV_GATT_CLIENT_MULTI_ADV_DATA */
+	{ handle_multi_adv_data, false,
+		sizeof(struct hal_ev_gatt_client_multi_adv_data) },
+	/* HAL_EV_GATT_CLIENT_MULTI_ADV_DISABLE */
+	{ handle_multi_adv_disable, false,
+		sizeof(struct hal_ev_gatt_client_multi_adv_disable) },
+	/* HAL_EV_GATT_CLIENT_CONGESTION */
+	{ handle_client_congestion, false,
+		sizeof(struct hal_ev_gatt_client_congestion) },
+	/* HAL_EV_GATT_CLIENT_CONFIG_BATCHSCAN */
+	{ handle_config_batchscan, false,
+		sizeof(struct hal_ev_gatt_client_config_batchscan) },
+	/* HAL_EV_GATT_CLIENT_ENABLE_BATCHSCAN */
+	{ handle_enable_batchscan, false,
+		sizeof(struct hal_ev_gatt_client_enable_batchscan) },
+	/* HAL_EV_GATT_CLIENT_BATCHSCAN_REPORTS */
+	{ handle_client_batchscan_reports, true,
+		sizeof(struct hal_ev_gatt_client_batchscan_reports) },
+	/* HAL_EV_GATT_CLIENT_BATCHSCAN_THRESHOLD */
+	{ handle_batchscan_threshold, false,
+		sizeof(struct hal_ev_gatt_client_batchscan_threshold) },
+	/* HAL_EV_GATT_CLIENT_TRACK_ADV */
+	{ handle_track_adv, false,
+		sizeof(struct hal_ev_gatt_client_track_adv) },
+	/* HAL_EV_GATT_SERVER_INDICATION_SENT */
+	{ handle_indication_send, false,
+		sizeof(struct hal_ev_gatt_server_indication_sent) },
+	/* HAL_EV_GATT_SERVER_CONGESTION */
+	{ handle_server_congestion, false,
+		sizeof(struct hal_ev_gatt_server_congestion) },
+	/* HAL_EV_GATT_SERVER_MTU_CHANGED */
+	{ handle_server_mtu_changed, false,
+		sizeof(struct hal_ev_gatt_server_mtu_changed) },
+	};
 
 /* Client API */
 
@@ -595,7 +827,7 @@ static bt_status_t unregister_client(int client_if)
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
 
-static bt_status_t scan(int client_if, bool start)
+static bt_status_t scan_real(int client_if, bool start)
 {
 	struct hal_cmd_gatt_client_scan cmd;
 
@@ -609,8 +841,20 @@ static bt_status_t scan(int client_if, bool start)
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
 
-static bt_status_t connect(int client_if, const bt_bdaddr_t *bd_addr,
-								bool is_direct)
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static bt_status_t scan(bool start)
+{
+	return scan_real(0, start);
+}
+#else
+static bt_status_t scan(int client_if, bool start)
+{
+	return scan_real(client_if, start);
+}
+#endif
+
+static bt_status_t connect_real(int client_if, const bt_bdaddr_t *bd_addr,
+						bool is_direct, int transport)
 {
 	struct hal_cmd_gatt_client_connect cmd;
 
@@ -619,12 +863,28 @@ static bt_status_t connect(int client_if, const bt_bdaddr_t *bd_addr,
 
 	cmd.client_if = client_if;
 	cmd.is_direct = is_direct;
+	cmd.transport = transport;
 
 	memcpy(cmd.bdaddr, bd_addr, sizeof(*bd_addr));
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT, HAL_OP_GATT_CLIENT_CONNECT,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static bt_status_t connect(int client_if, const bt_bdaddr_t *bd_addr,
+						bool is_direct, int transport)
+{
+	return connect_real(client_if, bd_addr, is_direct, transport);
+}
+#else
+static bt_status_t connect(int client_if, const bt_bdaddr_t *bd_addr,
+								bool is_direct)
+{
+	return connect_real(client_if, bd_addr, is_direct,
+							BT_TRANSPORT_UNKNOWN);
+}
+#endif
 
 static bt_status_t disconnect(int client_if, const bt_bdaddr_t *bd_addr,
 								int conn_id)
@@ -1027,7 +1287,7 @@ static bt_status_t set_adv_data_real(int server_if, bool set_scan_rsp,
  * This is temporary solution and support for older Android versions might
  * be removed at any time.
  */
-#if ANDROID_VERSION < PLATFORM_VER(4,4,3)
+#if ANDROID_VERSION < PLATFORM_VER(4, 4, 3)
 static bt_status_t set_adv_data(int server_if, bool set_scan_rsp,
 				bool include_name, bool include_txpower,
 				int min_interval, int max_interval,
@@ -1080,6 +1340,366 @@ static bt_status_t test_command(int command, btgatt_test_params_t *params)
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
 
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static bt_status_t scan_filter_param_setup(int client_if, int action,
+						int filt_index, int feat_seln,
+						int list_logic_type,
+						int filt_logic_type,
+						int rssi_high_thres,
+						int rssi_low_thres,
+						int dely_mode,
+						int found_timeout,
+						int lost_timeout,
+						int found_timeout_cnt)
+{
+	struct hal_cmd_gatt_client_scan_filter_setup cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.action = action;
+	cmd.filter_index = filt_index;
+	cmd.features = feat_seln;
+	cmd.list_type = list_logic_type;
+	cmd.filter_type = filt_logic_type;
+	cmd.rssi_hi = rssi_high_thres;
+	cmd.rssi_lo = rssi_low_thres;
+	cmd.delivery_mode = dely_mode;
+	cmd.found_timeout = found_timeout;
+	cmd.lost_timeout = lost_timeout;
+	cmd.found_timeout_cnt = found_timeout_cnt;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_SCAN_FILTER_SETUP,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t scan_filter_add_remove(int client_if, int action,
+						int filt_type, int filt_index,
+						int company_id,
+						int company_id_mask,
+						const bt_uuid_t *p_uuid,
+						const bt_uuid_t *p_uuid_mask,
+						const bt_bdaddr_t *bd_addr,
+						char addr_type,
+						int data_len, char *p_data,
+						int mask_len, char *p_mask)
+{
+	char buf[IPC_MTU];
+	struct hal_cmd_gatt_client_scan_filter_add_remove *cmd = (void *) buf;
+	size_t cmd_len;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	if (!p_uuid || !p_uuid_mask || !bd_addr)
+		return BT_STATUS_PARM_INVALID;
+
+	cmd_len = sizeof(*cmd) + data_len + mask_len;
+	if (cmd_len > IPC_MTU)
+		return BT_STATUS_FAIL;
+
+	cmd->client_if = client_if;
+	cmd->action = action;
+	cmd->filter_type = filt_type;
+	cmd->filter_index = filt_index;
+	cmd->company_id = company_id;
+	cmd->company_id_mask = company_id_mask;
+	memcpy(cmd->uuid, p_uuid, sizeof(*p_uuid));
+	memcpy(cmd->uuid_mask, p_uuid_mask, sizeof(*p_uuid_mask));
+	memcpy(cmd->address, bd_addr, sizeof(*bd_addr));
+	cmd->address_type = addr_type;
+
+	cmd->data_len = data_len;
+	memcpy(cmd->data_mask, p_data, data_len);
+
+	cmd->mask_len = mask_len;
+	memcpy(cmd->data_mask + data_len, p_mask, mask_len);
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+				HAL_OP_GATT_CLIENT_SCAN_FILTER_ADD_REMOVE,
+				cmd_len, cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t scan_filter_clear(int client_if, int filt_index)
+{
+	struct hal_cmd_gatt_client_scan_filter_clear cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.index = filt_index;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_SCAN_FILTER_CLEAR,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t scan_filter_enable(int client_if, bool enable)
+{
+	struct hal_cmd_gatt_client_scan_filter_enable cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.enable = enable;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_SCAN_FILTER_ENABLE,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t configure_mtu(int conn_id, int mtu)
+{
+	struct hal_cmd_gatt_client_configure_mtu cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.conn_id = conn_id;
+	cmd.mtu = mtu;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_CONFIGURE_MTU,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t conn_parameter_update(const bt_bdaddr_t *bd_addr,
+						int min_interval,
+						int max_interval, int latency,
+						int timeout)
+{
+	struct hal_cmd_gatt_client_conn_param_update cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	if (!bd_addr)
+		return BT_STATUS_PARM_INVALID;
+
+	memcpy(cmd.address, bd_addr, sizeof(*bd_addr));
+	cmd.min_interval = min_interval;
+	cmd.max_interval = max_interval;
+	cmd.latency = latency;
+	cmd.timeout = timeout;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_CONN_PARAM_UPDATE,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t set_scan_parameters(int scan_interval, int scan_window)
+{
+	struct hal_cmd_gatt_client_set_scan_param cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.interval = scan_interval;
+	cmd.window = scan_window;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_SET_SCAN_PARAM,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t multi_adv_enable(int client_if, int min_interval,
+					int max_interval, int adv_type,
+					int chnl_map, int tx_power,
+					int timeout_s)
+{
+	struct hal_cmd_gatt_client_setup_multi_adv cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.min_interval = min_interval;
+	cmd.max_interval = max_interval;
+	cmd.type = adv_type;
+	cmd.channel_map = chnl_map;
+	cmd.tx_power = tx_power;
+	cmd.timeout = timeout_s;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_SETUP_MULTI_ADV,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t multi_adv_update(int client_if, int min_interval,
+					int max_interval, int adv_type,
+					int chnl_map, int tx_power,
+					int timeout_s)
+{
+	struct hal_cmd_gatt_client_update_multi_adv cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.min_interval = min_interval;
+	cmd.max_interval = max_interval;
+	cmd.type = adv_type;
+	cmd.channel_map = chnl_map;
+	cmd.tx_power = tx_power;
+	cmd.timeout = timeout_s;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_UPDATE_MULTI_ADV,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t multi_adv_set_inst_data(int client_if, bool set_scan_rsp,
+						bool include_name,
+						bool incl_txpower,
+						int appearance,
+						int manufacturer_len,
+						char *manufacturer_data,
+						int service_data_len,
+						char *service_data,
+						int service_uuid_len,
+						char *service_uuid)
+{
+	char buf[IPC_MTU];
+	struct hal_cmd_gatt_client_setup_multi_adv_inst *cmd = (void *) buf;
+	int off = 0;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	if (manufacturer_len > 0 && !manufacturer_data)
+		return BT_STATUS_PARM_INVALID;
+
+	if (service_data_len > 0 && !service_data)
+		return BT_STATUS_PARM_INVALID;
+
+	if (service_uuid_len > 0 && !service_uuid)
+		return BT_STATUS_PARM_INVALID;
+
+	if (sizeof(*cmd) + manufacturer_len + service_data_len
+						+ service_uuid_len > IPC_MTU)
+		return BT_STATUS_FAIL;
+
+	cmd->client_if = client_if;
+	cmd->set_scan_rsp = set_scan_rsp;
+	cmd->include_name = include_name;
+	cmd->include_tx_power = incl_txpower;
+	cmd->appearance = appearance;
+	cmd->manufacturer_data_len = manufacturer_len;
+	cmd->service_data_len = service_data_len;
+	cmd->service_uuid_len = service_uuid_len;
+
+	if (manufacturer_len > 0) {
+		memcpy(cmd->data_service_uuid, manufacturer_data,
+							manufacturer_len);
+		off += manufacturer_len;
+	}
+
+	if (service_data_len > 0) {
+		memcpy(cmd->data_service_uuid + off, service_data,
+							service_data_len);
+		off += service_data_len;
+	}
+
+	if (service_uuid_len > 0) {
+		memcpy(cmd->data_service_uuid + off, service_uuid,
+							service_uuid_len);
+		off += service_uuid_len;
+	}
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+				HAL_OP_GATT_CLIENT_SETUP_MULTI_ADV_INST,
+				sizeof(*cmd) + off, cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t multi_adv_disable(int client_if)
+{
+	struct hal_cmd_gatt_client_disable_multi_adv_inst cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+				HAL_OP_GATT_CLIENT_DISABLE_MULTI_ADV_INST,
+				sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t batchscan_cfg_storage(int client_if, int batch_scan_full_max,
+						int batch_scan_trunc_max,
+						int batch_scan_notify_threshold)
+{
+	struct hal_cmd_gatt_client_configure_batchscan cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.full_max = batch_scan_full_max;
+	cmd.trunc_max = batch_scan_trunc_max;
+	cmd.notify_threshold = batch_scan_notify_threshold;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_CONFIGURE_BATCHSCAN,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t batchscan_enb_batch_scan(int client_if, int scan_mode,
+						int scan_interval,
+						int scan_window, int addr_type,
+						int discard_rule)
+{
+	struct hal_cmd_gatt_client_enable_batchscan cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.mode = scan_mode;
+	cmd.interval = scan_interval;
+	cmd.window = scan_window;
+	cmd.address_type = addr_type;
+	cmd.discard_rule = discard_rule;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_ENABLE_BATCHSCAN,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t batchscan_dis_batch_scan(int client_if)
+{
+	struct hal_cmd_gatt_client_disable_batchscan cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+					HAL_OP_GATT_CLIENT_DISABLE_BATCHSCAN,
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+
+static bt_status_t batchscan_read_reports(int client_if, int scan_mode)
+{
+	struct hal_cmd_gatt_client_read_batchscan_reports cmd;
+
+	if (!interface_ready())
+		return BT_STATUS_NOT_READY;
+
+	cmd.client_if = client_if;
+	cmd.scan_mode = scan_mode;
+
+	return hal_ipc_cmd(HAL_SERVICE_ID_GATT,
+				HAL_OP_GATT_CLIENT_READ_BATCHSCAN_REPORTS,
+				sizeof(cmd), &cmd, NULL, NULL, NULL);
+}
+#endif
+
 /* Server API */
 
 static bt_status_t register_server(bt_uuid_t *uuid)
@@ -1108,8 +1728,9 @@ static bt_status_t unregister_server(int server_if)
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
 
-static bt_status_t server_connect(int server_if, const bt_bdaddr_t *bd_addr,
-								bool is_direct)
+static bt_status_t server_connect_real(int server_if,
+						const bt_bdaddr_t *bd_addr,
+						bool is_direct, int transport)
 {
 	struct hal_cmd_gatt_server_connect cmd;
 
@@ -1118,12 +1739,28 @@ static bt_status_t server_connect(int server_if, const bt_bdaddr_t *bd_addr,
 
 	cmd.server_if = server_if;
 	cmd.is_direct = is_direct;
+	cmd.transport = transport;
 
 	memcpy(cmd.bdaddr, bd_addr, sizeof(*bd_addr));
 
 	return hal_ipc_cmd(HAL_SERVICE_ID_GATT, HAL_OP_GATT_SERVER_CONNECT,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static bt_status_t server_connect(int server_if, const bt_bdaddr_t *bd_addr,
+						bool is_direct, int transport)
+{
+	return server_connect_real(server_if, bd_addr, is_direct, transport);
+}
+#else
+static bt_status_t server_connect(int server_if, const bt_bdaddr_t *bd_addr,
+								bool is_direct)
+{
+	return server_connect_real(server_if, bd_addr, is_direct,
+							BT_TRANSPORT_UNKNOWN);
+}
+#endif
 
 static bt_status_t server_disconnect(int server_if, const bt_bdaddr_t *bd_addr,
 								int conn_id)
@@ -1216,7 +1853,7 @@ static bt_status_t add_descriptor(int server_if, int service_handle,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
 
-static bt_status_t start_service(int server_if, int service_handle,
+static bt_status_t start_service_real(int server_if, int service_handle,
 								int transport)
 {
 	struct hal_cmd_gatt_server_start_service cmd;
@@ -1232,6 +1869,36 @@ static bt_status_t start_service(int server_if, int service_handle,
 					HAL_OP_GATT_SERVER_START_SERVICE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 }
+
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+static bt_status_t start_service(int server_if, int service_handle,
+								int transport)
+{
+	return start_service_real(server_if, service_handle, transport);
+}
+#else
+static bt_status_t start_service(int server_if, int service_handle,
+								int transport)
+{
+	int transport_mask = 0;
+
+	/* Android 5 changes transport enum to bit mask. */
+	switch (transport) {
+	case 0:
+		transport_mask = GATT_SERVER_TRANSPORT_LE_BIT;
+		break;
+	case 1:
+		transport_mask = GATT_SERVER_TRANSPORT_BREDR_BIT;
+		break;
+	case 2:
+		transport_mask = GATT_SERVER_TRANSPORT_LE_BIT |
+						GATT_SERVER_TRANSPORT_BREDR_BIT;
+		break;
+	}
+
+	return start_service_real(server_if, service_handle, transport_mask);
+}
+#endif
 
 static bt_status_t stop_service(int server_if, int service_handle)
 {
@@ -1330,6 +1997,7 @@ static bt_status_t init(const btgatt_callbacks_t *callbacks)
 
 	cmd.service_id = HAL_SERVICE_ID_GATT;
 	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.max_clients = 1;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
@@ -1351,14 +2019,14 @@ static void cleanup(void)
 	if (!interface_ready())
 		return;
 
-	cbs = NULL;
-
 	cmd.service_id = HAL_SERVICE_ID_GATT;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_GATT);
+
+	cbs = NULL;
 }
 
 static btgatt_client_interface_t client_iface = {
@@ -1381,8 +2049,27 @@ static btgatt_client_interface_t client_iface = {
 	.register_for_notification = register_for_notification,
 	.deregister_for_notification = deregister_for_notification,
 	.read_remote_rssi = read_remote_rssi,
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	.scan_filter_param_setup = scan_filter_param_setup,
+	.scan_filter_add_remove = scan_filter_add_remove,
+	.scan_filter_clear = scan_filter_clear,
+	.scan_filter_enable = scan_filter_enable,
+#endif
 	.get_device_type = get_device_type,
 	.set_adv_data = set_adv_data,
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	.configure_mtu = configure_mtu,
+	.conn_parameter_update = conn_parameter_update,
+	.set_scan_parameters = set_scan_parameters,
+	.multi_adv_enable = multi_adv_enable,
+	.multi_adv_update = multi_adv_update,
+	.multi_adv_set_inst_data = multi_adv_set_inst_data,
+	.multi_adv_disable = multi_adv_disable,
+	.batchscan_cfg_storage = batchscan_cfg_storage,
+	.batchscan_enb_batch_scan = batchscan_enb_batch_scan,
+	.batchscan_dis_batch_scan = batchscan_dis_batch_scan,
+	.batchscan_read_reports = batchscan_read_reports,
+#endif
 	.test_command = test_command,
 };
 

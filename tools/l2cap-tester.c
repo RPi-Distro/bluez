@@ -38,10 +38,10 @@
 
 #include "monitor/bt.h"
 #include "emulator/bthost.h"
+#include "emulator/hciemu.h"
 
 #include "src/shared/tester.h"
 #include "src/shared/mgmt.h"
-#include "src/shared/hciemu.h"
 
 struct test_data {
 	const void *test_data;
@@ -73,6 +73,7 @@ struct l2cap_data {
 	const void *write_data;
 
 	bool enable_ssp;
+	uint8_t client_io_cap;
 	int sec_level;
 	bool reject_ssp;
 
@@ -81,6 +82,9 @@ struct l2cap_data {
 	const void *pin;
 	uint8_t client_pin_len;
 	const void *client_pin;
+
+	bool addr_type_avail;
+	uint8_t addr_type;
 };
 
 static void mgmt_debug(const char *str, void *user_data)
@@ -275,6 +279,7 @@ static const struct l2cap_data client_connect_ssp_success_test_2 = {
 	.server_psm = 0x1001,
 	.enable_ssp = true,
 	.sec_level  = BT_SECURITY_HIGH,
+	.client_io_cap = 0x04,
 };
 
 static const struct l2cap_data client_connect_pin_success_test = {
@@ -439,6 +444,12 @@ static const struct l2cap_data le_client_connect_reject_test_1 = {
 	.expect_err = ECONNREFUSED,
 };
 
+static const struct l2cap_data le_client_connect_reject_test_2 = {
+	.client_psm = 0x0080,
+	.addr_type_avail = true,
+	.addr_type = BDADDR_LE_PUBLIC,
+};
+
 static const struct l2cap_data le_client_connect_nval_psm_test = {
 	.client_psm = 0x0080,
 	.expect_err = ECONNREFUSED,
@@ -535,7 +546,7 @@ static void setup_powered_client_callback(uint8_t status, uint16_t length,
 	bthost = hciemu_client_get_host(data->hciemu);
 	bthost_set_cmd_complete_cb(bthost, client_cmd_complete, user_data);
 	if (data->hciemu_type == HCIEMU_TYPE_LE)
-		bthost_set_adv_enable(bthost, 0x01, 0x00);
+		bthost_set_adv_enable(bthost, 0x01);
 	else
 		bthost_write_scan_enable(bthost, 0x03);
 }
@@ -670,6 +681,9 @@ static void setup_powered_common(void)
 		mgmt_register(data->mgmt, MGMT_EV_PIN_CODE_REQUEST,
 				data->mgmt_index, pin_code_request_callback,
 				data, NULL);
+
+	if (test && test->client_io_cap)
+		bthost_set_io_capability(bthost, test->client_io_cap);
 
 	if (test && test->client_pin)
 		bthost_set_pin_code(bthost, test->client_pin,
@@ -938,6 +952,7 @@ failed:
 static int create_l2cap_sock(struct test_data *data, uint16_t psm,
 						uint16_t cid, int sec_level)
 {
+	const struct l2cap_data *l2data = data->test_data;
 	const uint8_t *master_bdaddr;
 	struct sockaddr_l2 addr;
 	int sk, err;
@@ -963,7 +978,10 @@ static int create_l2cap_sock(struct test_data *data, uint16_t psm,
 	addr.l2_psm = htobs(psm);
 	addr.l2_cid = htobs(cid);
 	bacpy(&addr.l2_bdaddr, (void *) master_bdaddr);
-	if (data->hciemu_type == HCIEMU_TYPE_LE)
+
+	if (l2data && l2data->addr_type_avail)
+		addr.l2_bdaddr_type = l2data->addr_type;
+	else if (data->hciemu_type == HCIEMU_TYPE_LE)
 		addr.l2_bdaddr_type = BDADDR_LE_PUBLIC;
 	else
 		addr.l2_bdaddr_type = BDADDR_BREDR;
@@ -998,6 +1016,7 @@ static int create_l2cap_sock(struct test_data *data, uint16_t psm,
 static int connect_l2cap_sock(struct test_data *data, int sk, uint16_t psm,
 								uint16_t cid)
 {
+	const struct l2cap_data *l2data = data->test_data;
 	const uint8_t *client_bdaddr;
 	struct sockaddr_l2 addr;
 	int err;
@@ -1013,7 +1032,10 @@ static int connect_l2cap_sock(struct test_data *data, int sk, uint16_t psm,
 	bacpy(&addr.l2_bdaddr, (void *) client_bdaddr);
 	addr.l2_psm = htobs(psm);
 	addr.l2_cid = htobs(cid);
-	if (data->hciemu_type == HCIEMU_TYPE_LE)
+
+	if (l2data && l2data->addr_type_avail)
+		addr.l2_bdaddr_type = l2data->addr_type;
+	else if (data->hciemu_type == HCIEMU_TYPE_LE)
 		addr.l2_bdaddr_type = BDADDR_LE_PUBLIC;
 	else
 		addr.l2_bdaddr_type = BDADDR_BREDR;
@@ -1077,6 +1099,27 @@ static void test_connect(const void *test_data)
 	g_io_channel_unref(io);
 
 	tester_print("Connect in progress");
+}
+
+static void test_connect_reject(const void *test_data)
+{
+	struct test_data *data = tester_get_data();
+	const struct l2cap_data *l2data = data->test_data;
+	int sk;
+
+	sk = create_l2cap_sock(data, 0, l2data->cid, l2data->sec_level);
+	if (sk < 0) {
+		tester_test_failed();
+		return;
+	}
+
+	if (connect_l2cap_sock(data, sk, l2data->client_psm,
+							l2data->cid) < 0)
+		tester_test_passed();
+	else
+		tester_test_failed();
+
+	close(sk);
 }
 
 static gboolean l2cap_listen_cb(GIOChannel *io, GIOCondition cond,
@@ -1391,6 +1434,9 @@ int main(int argc, char *argv[])
 	test_l2cap_le("L2CAP LE Client - Command Reject",
 					&le_client_connect_reject_test_1,
 					setup_powered_client, test_connect);
+	test_l2cap_bredr("L2CAP LE Client - Connection Reject",
+				&le_client_connect_reject_test_2,
+				setup_powered_client, test_connect_reject);
 	test_l2cap_le("L2CAP LE Client - Invalid PSM",
 					&le_client_connect_nval_psm_test,
 					setup_powered_client, test_connect);

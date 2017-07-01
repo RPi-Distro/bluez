@@ -30,14 +30,17 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdlib.h>
-#include <glib.h>
-#include <gdbus/gdbus.h>
-#include <gobex/gobex-apparam.h>
-#include <bluetooth/sdp.h>
 
+#include <glib.h>
+
+#include "lib/sdp.h"
+
+#include "gobex/gobex-apparam.h"
+#include "gdbus/gdbus.h"
+
+#include "obexd/src/log.h"
+#include "obexd/src/map_ap.h"
 #include "dbus.h"
-#include "log.h"
-#include "map_ap.h"
 #include "map-event.h"
 
 #include "map.h"
@@ -100,6 +103,7 @@ struct map_data {
 	GHashTable *messages;
 	int16_t mas_instance_id;
 	uint8_t supported_message_types;
+	uint32_t supported_features;
 };
 
 struct pending_request {
@@ -1132,7 +1136,8 @@ static void msg_element(GMarkupParseContext *ctxt, const char *element,
 
 		for (parser = msg_parsers; parser && parser->name; parser++) {
 			if (strcasecmp(key, parser->name) == 0) {
-				parser->func(msg, values[i]);
+				if (values[i])
+					parser->func(msg, values[i]);
 				break;
 			}
 		}
@@ -1927,6 +1932,8 @@ static void map_handle_notification(struct map_event *event, void *user_data)
 	case MAP_ET_MESSAGE_SHIFT:
 		map_handle_folder_changed(map, event, event->folder);
 		break;
+	case MAP_ET_MEMORY_FULL:
+	case MAP_ET_MEMORY_AVAILABLE:
 	default:
 		break;
 	}
@@ -2002,6 +2009,14 @@ static void parse_service_record(struct map_data *map)
 		map->supported_message_types = *(uint8_t *)data;
 	else
 		DBG("Failed to read supported message types");
+
+	/* Supported Feature Bits */
+	data = obc_session_get_attribute(map->session,
+					SDP_ATTR_MAP_SUPPORTED_FEATURES);
+	if(data != NULL)
+		map->supported_features = *(uint32_t *) data;
+	else
+		map->supported_features = 0x0000001f;
 }
 
 static int map_probe(struct obc_session *session)

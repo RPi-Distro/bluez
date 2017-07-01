@@ -29,15 +29,20 @@
 #include <errno.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
+
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/dbus-common.h"
 
 #include "src/log.h"
 #include "src/error.h"
+#include "src/shared/queue.h"
 
 #include "avdtp.h"
 #include "media.h"
@@ -332,7 +337,7 @@ static guint resume_a2dp(struct media_transport *transport,
 	guint id;
 
 	if (a2dp->session == NULL) {
-		a2dp->session = avdtp_get(transport->device);
+		a2dp->session = a2dp_avdtp_get(transport->device);
 		if (a2dp->session == NULL)
 			return 0;
 	}

@@ -18,50 +18,30 @@
 #include <stdbool.h>
 
 #include "emulator/bthost.h"
-#include "tester-main.h"
+#include "lib/bluetooth.h"
 #include "android/utils.h"
+#include "src/shared/tester.h"
+#include "src/shared/queue.h"
+#include "tester-main.h"
 
 static struct queue *list; /* List of pan test cases */
 
-struct emu_cid_data {
-	uint16_t nap_handle;
-	uint16_t nap_cid;
+#define pan_conn_req_pdu 0x01, 0x01, 0x02, 0x11, 0x16, 0x11, 0x15
+#define pan_conn_rsp_pdu 0x01, 0x02, 0x00, 0x00
+
+static const struct pdu_set pdus[] = {
+	{ raw_pdu(pan_conn_req_pdu), raw_pdu(pan_conn_rsp_pdu) },
+	{ end_pdu, end_pdu },
 };
 
-static struct emu_cid_data cid_data;
-static uint8_t pan_conn_req_pdu[] = { 0x01, 0x01, 0x02, 0x11, 0x16,
-								0x11, 0x15 };
-static uint8_t pan_conn_rsp_pdu[] = { 0x01, 0x02, 0x00, 0x00 };
-
-static void pan_nap_cid_hook_cb(const void *data, uint16_t len, void *user_data)
-{
-	struct test_data *t_data = tester_get_data();
-	struct emu_cid_data *cid_data = user_data;
-	struct bthost *bthost = hciemu_client_get_host(t_data->hciemu);
-
-	if (!memcmp((uint8_t *) data, pan_conn_req_pdu,
-						sizeof(pan_conn_req_pdu)))
-		bthost_send_cid(bthost, cid_data->nap_handle, cid_data->nap_cid,
-				pan_conn_rsp_pdu, sizeof(pan_conn_rsp_pdu));
-}
-
-static void pan_connect_request_cb(uint16_t handle, uint16_t cid,
-							void *user_data)
-{
-	struct test_data *data = tester_get_data();
-	struct bthost *bthost = hciemu_client_get_host(data->hciemu);
-
-	cid_data.nap_handle = handle;
-	cid_data.nap_cid = cid;
-
-	bthost_add_cid_hook(bthost, handle, cid, pan_nap_cid_hook_cb,
-								&cid_data);
-}
+static struct emu_l2cap_cid_data cid_data = {
+	.pdu = pdus,
+};
 
 static struct emu_set_l2cap_data l2cap_setup_data = {
 	.psm = 15,
-	.func = pan_connect_request_cb,
-	.user_data = NULL,
+	.func = tester_generic_connect_cb,
+	.user_data = &cid_data,
 };
 
 static void pan_connect_action(void)
@@ -246,10 +226,14 @@ struct queue *get_pan_tests(void)
 	uint16_t i = 0;
 
 	list = queue_new();
+	if (!list)
+		return NULL;
 
 	for (; i < sizeof(test_cases) / sizeof(test_cases[0]); ++i)
-		if (!queue_push_tail(list, &test_cases[i]))
+		if (!queue_push_tail(list, &test_cases[i])) {
+			queue_destroy(list, NULL);
 			return NULL;
+		}
 
 	return list;
 }

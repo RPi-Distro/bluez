@@ -249,6 +249,7 @@ static bt_status_t init(bthl_callbacks_t *callbacks)
 
 	cmd.service_id = HAL_SERVICE_ID_HEALTH;
 	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.max_clients = 1;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
@@ -270,14 +271,14 @@ static void cleanup(void)
 	if (!interface_ready())
 		return;
 
-	cbacks = NULL;
-
 	cmd.service_id = HAL_SERVICE_ID_HEALTH;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_HEALTH);
+
+	cbacks = NULL;
 }
 
 static bthl_interface_t health_if = {

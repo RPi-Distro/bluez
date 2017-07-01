@@ -31,12 +31,13 @@
 #include <unistd.h>
 #include <netinet/in.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/bnep.h>
-#include <bluetooth/sdp.h>
-
 #include <glib.h>
-#include <gdbus/gdbus.h>
+
+#include "lib/bluetooth.h"
+#include "lib/bnep.h"
+#include "lib/sdp.h"
+
+#include "gdbus/gdbus.h"
 
 #include "btio/btio.h"
 #include "src/log.h"
@@ -46,6 +47,7 @@
 #include "src/profile.h"
 #include "src/service.h"
 #include "src/error.h"
+#include "lib/uuid.h"
 
 #include "bnep.h"
 #include "connection.h"
@@ -78,9 +80,16 @@ struct network_conn {
 
 static GSList *peers = NULL;
 
-static uint16_t get_service_id(struct btd_service *service)
+static uint16_t get_pan_srv_id(const char *svc)
 {
-	return bnep_service_id(btd_service_get_profile(service)->remote_uuid);
+	if (!strcasecmp(svc, "panu") || !strcasecmp(svc, PANU_UUID))
+		return BNEP_SVC_PANU;
+	if (!strcasecmp(svc, "nap") || !strcasecmp(svc, NAP_UUID))
+		return BNEP_SVC_NAP;
+	if (!strcasecmp(svc, "gn") || !strcasecmp(svc, GN_UUID))
+		return BNEP_SVC_GN;
+
+	return 0;
 }
 
 static struct network_peer *find_peer(GSList *list, struct btd_device *device)
@@ -249,13 +258,11 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer data)
 	if (!nc->session)
 		goto failed;
 
-	perr = bnep_connect(nc->session, bnep_conn_cb, nc);
+	perr = bnep_connect(nc->session, bnep_conn_cb, bnep_disconn_cb, nc, nc);
 	if (perr < 0) {
 		error("bnep connect(): %s (%d)", strerror(-perr), -perr);
 		goto failed;
 	}
-
-	bnep_set_disconnect(nc->session, bnep_disconn_cb, nc);
 
 	if (nc->io) {
 		g_io_channel_unref(nc->io);
@@ -275,21 +282,23 @@ static DBusMessage *local_connect(DBusConnection *conn,
 	struct btd_service *service;
 	struct network_conn *nc;
 	const char *svc;
-	const char *uuid;
 	uint16_t id;
 	int err;
+	char uuid_str[MAX_LEN_UUID_STR];
+	bt_uuid_t uuid16, uuid128;
 
 	if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &svc,
 						DBUS_TYPE_INVALID) == FALSE)
 		return btd_error_invalid_args(msg);
 
-	id = bnep_service_id(svc);
-	uuid = bnep_uuid(id);
+	id = get_pan_srv_id(svc);
+	bt_uuid16_create(&uuid16, id);
+	bt_uuid_to_uuid128(&uuid16, &uuid128);
 
-	if (uuid == NULL)
+	if (bt_uuid_to_string(&uuid128, uuid_str, MAX_LEN_UUID_STR) < 0)
 		return btd_error_invalid_args(msg);
 
-	service = btd_device_get_service(peer->device, uuid);
+	service = btd_device_get_service(peer->device, uuid_str);
 	if (service == NULL)
 		return btd_error_not_supported(msg);
 
@@ -308,11 +317,11 @@ static DBusMessage *local_connect(DBusConnection *conn,
 }
 
 /* Connect and initiate BNEP session */
-int connection_connect(struct btd_service *service)
+int connection_connect(struct btd_service *svc)
 {
-	struct network_conn *nc = btd_service_get_user_data(service);
+	struct network_conn *nc = btd_service_get_user_data(svc);
 	struct network_peer *peer = nc->peer;
-	uint16_t id = get_service_id(service);
+	uint16_t id = get_pan_srv_id(btd_service_get_profile(svc)->remote_uuid);
 	GError *err = NULL;
 	const bdaddr_t *src;
 	const bdaddr_t *dst;
@@ -342,9 +351,9 @@ int connection_connect(struct btd_service *service)
 	return 0;
 }
 
-int connection_disconnect(struct btd_service *service)
+int connection_disconnect(struct btd_service *svc)
 {
-	struct network_conn *nc = btd_service_get_user_data(service);
+	struct network_conn *nc = btd_service_get_user_data(svc);
 
 	if (nc->state == DISCONNECTED)
 		return 0;
@@ -430,13 +439,17 @@ static gboolean network_property_get_uuid(const GDBusPropertyTable *property,
 {
 	struct network_peer *peer = data;
 	struct network_conn *nc;
-	const char *uuid;
+	char uuid_str[MAX_LEN_UUID_STR];
+	const char *uuid = uuid_str;
+	bt_uuid_t uuid16, uuid128;
 
 	nc = find_connection_by_state(peer->connections, CONNECTED);
 	if (nc == NULL)
 		return FALSE;
 
-	uuid = bnep_uuid(nc->id);
+	bt_uuid16_create(&uuid16, nc->id);
+	bt_uuid_to_uuid128(&uuid16, &uuid128);
+	bt_uuid_to_string(&uuid128, uuid_str, MAX_LEN_UUID_STR);
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &uuid);
 
@@ -496,12 +509,12 @@ static const GDBusPropertyTable connection_properties[] = {
 	{ }
 };
 
-void connection_unregister(struct btd_service *service)
+void connection_unregister(struct btd_service *svc)
 {
-	struct btd_device *device = btd_service_get_device(service);
-	struct network_conn *conn = btd_service_get_user_data(service);
+	struct btd_device *device = btd_service_get_device(svc);
+	struct network_conn *conn = btd_service_get_user_data(svc);
 	struct network_peer *peer = conn->peer;
-	uint16_t id = get_service_id(service);
+	uint16_t id = get_pan_srv_id(btd_service_get_profile(svc)->remote_uuid);
 
 	DBG("%s id %u", device_get_path(device), id);
 
@@ -543,12 +556,12 @@ static struct network_peer *create_peer(struct btd_device *device)
 	return peer;
 }
 
-int connection_register(struct btd_service *service)
+int connection_register(struct btd_service *svc)
 {
-	struct btd_device *device = btd_service_get_device(service);
+	struct btd_device *device = btd_service_get_device(svc);
 	struct network_peer *peer;
 	struct network_conn *nc;
-	uint16_t id = get_service_id(service);
+	uint16_t id = get_pan_srv_id(btd_service_get_profile(svc)->remote_uuid);
 
 	DBG("%s id %u", device_get_path(device), id);
 
@@ -562,11 +575,11 @@ int connection_register(struct btd_service *service)
 
 	nc = g_new0(struct network_conn, 1);
 	nc->id = id;
-	nc->service = btd_service_ref(service);
+	nc->service = btd_service_ref(svc);
 	nc->state = DISCONNECTED;
 	nc->peer = peer;
 
-	btd_service_set_user_data(service, nc);
+	btd_service_set_user_data(svc, nc);
 
 	DBG("id %u registered", id);
 

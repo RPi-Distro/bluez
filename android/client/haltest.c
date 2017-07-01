@@ -15,6 +15,10 @@
  *
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -30,6 +34,8 @@
 #include "pollhandler.h"
 #include "history.h"
 
+static void process_line(char *line_buffer);
+
 const struct interface *interfaces[] = {
 	&audio_if,
 	&sco_if,
@@ -44,6 +50,12 @@ const struct interface *interfaces[] = {
 	&pan_if,
 	&hl_if,
 	&sock_if,
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	&hf_client_if,
+	&mce_if,
+	&ctrl_rc_if,
+	&av_sink_if,
+#endif
 	NULL
 };
 
@@ -163,6 +175,11 @@ static void help_p(int argc, const char **argv)
 /* quit/exit execution */
 static void quit_p(int argc, const char **argv)
 {
+	char cleanup_audio[] = "audio cleanup";
+
+	close_hw_bt_dev();
+	process_line(cleanup_audio);
+
 	exit(0);
 }
 
@@ -327,38 +344,34 @@ static void usage(void)
 		"Usage:\n");
 	printf("\thaltest [options]\n");
 	printf("options:\n"
-		"\t-n, --no-init          Don't call init for interfaces\n"
-		"\t    --version          Print version\n"
+		"\t-i  --ivi              Initialize only IVI interfaces\n"
+		"\t-n, --no-init          Don't initialize any interfaces\n"
+		"\t-v  --version          Print version\n"
 		"\t-h, --help             Show help options\n");
 }
 
-enum {
-	PRINT_VERSION = 1000
-};
-
-int version = 1;
-int revision = 0;
-
 static void print_version(void)
 {
-	printf("haltest version %d.%d\n", version, revision);
+	printf("haltest version %s\n", VERSION);
 }
 
 static const struct option main_options[] = {
 	{ "no-init", no_argument, NULL, 'n' },
+	{ "ivi",     no_argument, NULL, 'i' },
 	{ "help",    no_argument, NULL, 'h' },
-	{ "version", no_argument, NULL, PRINT_VERSION },
+	{ "version", no_argument, NULL, 'v' },
 	{ NULL }
 };
 
 static bool no_init = false;
+static bool ivi_only = false;
 
 static void parse_command_line(int argc, char *argv[])
 {
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "nh", main_options, NULL);
+		opt = getopt_long(argc, argv, "inhv", main_options, NULL);
 		if (opt < 0)
 			break;
 
@@ -366,10 +379,13 @@ static void parse_command_line(int argc, char *argv[])
 		case 'n':
 			no_init = true;
 			break;
+		case 'i':
+			ivi_only = true;
+			break;
 		case 'h':
 			usage();
 			exit(0);
-		case PRINT_VERSION:
+		case 'v':
 			print_version();
 			exit(0);
 		default:
@@ -380,18 +396,30 @@ static void parse_command_line(int argc, char *argv[])
 	}
 }
 
-static void init(void)
+static const char * const interface_names[] = {
+	BT_PROFILE_HANDSFREE_ID,
+	BT_PROFILE_ADVANCED_AUDIO_ID,
+	BT_PROFILE_AV_RC_ID,
+	BT_PROFILE_HEALTH_ID,
+	BT_PROFILE_HIDHOST_ID,
+	BT_PROFILE_PAN_ID,
+	BT_PROFILE_GATT_ID,
+	BT_PROFILE_SOCKETS_ID,
+	NULL
+};
+
+static const char * const ivi_interface_inames[] = {
+#if ANDROID_VERSION >= PLATFORM_VER(5, 0, 0)
+	BT_PROFILE_HANDSFREE_CLIENT_ID,
+	BT_PROFILE_MAP_CLIENT_ID,
+	BT_PROFILE_AV_RC_CTRL_ID,
+		BT_PROFILE_ADVANCED_AUDIO_SINK_ID,
+#endif
+	NULL
+};
+
+static void init(const char * const *inames)
 {
-	static const char * const inames[] = {
-		BT_PROFILE_HANDSFREE_ID,
-		BT_PROFILE_ADVANCED_AUDIO_ID,
-		BT_PROFILE_AV_RC_ID,
-		BT_PROFILE_HEALTH_ID,
-		BT_PROFILE_HIDHOST_ID,
-		BT_PROFILE_PAN_ID,
-		BT_PROFILE_GATT_ID,
-		BT_PROFILE_SOCKETS_ID
-	};
 	const struct method *m;
 	const char *argv[4];
 	char init_audio[] = "audio init";
@@ -405,13 +433,14 @@ static void init(void)
 
 	m = get_interface_method("bluetooth", "get_profile_interface");
 
-	for (i = 0; i < NELEM(inames); ++i) {
-		argv[2] = inames[i];
+	while (*inames) {
+		argv[2] = *inames;
 		m->func(3, argv);
+		inames++;
 	}
 
 	/* Init what is available to init */
-	for (i = 2; i < NELEM(interfaces) - 1; ++i) {
+	for (i = 3; i < NELEM(interfaces) - 1; ++i) {
 		m = get_interface_method(interfaces[i]->name, "init");
 		if (m != NULL)
 			m->func(2, argv);
@@ -426,8 +455,12 @@ int main(int argc, char **argv)
 
 	terminal_setup();
 
-	if (!no_init)
-		init();
+	if (!no_init) {
+		if (ivi_only)
+			init(ivi_interface_inames);
+		else
+			init(interface_names);
+	}
 
 	history_restore(".haltest_history");
 

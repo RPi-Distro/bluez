@@ -32,14 +32,15 @@
 
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus/gdbus.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
+#include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
 
 #include "btio/btio.h"
-#include "lib/uuid.h"
 #include "sdpd.h"
 #include "log.h"
 #include "error.h"
@@ -150,6 +151,44 @@
 		</attribute>						\
 		<attribute id=\"0x0301\" >				\
 			<uint8 value=\"0x01\" />			\
+		</attribute>						\
+	</record>"
+
+#define HSP_AG_RECORD							\
+	"<?xml version=\"1.0\" encoding=\"UTF-8\" ?>			\
+	<record>							\
+		<attribute id=\"0x0001\">				\
+			<sequence>					\
+				<uuid value=\"0x1112\" />		\
+				<uuid value=\"0x1203\" />		\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0004\">				\
+			<sequence>					\
+				<sequence>				\
+					<uuid value=\"0x0100\" />	\
+				</sequence>				\
+				<sequence>				\
+					<uuid value=\"0x0003\" />	\
+					<uint8 value=\"0x%02x\" />	\
+				</sequence>				\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0005\">				\
+			<sequence>					\
+				<uuid value=\"0x1002\" />		\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0009\">				\
+			<sequence>					\
+				<sequence>				\
+					<uuid value=\"0x1108\" />	\
+					<uint16 value=\"0x%04x\" />	\
+				</sequence>				\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0100\">				\
+			<text value=\"%s\" />				\
 		</attribute>						\
 	</record>"
 
@@ -393,6 +432,9 @@
 		<attribute id=\"0x0314\">				\
 			<uint8 value=\"0x01\"/>				\
 		</attribute>						\
+		<attribute id=\"0x0317\">				\
+			<uint32 value=\"0x00000003\"/>			\
+		</attribute>						\
 	</record>"
 
 #define MAS_RECORD							\
@@ -438,6 +480,9 @@
 		</attribute>						\
 		<attribute id=\"0x0316\">				\
 			<uint8 value=\"0x0F\"/>				\
+		</attribute>						\
+		<attribute id=\"0x0317\">				\
+			<uint32 value=\"0x0000007f\"/>			\
 		</attribute>						\
 	</record>"
 
@@ -752,8 +797,13 @@ static gboolean ext_io_disconnected(GIOChannel *io, GIOCondition cond,
 
 	DBG("%s disconnected from %s", ext->name, addr);
 drop:
-	if (conn->service)
-		btd_service_disconnecting_complete(conn->service, 0);
+	if (conn->service) {
+		if (btd_service_get_state(conn->service) ==
+						BTD_SERVICE_STATE_CONNECTING)
+			btd_service_connecting_complete(conn->service, -EIO);
+		else
+			btd_service_disconnecting_complete(conn->service, 0);
+	}
 
 	ext->conns = g_slist_remove(ext->conns, conn);
 	ext_io_destroy(conn);
@@ -991,8 +1041,10 @@ static void ext_connect(GIOChannel *io, GError *err, gpointer user_data)
 									conn);
 	}
 
-	if (send_new_connection(ext, conn))
-		return;
+	if (conn->service && service_accept(conn->service) == 0) {
+		if (send_new_connection(ext, conn))
+			return;
+	}
 
 drop:
 	if (conn->service)
@@ -1502,6 +1554,7 @@ static void record_cb(sdp_list_t *recs, int err, gpointer user_data)
 
 	if (!recs || !recs->data) {
 		error("No SDP records found for %s", ext->name);
+		err = -ENOTSUP;
 		goto failed;
 	}
 
@@ -1513,6 +1566,7 @@ static void record_cb(sdp_list_t *recs, int err, gpointer user_data)
 		if (sdp_get_access_protos(rec, &protos) < 0) {
 			error("Unable to get proto list from %s record",
 								ext->name);
+			err = -ENOTSUP;
 			goto failed;
 		}
 
@@ -1541,6 +1595,7 @@ static void record_cb(sdp_list_t *recs, int err, gpointer user_data)
 	if (!conn->chan && !conn->psm) {
 		error("Failed to find L2CAP PSM or RFCOMM channel for %s",
 								ext->name);
+		err = -ENOTSUP;
 		goto failed;
 	}
 
@@ -1696,6 +1751,13 @@ static char *get_hfp_ag_record(struct ext_profile *ext, struct ext_io *l2cap,
 {
 	return g_strdup_printf(HFP_AG_RECORD, rfcomm->chan, ext->version,
 						ext->name, ext->features);
+}
+
+static char *get_hsp_ag_record(struct ext_profile *ext, struct ext_io *l2cap,
+							struct ext_io *rfcomm)
+{
+	return g_strdup_printf(HSP_AG_RECORD, rfcomm->chan, ext->version,
+						ext->name);
 }
 
 static char *get_spp_record(struct ext_profile *ext, struct ext_io *l2cap,
@@ -1907,6 +1969,8 @@ static struct default_settings {
 		.channel	= HSP_AG_DEFAULT_CHANNEL,
 		.authorize	= true,
 		.auto_connect	= true,
+		.get_record	= get_hsp_ag_record,
+		.version	= 0x0102,
 	}, {
 		.uuid		= OBEX_OPP_UUID,
 		.name		= "Object Push",
@@ -1946,7 +2010,7 @@ static struct default_settings {
 		.remote_uuid	= OBEX_PSE_UUID,
 		.authorize	= true,
 		.get_record	= get_pce_record,
-		.version	= 0x0101,
+		.version	= 0x0102,
 	}, {
 		.uuid		= OBEX_MAS_UUID,
 		.name		= "Message Access",

@@ -52,6 +52,9 @@ struct a2dp_endpoint {
 							void *user_data);
 };
 
+typedef void (*a2dp_discover_cb_t) (struct avdtp *session, GSList *seps,
+					struct avdtp_error *err,
+					void *user_data);
 typedef void (*a2dp_select_cb_t) (struct avdtp *session,
 					struct a2dp_sep *sep, GSList *caps,
 					void *user_data);
@@ -70,6 +73,9 @@ struct a2dp_sep *a2dp_add_sep(struct btd_adapter *adapter, uint8_t type,
 				int *err);
 void a2dp_remove_sep(struct a2dp_sep *sep);
 
+
+unsigned int a2dp_discover(struct avdtp *session, a2dp_discover_cb_t cb,
+							void *user_data);
 unsigned int a2dp_select_capabilities(struct avdtp *session,
 					uint8_t type, const char *sender,
 					a2dp_select_cb_t cb,
@@ -87,3 +93,4 @@ gboolean a2dp_sep_lock(struct a2dp_sep *sep, struct avdtp *session);
 gboolean a2dp_sep_unlock(struct a2dp_sep *sep, struct avdtp *session);
 struct avdtp_stream *a2dp_sep_get_stream(struct a2dp_sep *sep);
 struct btd_device *a2dp_setup_get_device(struct a2dp_setup *setup);
+struct avdtp *a2dp_avdtp_get(struct btd_device *device);

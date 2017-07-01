@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "hal-utils.h"
 #include "hal-log.h"
 #include "hal.h"
 #include "hal-msg.h"
@@ -223,6 +224,7 @@ static bt_status_t init(btrc_callbacks_t *callbacks)
 
 	cmd.service_id = HAL_SERVICE_ID_AVRCP;
 	cmd.mode = HAL_MODE_DEFAULT;
+	cmd.max_clients = 1;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
@@ -654,14 +656,14 @@ static void cleanup(void)
 	if (!interface_ready())
 		return;
 
-	cbs = NULL;
-
 	cmd.service_id = HAL_SERVICE_ID_AVRCP;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
 					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_AVRCP);
+
+	cbs = NULL;
 }
 
 static btrc_interface_t iface = {

@@ -675,6 +675,62 @@ struct bt_hci_cmd_flow_spec_modify {
 	uint8_t  rx_flow_spec[16];
 } __attribute__ ((packed));
 
+#define BT_HCI_CMD_ENHANCED_SETUP_SYNC_CONN	0x043d
+struct bt_hci_cmd_enhanced_setup_sync_conn {
+	uint16_t handle;
+	uint32_t tx_bandwidth;
+	uint32_t rx_bandwidth;
+	uint8_t  tx_coding_format[5];
+	uint8_t  rx_coding_format[5];
+	uint16_t tx_codec_frame_size;
+	uint16_t rx_codec_frame_size;
+	uint32_t input_bandwidth;
+	uint32_t output_bandwidth;
+	uint8_t  input_coding_format[5];
+	uint8_t  output_coding_format[5];
+	uint16_t input_coded_data_size;
+	uint16_t output_coded_data_size;
+	uint8_t  input_pcm_data_format;
+	uint8_t  output_pcm_data_format;
+	uint8_t  input_pcm_msb_position;
+	uint8_t  output_pcm_msb_position;
+	uint8_t  input_data_path;
+	uint8_t  output_data_path;
+	uint8_t  input_unit_size;
+	uint8_t  output_unit_size;
+	uint16_t max_latency;
+	uint16_t pkt_type;
+	uint8_t  retrans_effort;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_ENHANCED_ACCEPT_SYNC_CONN_REQUEST	0x043e
+struct bt_hci_cmd_enhanced_accept_sync_conn_request {
+	uint8_t  bdaddr[6];
+	uint32_t tx_bandwidth;
+	uint32_t rx_bandwidth;
+	uint8_t  tx_coding_format[5];
+	uint8_t  rx_coding_format[5];
+	uint16_t tx_codec_frame_size;
+	uint16_t rx_codec_frame_size;
+	uint32_t input_bandwidth;
+	uint32_t output_bandwidth;
+	uint8_t  input_coding_format[5];
+	uint8_t  output_coding_format[5];
+	uint16_t input_coded_data_size;
+	uint16_t output_coded_data_size;
+	uint8_t  input_pcm_data_format;
+	uint8_t  output_pcm_data_format;
+	uint8_t  input_pcm_msb_position;
+	uint8_t  output_pcm_msb_position;
+	uint8_t  input_data_path;
+	uint8_t  output_data_path;
+	uint8_t  input_unit_size;
+	uint8_t  output_unit_size;
+	uint16_t max_latency;
+	uint16_t pkt_type;
+	uint8_t  retrans_effort;
+} __attribute__ ((packed));
+
 #define BT_HCI_CMD_TRUNCATED_PAGE		0x043f
 struct bt_hci_cmd_truncated_page {
 	uint8_t  bdaddr[6];
@@ -1114,6 +1170,13 @@ struct bt_hci_cmd_host_buffer_size {
 	uint16_t sco_max_pkt;
 } __attribute__ ((packed));
 
+#define BT_HCI_CMD_HOST_NUM_COMPLETED_PACKETS	0x0c35
+struct bt_hci_cmd_host_num_completed_packets {
+	uint8_t  num_handles;
+	uint16_t handle;
+	uint16_t count;
+} __attribute__ ((packed));
+
 #define BT_HCI_CMD_READ_LINK_SUPV_TIMEOUT	0x0c36
 struct bt_hci_cmd_read_link_supv_timeout {
 	uint16_t handle;
@@ -1271,6 +1334,17 @@ struct bt_hci_cmd_write_inquiry_tx_power {
 	int8_t   level;
 } __attribute__ ((packed));
 
+#define BT_HCI_CMD_READ_ERRONEOUS_REPORTING	0x0c5a
+struct bt_hci_rsp_read_erroneous_reporting {
+	uint8_t  status;
+	uint8_t  mode;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_WRITE_ERRONEOUS_REPORTING	0x0c5b
+struct bt_hci_cmd_write_erroneous_reporting {
+	uint8_t  mode;
+} __attribute__ ((packed));
+
 #define BT_HCI_CMD_ENHANCED_FLUSH		0x0c5f
 struct bt_hci_cmd_enhanced_flush {
 	uint16_t handle;
@@ -1317,6 +1391,25 @@ struct bt_hci_rsp_read_flow_control_mode {
 
 #define BT_HCI_CMD_WRITE_FLOW_CONTROL_MODE	0x0c67
 struct bt_hci_cmd_write_flow_control_mode {
+	uint8_t  mode;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_ENHANCED_TX_POWER	0x0c68
+struct bt_hci_cmd_read_enhanced_tx_power {
+	uint16_t handle;
+	uint8_t  type;
+} __attribute__ ((packed));
+struct bt_hci_rsp_read_enhanced_tx_power {
+	uint8_t  status;
+	uint16_t handle;
+	int8_t   level_gfsk;
+	int8_t   level_dqpsk;
+	int8_t   level_8dpsk;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_SHORT_RANGE_MODE		0x0c6b
+struct bt_hci_cmd_short_range_mode {
+	uint8_t  phy_handle;
 	uint8_t  mode;
 } __attribute__ ((packed));
 
@@ -1420,6 +1513,28 @@ struct bt_hci_rsp_read_local_oob_ext_data {
 	uint8_t  randomizer192[16];
 	uint8_t  hash256[16];
 	uint8_t  randomizer256[16];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_EXT_PAGE_TIMEOUT	0x0c7e
+struct bt_hci_rsp_read_ext_page_timeout {
+	uint8_t  status;
+	uint16_t timeout;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_WRITE_EXT_PAGE_TIMEOUT	0x0c7f
+struct bt_hci_cmd_write_ext_page_timeout {
+	uint16_t timeout;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_EXT_INQUIRY_LENGTH	0x0c80
+struct bt_hci_rsp_read_ext_inquiry_length {
+	uint8_t  status;
+	uint16_t interval;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_WRITE_EXT_INQUIRY_LENGTH	0x0c81
+struct bt_hci_cmd_write_ext_inquiry_length {
+	uint16_t interval;
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_READ_LOCAL_VERSION		0x1001
@@ -1617,6 +1732,17 @@ struct bt_hci_cmd_set_triggered_clock_capture {
 	uint8_t  type;
 	uint8_t  lpo_allowed;
 	uint8_t  num_filter;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_LOOPBACK_MODE		0x1801
+struct bt_hci_rsp_read_loopback_mode {
+	uint8_t  status;
+	uint8_t  mode;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_WRITE_LOOPBACK_MODE		0x1802
+struct bt_hci_cmd_write_loopback_mode {
+	uint8_t  mode;
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_ENABLE_DUT_MODE		0x1803
@@ -1860,6 +1986,98 @@ struct bt_hci_rsp_le_conn_param_req_neg_reply {
 	uint16_t handle;
 } __attribute__ ((packed));
 
+#define BT_HCI_CMD_LE_SET_DATA_LENGTH		0x2022
+struct bt_hci_cmd_le_set_data_length {
+	uint16_t handle;
+	uint16_t tx_len;
+	uint16_t tx_time;
+} __attribute__ ((packed));
+struct bt_hci_rsp_le_set_data_length {
+	uint8_t  status;
+	uint16_t handle;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_READ_DEFAULT_DATA_LENGTH	0x2023
+struct bt_hci_rsp_le_read_default_data_length {
+	uint8_t  status;
+	uint16_t tx_len;
+	uint16_t tx_time;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_WRITE_DEFAULT_DATA_LENGTH	0x2024
+struct bt_hci_cmd_le_write_default_data_length {
+	uint16_t tx_len;
+	uint16_t tx_time;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_READ_LOCAL_PK256		0x2025
+
+#define BT_HCI_CMD_LE_GENERATE_DHKEY		0x2026
+struct bt_hci_cmd_le_generate_dhkey {
+	uint8_t  remote_pk256[64];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_ADD_TO_RESOLV_LIST	0x2027
+struct bt_hci_cmd_le_add_to_resolv_list {
+	uint8_t  addr_type;
+	uint8_t  addr[6];
+	uint8_t  peer_irk[16];
+	uint8_t  local_irk[16];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_REMOVE_FROM_RESOLV_LIST	0x2028
+struct bt_hci_cmd_le_remove_from_resolv_list {
+	uint8_t  addr_type;
+	uint8_t  addr[6];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_CLEAR_RESOLV_LIST		0x2029
+
+#define BT_HCI_CMD_LE_READ_RESOLV_LIST_SIZE	0x202a
+struct bt_hci_rsp_le_read_resolv_list_size {
+	uint8_t  status;
+	uint8_t  size;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_READ_PEER_RESOLV_ADDR	0x202b
+struct bt_hci_cmd_le_read_peer_resolv_addr {
+	uint8_t  addr_type;
+	uint8_t  addr[6];
+} __attribute__ ((packed));
+struct bt_hci_rsp_le_read_peer_resolv_addr {
+	uint8_t  status;
+	uint8_t  addr[6];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_READ_LOCAL_RESOLV_ADDR	0x202c
+struct bt_hci_cmd_le_read_local_resolv_addr {
+	uint8_t  addr_type;
+	uint8_t  addr[6];
+} __attribute__ ((packed));
+struct bt_hci_rsp_le_read_local_resolv_addr {
+	uint8_t  status;
+	uint8_t  addr[6];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_SET_RESOLV_ENABLE		0x202d
+struct bt_hci_cmd_le_set_resolv_enable {
+	uint8_t  enable;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_SET_RESOLV_TIMEOUT	0x202e
+struct bt_hci_cmd_le_set_resolv_timeout {
+	uint16_t timeout;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_READ_MAX_DATA_LENGTH	0x202f
+struct bt_hci_rsp_le_read_max_data_length {
+	uint8_t  status;
+	uint16_t max_tx_len;
+	uint16_t max_tx_time;
+	uint16_t max_rx_len;
+	uint16_t max_rx_time;
+} __attribute__ ((packed));
+
 #define BT_HCI_EVT_INQUIRY_COMPLETE		0x01
 struct bt_hci_evt_inquiry_complete {
 	uint8_t  status;
@@ -2006,6 +2224,10 @@ struct bt_hci_evt_mode_change {
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_RETURN_LINK_KEYS		0x15
+struct bt_hci_evt_return_link_keys {
+	uint8_t  num_keys;
+	uint8_t  keys[0];
+} __attribute__ ((packed));
 
 #define BT_HCI_EVT_PIN_CODE_REQUEST		0x16
 struct bt_hci_evt_pin_code_request {
@@ -2290,6 +2512,14 @@ struct bt_hci_evt_amp_status_change {
 	uint8_t  amp_status;
 } __attribute__ ((packed));
 
+#define BT_HCI_EVT_TRIGGERED_CLOCK_CAPTURE	0x4e
+struct bt_hci_evt_triggered_clock_capture {
+	uint16_t handle;
+	uint8_t  type;
+	uint32_t clock;
+	uint16_t clock_offset;
+} __attribute__ ((packed));
+
 #define BT_HCI_EVT_SYNC_TRAIN_COMPLETE		0x4f
 struct bt_hci_evt_sync_train_complete {
 	uint8_t  status;
@@ -2403,6 +2633,53 @@ struct bt_hci_evt_le_conn_param_request {
 	uint16_t supv_timeout;
 } __attribute__ ((packed));
 
+#define BT_HCI_EVT_LE_DATA_LENGTH_CHANGE	0x07
+struct bt_hci_evt_le_data_length_change {
+	uint16_t handle;
+	uint16_t max_tx_len;
+	uint16_t max_tx_time;
+	uint16_t max_rx_len;
+	uint16_t max_rx_time;
+} __attribute__ ((packed));
+
+#define BT_HCI_EVT_LE_READ_LOCAL_PK256_COMPLETE	0x08
+struct bt_hci_evt_le_read_local_pk256_complete {
+	uint8_t  status;
+	uint8_t  local_pk256[64];
+} __attribute__ ((packed));
+
+#define BT_HCI_EVT_LE_GENERATE_DHKEY_COMPLETE	0x09
+struct bt_hci_evt_le_generate_dhkey_complete {
+	uint8_t  status;
+	uint8_t  dhkey[32];
+} __attribute__ ((packed));
+
+#define BT_HCI_EVT_LE_ENHANCED_CONN_COMPLETE	0x0a
+struct bt_hci_evt_le_enhanced_conn_complete {
+	uint8_t  status;
+	uint16_t handle;
+	uint8_t  role;
+	uint8_t  peer_addr_type;
+	uint8_t  peer_addr[6];
+	uint8_t  local_rpa[6];
+	uint8_t  peer_rpa[6];
+	uint16_t interval;
+	uint16_t latency;
+	uint16_t supv_timeout;
+	uint8_t  clock_accuracy;
+} __attribute__ ((packed));
+
+#define BT_HCI_EVT_LE_DIRECT_ADV_REPORT		0x0b
+struct bt_hci_evt_le_direct_adv_report {
+	uint8_t  num_reports;
+	uint8_t  event_type;
+	uint8_t  addr_type;
+	uint8_t  addr[6];
+	uint8_t  direct_addr_type;
+	uint8_t  direct_addr[6];
+	int8_t   rssi;
+} __attribute__ ((packed));
+
 #define BT_HCI_ERR_SUCCESS			0x00
 #define BT_HCI_ERR_UNKNOWN_COMMAND		0x01
 #define BT_HCI_ERR_UNKNOWN_CONN_ID		0x02
@@ -2485,6 +2762,7 @@ struct bt_l2cap_pdu_info_req {
 struct bt_l2cap_pdu_info_rsp {
 	uint16_t type;
 	uint16_t result;
+	uint8_t  data[0];
 } __attribute__ ((packed));
 
 #define BT_L2CAP_PDU_CREATE_CHAN_REQ	0x0c
@@ -2777,6 +3055,22 @@ struct bt_l2cap_smp_signing_info {
 #define BT_L2CAP_SMP_SECURITY_REQUEST	0x0b
 struct bt_l2cap_smp_security_request {
 	uint8_t  auth_req;
+} __attribute__ ((packed));
+
+#define BT_L2CAP_SMP_PUBLIC_KEY		0x0c
+struct bt_l2cap_smp_public_key {
+	uint8_t  x[32];
+	uint8_t  y[32];
+} __attribute__ ((packed));
+
+#define BT_L2CAP_SMP_DHKEY_CHECK	0x0d
+struct bt_l2cap_smp_dhkey_check {
+	uint8_t  e[16];
+} __attribute__ ((packed));
+
+#define BT_L2CAP_SMP_KEYPRESS_NOTIFY	0x0e
+struct bt_l2cap_smp_keypress_notify {
+	uint8_t  type;
 } __attribute__ ((packed));
 
 struct bt_sdp_hdr {

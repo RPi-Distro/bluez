@@ -58,12 +58,15 @@
 #define L2CAP_PSM_HIDP_INTR	0x13
 
 /* HID message types */
+#define HID_MSG_HANDSHAKE	0x00
 #define HID_MSG_CONTROL		0x10
 #define HID_MSG_GET_REPORT	0x40
 #define HID_MSG_SET_REPORT	0x50
 #define HID_MSG_GET_PROTOCOL	0x60
 #define HID_MSG_SET_PROTOCOL	0x70
 #define HID_MSG_DATA		0xa0
+
+#define HID_MSG_TYPE_MASK	0xf0
 
 /* HID data types */
 #define HID_DATA_TYPE_INPUT	0x01
@@ -391,6 +394,22 @@ send:
 	g_free(ev);
 }
 
+static void bt_hid_notify_handshake(struct hid_device *dev, uint8_t *buf,
+									int len)
+{
+	struct hal_ev_hidhost_handshake ev;
+
+	bdaddr2android(&dev->dst, ev.bdaddr);
+
+	/* crop result code to handshake status range from HAL */
+	ev.status = buf[0];
+	if (ev.status > HAL_HIDHOST_HS_ERROR)
+		ev.status = HAL_HIDHOST_HS_ERROR;
+
+	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_HIDHOST,
+				HAL_EV_HIDHOST_HANDSHAKE, sizeof(ev), &ev);
+}
+
 static void bt_hid_notify_virtual_unplug(struct hid_device *dev,
 							uint8_t *buf, int len)
 {
@@ -441,8 +460,17 @@ static gboolean ctrl_io_watch_cb(GIOChannel *chan, gpointer data)
 		break;
 	}
 
-	if (buf[0] == (HID_MSG_CONTROL | HID_VIRTUAL_CABLE_UNPLUG))
-		bt_hid_notify_virtual_unplug(dev, buf, bread);
+	switch (buf[0] & HID_MSG_TYPE_MASK) {
+	case HID_MSG_HANDSHAKE:
+		bt_hid_notify_handshake(dev, buf, bread);
+		break;
+	case HID_MSG_CONTROL:
+		if ((buf[0] & ~HID_MSG_TYPE_MASK) == HID_VIRTUAL_CABLE_UNPLUG)
+			bt_hid_notify_virtual_unplug(dev, buf, bread);
+		break;
+	default:
+		break;
+	}
 
 	/* reset msg type request */
 	dev->last_hid_msg = 0;
@@ -789,7 +817,7 @@ static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 
 	if (!dev->hog) {
 		/* TODO: Get device details and primary */
-		dev->hog = bt_hog_new("bluez-input-device", dev->vendor,
+		dev->hog = bt_hog_new_default("bluez-input-device", dev->vendor,
 					dev->product, dev->version, NULL);
 		if (!dev->hog) {
 			error("HoG: unable to create session");
@@ -863,7 +891,7 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 	ba2str(&dev->dst, addr);
 	DBG("connecting to %s", addr);
 
-	if (bt_is_device_le(&dst)) {
+	if (bt_device_last_seen_bearer(&dev->dst) != BDADDR_BREDR) {
 		if (!hog_connect(dev)) {
 			status = HAL_STATUS_FAILED;
 			hid_device_remove(dev);
@@ -1467,7 +1495,7 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	}
 }
 
-static void hid_unpaired_cb(const bdaddr_t *addr, uint8_t type)
+static void hid_unpaired_cb(const bdaddr_t *addr)
 {
 	GSList *l;
 	struct hid_device *dev;

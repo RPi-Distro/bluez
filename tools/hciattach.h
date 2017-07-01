@@ -39,10 +39,15 @@
 #define HCI_UART_H4DS	3
 #define HCI_UART_LL	4
 #define HCI_UART_ATH3K  5
+#define HCI_UART_INTEL	6
+#define HCI_UART_BCM	7
 
 #define HCI_UART_RAW_DEVICE	0
 #define HCI_UART_RESET_ON_INIT	1
 #define HCI_UART_CREATE_AMP	2
+#define HCI_UART_INIT_PENDING	3
+#define HCI_UART_EXT_CONFIG	4
+#define HCI_UART_VND_DETECT	5
 
 int read_hci_event(int fd, unsigned char *buf, int size);
 int set_speed(int fd, struct termios *ti, int speed);
@@ -58,4 +63,5 @@ int ath3k_init(int fd, int speed, int init_speed, char *bdaddr,
 int ath3k_post(int fd, int pm);
 int qualcomm_init(int fd, int speed, struct termios *ti, const char *bdaddr);
 int intel_init(int fd, int init_speed, int *speed, struct termios *ti);
-int bcm43xx_init(int fd, int speed, struct termios *ti, const char *bdaddr);
+int bcm43xx_init(int fd, int def_speed, int speed, struct termios *ti,
+		const char *bdaddr);

@@ -29,23 +29,25 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
-
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/bnep.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
 #include <netinet/in.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
+
+#include "lib/bluetooth.h"
+#include "lib/bnep.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
+#include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
 
 #include "btio/btio.h"
-#include "lib/uuid.h"
 #include "src/dbus-common.h"
 #include "src/adapter.h"
 #include "src/log.h"
 #include "src/error.h"
 #include "src/sdpd.h"
+#include "src/shared/util.h"
 
 #include "bnep.h"
 #include "server.h"
@@ -112,14 +114,38 @@ static struct network_server *find_server(GSList *list, uint16_t id)
 static struct network_server *find_server_by_uuid(GSList *list,
 							const char *uuid)
 {
-	for (; list; list = list->next) {
-		struct network_server *ns = list->data;
+	bt_uuid_t srv_uuid, bnep_uuid;
 
-		if (strcasecmp(uuid, bnep_uuid(ns->id)) == 0)
-			return ns;
+	if (!bt_string_to_uuid(&srv_uuid, uuid)) {
+		for (; list; list = list->next) {
+			struct network_server *ns = list->data;
 
-		if (strcasecmp(uuid, bnep_name(ns->id)) == 0)
-			return ns;
+			bt_uuid16_create(&bnep_uuid, ns->id);
+
+			/* UUID value compare */
+			if (!bt_uuid_cmp(&srv_uuid, &bnep_uuid))
+				return ns;
+		}
+	} else {
+		for (; list; list = list->next) {
+			struct network_server *ns = list->data;
+
+			/* String value compare */
+			switch (ns->id) {
+			case BNEP_SVC_PANU:
+				if (!strcasecmp(uuid, "panu"))
+					return ns;
+				break;
+			case BNEP_SVC_NAP:
+				if (!strcasecmp(uuid, "nap"))
+					return ns;
+				break;
+			case BNEP_SVC_GN:
+				if (!strcasecmp(uuid, "gn"))
+					return ns;
+				break;
+			}
+		}
 	}
 
 	return NULL;
@@ -280,12 +306,16 @@ static void setup_destroy(void *user_data)
 static gboolean bnep_setup(GIOChannel *chan,
 			GIOCondition cond, gpointer user_data)
 {
+	const uint8_t bt_base[] = { 0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
+					0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB };
 	struct network_adapter *na = user_data;
 	struct network_server *ns;
 	uint8_t packet[BNEP_MTU];
 	struct bnep_setup_conn_req *req = (void *) packet;
-	uint16_t src_role, dst_role, rsp = BNEP_CONN_NOT_ALLOWED;
+	uint16_t dst_role = 0;
+	uint32_t val;
 	int n, sk;
+	char *bridge = NULL;
 
 	if (cond & G_IO_NVAL)
 		return FALSE;
@@ -297,70 +327,61 @@ static gboolean bnep_setup(GIOChannel *chan,
 
 	sk = g_io_channel_unix_get_fd(chan);
 
-	/* Reading BNEP_SETUP_CONNECTION_REQUEST_MSG */
-	n = read(sk, packet, sizeof(packet));
+	/*
+	 * BNEP_SETUP_CONNECTION_REQUEST_MSG should be read and left in case
+	 * of kernel setup connection msg handling.
+	 */
+	n = recv(sk, packet, sizeof(packet), MSG_PEEK);
 	if (n < 0) {
 		error("read(): %s(%d)", strerror(errno), errno);
 		return FALSE;
 	}
 
-	/* Highest known Control command ID
-	 * is BNEP_FILTER_MULT_ADDR_RSP = 0x06 */
-	if (req->type == BNEP_CONTROL &&
-				req->ctrl > BNEP_FILTER_MULT_ADDR_RSP) {
-		uint8_t pkt[3];
-
-		pkt[0] = BNEP_CONTROL;
-		pkt[1] = BNEP_CMD_NOT_UNDERSTOOD;
-		pkt[2] = req->ctrl;
-
-		send(sk, pkt, sizeof(pkt), 0);
-
+	/*
+	 * Initial received data packet is BNEP_SETUP_CONNECTION_REQUEST_MSG
+	 * minimal size of this frame is 3 octets: 1 byte of BNEP Type +
+	 * 1 byte of BNEP Control Type + 1 byte of BNEP services UUID size.
+	 */
+	if (n < 3) {
+		error("To few setup connection request data received");
 		return FALSE;
 	}
 
-	if (req->type != BNEP_CONTROL || req->ctrl != BNEP_SETUP_CONN_REQ)
-		return FALSE;
+	switch (req->uuid_size) {
+	case 2:
+		dst_role = get_be16(req->service);
+		break;
+	case 16:
+		if (memcmp(&req->service[4], bt_base, sizeof(bt_base)) != 0)
+			break;
 
-	rsp = bnep_setup_decode(req, &dst_role, &src_role);
-	if (rsp)
-		goto reply;
+		/* Intentional no-brake */
 
-	rsp = bnep_setup_chk(dst_role, src_role);
-	if (rsp)
-		goto reply;
+	case 4:
+		val = get_be32(req->service);
+		if (val > 0xffff)
+			break;
 
-	rsp = BNEP_CONN_NOT_ALLOWED;
+		dst_role = val;
+		break;
+	default:
+		break;
+	}
 
 	ns = find_server(na->servers, dst_role);
-	if (!ns) {
-		error("Server unavailable: (0x%x)", dst_role);
-		goto reply;
-	}
-
-	if (!ns->record_id) {
-		error("Service record not available");
-		goto reply;
-	}
-
-	if (!ns->bridge) {
-		error("Bridge interface not configured");
-		goto reply;
-	}
+	if (!ns || !ns->record_id || !ns->bridge)
+		error("Server error, bridge not initialized: (0x%x)", dst_role);
+	else
+		bridge = ns->bridge;
 
 	strncpy(na->setup->dev, BNEP_INTERFACE, 16);
 	na->setup->dev[15] = '\0';
 
-	if (bnep_server_add(sk, dst_role, ns->bridge, na->setup->dev,
-							&na->setup->dst) < 0)
-		goto reply;
+	if (bnep_server_add(sk, bridge, na->setup->dev, &na->setup->dst,
+							packet, n) < 0)
+		error("BNEP server cannot be added");
 
 	na->setup = NULL;
-
-	rsp = BNEP_SUCCESS;
-
-reply:
-	bnep_send_ctrl_rsp(sk, BNEP_CONTROL, BNEP_SETUP_CONN_RSP, rsp);
 
 	return FALSE;
 }
@@ -434,13 +455,7 @@ static void confirm_event(GIOChannel *chan, gpointer user_data)
 	}
 
 	ns = find_server(na->servers, BNEP_SVC_NAP);
-	if (!ns)
-		goto drop;
-
-	if (!ns->record_id)
-		goto drop;
-
-	if (!ns->bridge)
+	if (!ns || !ns->record_id || !ns->bridge)
 		goto drop;
 
 	na->setup = g_new0(struct network_session, 1);
@@ -650,8 +665,7 @@ static struct network_adapter *create_adapter(struct btd_adapter *adapter)
 	na = g_new0(struct network_adapter, 1);
 	na->adapter = btd_adapter_ref(adapter);
 
-	na->io = bt_io_listen(NULL, confirm_event, na,
-				NULL, &err,
+	na->io = bt_io_listen(NULL, confirm_event, na, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR,
 				btd_adapter_get_address(adapter),
 				BT_IO_OPT_PSM, BNEP_PSM,
@@ -697,10 +711,10 @@ int server_register(struct btd_adapter *adapter, uint16_t id)
 	if (g_slist_length(na->servers) > 0)
 		goto done;
 
-	if (!g_dbus_register_interface(btd_get_dbus_connection(),
-					path, NETWORK_SERVER_INTERFACE,
-					server_methods, NULL, NULL,
-					na, path_unregister)) {
+	if (!g_dbus_register_interface(btd_get_dbus_connection(), path,
+						NETWORK_SERVER_INTERFACE,
+						server_methods, NULL, NULL, na,
+						path_unregister)) {
 		error("D-Bus failed to register %s interface",
 						NETWORK_SERVER_INTERFACE);
 		server_free(ns);

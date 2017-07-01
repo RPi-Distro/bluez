@@ -54,51 +54,11 @@
 #include "utils.h"
 #include "bluetooth.h"
 
-/*
- * bits in bitmask as defined in table 6.3 of Multi Profile Specification
- * HFP AG + A2DP SRC + AVRCP TG + PAN (NAP/PANU) + PBAP PSE
- */
-#define MPS_DEFAULT_MPSD ((1ULL << 0) | (1ULL << 2) | (1ULL << 4) | \
-				(1ULL << 6) | (1ULL << 8) | (1ULL << 10) | \
-				(1ULL << 12) | (1ULL << 26) | (1ULL << 28) | \
-				(1ULL << 30) | (1ULL << 32) | (1ULL << 34) | \
-				(1ULL << 36))
-
-/*
- * bits in bitmask as defined in table 6.4 of Multi Profile Specification
- * HFP AG + A2DP SRC + AVRCP TG + PAN (NAP/PANU) + PBAP PSE
- */
-#define MPS_DEFAULT_MPMD ((1ULL << 1) | (1ULL << 3) | (1ULL << 5) | \
-				(1ULL << 6) | (1ULL << 8) | (1ULL << 10) | \
-				(1ULL << 12) | (1ULL << 15) | (1ULL << 18))
-
-/*
- * bits in bitmask as defined in table 6.5 of Multi Profile Specification
- * Note that in this table spec starts bit positions from 1 (bit 0 unused?)
- */
-#define MPS_DEFAULT_DEPS ((1 << 1) | (1 << 2) | (1 << 3))
-
-/* MPSD bit dependent on HFP AG support */
-#define MPS_MPSD_HFP_AG_DEP ((1ULL << 0) | (1ULL << 2) | (1ULL << 4) | \
-				(1ULL << 6) | (1ULL << 8) | (1ULL << 10) | \
-				(1ULL << 12) | (1ULL << 14) | (1ULL << 16) | \
-				(1ULL << 18) | (1ULL << 26) | (1ULL << 28) | \
-				(1ULL << 30))
-
-/* MPMD bit dependent on HFP AG support */
-#define MPS_MPMD_HFP_AG_DEP (1ULL << 6)
-
-#define DEFAULT_ADAPTER_NAME "BlueZ for Android"
-
 #define DUT_MODE_FILE "/sys/kernel/debug/bluetooth/hci%u/dut_mode"
 
 #define SETTINGS_FILE ANDROID_STORAGEDIR"/settings"
 #define DEVICES_FILE ANDROID_STORAGEDIR"/devices"
 #define CACHE_FILE ANDROID_STORAGEDIR"/cache"
-
-#define DEVICE_ID_SOURCE	0x0002	/* USB */
-#define DEVICE_ID_VENDOR	0x1d6b	/* Linux Foundation */
-#define DEVICE_ID_PRODUCT	0x0247	/* BlueZ for Android */
 
 #define ADAPTER_MAJOR_CLASS 0x02 /* Phone */
 #define ADAPTER_MINOR_CLASS 0x03 /* Smartphone */
@@ -143,6 +103,8 @@ struct device {
 
 	bool in_white_list;
 
+	bool connected;
+
 	char *name;
 	char *friendly_name;
 
@@ -158,10 +120,12 @@ struct device {
 	unsigned int confirm_id; /* mgtm command id if command pending */
 
 	bool valid_remote_csrk;
+	bool remote_csrk_auth;
 	uint8_t remote_csrk[16];
 	uint32_t remote_sign_cnt;
 
 	bool valid_local_csrk;
+	bool local_csrk_auth;
 	uint8_t local_csrk[16];
 	uint32_t local_sign_cnt;
 	uint16_t gatt_ccc;
@@ -182,6 +146,13 @@ static struct {
 
 	char *name;
 
+	uint8_t max_advert_instance;
+	uint8_t rpa_offload_supported;
+	uint8_t max_irk_list_size;
+	uint8_t max_scan_filters_supported;
+	uint16_t scan_result_storage_size;
+	uint8_t activity_energy_info_supported;
+
 	uint32_t current_settings;
 	uint32_t supported_settings;
 
@@ -195,6 +166,12 @@ static struct {
 	.index = MGMT_INDEX_NONE,
 	.dev_class = 0,
 	.name = NULL,
+	.max_advert_instance = 0,
+	.rpa_offload_supported = 0,
+	.max_irk_list_size = 0,
+	.max_scan_filters_supported = 0,
+	.scan_result_storage_size = 0,
+	.activity_energy_info_supported = 0,
 	.current_settings = 0,
 	.supported_settings = 0,
 	.cur_discovery_type = SCAN_TYPE_NONE,
@@ -227,6 +204,7 @@ static struct ipc *hal_ipc = NULL;
 static bool kernel_conn_control = false;
 
 static struct queue *unpaired_cb_list = NULL;
+static struct queue *paired_cb_list = NULL;
 
 static void get_device_android_addr(struct device *dev, uint8_t *addr)
 {
@@ -261,7 +239,11 @@ static void store_adapter_config(void)
 	ba2str(&adapter.bdaddr, addr);
 
 	g_key_file_set_string(key_file, "General", "Address", addr);
-	g_key_file_set_string(key_file, "General", "Name", adapter.name);
+
+	if (adapter.name)
+		g_key_file_set_string(key_file, "General", "Name",
+				adapter.name);
+
 	g_key_file_set_integer(key_file, "General", "DiscoverableTimeout",
 						adapter.discoverable_timeout);
 
@@ -898,7 +880,14 @@ static void update_bond_state(struct device *dev, uint8_t status,
 						HAL_BOND_STATE_BONDING);
 
 	send_bond_state_change(dev, status, new_bond);
+}
 
+static void send_paired_notification(void *data, void *user_data)
+{
+	bt_paired_device_cb cb = data;
+	struct device *dev = user_data;
+
+	cb(&dev->bdaddr);
 }
 
 static void update_device_state(struct device *dev, uint8_t addr_type,
@@ -1746,6 +1735,30 @@ void bt_unpaired_unregister(bt_unpaired_device_cb cb)
 	queue_remove(unpaired_cb_list, cb);
 }
 
+bool bt_paired_register(bt_paired_device_cb cb)
+{
+	if (queue_find(paired_cb_list, match_by_value, cb))
+		return false;
+
+	return queue_push_head(paired_cb_list, cb);
+}
+
+void bt_paired_unregister(bt_paired_device_cb cb)
+{
+	queue_remove(paired_cb_list, cb);
+}
+
+bool bt_is_pairing(const bdaddr_t *addr)
+{
+	struct device *dev;
+
+	dev = find_device(addr);
+	if (!dev)
+		return false;
+
+	return dev->pairing;
+}
+
 static bool rssi_above_threshold(int old, int new)
 {
 	/* only 8 dBm or more */
@@ -1821,7 +1834,7 @@ static void update_new_device(struct device *dev, int8_t rssi,
 }
 
 static void update_device(struct device *dev, int8_t rssi,
-				const struct eir_data *eir, uint8_t bdaddr_type)
+						const struct eir_data *eir)
 {
 	uint8_t buf[IPC_MTU];
 	struct hal_ev_remote_device_props *ev = (void *) buf;
@@ -1836,13 +1849,6 @@ static void update_device(struct device *dev, int8_t rssi,
 	get_device_android_addr(dev, ev->bdaddr);
 
 	old_type = get_device_android_type(dev);
-
-	if (bdaddr_type == BDADDR_BREDR) {
-		dev->bredr = true;
-	} else {
-		dev->le = true;
-		dev->bdaddr_type = bdaddr_type;
-	}
 
 	new_type = get_device_android_type(dev);
 
@@ -1906,6 +1912,7 @@ static bool is_new_device(const struct device *dev, unsigned int flags,
 
 static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 					int8_t rssi, bool confirm,
+					bool connectable,
 					const uint8_t *data, uint8_t data_len)
 {
 	struct eir_data eir;
@@ -1917,10 +1924,14 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 
 	dev = get_device(bdaddr, bdaddr_type);
 
-	if (bdaddr_type == BDADDR_BREDR)
+	if (bdaddr_type == BDADDR_BREDR) {
+		dev->bredr = true;
 		dev->bredr_seen = time(NULL);
-	else
+	} else {
+		dev->le = true;
+		dev->bdaddr_type = bdaddr_type;
 		dev->le_seen = time(NULL);
+	}
 
 	/*
 	 * Device found event needs to be send also for known device if this is
@@ -1929,17 +1940,13 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 	if (is_new_device(dev, eir.flags, bdaddr_type))
 		update_new_device(dev, rssi, &eir);
 	else
-		update_device(dev, rssi, &eir, bdaddr_type);
+		update_device(dev, rssi, &eir);
 
 	eir_data_free(&eir);
 
 	/* Notify Gatt if its registered for LE events */
 	if (bdaddr_type != BDADDR_BREDR && gatt_device_found_cb) {
-		bool discoverable;
-		bdaddr_t *addr;
-		uint8_t addr_type;
-
-		discoverable = eir.flags & (EIR_LIM_DISC | EIR_GEN_DISC);
+		const bdaddr_t *addr;
 
 		/*
 		 * If RPA is set it means that IRK was received and ID address
@@ -1947,16 +1954,13 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 		 * it needs to be used also in GATT notifications. Also GATT
 		 * HAL implementation is using RPA for devices matching.
 		 */
-		if (bacmp(&dev->rpa, BDADDR_ANY)) {
+		if (bacmp(&dev->rpa, BDADDR_ANY))
 			addr = &dev->rpa;
-			addr_type = dev->rpa_type;
-		} else {
+		else
 			addr = &dev->bdaddr;
-			addr_type = dev->bdaddr_type;
-		}
 
-		gatt_device_found_cb(addr, addr_type, rssi, data_len, data,
-						discoverable, dev->le_bonded);
+		gatt_device_found_cb(addr, rssi, data_len, data, connectable,
+								dev->le_bonded);
 	}
 
 	if (!dev->bredr_paired && !dev->le_paired)
@@ -1992,6 +1996,7 @@ static void mgmt_device_found_event(uint16_t index, uint16_t length,
 	uint16_t eir_len;
 	uint32_t flags;
 	bool confirm_name;
+	bool connectable;
 	char addr[18];
 
 	if (length < sizeof(*ev)) {
@@ -1999,7 +2004,7 @@ static void mgmt_device_found_event(uint16_t index, uint16_t length,
 		return;
 	}
 
-	eir_len = btohs(ev->eir_len);
+	eir_len = le16_to_cpu(ev->eir_len);
 	if (length != sizeof(*ev) + eir_len) {
 		error("Device found event size mismatch (%u != %zu)",
 					length, sizeof(*ev) + eir_len);
@@ -2011,16 +2016,17 @@ static void mgmt_device_found_event(uint16_t index, uint16_t length,
 	else
 		eir = ev->eir;
 
-	flags = btohl(ev->flags);
+	flags = le32_to_cpu(ev->flags);
 
 	ba2str(&ev->addr.bdaddr, addr);
 	DBG("hci%u addr %s, rssi %d flags 0x%04x eir_len %u",
 				index, addr, ev->rssi, flags, eir_len);
 
 	confirm_name = flags & MGMT_DEV_FOUND_CONFIRM_NAME;
+	connectable = !(flags & MGMT_DEV_FOUND_NOT_CONNECTABLE);
 
 	update_found_device(&ev->addr.bdaddr, ev->addr.type, ev->rssi,
-						confirm_name, eir, eir_len);
+				confirm_name, connectable, eir, eir_len);
 }
 
 static void mgmt_device_connected_event(uint16_t index, uint16_t length,
@@ -2029,14 +2035,18 @@ static void mgmt_device_connected_event(uint16_t index, uint16_t length,
 	const struct mgmt_ev_device_connected *ev = param;
 	struct hal_ev_acl_state_changed hal_ev;
 	struct device *dev;
+	char addr[18];
 
 	if (length < sizeof(*ev)) {
 		error("Too short device connected event (%u bytes)", length);
 		return;
 	}
 
-	update_found_device(&ev->addr.bdaddr, ev->addr.type, 0, false,
-					&ev->eir[0], btohs(ev->eir_len));
+	ba2str(&ev->addr.bdaddr, addr);
+	DBG("%s type %u", addr, ev->addr.type);
+
+	update_found_device(&ev->addr.bdaddr, ev->addr.type, 0, false, false,
+					&ev->eir[0], le16_to_cpu(ev->eir_len));
 
 	hal_ev.status = HAL_STATUS_SUCCESS;
 	hal_ev.state = HAL_ACL_STATE_CONNECTED;
@@ -2044,6 +2054,8 @@ static void mgmt_device_connected_event(uint16_t index, uint16_t length,
 	dev = find_device(&ev->addr.bdaddr);
 	if (!dev)
 		return;
+
+	dev->connected = true;
 
 	get_device_android_addr(dev, hal_ev.bdaddr);
 
@@ -2092,6 +2104,8 @@ static void mgmt_device_disconnected_event(uint16_t index, uint16_t length,
 	if (device_is_paired(dev, type) && !device_is_bonded(dev))
 		update_device_state(dev, type, HAL_STATUS_SUCCESS, false,
 								false, false);
+
+	dev->connected = false;
 }
 
 static uint8_t status_mgmt2hal(uint8_t mgmt)
@@ -2304,6 +2318,9 @@ static void store_csrk(struct device *dev)
 							dev->local_csrk[i]);
 
 		g_key_file_set_string(key_file, addr, "LocalCSRK", key_str);
+
+		g_key_file_set_boolean(key_file, addr, "LocalCSRKAuthenticated",
+							dev->local_csrk_auth);
 	}
 
 	if (dev->valid_remote_csrk) {
@@ -2312,6 +2329,10 @@ static void store_csrk(struct device *dev)
 							dev->remote_csrk[i]);
 
 		g_key_file_set_string(key_file, addr, "RemoteCSRK", key_str);
+
+		g_key_file_set_boolean(key_file, addr,
+						"RemoteCSRKAuthenticated",
+						dev->remote_csrk_auth);
 	}
 
 	data = g_key_file_to_data(key_file, &length, NULL);
@@ -2338,19 +2359,23 @@ static void new_csrk_callback(uint16_t index, uint16_t length,
 	if (!dev)
 		return;
 
-	switch (ev->key.master) {
+	switch (ev->key.type) {
 	case 0x00:
+	case 0x02:
 		memcpy(dev->local_csrk, ev->key.val, 16);
 		dev->local_sign_cnt = 0;
 		dev->valid_local_csrk = true;
+		dev->local_csrk_auth = ev->key.type == 0x02;
 		break;
 	case 0x01:
+	case 0x03:
 		memcpy(dev->remote_csrk, ev->key.val, 16);
 		dev->remote_sign_cnt = 0;
 		dev->valid_remote_csrk = true;
+		dev->remote_csrk_auth = ev->key.type == 0x03;
 		break;
 	default:
-		error("Unknown CSRK key type 02%02x", ev->key.master);
+		error("Unknown CSRK key type 02%02x", ev->key.type);
 		return;
 	}
 
@@ -2548,7 +2573,7 @@ static void load_link_keys(GSList *keys, bt_bluetooth_ready cb)
 	 * load an empty list into the kernel. That way it is ensured
 	 * that no old keys from a previous daemon are present.
 	 */
-	cp->key_count = htobs(key_count);
+	cp->key_count = cpu_to_le16(key_count);
 
 	for (key = cp->keys; keys != NULL; keys = g_slist_next(keys), key++)
 		memcpy(key, keys->data, sizeof(*key));
@@ -2593,7 +2618,7 @@ static void load_ltks(GSList *ltks)
 	 * an empty list into the kernel. That way it is ensured that no old
 	 * keys from a previous daemon are present.
 	 */
-	cp->key_count = htobs(ltk_count);
+	cp->key_count = cpu_to_le16(ltk_count);
 
 	for (l = ltks, ltk = cp->keys; l != NULL; l = g_slist_next(l), ltk++)
 		memcpy(ltk, l->data, sizeof(*ltk));
@@ -2629,7 +2654,7 @@ static void load_irks(GSList *irks)
 
 	cp = g_malloc0(cp_size);
 
-	cp->irk_count = htobs(irk_count);
+	cp->irk_count = cpu_to_le16(irk_count);
 
 	for (l = irks, irk = cp->irks; l != NULL; l = g_slist_next(l), irk++)
 		memcpy(irk, irks->data, sizeof(*irk));
@@ -2825,26 +2850,21 @@ static void set_io_capability(void)
 static void set_device_id(void)
 {
 	struct mgmt_cp_set_device_id cp;
-	uint8_t major, minor;
-	uint16_t version;
-
-	if (sscanf(VERSION, "%hhu.%hhu", &major, &minor) != 2)
-		return;
-
-	version = major << 8 | minor;
 
 	memset(&cp, 0, sizeof(cp));
-	cp.source = htobs(DEVICE_ID_SOURCE);
-	cp.vendor = htobs(DEVICE_ID_VENDOR);
-	cp.product = htobs(DEVICE_ID_PRODUCT);
-	cp.version = htobs(version);
+	cp.source = cpu_to_le16(bt_config_get_pnp_source());
+	cp.vendor = cpu_to_le16(bt_config_get_pnp_vendor());
+	cp.product = cpu_to_le16(bt_config_get_pnp_product());
+	cp.version = cpu_to_le16(bt_config_get_pnp_version());
 
 	if (mgmt_send(mgmt_if, MGMT_OP_SET_DEVICE_ID, adapter.index,
 				sizeof(cp), &cp, NULL, NULL, NULL) == 0)
 		error("Failed to set device id");
 
-	register_device_id(DEVICE_ID_SOURCE, DEVICE_ID_VENDOR,
-						DEVICE_ID_PRODUCT, version);
+	register_device_id(bt_config_get_pnp_source(),
+						bt_config_get_pnp_vendor(),
+						bt_config_get_pnp_product(),
+						bt_config_get_pnp_version());
 
 	bt_adapter_add_record(sdp_record_find(0x10000), 0x00);
 }
@@ -2937,27 +2957,6 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 		dev->bredr = g_key_file_get_boolean(key_file, peer, "BREDR",
 									NULL);
 
-	str = g_key_file_get_string(key_file, peer, "LinkKey", NULL);
-	if (str) {
-		g_free(str);
-		dev->bredr_paired = true;
-		dev->bredr_bonded = true;
-	}
-
-	str = g_key_file_get_string(key_file, peer, "LongTermKey", NULL);
-	if (str) {
-		g_free(str);
-		dev->le_paired = true;
-		dev->le_bonded = true;
-	}
-
-	str = g_key_file_get_string(key_file, peer, "SlaveLongTermKey", NULL);
-	if (str) {
-		g_free(str);
-		dev->le_paired = true;
-		dev->le_bonded = true;
-	}
-
 	str = g_key_file_get_string(key_file, peer, "LocalCSRK", NULL);
 	if (str) {
 		int i;
@@ -2970,6 +2969,9 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 
 		dev->local_sign_cnt = g_key_file_get_integer(key_file, peer,
 						"LocalCSRKSignCounter", NULL);
+
+		dev->local_csrk_auth = g_key_file_get_boolean(key_file, peer,
+						"LocalCSRKAuthenticated", NULL);
 	}
 
 	str = g_key_file_get_string(key_file, peer, "RemoteCSRK", NULL);
@@ -2984,6 +2986,10 @@ static struct device *create_device_from_info(GKeyFile *key_file,
 
 		dev->remote_sign_cnt = g_key_file_get_integer(key_file, peer,
 						"RemoteCSRKSignCounter", NULL);
+
+		dev->remote_csrk_auth = g_key_file_get_boolean(key_file, peer,
+						"RemoteCSRKAuthenticated",
+						NULL);
 	}
 
 	str = g_key_file_get_string(key_file, peer, "GattCCC", NULL);
@@ -3210,19 +3216,30 @@ static void load_devices_info(bt_bluetooth_ready cb)
 		struct mgmt_ltk_info *slave_ltk_info;
 		struct device *dev;
 
+		dev = create_device_from_info(key_file, devs[i]);
+
 		key_info = get_key_info(key_file, devs[i]);
 		irk_info = get_irk_info(key_file, devs[i]);
 		ltk_info = get_ltk_info(key_file, devs[i], true);
 		slave_ltk_info = get_ltk_info(key_file, devs[i], false);
 
-		if (!key_info && !ltk_info && !slave_ltk_info) {
+		/*
+		 * Skip devices that have no permanent keys
+		 * (CSRKs are loaded by create_device_from_info())
+		 */
+		if (!dev->valid_local_csrk && !dev->valid_remote_csrk &&
+						!key_info && !ltk_info &&
+						!slave_ltk_info && !irk_info) {
 			error("Failed to load keys for %s, skipping", devs[i]);
-
+			free_device(dev);
 			continue;
 		}
 
-		if (key_info)
+		if (key_info) {
 			keys = g_slist_prepend(keys, key_info);
+			dev->bredr_paired = true;
+			dev->bredr_bonded = true;
+		}
 
 		if (irk_info)
 			irks = g_slist_prepend(irks, irk_info);
@@ -3233,7 +3250,11 @@ static void load_devices_info(bt_bluetooth_ready cb)
 		if (slave_ltk_info)
 			ltks = g_slist_prepend(ltks, slave_ltk_info);
 
-		dev = create_device_from_info(key_file, devs[i]);
+		if (dev->valid_local_csrk || dev->valid_remote_csrk ||
+				irk_info || ltk_info || slave_ltk_info) {
+			dev->le_paired = true;
+			dev->le_bonded = true;
+		}
 
 		bonded_devices = g_slist_prepend(bonded_devices, dev);
 	}
@@ -3271,75 +3292,18 @@ static void set_adapter_class(void)
 	error("Failed to set class of device");
 }
 
-static sdp_record_t *mps_record(void)
+static void enable_mps(void)
 {
-	sdp_data_t *mpsd_features, *mpmd_features, *dependencies;
-	sdp_list_t *svclass_id, *pfseq, *root;
-	uuid_t root_uuid, svclass_uuid;
-	sdp_profile_desc_t profile;
-	sdp_record_t *record;
-	uint64_t mpsd_feat, mpmd_feat;
-	uint16_t deps;
+	uuid_t uuid, *uuid128;
 
-	record = sdp_record_alloc();
-	if (!record)
-		return NULL;
-
-	sdp_uuid16_create(&root_uuid, PUBLIC_BROWSE_GROUP);
-	root = sdp_list_append(NULL, &root_uuid);
-	sdp_set_browse_groups(record, root);
-
-	sdp_uuid16_create(&svclass_uuid, MPS_SVCLASS_ID);
-	svclass_id = sdp_list_append(NULL, &svclass_uuid);
-	sdp_set_service_classes(record, svclass_id);
-
-	sdp_uuid16_create(&profile.uuid, MPS_PROFILE_ID);
-	profile.version = 0x0100;
-	pfseq = sdp_list_append(NULL, &profile);
-	sdp_set_profile_descs(record, pfseq);
-
-	mpsd_feat = MPS_DEFAULT_MPSD;
-	mpmd_feat = MPS_DEFAULT_MPMD;
-
-	/* TODO should be configurable based on HFP AG support */
-	if (false) {
-		mpsd_feat &= MPS_MPSD_HFP_AG_DEP;
-		mpmd_feat &= MPS_MPMD_HFP_AG_DEP;
-	}
-
-	mpsd_features = sdp_data_alloc(SDP_UINT64, &mpsd_feat);
-	sdp_attr_add(record, SDP_ATTR_MPSD_SCENARIOS, mpsd_features);
-
-	mpmd_features = sdp_data_alloc(SDP_UINT64, &mpmd_feat);
-	sdp_attr_add(record, SDP_ATTR_MPMD_SCENARIOS, mpmd_features);
-
-	deps = MPS_DEFAULT_DEPS;
-	dependencies = sdp_data_alloc(SDP_UINT16, &deps);
-	sdp_attr_add(record, SDP_ATTR_MPS_DEPENDENCIES, dependencies);
-
-	sdp_set_info_attr(record, "Multi Profile", 0, 0);
-
-	sdp_list_free(pfseq, NULL);
-	sdp_list_free(root, NULL);
-	sdp_list_free(svclass_id, NULL);
-
-	return record;
-}
-
-static void add_mps_record(void)
-{
-	sdp_record_t *rec;
-
-	rec = mps_record();
-	if (!rec) {
-		error("Failed to allocate MPS record");
+	sdp_uuid16_create(&uuid, MPS_SVCLASS_ID);
+	uuid128 = sdp_uuid_to_uuid128(&uuid);
+	if (!uuid128)
 		return;
-	}
 
-	if (bt_adapter_add_record(rec, 0) < 0) {
-		error("Failed to register MPS record");
-		sdp_record_free(rec);
-	}
+	register_mps(true);
+	adapter.uuids = g_slist_prepend(adapter.uuids, uuid128);
+	add_uuid(0, uuid128);
 }
 
 static void clear_auto_connect_list_complete(uint8_t status,
@@ -3401,7 +3365,6 @@ static void read_info_complete(uint8_t status, uint16_t length,
 
 	if (!bacmp(&adapter.bdaddr, BDADDR_ANY)) {
 		bacpy(&adapter.bdaddr, &rp->bdaddr);
-		adapter.name = g_strdup(DEFAULT_ADAPTER_NAME);
 		store_adapter_config();
 	} else if (bacmp(&adapter.bdaddr, &rp->bdaddr)) {
 		error("Bluetooth address mismatch");
@@ -3409,7 +3372,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 		goto failed;
 	}
 
-	if (g_strcmp0(adapter.name, (const char *) rp->name))
+	if (adapter.name && g_strcmp0(adapter.name, (const char *) rp->name))
 		set_adapter_name((uint8_t *)adapter.name, strlen(adapter.name));
 
 	set_adapter_class();
@@ -3418,8 +3381,8 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	adapter.dev_class = rp->dev_class[0] | (rp->dev_class[1] << 8) |
 						(rp->dev_class[2] << 16);
 
-	adapter.supported_settings = btohs(rp->supported_settings);
-	adapter.current_settings = btohs(rp->current_settings);
+	adapter.supported_settings = le32_to_cpu(rp->supported_settings);
+	adapter.current_settings = le32_to_cpu(rp->current_settings);
 
 	/* TODO: Register all event notification handlers */
 	register_mgmt_handlers();
@@ -3429,16 +3392,13 @@ static void read_info_complete(uint8_t status, uint16_t length,
 
 	set_io_capability();
 	set_device_id();
-	add_mps_record();
+	enable_mps();
 
 	missing_settings = adapter.current_settings ^
 						adapter.supported_settings;
 
 	if (missing_settings & MGMT_SETTING_SSP)
 		set_mode(MGMT_OP_SET_SSP, 0x01);
-
-	if (missing_settings & MGMT_SETTING_SECURE_CONN)
-		set_mode(MGMT_OP_SET_SECURE_CONN, 0x01);
 
 	if (missing_settings & MGMT_SETTING_BONDABLE)
 		set_mode(MGMT_OP_SET_BONDABLE, 0x01);
@@ -3511,7 +3471,7 @@ static void read_index_list_complete(uint8_t status, uint16_t length,
 		goto failed;
 	}
 
-	num = btohs(rp->num_controllers);
+	num = le16_to_cpu(rp->num_controllers);
 
 	DBG("Number of controllers: %u", num);
 
@@ -3524,7 +3484,7 @@ static void read_index_list_complete(uint8_t status, uint16_t length,
 		return;
 
 	for (i = 0; i < num; i++) {
-		uint16_t index = btohs(rp->index[i]);
+		uint16_t index = le16_to_cpu(rp->index[i]);
 
 		if (option_index != MGMT_INDEX_NONE && option_index != index)
 			continue;
@@ -3564,7 +3524,7 @@ static void read_version_complete(uint8_t status, uint16_t length,
 	}
 
 	mgmt_version = rp->version;
-	mgmt_revision = btohs(rp->revision);
+	mgmt_revision = le16_to_cpu(rp->revision);
 
 	info("Bluetooth management interface %u.%u initialized",
 						mgmt_version, mgmt_revision);
@@ -3666,7 +3626,7 @@ static bool set_discoverable(uint8_t mode, uint16_t timeout)
 
 	memset(&cp, 0, sizeof(cp));
 	cp.val = mode;
-	cp.timeout = htobs(timeout);
+	cp.timeout = cpu_to_le16(timeout);
 
 	DBG("mode %u timeout %u", mode, timeout);
 
@@ -3792,6 +3752,31 @@ static uint8_t get_adapter_discoverable_timeout(void)
 	return HAL_STATUS_SUCCESS;
 }
 
+static void prepare_le_features(uint8_t *le_features)
+{
+	le_features[0] = !!(adapter.current_settings & MGMT_SETTING_PRIVACY);
+	le_features[1] = adapter.max_advert_instance;
+	le_features[2] = adapter.rpa_offload_supported;
+	le_features[3] = adapter.max_irk_list_size;
+	le_features[4] = adapter.max_scan_filters_supported;
+	/* lo byte */
+	le_features[5] = adapter.scan_result_storage_size;
+	/* hi byte */
+	le_features[6] = adapter.scan_result_storage_size >> 8;
+	le_features[7] = adapter.activity_energy_info_supported;
+}
+
+static uint8_t get_adapter_le_features(void)
+{
+	uint8_t le_features[8];
+
+	prepare_le_features(le_features);
+
+	send_adapter_property(HAL_PROP_ADAPTER_LOCAL_LE_FEAT,
+					sizeof(le_features), le_features);
+	return HAL_STATUS_SUCCESS;
+}
+
 static void handle_get_adapter_prop_cmd(const void *buf, uint16_t len)
 {
 	const struct hal_cmd_get_adapter_prop *cmd = buf;
@@ -3825,6 +3810,9 @@ static void handle_get_adapter_prop_cmd(const void *buf, uint16_t len)
 	case HAL_PROP_ADAPTER_DISC_TIMEOUT:
 		status = get_adapter_discoverable_timeout();
 		break;
+	case HAL_PROP_ADAPTER_LOCAL_LE_FEAT:
+		status = get_adapter_le_features();
+		break;
 	default:
 		status = HAL_STATUS_FAILED;
 		break;
@@ -3845,6 +3833,7 @@ static void get_adapter_properties(void)
 	uint8_t bonded[g_slist_length(bonded_devices) * sizeof(bdaddr_t)];
 	uint128_t uuids[g_slist_length(adapter.uuids)];
 	uint8_t android_bdaddr[6];
+	uint8_t le_features[8];
 	uint8_t type, mode;
 	size_t size, i;
 	GSList *l;
@@ -3904,6 +3893,12 @@ static void get_adapter_properties(void)
 
 	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_UUIDS, sizeof(uuids),
 									uuids);
+	ev->num_props++;
+
+	prepare_le_features(le_features);
+	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_LOCAL_LE_FEAT,
+					sizeof(le_features), le_features);
+
 	ev->num_props++;
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
@@ -4099,22 +4094,33 @@ bool bt_read_device_rssi(const bdaddr_t *addr, bt_read_device_rssi_done cb,
 	return true;
 }
 
-bool bt_get_csrk(const bdaddr_t *addr, enum bt_csrk_type type, uint8_t key[16],
-							uint32_t *sign_cnt)
+bool bt_get_csrk(const bdaddr_t *addr, bool local, uint8_t key[16],
+					uint32_t *sign_cnt, bool *authenticated)
 {
 	struct device *dev;
-	bool local = (type == LOCAL_CSRK);
 
 	dev = find_device(addr);
 	if (!dev)
 		return false;
 
 	if (local && dev->valid_local_csrk) {
-		memcpy(key, dev->local_csrk, 16);
-		*sign_cnt = dev->local_sign_cnt;
+		if (key)
+			memcpy(key, dev->local_csrk, 16);
+
+		if (sign_cnt)
+			*sign_cnt = dev->local_sign_cnt;
+
+		if (authenticated)
+			*authenticated = dev->local_csrk_auth;
 	} else if (!local && dev->valid_remote_csrk) {
-		memcpy(key, dev->remote_csrk, 16);
-		*sign_cnt = dev->remote_sign_cnt;
+		if (key)
+			memcpy(key, dev->remote_csrk, 16);
+
+		if (sign_cnt)
+			*sign_cnt = dev->remote_sign_cnt;
+
+		if (authenticated)
+			*authenticated = dev->remote_csrk_auth;
 	} else {
 		return false;
 	}
@@ -4122,12 +4128,11 @@ bool bt_get_csrk(const bdaddr_t *addr, enum bt_csrk_type type, uint8_t key[16],
 	return true;
 }
 
-static void store_sign_counter(struct device *dev, enum bt_csrk_type type)
+static void store_sign_counter(struct device *dev, bool local)
 {
 	const char *sign_cnt_s;
 	uint32_t sign_cnt;
 	GKeyFile *key_file;
-	bool local = (type == LOCAL_CSRK);
 
 	gsize length = 0;
 	char addr[18];
@@ -4153,7 +4158,7 @@ static void store_sign_counter(struct device *dev, enum bt_csrk_type type)
 	g_key_file_free(key_file);
 }
 
-void bt_update_sign_counter(const bdaddr_t *addr, enum bt_csrk_type type)
+void bt_update_sign_counter(const bdaddr_t *addr, bool local, uint32_t val)
 {
 	struct device *dev;
 
@@ -4161,12 +4166,12 @@ void bt_update_sign_counter(const bdaddr_t *addr, enum bt_csrk_type type)
 	if (!dev)
 		return;
 
-	if (type == LOCAL_CSRK)
-		dev->local_sign_cnt++;
+	if (local)
+		dev->local_sign_cnt = val;
 	else
-		dev->remote_sign_cnt++;
+		dev->remote_sign_cnt = val;
 
-	store_sign_counter(dev, type);
+	store_sign_counter(dev, local);
 }
 
 static uint8_t set_adapter_scan_mode(const void *buf, uint16_t len)
@@ -4286,6 +4291,9 @@ static void pair_device_complete(uint8_t status, uint16_t length,
 	 */
 	update_device_state(dev, rp->addr.type, status_mgmt2hal(status), false,
 								!status, false);
+
+	if (status == MGMT_STATUS_SUCCESS)
+		queue_foreach(paired_cb_list, send_paired_notification, dev);
 }
 
 static uint8_t select_device_bearer(struct device *dev)
@@ -4329,6 +4337,12 @@ static void handle_create_bond_cmd(const void *buf, uint16_t len)
 	cp.io_cap = DEFAULT_IO_CAPABILITY;
 	cp.addr.type = select_device_bearer(dev);
 	bacpy(&cp.addr.bdaddr, &dev->bdaddr);
+
+	/* TODO: Handle transport parameter */
+	if (cmd->transport > BT_TRANSPORT_LE) {
+		status = HAL_STATUS_INVALID;
+		goto fail;
+	}
 
 	if (device_is_paired(dev, cp.addr.type)) {
 		status = HAL_STATUS_FAILED;
@@ -4385,7 +4399,7 @@ static void send_unpaired_notification(void *data, void *user_data)
 	bt_unpaired_device_cb cb = data;
 	struct mgmt_addr_info *addr = user_data;
 
-	cb(&addr->bdaddr, addr->type);
+	cb(&addr->bdaddr);
 }
 
 static void unpair_device_complete(uint8_t status, uint16_t length,
@@ -4407,7 +4421,9 @@ static void unpair_device_complete(uint8_t status, uint16_t length,
 								false, false);
 
 	/* Cast rp->addr to (void *) since queue_foreach don't take const */
-	queue_foreach(unpaired_cb_list, send_unpaired_notification,
+
+	if (!dev->le_paired && !dev->bredr_paired)
+		queue_foreach(unpaired_cb_list, send_unpaired_notification,
 							(void *)&rp->addr);
 }
 
@@ -4540,7 +4556,7 @@ static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, uint8_t type,
 		memset(&cp, 0, sizeof(cp));
 		bacpy(&cp.addr.bdaddr, bdaddr);
 		cp.addr.type = type;
-		cp.passkey = htobl(passkey);
+		cp.passkey = cpu_to_le32(passkey);
 
 		id = mgmt_reply(mgmt_if, MGMT_OP_USER_PASSKEY_REPLY,
 						adapter.index, sizeof(cp), &cp,
@@ -5135,6 +5151,40 @@ static void handle_le_test_mode_cmd(const void *buf, uint16_t len)
 							HAL_STATUS_FAILED);
 }
 
+static void handle_get_connection_state(const void *buf, uint16_t len)
+{
+	const struct hal_cmd_get_connection_state *cmd = buf;
+	struct hal_rsp_get_connection_state rsp;
+	struct device *dev;
+	char address[18];
+	bdaddr_t bdaddr;
+
+	android2bdaddr(cmd->bdaddr, &bdaddr);
+	ba2str(&bdaddr, address);
+
+	dev = find_device_android(cmd->bdaddr);
+	if (dev && dev->connected)
+		rsp.connection_state = 1;
+	else
+		rsp.connection_state = 0;
+
+	DBG("%s %u", address, rsp.connection_state);
+
+	ipc_send_rsp_full(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
+				HAL_OP_GET_CONNECTION_STATE, sizeof(rsp), &rsp,
+				-1);
+}
+
+static void handle_read_energy_info(const void *buf, uint16_t len)
+{
+	DBG("");
+
+	/* TODO */
+
+	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_OP_READ_ENERGY_INFO,
+							HAL_STATUS_UNSUPPORTED);
+}
+
 static const struct ipc_handler cmd_handlers[] = {
 	/* HAL_OP_ENABLE */
 	{ handle_enable_cmd, false, 0 },
@@ -5185,6 +5235,11 @@ static const struct ipc_handler cmd_handlers[] = {
 					sizeof(struct hal_cmd_dut_mode_send) },
 	/* HAL_OP_LE_TEST_MODE */
 	{ handle_le_test_mode_cmd, true, sizeof(struct hal_cmd_le_test_mode) },
+	/* HAL_OP_GET_CONNECTION_STATE */
+	{ handle_get_connection_state, false,
+				sizeof(struct hal_cmd_get_connection_state) },
+	/* HAL_OP_READ_ENERGY_INFO */
+	{ handle_read_energy_info, false, 0 },
 };
 
 bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
@@ -5195,7 +5250,15 @@ bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
 
 	unpaired_cb_list = queue_new();
 	if (!unpaired_cb_list) {
-		error("Can not allocate queue for unpaired callbacks");
+		error("Cannot allocate queue for unpaired callbacks");
+		return false;
+	}
+
+	paired_cb_list = queue_new();
+	if (!paired_cb_list) {
+		error("Cannot allocate queue for paired callbacks");
+		queue_destroy(unpaired_cb_list, NULL);
+		unpaired_cb_list = NULL;
 		return false;
 	}
 
@@ -5250,6 +5313,16 @@ bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
 		goto failed;
 	}
 
+	/* Requested mode is set now, let's enable secure connection */
+	if (missing_settings & MGMT_SETTING_SECURE_CONN)
+		set_mode(MGMT_OP_SET_SECURE_CONN, 0x01);
+
+	/* Set initial default name */
+	if (!adapter.name) {
+		adapter.name = g_strdup(bt_config_get_model());
+		set_adapter_name((uint8_t *)adapter.name, strlen(adapter.name));
+	}
+
 	hal_ipc = ipc;
 
 	ipc_register(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, cmd_handlers,
@@ -5259,6 +5332,10 @@ bool bt_bluetooth_register(struct ipc *ipc, uint8_t mode)
 
 failed:
 	queue_destroy(unpaired_cb_list, NULL);
+	unpaired_cb_list = NULL;
+	queue_destroy(paired_cb_list, NULL);
+	paired_cb_list = NULL;
+
 	return false;
 }
 
@@ -5277,4 +5354,7 @@ void bt_bluetooth_unregister(void)
 
 	queue_destroy(unpaired_cb_list, NULL);
 	unpaired_cb_list = NULL;
+
+	queue_destroy(paired_cb_list, NULL);
+	paired_cb_list = NULL;
 }

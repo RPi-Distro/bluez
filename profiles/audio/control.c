@@ -37,20 +37,20 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
-
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus/gdbus.h>
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
 #include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
+
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/profile.h"
 #include "src/service.h"
-
 #include "src/log.h"
 #include "src/error.h"
 #include "src/sdpd.h"
@@ -71,7 +71,8 @@ struct control {
 };
 
 static void state_changed(struct btd_device *dev, avctp_state_t old_state,
-				avctp_state_t new_state, void *user_data)
+					avctp_state_t new_state, int err,
+					void *user_data)
 {
 	struct control *control = user_data;
 	DBusConnection *conn = btd_get_dbus_connection();
@@ -96,6 +97,8 @@ static void state_changed(struct btd_device *dev, avctp_state_t old_state,
 		g_dbus_emit_property_changed(conn, path,
 					AUDIO_CONTROL_INTERFACE, "Connected");
 		break;
+	case AVCTP_STATE_BROWSING_CONNECTING:
+	case AVCTP_STATE_BROWSING_CONNECTED:
 	default:
 		return;
 	}
@@ -334,14 +337,4 @@ int control_init_remote(struct btd_service *service)
 	btd_service_set_user_data(service, control);
 
 	return 0;
-}
-
-gboolean control_is_active(struct btd_service *service)
-{
-	struct control *control = btd_service_get_user_data(service);
-
-	if (control && control->session)
-		return TRUE;
-
-	return FALSE;
 }
