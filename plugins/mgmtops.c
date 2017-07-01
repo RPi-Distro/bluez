@@ -66,6 +66,7 @@ static struct controller_info {
 	gboolean discoverable;
 	gboolean pairable;
 	uint8_t sec_mode;
+	GSList *connections;
 } *controllers = NULL;
 
 static int mgmt_sock = -1;
@@ -125,6 +126,23 @@ static void read_info(int sk, uint16_t index)
 
 	if (write(sk, buf, sizeof(buf)) < 0)
 		error("Unable to send read_info command: %s (%d)",
+						strerror(errno), errno);
+}
+
+static void get_connections(int sk, uint16_t index)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_get_connections)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_get_connections *cp = (void *) &buf[sizeof(*hdr)];
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_GET_CONNECTIONS);
+	hdr->len = htobs(sizeof(*cp));
+
+	cp->index = htobs(index);
+
+	if (write(sk, buf, sizeof(buf)) < 0)
+		error("Unable to send get_connections command: %s (%d)",
 						strerror(errno), errno);
 }
 
@@ -400,6 +418,203 @@ static void mgmt_pairable(int sk, void *buf, size_t len)
 	btd_adapter_pairable_changed(adapter, info->pairable);
 }
 
+static void mgmt_new_key(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_new_key *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+
+	if (len != sizeof(*ev)) {
+		error("new_key event size mismatch (%zu != %zu)",
+							len, sizeof(*ev));
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+
+	DBG("Controller %u new key of type %u pin_len %u", index,
+					ev->key.type, ev->key.pin_len);
+
+	if (index > max_index) {
+		error("Unexpected index %u in new_key event", index);
+		return;
+	}
+
+	if (ev->key.pin_len > 16) {
+		error("Invalid PIN length (%u) in new_key event",
+							ev->key.pin_len);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_link_key_notify(&info->bdaddr, &ev->key.bdaddr,
+					ev->key.val, ev->key.type,
+					ev->key.pin_len, ev->old_key_type);
+}
+
+static void mgmt_device_connected(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_device_connected *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+
+	if (len < sizeof(*ev)) {
+		error("Too small device_connected event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+	ba2str(&ev->bdaddr, addr);
+
+	DBG("hci%u device %s connected", index, addr);
+
+	if (index > max_index) {
+		error("Unexpected index %u in device_connected event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_conn_complete(&info->bdaddr, 0, &ev->bdaddr);
+}
+
+static void mgmt_device_disconnected(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_device_disconnected *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+
+	if (len < sizeof(*ev)) {
+		error("Too small device_disconnected event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+	ba2str(&ev->bdaddr, addr);
+
+	DBG("hci%u device %s disconnected", index, addr);
+
+	if (index > max_index) {
+		error("Unexpected index %u in device_disconnected event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_disconn_complete(&info->bdaddr, &ev->bdaddr);
+}
+
+static void mgmt_connect_failed(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_connect_failed *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+
+	if (len < sizeof(*ev)) {
+		error("Too small connect_failed event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+	ba2str(&ev->bdaddr, addr);
+
+	DBG("hci%u %s status %u", index, addr, ev->status);
+
+	if (index > max_index) {
+		error("Unexpected index %u in connect_failed event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_conn_complete(&info->bdaddr, ev->status, &ev->bdaddr);
+}
+
+static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_pin_code_reply)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	size_t buf_len;
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("index %d addr %s pin %s", index, addr, pin ? pin : "<none>");
+
+	memset(buf, 0, sizeof(buf));
+
+	if (pin == NULL) {
+		struct mgmt_cp_pin_code_neg_reply *cp;
+
+		hdr->opcode = htobs(MGMT_OP_PIN_CODE_NEG_REPLY);
+		hdr->len = htobs(sizeof(*cp));
+
+		cp = (void *) &buf[sizeof(*hdr)];
+		cp->index = htobs(index);
+		bacpy(&cp->bdaddr, bdaddr);
+
+		buf_len = sizeof(*hdr) + sizeof(*cp);
+	} else {
+		struct mgmt_cp_pin_code_reply *cp;
+		size_t pin_len;
+
+		pin_len = strlen(pin);
+		if (pin_len > 16)
+			return -EINVAL;
+
+		hdr->opcode = htobs(MGMT_OP_PIN_CODE_REPLY);
+		hdr->len = htobs(sizeof(*cp));
+
+		cp = (void *) &buf[sizeof(*hdr)];
+		cp->index = htobs(index);
+		bacpy(&cp->bdaddr, bdaddr);
+		cp->pin_len = pin_len;
+		memcpy(cp->pin_code, pin, pin_len);
+
+		buf_len = sizeof(*hdr) + sizeof(*cp);
+	}
+
+	if (write(mgmt_sock, buf, buf_len) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static void mgmt_pin_code_request(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_pin_code_request *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+	int err;
+
+	if (len < sizeof(*ev)) {
+		error("Too small pin_code_request event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+	ba2str(&ev->bdaddr, addr);
+
+	DBG("hci%u %s", index, addr);
+
+	if (index > max_index) {
+		error("Unexpected index %u in pin_code_request event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	err = btd_event_request_pin(&info->bdaddr, &ev->bdaddr);
+	if (err < 0) {
+		error("btd_event_request_pin: %s", strerror(-err));
+		mgmt_pincode_reply(index, &ev->bdaddr, NULL);
+	}
+}
+
 static void uuid_to_uuid128(uuid_t *uuid128, const uuid_t *uuid)
 {
 	if (uuid->type == SDP_UUID16)
@@ -493,7 +708,7 @@ static void read_index_list_complete(int sk, void *buf, size_t len)
 		index = btohs(bt_get_unaligned(&rp->index[i]));
 
 		add_controller(index);
-		read_info(sk, index);
+		get_connections(sk, index);
 		clear_uuids(index);
 	}
 }
@@ -688,6 +903,69 @@ static void set_pairable_complete(int sk, void *buf, size_t len)
 	btd_adapter_pairable_changed(adapter, info->pairable);
 }
 
+static void disconnect_complete(int sk, void *buf, size_t len)
+{
+	struct mgmt_rp_disconnect *rp = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+
+	if (len < sizeof(*rp)) {
+		error("Too small disconnect complete event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&rp->index));
+
+	ba2str(&rp->bdaddr, addr);
+
+	DBG("hci%d %s disconnected", index, addr);
+
+	if (index > max_index) {
+		error("Unexpected index %u in disconnect complete", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_disconn_complete(&info->bdaddr, &rp->bdaddr);
+}
+
+static void get_connections_complete(int sk, void *buf, size_t len)
+{
+	struct mgmt_rp_get_connections *rp = buf;
+	struct controller_info *info;
+	uint16_t index;
+	int i;
+
+	if (len < sizeof(*rp)) {
+		error("Too small get_connections complete event");
+		return;
+	}
+
+	if (len < (sizeof(*rp) + (rp->conn_count * sizeof(bdaddr_t)))) {
+		error("Too small get_connections complete event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&rp->index));
+
+	if (index > max_index) {
+		error("Unexpected index %u in get_connections complete",
+								index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	for (i = 0; i < rp->conn_count; i++) {
+		bdaddr_t *bdaddr = g_memdup(&rp->conn[i], sizeof(bdaddr_t));
+		info->connections = g_slist_append(info->connections, bdaddr);
+	}
+
+	read_info(sk, index);
+}
+
 static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 {
 	struct mgmt_ev_cmd_complete *ev = buf;
@@ -735,6 +1013,28 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 		break;
 	case MGMT_OP_SET_SERVICE_CACHE:
 		DBG("set_service_cache complete");
+		break;
+	case MGMT_OP_LOAD_KEYS:
+		DBG("load_keys complete");
+		break;
+	case MGMT_OP_REMOVE_KEY:
+		DBG("remove_key complete");
+		break;
+	case MGMT_OP_DISCONNECT:
+		DBG("disconnect complete");
+		disconnect_complete(sk, ev->data, len - sizeof(*ev));
+		break;
+	case MGMT_OP_GET_CONNECTIONS:
+		get_connections_complete(sk, ev->data, len - sizeof(*ev));
+		break;
+	case MGMT_OP_PIN_CODE_REPLY:
+		DBG("pin_code_reply complete");
+		break;
+	case MGMT_OP_PIN_CODE_NEG_REPLY:
+		DBG("pin_code_neg_reply complete");
+		break;
+	case MGMT_OP_SET_IO_CAPABILITY:
+		DBG("set_io_capability complete");
 		break;
 	default:
 		error("Unknown command complete for opcode %u", opcode);
@@ -841,6 +1141,21 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 		break;
 	case MGMT_EV_PAIRABLE:
 		mgmt_pairable(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_NEW_KEY:
+		mgmt_new_key(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_DEVICE_CONNECTED:
+		mgmt_device_connected(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_DEVICE_DISCONNECTED:
+		mgmt_device_disconnected(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_CONNECT_FAILED:
+		mgmt_connect_failed(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_PIN_CODE_REQUEST:
+		mgmt_pin_code_request(sk, buf + MGMT_HDR_SIZE, len);
 		break;
 	default:
 		error("Unknown Management opcode %u", opcode);
@@ -1046,8 +1361,14 @@ static int mgmt_unblock_device(int index, bdaddr_t *bdaddr)
 
 static int mgmt_get_conn_list(int index, GSList **conns)
 {
+	struct controller_info *info = &controllers[index];
+
 	DBG("index %d", index);
-	return -ENOSYS;
+
+	*conns = info->connections;
+	info->connections = NULL;
+
+	return 0;
 }
 
 static int mgmt_read_local_version(int index, struct hci_version *ver)
@@ -1081,34 +1402,59 @@ static int mgmt_read_local_features(int index, uint8_t *features)
 	return 0;
 }
 
-static int mgmt_disconnect(int index, uint16_t handle)
+static int mgmt_disconnect(int index, bdaddr_t *bdaddr)
 {
-	DBG("index %d handle %u", index, handle);
-	return -ENOSYS;
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_disconnect)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_disconnect *cp = (void *) &buf[sizeof(*hdr)];
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("index %d %s", index, addr);
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_DISCONNECT);
+	hdr->len = htobs(sizeof(*cp));
+
+	cp->index = htobs(index);
+	bacpy(&cp->bdaddr, bdaddr);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		error("write: %s (%d)", strerror(errno), errno);
+
+	return 0;
 }
 
 static int mgmt_remove_bonding(int index, bdaddr_t *bdaddr)
 {
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_remove_key)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_remove_key *cp = (void *) &buf[sizeof(*hdr)];
 	char addr[18];
 
 	ba2str(bdaddr, addr);
 	DBG("index %d addr %s", index, addr);
 
-	return -ENOSYS;
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_REMOVE_KEY);
+	hdr->len = htobs(sizeof(*cp));
+
+	cp->index = htobs(index);
+	bacpy(&cp->bdaddr, bdaddr);
+	cp->disconnect = 1;
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
 }
 
-static int mgmt_request_authentication(int index, uint16_t handle)
-{
-	DBG("index %d handle %u", index, handle);
-	return -ENOSYS;
-}
-
-static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
+static int mgmt_request_authentication(int index, bdaddr_t *bdaddr)
 {
 	char addr[18];
 
 	ba2str(bdaddr, addr);
-	DBG("index %d addr %s pin %s", index, addr, pin);
+	DBG("index %d %s", index, addr);
 
 	return -ENOSYS;
 }
@@ -1188,9 +1534,73 @@ static int mgmt_restore_powered(int index)
 
 static int mgmt_load_keys(int index, GSList *keys, gboolean debug_keys)
 {
-	DBG("index %d keys %d debug_keys %d", index, g_slist_length(keys),
-								debug_keys);
-	return -ENOSYS;
+	char *buf;
+	struct mgmt_hdr *hdr;
+	struct mgmt_cp_load_keys *cp;
+	struct mgmt_key_info *key;
+	size_t key_count, cp_size;
+	GSList *l;
+	int err;
+
+	key_count = g_slist_length(keys);
+
+	DBG("index %d keys %zu debug_keys %d", index, key_count, debug_keys);
+
+	cp_size = sizeof(*cp) + (key_count * sizeof(*key));
+
+	buf = g_try_malloc0(sizeof(*hdr) + cp_size);
+	if (buf == NULL)
+		return -ENOMEM;
+
+	memset(buf, 0, sizeof(buf));
+
+	hdr = (void *) buf;
+	hdr->opcode = htobs(MGMT_OP_LOAD_KEYS);
+	hdr->len = htobs(cp_size);
+
+	cp = (void *) (buf + sizeof(*hdr));
+	cp->index = htobs(index);
+	cp->debug_keys = debug_keys;
+	cp->key_count = htobs(key_count);
+
+	for (l = keys, key = cp->keys; l != NULL; l = g_slist_next(l), key++) {
+		struct link_key_info *info = l->data;
+
+		bacpy(&key->bdaddr, &info->bdaddr);
+		key->type = info->type;
+		memcpy(key->val, info->key, 16);
+		key->pin_len = info->pin_len;
+	}
+
+	if (write(mgmt_sock, buf, sizeof(*hdr) + cp_size) < 0)
+		err = -errno;
+	else
+		err = 0;
+
+	g_free(buf);
+
+	return err;
+}
+
+static int mgmt_set_io_capability(int index, uint8_t io_capability)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_set_io_capability)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_set_io_capability *cp = (void *) &buf[sizeof(*hdr)];
+
+	DBG("hci%d io_capability 0x%02x", index, io_capability);
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_SET_IO_CAPABILITY);
+	hdr->len = htobs(sizeof(*cp));
+
+	cp->index = htobs(index);
+	cp->io_capability = io_capability;
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
 }
 
 static struct btd_adapter_ops mgmt_ops = {
@@ -1232,6 +1642,7 @@ static struct btd_adapter_ops mgmt_ops = {
 	.disable_cod_cache = mgmt_disable_cod_cache,
 	.restore_powered = mgmt_restore_powered,
 	.load_keys = mgmt_load_keys,
+	.set_io_capability = mgmt_set_io_capability,
 };
 
 static int mgmt_init(void)
