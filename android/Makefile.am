@@ -38,6 +38,9 @@ android_bluetoothd_SOURCES = android/main.c \
 				src/shared/uhid.h src/shared/uhid.c \
 				android/bluetooth.h android/bluetooth.c \
 				android/hidhost.h android/hidhost.c \
+				android/scpp.h android/scpp.c \
+				android/dis.h android/dis.c \
+				android/bas.h android/bas.c \
 				android/hog.h android/hog.c \
 				android/ipc-common.h \
 				android/ipc.h android/ipc.c \
@@ -94,6 +97,17 @@ android_bluetooth_default_la_SOURCES = android/hal.h android/hal-bluetooth.c \
 android_bluetooth_default_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/android
 android_bluetooth_default_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
 					-no-undefined
+
+noinst_PROGRAMS += android/mcaptest
+
+android_mcaptest_SOURCES = android/mcaptest.c \
+				src/log.h src/log.c \
+				btio/btio.h btio/btio.c \
+				android/mcap-lib.h android/mcap-lib.c
+
+android_mcaptest_CFLAGS = $(AM_CFLAGS)
+
+android_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
 
 noinst_PROGRAMS += android/haltest
 
@@ -248,6 +262,8 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pics-sm.txt \
 				android/pics-mps.txt \
 				android/pics-hogp.txt \
+				android/pics-scpp.txt \
+				android/pics-dis.txt \
 				android/pixit-l2cap.txt \
 				android/pixit-gap.txt \
 				android/pixit-did.txt \
@@ -268,6 +284,8 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pixit-sm.txt \
 				android/pixit-mps.txt \
 				android/pixit-hogp.txt \
+				android/pixit-scpp.txt \
+				android/pixit-dis.txt \
 				android/bite-rfcomm.txt \
 				android/bite-spp.txt \
 				android/pts-l2cap.txt \
@@ -289,4 +307,6 @@ EXTRA_DIST += android/Android.mk android/README \
 				android/pts-mcap.txt \
 				android/pts-mps.txt \
 				android/pts-sm.txt \
-				android/pts-hogp.txt
+				android/pts-hogp.txt \
+				android/pts-scpp.txt \
+				android/pts-dis.txt

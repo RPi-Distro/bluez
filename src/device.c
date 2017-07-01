@@ -222,6 +222,12 @@ struct btd_device {
 	GIOChannel	*att_io;
 	guint		cleanup_id;
 	guint		store_id;
+
+	bool		pending_conn_params;
+	uint16_t	min_interval;
+	uint16_t	max_interval;
+	uint16_t	latency;
+	uint16_t	timeout;
 };
 
 static const uint16_t uuid_list[] = {
@@ -374,6 +380,18 @@ static gboolean store_device_info_cb(gpointer user_data)
 					device->version);
 	} else {
 		g_key_file_remove_group(key_file, "DeviceID", NULL);
+	}
+
+	if (device->pending_conn_params) {
+		device->pending_conn_params = false;
+		g_key_file_set_integer(key_file, "ConnectionParameters",
+					"MinInterval", device->min_interval);
+		g_key_file_set_integer(key_file, "ConnectionParameters",
+					"MaxInterval", device->max_interval);
+		g_key_file_set_integer(key_file, "ConnectionParameters",
+					"Latency", device->latency);
+		g_key_file_set_integer(key_file, "ConnectionParameters",
+					"Timeout", device->timeout);
 	}
 
 	create_file(filename, S_IRUSR | S_IWUSR);
@@ -593,9 +611,8 @@ static gboolean dev_property_get_name(const GDBusPropertyTable *property,
 					DBusMessageIter *iter, void *data)
 {
 	struct btd_device *device = data;
-	const char *empty = "", *ptr;
+	const char *ptr = device->name;
 
-	ptr = device->name ?: empty;
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &ptr);
 
 	return TRUE;
@@ -2493,6 +2510,19 @@ void device_update_last_seen(struct btd_device *device, uint8_t bdaddr_type)
 		device->le_seen = time(NULL);
 }
 
+void device_set_conn_param(struct btd_device *dev, uint16_t min_interval,
+				uint16_t max_interval, uint16_t latency,
+				uint16_t timeout)
+{
+	dev->pending_conn_params = true;
+	dev->min_interval = min_interval;
+	dev->max_interval = max_interval;
+	dev->latency = latency;
+	dev->timeout = timeout;
+
+	store_device_info(dev);
+}
+
 /* It is possible that we have two device objects for the same device in
  * case it has first been discovered over BR/EDR and has a private
  * address when discovered over LE for the first time. In such a case we
@@ -3345,6 +3375,8 @@ static void attio_connected(gpointer data, gpointer user_data)
 	struct attio_data *attio = data;
 	GAttrib *attrib = user_data;
 
+	DBG("");
+
 	if (attio->cfunc)
 		attio->cfunc(attrib, attio->user_data);
 }
@@ -3352,6 +3384,8 @@ static void attio_connected(gpointer data, gpointer user_data)
 static void attio_disconnected(gpointer data, gpointer user_data)
 {
 	struct attio_data *attio = data;
+
+	DBG("");
 
 	if (attio->dcfunc)
 		attio->dcfunc(attio->user_data);
@@ -3363,6 +3397,8 @@ static gboolean attrib_disconnected_cb(GIOChannel *io, GIOCondition cond,
 	struct btd_device *device = user_data;
 	int sock, err = 0;
 	socklen_t len;
+
+	DBG("");
 
 	if (device->browse)
 		goto done;
@@ -3579,7 +3615,30 @@ static void primary_cb(uint8_t status, GSList *services, void *user_data)
 
 bool device_attach_attrib(struct btd_device *dev, GIOChannel *io)
 {
+	GError *gerr = NULL;
 	GAttrib *attrib;
+	BtIOSecLevel sec_level;
+
+	bt_io_get(io, &gerr, BT_IO_OPT_SEC_LEVEL, &sec_level,
+						BT_IO_OPT_INVALID);
+	if (gerr) {
+		error("bt_io_get: %s", gerr->message);
+		g_error_free(gerr);
+		return false;
+	}
+
+	if (sec_level == BT_IO_SEC_LOW && dev->le_state.paired) {
+		DBG("Elevating security level since LTK is available");
+
+		sec_level = BT_IO_SEC_MEDIUM;
+		bt_io_set(io, &gerr, BT_IO_OPT_SEC_LEVEL, sec_level,
+							BT_IO_OPT_INVALID);
+		if (gerr) {
+			error("bt_io_set: %s", gerr->message);
+			g_error_free(gerr);
+			return false;
+		}
+	}
 
 	attrib = g_attrib_new(io);
 	if (!attrib) {
@@ -3597,6 +3656,15 @@ bool device_attach_attrib(struct btd_device *dev, GIOChannel *io)
 	dev->attrib = attrib;
 	dev->cleanup_id = g_io_add_watch(io, G_IO_HUP,
 					attrib_disconnected_cb, dev);
+
+	/*
+	 * Remove the device from the connect_list and give the passive
+	 * scanning another chance to be restarted in case there are
+	 * other devices in the connect_list.
+	 */
+	adapter_connect_list_remove(dev->adapter, dev);
+
+	g_slist_foreach(dev->attios, attio_connected, dev->attrib);
 
 	return true;
 }
@@ -3678,24 +3746,6 @@ static void att_error_cb(const GError *gerr, gpointer user_data)
 	}
 }
 
-static void att_success_cb(gpointer user_data)
-{
-	struct att_callbacks *attcb = user_data;
-	struct btd_device *device = attcb->user_data;
-
-	if (device->attios == NULL)
-		return;
-
-	/*
-	 * Remove the device from the connect_list and give the passive
-	 * scanning another chance to be restarted in case there are
-	 * other devices in the connect_list.
-	 */
-	adapter_connect_list_remove(device->adapter, device);
-
-	g_slist_foreach(device->attios, attio_connected, device->attrib);
-}
-
 int device_connect_le(struct btd_device *dev)
 {
 	struct btd_adapter *adapter = dev->adapter;
@@ -3715,7 +3765,6 @@ int device_connect_le(struct btd_device *dev)
 
 	attcb = g_new0(struct att_callbacks, 1);
 	attcb->err = att_error_cb;
-	attcb->success = att_success_cb;
 	attcb->user_data = dev;
 
 	if (dev->le_state.paired)
@@ -4054,20 +4103,26 @@ static void device_set_auto_connect(struct btd_device *device, gboolean enable)
 
 	DBG("%s auto connect: %d", addr, enable);
 
+	if (device->auto_connect == enable)
+		return;
+
 	device->auto_connect = enable;
 
 	/* Disabling auto connect */
 	if (enable == FALSE) {
 		adapter_connect_list_remove(device->adapter, device);
+		adapter_auto_connect_remove(device->adapter, device);
 		return;
 	}
+
+	/* Enabling auto connect */
+	adapter_auto_connect_add(device->adapter, device);
 
 	if (device->attrib) {
 		DBG("Already connected");
 		return;
 	}
 
-	/* Enabling auto connect */
 	adapter_connect_list_add(device->adapter, device);
 }
 
@@ -4835,6 +4890,8 @@ void device_set_appearance(struct btd_device *device, uint16_t value)
 static gboolean notify_attios(gpointer user_data)
 {
 	struct btd_device *device = user_data;
+
+	DBG("");
 
 	if (device->attrib == NULL)
 		return FALSE;

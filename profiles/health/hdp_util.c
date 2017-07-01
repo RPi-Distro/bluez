@@ -425,11 +425,8 @@ static gboolean register_service_protocols(struct hdp_adapter *adapter,
 		goto end;
 	}
 
-	if (sdp_set_access_protos(sdp_record, access_proto_list) < 0) {
-		ret = FALSE;
-		goto end;
-	}
 	ret = TRUE;
+	sdp_set_access_protos(sdp_record, access_proto_list);
 
 end:
 	if (l2cap_list != NULL)
@@ -476,7 +473,7 @@ static gboolean register_service_additional_protocols(
 						struct hdp_adapter *adapter,
 						sdp_record_t *sdp_record)
 {
-	gboolean ret;
+	gboolean ret = TRUE;
 	uuid_t l2cap_uuid, mcap_d_uuid;
 	sdp_list_t *l2cap_list, *proto_list = NULL, *mcap_list = NULL;
 	sdp_list_t *access_proto_list = NULL;
@@ -527,10 +524,7 @@ static gboolean register_service_additional_protocols(
 		goto end;
 	}
 
-	if (sdp_set_add_access_protos(sdp_record, access_proto_list) < 0)
-		ret = FALSE;
-	else
-		ret = TRUE;
+	sdp_set_add_access_protos(sdp_record, access_proto_list);
 
 end:
 	if (l2cap_list != NULL)
@@ -604,6 +598,13 @@ fail:
 	return NULL;
 }
 
+static void free_hdp_list(void *list)
+{
+	sdp_list_t *hdp_list = list;
+
+	sdp_list_free(hdp_list, (sdp_free_func_t)sdp_data_free);
+}
+
 static gboolean register_features(struct hdp_application *app,
 						sdp_list_t **sup_features)
 {
@@ -626,14 +627,9 @@ static gboolean register_features(struct hdp_application *app,
 fail:
 	if (hdp_feature != NULL)
 		sdp_list_free(hdp_feature, (sdp_free_func_t)sdp_data_free);
+	if (*sup_features != NULL)
+		sdp_list_free(*sup_features, free_hdp_list);
 	return FALSE;
-}
-
-static void free_hdp_list(void *list)
-{
-	sdp_list_t *hdp_list = list;
-
-	sdp_list_free(hdp_list, (sdp_free_func_t)sdp_data_free);
 }
 
 static gboolean register_service_sup_features(GSList *app_list,

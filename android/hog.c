@@ -52,6 +52,9 @@
 
 #include "btio/btio.h"
 
+#include "android/scpp.h"
+#include "android/dis.h"
+#include "android/bas.h"
 #include "android/hog.h"
 
 #define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
@@ -89,12 +92,17 @@ struct bt_hog {
 	uint16_t		proto_mode_handle;
 	uint16_t		ctrlpt_handle;
 	uint8_t			flags;
+	struct bt_scpp		*scpp;
+	struct bt_dis		*dis;
+	struct bt_bas		*bas;
+	GSList			*instances;
 };
 
 struct report {
 	struct bt_hog		*hog;
 	uint8_t			id;
 	uint8_t			type;
+	uint16_t		ccc_handle;
 	guint			notifyid;
 	struct gatt_char	*decl;
 };
@@ -159,14 +167,27 @@ static void report_ccc_written_cb(guint8 status, const guint8 *pdu,
 	DBG("Report characteristic descriptor written: notifications enabled");
 }
 
-static void write_ccc(uint16_t handle, gpointer user_data)
+static void write_ccc(GAttrib *attrib, uint16_t handle, void *user_data)
+{
+	uint8_t value[2];
+
+	put_le16(GATT_CLIENT_CHARAC_CFG_NOTIF_BIT, value);
+
+	gatt_write_char(attrib, handle, value, sizeof(value),
+					report_ccc_written_cb, user_data);
+}
+
+static void ccc_read_cb(guint8 status, const guint8 *pdu, guint16 len,
+							gpointer user_data)
 {
 	struct report *report = user_data;
-	struct bt_hog *hog = report->hog;
-	uint8_t value[] = { 0x01, 0x00 };
 
-	gatt_write_char(hog->attrib, handle, value, sizeof(value),
-					report_ccc_written_cb, report);
+	if (status != 0) {
+		error("Error reading CCC value: %s", att_ecode2str(status));
+		return;
+	}
+
+	write_ccc(report->hog->attrib, report->ccc_handle, report);
 }
 
 static void report_reference_cb(guint8 status, const guint8 *pdu,
@@ -188,21 +209,55 @@ static void report_reference_cb(guint8 status, const guint8 *pdu,
 	report->id = pdu[1];
 	report->type = pdu[2];
 	DBG("Report ID: 0x%02x Report type: 0x%02x", pdu[1], pdu[2]);
+
+	/* Enable notifications only for Input Reports */
+	if (report->type == HOG_REPORT_TYPE_INPUT)
+		gatt_read_char(report->hog->attrib, report->ccc_handle,
+							ccc_read_cb, report);
 }
 
 static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data);
 
-
-static void discover_descriptor_cb(uint8_t status, GSList *descs,
-								void *user_data)
+static void discover_external_cb(uint8_t status, GSList *descs, void *user_data)
 {
-	struct report *report;
-	struct bt_hog *hog;
-	GAttrib *attrib = NULL;
+	struct bt_hog *hog = user_data;
 
 	if (status != 0) {
-		error("Discover all descriptors failed: %s",
+		error("Discover external descriptors failed: %s",
+							att_ecode2str(status));
+		return;
+	}
+
+	for ( ; descs; descs = descs->next) {
+		struct gatt_desc *desc = descs->data;
+
+		gatt_read_char(hog->attrib, desc->handle,
+					external_report_reference_cb, hog);
+	}
+}
+
+static void discover_external(GAttrib *attrib, uint16_t start, uint16_t end,
+							gpointer user_data)
+{
+	bt_uuid_t uuid;
+
+	if (start > end)
+		return;
+
+	bt_uuid16_create(&uuid, GATT_EXTERNAL_REPORT_REFERENCE);
+
+	gatt_discover_desc(attrib, start, end, NULL, discover_external_cb,
+								user_data);
+}
+
+static void discover_report_cb(uint8_t status, GSList *descs, void *user_data)
+{
+	struct report *report = user_data;
+	struct bt_hog *hog = report->hog;
+
+	if (status != 0) {
+		error("Discover report descriptors failed: %s",
 							att_ecode2str(status));
 		return;
 	}
@@ -212,34 +267,45 @@ static void discover_descriptor_cb(uint8_t status, GSList *descs,
 
 		switch (desc->uuid16) {
 		case GATT_CLIENT_CHARAC_CFG_UUID:
-			report = user_data;
-			attrib = report->hog->attrib;
-			write_ccc(desc->handle, report);
+			report->ccc_handle = desc->handle;
 			break;
 		case GATT_REPORT_REFERENCE:
-			report = user_data;
-			attrib = report->hog->attrib;
-			gatt_read_char(attrib, desc->handle,
+			gatt_read_char(hog->attrib, desc->handle,
 						report_reference_cb, report);
-			break;
-		case GATT_EXTERNAL_REPORT_REFERENCE:
-			hog = user_data;
-			attrib = hog->attrib;
-			gatt_read_char(attrib, desc->handle,
-					external_report_reference_cb, hog);
 			break;
 		}
 	}
 }
 
-static void discover_descriptor(GAttrib *attrib, uint16_t start, uint16_t end,
+static void discover_report(GAttrib *attrib, uint16_t start, uint16_t end,
 							gpointer user_data)
 {
 	if (start > end)
 		return;
 
-	gatt_discover_desc(attrib, start, end, NULL,
-					discover_descriptor_cb, user_data);
+	gatt_discover_desc(attrib, start, end, NULL, discover_report_cb,
+								user_data);
+}
+
+static void report_read_cb(guint8 status, const guint8 *pdu, guint16 len,
+							gpointer user_data)
+{
+	if (status != 0)
+		error("Error reading Report value: %s", att_ecode2str(status));
+}
+
+static struct report *report_new(struct bt_hog *hog, struct gatt_char *chr)
+{
+	struct report *report;
+
+	report = g_new0(struct report, 1);
+	report->hog = hog;
+	report->decl = g_memdup(chr, sizeof(*chr));
+	hog->reports = g_slist_append(hog->reports, report);
+
+	gatt_read_char(hog->attrib, chr->value_handle, report_read_cb, report);
+
+	return report;
 }
 
 static void external_service_char_cb(uint8_t status, GSList *chars,
@@ -266,13 +332,10 @@ static void external_service_char_cb(uint8_t status, GSList *chars,
 		DBG("0x%04x UUID: %s properties: %02x",
 				chr->handle, chr->uuid, chr->properties);
 
-		report = g_new0(struct report, 1);
-		report->hog = hog;
-		report->decl = g_memdup(chr, sizeof(*chr));
-		hog->reports = g_slist_append(hog->reports, report);
+		report = report_new(hog, chr);
 		start = chr->value_handle + 1;
 		end = (next ? next->handle - 1 : primary->range.end);
-		discover_descriptor(hog->attrib, start, end, report);
+		discover_report(hog->attrib, start, end, report);
 	}
 }
 
@@ -297,8 +360,13 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 	uuid16 = get_le16(&pdu[1]);
 	DBG("External report reference read, external report characteristic "
 						"UUID: 0x%04x", uuid16);
+
+	/* Do not discover if is not a Report */
+	if (uuid16 != HOG_REPORT_UUID)
+		return;
+
 	bt_uuid16_create(&uuid, uuid16);
-	gatt_discover_char(hog->attrib, 0x00, 0xff, &uuid,
+	gatt_discover_char(hog->attrib, 0x0001, 0xffff, &uuid,
 					external_service_char_cb, hog);
 }
 
@@ -604,16 +672,12 @@ static void char_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 		end = (next ? next->handle - 1 : primary->range.end);
 
 		if (bt_uuid_cmp(&uuid, &report_uuid) == 0) {
-			report = g_new0(struct report, 1);
-			report->hog = hog;
-			report->decl = g_memdup(chr, sizeof(*chr));
-			hog->reports = g_slist_append(hog->reports,
-								report);
-			discover_descriptor(hog->attrib, start, end, report);
+			report = report_new(hog, chr);
+			discover_report(hog->attrib, start, end, report);
 		} else if (bt_uuid_cmp(&uuid, &report_map_uuid) == 0) {
 			gatt_read_char(hog->attrib, chr->value_handle,
 						report_map_read_cb, hog);
-			discover_descriptor(hog->attrib, start, end, hog);
+			discover_external(hog->attrib, start, end, hog);
 		} else if (bt_uuid_cmp(&uuid, &info_uuid) == 0)
 			info_handle = chr->value_handle;
 		else if (bt_uuid_cmp(&uuid, &proto_mode_uuid) == 0)
@@ -629,27 +693,30 @@ static void char_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 	}
 
 	if (info_handle)
-		gatt_read_char(hog->attrib, info_handle, info_read_cb,
-									hog);
+		gatt_read_char(hog->attrib, info_handle, info_read_cb, hog);
 }
 
 static void report_free(void *data)
 {
 	struct report *report = data;
-	struct bt_hog *hog = report->hog;
-
-	if (hog->attrib)
-		g_attrib_unregister(hog->attrib, report->notifyid);
 
 	g_free(report->decl);
 	g_free(report);
 }
 
-static void hog_free(struct bt_hog *hog)
+static void hog_free(void *data)
 {
+	struct bt_hog *hog = data;
+
+	bt_hog_detach(hog);
+
+	g_slist_free_full(hog->instances, hog_free);
+
+	bt_scpp_unref(hog->scpp);
+	bt_dis_unref(hog->dis);
+	bt_bas_unref(hog->bas);
 	bt_uhid_unref(hog->uhid);
 	g_slist_free_full(hog->reports, report_free);
-	g_attrib_unref(hog->attrib);
 	g_free(hog->name);
 	g_free(hog->primary);
 	g_free(hog);
@@ -750,6 +817,75 @@ static void find_included_cb(uint8_t status, GSList *services, void *user_data)
 						char_discovered_cb, hog);
 }
 
+static void hog_attach_scpp(struct bt_hog *hog, struct gatt_primary *primary)
+{
+	if (hog->scpp) {
+		bt_scpp_attach(hog->scpp, hog->attrib);
+		return;
+	}
+
+	hog->scpp = bt_scpp_new(primary);
+	if (hog->scpp)
+		bt_scpp_attach(hog->scpp, hog->attrib);
+}
+
+static void dis_notify(uint8_t source, uint16_t vendor, uint16_t product,
+					uint16_t version, void *user_data)
+{
+	struct bt_hog *hog = user_data;
+
+	hog->vendor = vendor;
+	hog->product = product;
+	hog->version = version;
+}
+
+static void hog_attach_dis(struct bt_hog *hog, struct gatt_primary *primary)
+{
+	if (hog->dis) {
+		bt_dis_attach(hog->dis, hog->attrib);
+		return;
+	}
+
+	hog->dis = bt_dis_new(primary);
+	if (hog->dis) {
+		bt_dis_set_notification(hog->dis, dis_notify, hog);
+		bt_dis_attach(hog->dis, hog->attrib);
+	}
+}
+
+static void hog_attach_bas(struct bt_hog *hog, struct gatt_primary *primary)
+{
+	if (hog->bas) {
+		bt_bas_attach(hog->bas, hog->attrib);
+		return;
+	}
+
+	hog->bas = bt_bas_new(primary);
+	if (hog->bas)
+		bt_bas_attach(hog->bas, hog->attrib);
+}
+
+static void hog_attach_hog(struct bt_hog *hog, struct gatt_primary *primary)
+{
+	struct bt_hog *instance;
+
+	if (!hog->primary) {
+		hog->primary = g_memdup(primary, sizeof(*primary));
+		gatt_discover_char(hog->attrib, primary->range.start,
+						primary->range.end, NULL,
+						char_discovered_cb, hog);
+		return;
+	}
+
+	instance = bt_hog_new(hog->name, hog->vendor, hog->product,
+							hog->version, primary);
+	if (!instance)
+		return;
+
+	bt_hog_attach(instance, hog->attrib);
+	hog->instances = g_slist_append(hog->instances, instance);
+}
+
 static void primary_cb(uint8_t status, GSList *services, void *user_data)
 {
 	struct bt_hog *hog = user_data;
@@ -772,26 +908,35 @@ static void primary_cb(uint8_t status, GSList *services, void *user_data)
 	for (l = services; l; l = l->next) {
 		primary = l->data;
 
-		if (strcmp(primary->uuid, HOG_UUID) == 0)
-			break;
-	}
-
-	if (!l) {
-		for (l = services; l; l = l->next) {
-			primary = l->data;
-
-			gatt_find_included(hog->attrib, primary->range.start,
-					primary->range.end, find_included_cb,
-					hog);
+		if (strcmp(primary->uuid, SCAN_PARAMETERS_UUID) == 0) {
+			hog_attach_scpp(hog, primary);
+			continue;
 		}
-		return;
+
+		if (strcmp(primary->uuid, DEVICE_INFORMATION_UUID) == 0) {
+			hog_attach_dis(hog, primary);
+			continue;
+		}
+
+		if (strcmp(primary->uuid, BATTERY_UUID) == 0) {
+			hog_attach_bas(hog, primary);
+			continue;
+		}
+
+		if (strcmp(primary->uuid, HOG_UUID) == 0)
+			hog_attach_hog(hog, primary);
 	}
 
-	hog->primary = g_memdup(primary, sizeof(*primary));
+	if (hog->primary)
+		return;
 
-	gatt_discover_char(hog->attrib, hog->primary->range.start,
-						hog->primary->range.end, NULL,
-						char_discovered_cb, hog);
+	for (l = services; l; l = l->next) {
+		primary = l->data;
+
+		gatt_find_included(hog->attrib, primary->range.start,
+				primary->range.end, find_included_cb,
+				hog);
+	}
 }
 
 bool bt_hog_attach(struct bt_hog *hog, void *gatt)
@@ -807,6 +952,21 @@ bool bt_hog_attach(struct bt_hog *hog, void *gatt)
 	if (!primary) {
 		gatt_discover_primary(hog->attrib, NULL, primary_cb, hog);
 		return true;
+	}
+
+	if (hog->scpp)
+		bt_scpp_attach(hog->scpp, gatt);
+
+	if (hog->dis)
+		bt_dis_attach(hog->dis, gatt);
+
+	if (hog->bas)
+		bt_bas_attach(hog->bas, gatt);
+
+	for (l = hog->instances; l; l = l->next) {
+		struct bt_hog *instance = l->data;
+
+		bt_hog_attach(instance, gatt);
 	}
 
 	if (hog->reports == NULL) {
@@ -835,11 +995,29 @@ void bt_hog_detach(struct bt_hog *hog)
 	if (!hog->attrib)
 		return;
 
+	for (l = hog->instances; l; l = l->next) {
+		struct bt_hog *instance = l->data;
+
+		bt_hog_detach(instance);
+	}
+
 	for (l = hog->reports; l; l = l->next) {
 		struct report *r = l->data;
 
-		g_attrib_unregister(hog->attrib, r->notifyid);
+		if (r->notifyid > 0) {
+			g_attrib_unregister(hog->attrib, r->notifyid);
+			r->notifyid = 0;
+		}
 	}
+
+	if (hog->scpp)
+		bt_scpp_detach(hog->scpp);
+
+	if (hog->dis)
+		bt_dis_detach(hog->dis);
+
+	if (hog->bas)
+		bt_bas_detach(hog->bas);
 
 	g_attrib_unref(hog->attrib);
 	hog->attrib = NULL;
@@ -857,6 +1035,43 @@ int bt_hog_set_control_point(struct bt_hog *hog, bool suspend)
 
 	gatt_write_cmd(hog->attrib, hog->ctrlpt_handle, &value,
 					sizeof(value), NULL, NULL);
+
+	return 0;
+}
+
+int bt_hog_send_report(struct bt_hog *hog, void *data, size_t size, int type)
+{
+	struct report *report;
+	GSList *l;
+
+	if (!hog)
+		return -EINVAL;
+
+	if (!hog->attrib)
+		return -ENOTCONN;
+
+	l = g_slist_find_custom(hog->reports, GUINT_TO_POINTER(type),
+							report_type_cmp);
+	if (!l)
+		return -ENOTSUP;
+
+	report = l->data;
+
+	DBG("hog: Write report, handle 0x%X", report->decl->value_handle);
+
+	if (report->decl->properties & GATT_CHR_PROP_WRITE)
+		gatt_write_char(hog->attrib, report->decl->value_handle,
+				data, size, output_written_cb, hog);
+
+	if (report->decl->properties & GATT_CHR_PROP_WRITE_WITHOUT_RESP)
+		gatt_write_cmd(hog->attrib, report->decl->value_handle,
+						data, size, NULL, NULL);
+
+	for (l = hog->instances; l; l = l->next) {
+		struct bt_hog *instance = l->data;
+
+		bt_hog_send_report(instance, data, size, type);
+	}
 
 	return 0;
 }

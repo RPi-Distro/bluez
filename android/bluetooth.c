@@ -127,6 +127,9 @@ struct device {
 	bdaddr_t bdaddr;
 	uint8_t bdaddr_type;
 
+	bdaddr_t rpa;
+	uint8_t rpa_type;
+
 	bool le;
 	bool bredr;
 
@@ -217,6 +220,19 @@ static bt_le_discovery_stopped gatt_discovery_stopped_cb = NULL;
 static GSList *browse_reqs;
 
 static struct ipc *hal_ipc = NULL;
+
+static void get_device_android_addr(struct device *dev, uint8_t *addr)
+{
+	/*
+	 * If RPA is set it means that IRK was received and ID address is being
+	 * used. Android Framework is still using old RPA and it needs to be
+	 * used in notifications.
+	 */
+	if (bacmp(&dev->rpa, BDADDR_ANY))
+		bdaddr2android(&dev->rpa, addr);
+	else
+		bdaddr2android(&dev->bdaddr, addr);
+}
 
 static void mgmt_debug(const char *str, void *user_data)
 {
@@ -377,6 +393,10 @@ static int device_match(gconstpointer a, gconstpointer b)
 	const struct device *dev = a;
 	const bdaddr_t *bdaddr = b;
 
+	/* Android is using RPA even if IRK was received and ID addr resolved */
+	if (!bacmp(&dev->rpa, bdaddr))
+		return 0;
+
 	return bacmp(&dev->bdaddr, bdaddr);
 }
 
@@ -475,6 +495,24 @@ static struct device *get_device(const bdaddr_t *bdaddr, uint8_t type)
 	cache_device(dev);
 
 	return dev;
+}
+
+static struct device *find_device_android(const uint8_t *addr)
+{
+	bdaddr_t bdaddr;
+
+	android2bdaddr(addr, &bdaddr);
+
+	return find_device(&bdaddr);
+}
+
+static struct device *get_device_android(const uint8_t *addr)
+{
+	bdaddr_t bdaddr;
+
+	android2bdaddr(addr, &bdaddr);
+
+	return get_device(&bdaddr, BDADDR_BREDR);
 }
 
 static  void send_adapter_property(uint8_t type, uint16_t len, const void *val)
@@ -666,7 +704,7 @@ void bt_store_gatt_ccc(const bdaddr_t *dst, uint16_t value)
 		return;
 	}
 
-	ba2str(dst, addr);
+	ba2str(&dev->bdaddr, addr);
 
 	DBG("%s Gatt CCC %d", addr, value);
 
@@ -727,14 +765,14 @@ static void store_link_key(const bdaddr_t *dst, const uint8_t *key,
 	g_key_file_free(key_file);
 }
 
-static void send_bond_state_change(const bdaddr_t *addr, uint8_t status,
+static void send_bond_state_change(struct device *dev, uint8_t status,
 								uint8_t state)
 {
 	struct hal_ev_bond_state_changed ev;
 
 	ev.status = status;
 	ev.state = state;
-	bdaddr2android(addr, ev.bdaddr);
+	get_device_android_addr(dev, ev.bdaddr);
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
 				HAL_EV_BOND_STATE_CHANGED, sizeof(ev), &ev);
@@ -755,7 +793,7 @@ static void update_bredr_state(struct device *dev, bool pairing, bool paired,
 	if (!pairing && !paired && dev->pairing && dev->bredr_paired)
 		goto done;
 
-	if (paired && !dev->le_paired) {
+	if (paired && !dev->le_paired && !dev->bredr_paired) {
 		cached_devices = g_slist_remove(cached_devices, dev);
 		bonded_devices = g_slist_prepend(bonded_devices, dev);
 		remove_device_info(dev, CACHE_FILE);
@@ -767,7 +805,11 @@ static void update_bredr_state(struct device *dev, bool pairing, bool paired,
 	}
 
 	dev->bredr_paired = paired;
-	dev->bredr_bonded = bonded;
+
+	if (dev->bredr_paired)
+		dev->bredr_bonded = dev->bredr_bonded || bonded;
+	else
+		dev->bredr_bonded = false;
 
 done:
 	dev->pairing = pairing;
@@ -788,7 +830,7 @@ static void update_le_state(struct device *dev, bool pairing, bool paired,
 	if (!pairing && !paired && dev->pairing && dev->le_paired)
 		goto done;
 
-	if (paired && !dev->bredr_paired) {
+	if (paired && !dev->bredr_paired && !dev->le_paired) {
 		cached_devices = g_slist_remove(cached_devices, dev);
 		bonded_devices = g_slist_prepend(bonded_devices, dev);
 		remove_device_info(dev, CACHE_FILE);
@@ -806,7 +848,11 @@ static void update_le_state(struct device *dev, bool pairing, bool paired,
 	}
 
 	dev->le_paired = paired;
-	dev->le_bonded = bonded;
+
+	if (dev->le_paired)
+		dev->le_bonded = dev->le_bonded || bonded;
+	else
+		dev->le_bonded = false;
 
 done:
 	dev->pairing = pairing;
@@ -843,7 +889,7 @@ static void update_device_state(struct device *dev, uint8_t addr_type,
 	new_bond = device_bond_state(dev);
 
 	if (old_bond != new_bond)
-		send_bond_state_change(&dev->bdaddr, status, new_bond);
+		send_bond_state_change(dev, status, new_bond);
 }
 
 static void send_device_property(struct device *dev, uint8_t type,
@@ -853,7 +899,7 @@ static void send_device_property(struct device *dev, uint8_t type,
 	struct hal_ev_remote_device_props *ev = (void *) buf;
 
 	ev->status = HAL_STATUS_SUCCESS;
-	bdaddr2android(&dev->bdaddr, ev->bdaddr);
+	get_device_android_addr(dev, ev->bdaddr);
 	ev->num_props = 1;
 	ev->props[0].type = type;
 	ev->props[0].len = len;
@@ -1100,7 +1146,7 @@ static void pin_code_request_callback(uint16_t index, uint16_t length,
 
 	/* Name already sent in remote device prop */
 	memset(&hal_ev, 0, sizeof(hal_ev));
-	bdaddr2android(&ev->addr.bdaddr, hal_ev.bdaddr);
+	get_device_android_addr(dev, hal_ev.bdaddr);
 	hal_ev.class_of_dev = dev->class;
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH, HAL_EV_PIN_REQUEST,
@@ -1114,7 +1160,7 @@ static void send_ssp_request(struct device *dev, uint8_t variant,
 
 	memset(&ev, 0, sizeof(ev));
 
-	bdaddr2android(&dev->bdaddr, ev.bdaddr);
+	get_device_android_addr(dev, ev.bdaddr);
 	memcpy(ev.name, dev->name, strlen(dev->name));
 	ev.class_of_dev = dev->class;
 
@@ -1404,6 +1450,20 @@ bool bt_is_device_le(const bdaddr_t *addr)
 	return dev->le;
 }
 
+const bdaddr_t *bt_get_id_addr(const bdaddr_t *addr, uint8_t *type)
+{
+	struct device *dev;
+
+	dev = find_device(addr);
+	if (!dev)
+		return NULL;
+
+	if (type)
+		*type = dev->bdaddr_type;
+
+	return &dev->bdaddr;
+}
+
 const char *bt_get_adapter_name(void)
 {
 	return adapter.name;
@@ -1441,7 +1501,7 @@ static void update_new_device(struct device *dev, int8_t rssi,
 {
 	uint8_t buf[IPC_MTU];
 	struct hal_ev_device_found *ev = (void *) buf;
-	bdaddr_t android_bdaddr;
+	uint8_t android_bdaddr[6];
 	uint8_t android_type;
 	int size;
 
@@ -1452,10 +1512,9 @@ static void update_new_device(struct device *dev, int8_t rssi,
 
 	size = sizeof(*ev);
 
-	bdaddr2android(&dev->bdaddr, &android_bdaddr);
+	get_device_android_addr(dev, android_bdaddr);
 	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_ADDR,
-						sizeof(android_bdaddr),
-						&android_bdaddr);
+				sizeof(android_bdaddr), android_bdaddr);
 	ev->num_props++;
 
 	android_type = get_device_android_type(dev);
@@ -1518,7 +1577,7 @@ static void update_device(struct device *dev, int8_t rssi,
 	size = sizeof(*ev);
 
 	ev->status = HAL_STATUS_SUCCESS;
-	bdaddr2android(&dev->bdaddr, ev->bdaddr);
+	get_device_android_addr(dev, ev->bdaddr);
 
 	old_type = get_device_android_type(dev);
 
@@ -1620,12 +1679,27 @@ static void update_found_device(const bdaddr_t *bdaddr, uint8_t bdaddr_type,
 	/* Notify Gatt if its registered for LE events */
 	if (bdaddr_type != BDADDR_BREDR && gatt_device_found_cb) {
 		bool discoverable;
+		bdaddr_t *addr;
+		uint8_t addr_type;
 
 		discoverable = eir.flags & (EIR_LIM_DISC | EIR_GEN_DISC);
 
-		gatt_device_found_cb(bdaddr, bdaddr_type, rssi, data_len, data,
-								discoverable,
-								dev->le_bonded);
+		/*
+		 * If RPA is set it means that IRK was received and ID address
+		 * is being used. Android Framework is still using old RPA and
+		 * it needs to be used also in GATT notifications. Also GATT
+		 * HAL implementation is using RPA for devices matching.
+		 */
+		if (bacmp(&dev->rpa, BDADDR_ANY)) {
+			addr = &dev->rpa;
+			addr_type = dev->rpa_type;
+		} else {
+			addr = &dev->bdaddr;
+			addr_type = dev->bdaddr_type;
+		}
+
+		gatt_device_found_cb(addr, addr_type, rssi, data_len, data,
+						discoverable, dev->le_bonded);
 	}
 
 	if (!dev->bredr_paired && !dev->le_paired)
@@ -1697,6 +1771,7 @@ static void mgmt_device_connected_event(uint16_t index, uint16_t length,
 {
 	const struct mgmt_ev_device_connected *ev = param;
 	struct hal_ev_acl_state_changed hal_ev;
+	struct device *dev;
 
 	if (length < sizeof(*ev)) {
 		error("Too short device connected event (%u bytes)", length);
@@ -1708,7 +1783,12 @@ static void mgmt_device_connected_event(uint16_t index, uint16_t length,
 
 	hal_ev.status = HAL_STATUS_SUCCESS;
 	hal_ev.state = HAL_ACL_STATE_CONNECTED;
-	bdaddr2android(&ev->addr.bdaddr, hal_ev.bdaddr);
+
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
+
+	get_device_android_addr(dev, hal_ev.bdaddr);
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
 			HAL_EV_ACL_STATE_CHANGED, sizeof(hal_ev), &hal_ev);
@@ -1720,15 +1800,20 @@ static void mgmt_device_disconnected_event(uint16_t index, uint16_t length,
 {
 	const struct mgmt_ev_device_disconnected *ev = param;
 	struct hal_ev_acl_state_changed hal_ev;
+	struct device *dev;
 
 	if (length < sizeof(*ev)) {
 		error("Too short device disconnected event (%u bytes)", length);
 		return;
 	}
 
+	dev = find_device(&ev->addr.bdaddr);
+	if (!dev)
+		return;
+
 	hal_ev.status = HAL_STATUS_SUCCESS;
 	hal_ev.state = HAL_ACL_STATE_DISCONNECTED;
-	bdaddr2android(&ev->addr.bdaddr, hal_ev.bdaddr);
+	get_device_android_addr(dev, hal_ev.bdaddr);
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_BLUETOOTH,
 			HAL_EV_ACL_STATE_CHANGED, sizeof(hal_ev), &hal_ev);
@@ -2045,10 +2130,42 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 
 	DBG("new IRK for %s, RPA %s", dst, rpa);
 
-	/* TODO: handle new Identity to RPA mapping */
-	dev = find_device(&addr->bdaddr);
-	if (!dev)
-		return;
+	if (!bacmp(&ev->rpa, BDADDR_ANY)) {
+		dev = find_device(&addr->bdaddr);
+		if (!dev)
+			return;
+	} else {
+		dev = find_device(&addr->bdaddr);
+
+		if (dev && dev->bredr_paired) {
+			bacpy(&dev->rpa, &addr->bdaddr);
+			dev->rpa_type = addr->type;
+
+			/* TODO merge properties ie. UUIDs */
+		} else {
+			dev = find_device(&ev->rpa);
+			if (!dev)
+				return;
+
+			/* don't leave garbage in cache file */
+			remove_device_info(dev, CACHE_FILE);
+
+			/*
+			 * RPA resolution is transparent for Android Framework
+			 * ie. device is still access by RPA so it need to be
+			 * keep. After bluetoothd restart device is advertised
+			 * to Android with IDA and RPA is not set.
+			 */
+			bacpy(&dev->rpa, &dev->bdaddr);
+			dev->rpa_type = dev->bdaddr_type;
+
+			bacpy(&dev->bdaddr, &addr->bdaddr);
+			dev->bdaddr_type = addr->type;
+		}
+	}
+
+	update_device_state(dev, ev->key.addr.type, HAL_STATUS_SUCCESS, false,
+							true, !!ev->store_hint);
 
 	if (ev->store_hint)
 		store_irk(dev, ev->key.val);
@@ -2169,6 +2286,15 @@ static void load_link_keys(GSList *keys, bt_bluetooth_ready cb)
 	}
 }
 
+static void load_ltk_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	if (status == MGMT_STATUS_SUCCESS)
+		return;
+
+	info("Failed to load LTKs: %s (0x%02x)", mgmt_errstr(status), status);
+}
+
 static void load_ltks(GSList *ltks)
 {
 	struct mgmt_cp_load_long_term_keys *cp;
@@ -2195,10 +2321,19 @@ static void load_ltks(GSList *ltks)
 		memcpy(ltk, ltks->data, sizeof(*ltk));
 
 	if (mgmt_send(mgmt_if, MGMT_OP_LOAD_LONG_TERM_KEYS, adapter.index,
-					cp_size, cp, NULL, NULL, NULL) == 0)
+			cp_size, cp, load_ltk_complete, NULL, NULL) == 0)
 		error("Failed to load LTKs");
 
 	g_free(cp);
+}
+
+static void load_irk_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	if (status == MGMT_STATUS_SUCCESS)
+		return;
+
+	info("Failed to load IRKs: %s (0x%02x)", mgmt_errstr(status), status);
 }
 
 static void load_irks(GSList *irks)
@@ -2222,7 +2357,7 @@ static void load_irks(GSList *irks)
 		memcpy(irk, irks->data, sizeof(*irk));
 
 	if (mgmt_send(mgmt_if, MGMT_OP_LOAD_IRKS, adapter.index, cp_size, cp,
-							NULL, NULL, NULL) == 0)
+					load_irk_complete, NULL, NULL) == 0)
 		error("Failed to load IRKs");
 
 	g_free(cp);
@@ -3327,7 +3462,7 @@ static uint8_t get_adapter_bonded_devices(void)
 	for (l = bonded_devices; l; l = g_slist_next(l)) {
 		struct device *dev = l->data;
 
-		bdaddr2android(&dev->bdaddr, buf + (i * sizeof(bdaddr_t)));
+		get_device_android_addr(dev, buf + (i * sizeof(bdaddr_t)));
 		i++;
 	}
 
@@ -3443,7 +3578,7 @@ static void get_adapter_properties(void)
 	for (i = 0, l = bonded_devices; l; l = g_slist_next(l), i++) {
 		struct device *dev = l->data;
 
-		bdaddr2android(&dev->bdaddr, bonded + (i * sizeof(bdaddr_t)));
+		get_device_android_addr(dev, bonded + (i * sizeof(bdaddr_t)));
 	}
 
 	size += fill_hal_prop(buf + size, HAL_PROP_ADAPTER_BONDED_DEVICES,
@@ -3865,13 +4000,11 @@ static void handle_create_bond_cmd(const void *buf, uint16_t len)
 	uint8_t status;
 	struct mgmt_cp_pair_device cp;
 
+	dev = get_device_android(cmd->bdaddr);
+
 	cp.io_cap = DEFAULT_IO_CAPABILITY;
-	android2bdaddr(cmd->bdaddr, &cp.addr.bdaddr);
-
-	/* type is used only as fallback when device is not in cache */
-	dev = get_device(&cp.addr.bdaddr, BDADDR_BREDR);
-
 	cp.addr.type = select_device_bearer(dev);
+	bacpy(&cp.addr.bdaddr, &dev->bdaddr);
 
 	if (device_is_paired(dev, cp.addr.type)) {
 		status = HAL_STATUS_FAILED;
@@ -3901,15 +4034,14 @@ static void handle_cancel_bond_cmd(const void *buf, uint16_t len)
 	struct device *dev;
 	uint8_t status;
 
-	android2bdaddr(cmd->bdaddr, &cp.bdaddr);
-
-	dev = find_device(&cp.bdaddr);
+	dev = find_device_android(cmd->bdaddr);
 	if (!dev) {
 		status = HAL_STATUS_FAILED;
 		goto failed;
 	}
 
 	cp.type = select_device_bearer(dev);
+	bacpy(&cp.bdaddr, &dev->bdaddr);
 
 	if (mgmt_reply(mgmt_if, MGMT_OP_CANCEL_PAIR_DEVICE,
 					adapter.index, sizeof(cp), &cp,
@@ -3951,14 +4083,14 @@ static void handle_remove_bond_cmd(const void *buf, uint16_t len)
 	struct device *dev;
 	uint8_t status;
 
-	cp.disconnect = 1;
-	android2bdaddr(cmd->bdaddr, &cp.addr.bdaddr);
-
-	dev = find_device(&cp.addr.bdaddr);
+	dev = find_device_android(cmd->bdaddr);
 	if (!dev) {
 		status = HAL_STATUS_FAILED;
 		goto failed;
 	}
+
+	cp.disconnect = 1;
+	bacpy(&cp.addr.bdaddr, &dev->bdaddr);
 
 	if (dev->le_paired) {
 		cp.addr.type = dev->bdaddr_type;
@@ -4041,7 +4173,8 @@ failed:
 									status);
 }
 
-static uint8_t user_confirm_reply(const bdaddr_t *bdaddr, bool accept)
+static uint8_t user_confirm_reply(const bdaddr_t *bdaddr, uint8_t type,
+								bool accept)
 {
 	struct mgmt_addr_info cp;
 	uint16_t opcode;
@@ -4052,7 +4185,7 @@ static uint8_t user_confirm_reply(const bdaddr_t *bdaddr, bool accept)
 		opcode = MGMT_OP_USER_CONFIRM_NEG_REPLY;
 
 	bacpy(&cp.bdaddr, bdaddr);
-	cp.type = BDADDR_BREDR;
+	cp.type = type;
 
 	if (mgmt_reply(mgmt_if, opcode, adapter.index, sizeof(cp), &cp,
 							NULL, NULL, NULL) > 0)
@@ -4061,8 +4194,8 @@ static uint8_t user_confirm_reply(const bdaddr_t *bdaddr, bool accept)
 	return HAL_STATUS_FAILED;
 }
 
-static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, bool accept,
-							uint32_t passkey)
+static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, uint8_t type,
+						bool accept, uint32_t passkey)
 {
 	unsigned int id;
 
@@ -4071,7 +4204,7 @@ static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, bool accept,
 
 		memset(&cp, 0, sizeof(cp));
 		bacpy(&cp.addr.bdaddr, bdaddr);
-		cp.addr.type = BDADDR_BREDR;
+		cp.addr.type = type;
 		cp.passkey = htobl(passkey);
 
 		id = mgmt_reply(mgmt_if, MGMT_OP_USER_PASSKEY_REPLY,
@@ -4082,7 +4215,7 @@ static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, bool accept,
 
 		memset(&cp, 0, sizeof(cp));
 		bacpy(&cp.addr.bdaddr, bdaddr);
-		cp.addr.type = BDADDR_BREDR;
+		cp.addr.type = type;
 
 		id = mgmt_reply(mgmt_if, MGMT_OP_USER_PASSKEY_NEG_REPLY,
 						adapter.index, sizeof(cp), &cp,
@@ -4098,25 +4231,29 @@ static uint8_t user_passkey_reply(const bdaddr_t *bdaddr, bool accept,
 static void handle_ssp_reply_cmd(const void *buf, uint16_t len)
 {
 	const struct hal_cmd_ssp_reply *cmd = buf;
-	bdaddr_t bdaddr;
+	struct device *dev;
 	uint8_t status;
 	char addr[18];
 
 	/* TODO should parameters sanity be verified here? */
 
-	android2bdaddr(cmd->bdaddr, &bdaddr);
-	ba2str(&bdaddr, addr);
+	dev = find_device_android(cmd->bdaddr);
+	if (!dev)
+		return;
+
+	ba2str(&dev->bdaddr, addr);
 
 	DBG("%s variant %u accept %u", addr, cmd->ssp_variant, cmd->accept);
 
 	switch (cmd->ssp_variant) {
 	case HAL_SSP_VARIANT_CONFIRM:
 	case HAL_SSP_VARIANT_CONSENT:
-		status = user_confirm_reply(&bdaddr, cmd->accept);
+		status = user_confirm_reply(&dev->bdaddr, dev->bdaddr_type,
+								cmd->accept);
 		break;
 	case HAL_SSP_VARIANT_ENTRY:
-		status = user_passkey_reply(&bdaddr, cmd->accept,
-								cmd->passkey);
+		status = user_passkey_reply(&dev->bdaddr, dev->bdaddr_type,
+						cmd->accept, cmd->passkey);
 		break;
 	case HAL_SSP_VARIANT_NOTIF:
 		status = HAL_STATUS_SUCCESS;
@@ -4235,7 +4372,7 @@ static void get_remote_device_props(struct device *dev)
 	size = sizeof(*ev);
 
 	ev->status = HAL_STATUS_SUCCESS;
-	bdaddr2android(&dev->bdaddr, ev->bdaddr);
+	get_device_android_addr(dev, ev->bdaddr);
 
 	android_type = get_device_android_type(dev);
 	size += fill_hal_prop(buf + size, HAL_PROP_DEVICE_TYPE,
@@ -4355,11 +4492,8 @@ static void handle_get_remote_device_props_cmd(const void *buf, uint16_t len)
 	const struct hal_cmd_get_remote_device_props *cmd = buf;
 	struct device *dev;
 	uint8_t status;
-	bdaddr_t addr;
 
-	android2bdaddr(cmd->bdaddr, &addr);
-
-	dev = find_device(&addr);
+	dev = find_device_android(cmd->bdaddr);
 	if (!dev) {
 		status = HAL_STATUS_INVALID;
 		goto failed;
@@ -4379,11 +4513,8 @@ static void handle_get_remote_device_prop_cmd(const void *buf, uint16_t len)
 	const struct hal_cmd_get_remote_device_prop *cmd = buf;
 	struct device *dev;
 	uint8_t status;
-	bdaddr_t addr;
 
-	android2bdaddr(cmd->bdaddr, &addr);
-
-	dev = find_device(&addr);
+	dev = find_device_android(cmd->bdaddr);
 	if (!dev) {
 		status = HAL_STATUS_INVALID;
 		goto failed;
@@ -4461,7 +4592,6 @@ static void handle_set_remote_device_prop_cmd(const void *buf, uint16_t len)
 	const struct hal_cmd_set_remote_device_prop *cmd = buf;
 	struct device *dev;
 	uint8_t status;
-	bdaddr_t addr;
 
 	if (len != sizeof(*cmd) + cmd->len) {
 		error("Invalid set remote device prop cmd (0x%x), terminating",
@@ -4470,9 +4600,7 @@ static void handle_set_remote_device_prop_cmd(const void *buf, uint16_t len)
 		return;
 	}
 
-	android2bdaddr(cmd->bdaddr, &addr);
-
-	dev = find_device(&addr);
+	dev = find_device_android(cmd->bdaddr);
 	if (!dev) {
 		status = HAL_STATUS_INVALID;
 		goto failed;

@@ -84,6 +84,8 @@
 
 static DBusConnection *dbus_conn = NULL;
 
+static bool kernel_bg_scan = false;
+
 static GList *adapter_list = NULL;
 static unsigned int adapter_remaining = 0;
 static bool powering_down = false;
@@ -122,6 +124,15 @@ struct irk_info {
 	bdaddr_t bdaddr;
 	uint8_t bdaddr_type;
 	uint8_t val[16];
+};
+
+struct conn_param {
+	bdaddr_t bdaddr;
+	uint8_t  bdaddr_type;
+	uint16_t min_interval;
+	uint16_t max_interval;
+	uint16_t latency;
+	uint16_t timeout;
 };
 
 struct watch_client {
@@ -1186,6 +1197,14 @@ static void trigger_passive_scanning(struct btd_adapter *adapter)
 	}
 
 	/*
+	 * When the kernel background scanning is available, there is
+	 * no need to start any discovery. The kernel will keep scanning
+	 * as long as devices are in its auto-connection list.
+	 */
+	if (kernel_bg_scan)
+		return;
+
+	/*
 	 * If any client is running a discovery right now, then do not
 	 * even try to start passive scanning.
 	 *
@@ -1228,7 +1247,20 @@ static void stop_passive_scanning_complete(uint8_t status, uint16_t length,
 	dev = adapter->connect_le;
 	adapter->connect_le = NULL;
 
-	if (status != MGMT_STATUS_SUCCESS) {
+	/*
+	 * When the kernel background scanning is available, there is
+	 * no need to stop any discovery. The kernel will handle the
+	 * auto-connection by itself.
+	 */
+	if (kernel_bg_scan)
+		return;
+
+	/*
+	 * MGMT_STATUS_REJECTED may be returned from kernel because the passive
+	 * scan timer had expired in kernel and passive scan was disabled just
+	 * around the time we called stop_passive_scanning().
+	 */
+	if (status != MGMT_STATUS_SUCCESS && status != MGMT_STATUS_REJECTED) {
 		error("Stopping passive scanning failed: %s",
 							mgmt_errstr(status));
 		return;
@@ -1500,7 +1532,8 @@ static void discovering_callback(uint16_t index, uint16_t length,
 	 * passive scanning attempt.
 	 */
 	if (!adapter->discovery_list) {
-		trigger_passive_scanning(adapter);
+		if (!adapter->connect_le)
+			trigger_passive_scanning(adapter);
 		return;
 	}
 
@@ -2406,6 +2439,34 @@ static struct irk_info *get_irk_info(GKeyFile *key_file, const char *peer,
 	return irk;
 }
 
+static struct conn_param *get_conn_param(GKeyFile *key_file, const char *peer,
+							uint8_t bdaddr_type)
+{
+	struct conn_param *param;
+
+	if (!g_key_file_has_group(key_file, "ConnectionParameters"))
+		return NULL;
+
+	param = g_new0(struct conn_param, 1);
+
+	param->min_interval = g_key_file_get_integer(key_file,
+							"ConnectionParameters",
+							"MinInterval", NULL);
+	param->max_interval = g_key_file_get_integer(key_file,
+							"ConnectionParameters",
+							"MaxInterval", NULL);
+	param->latency = g_key_file_get_integer(key_file,
+							"ConnectionParameters",
+							"Latency", NULL);
+	param->timeout = g_key_file_get_integer(key_file,
+							"ConnectionParameters",
+							"Timeout", NULL);
+	str2ba(peer, &param->bdaddr);
+	param->bdaddr_type = bdaddr_type;
+
+	return param;
+}
+
 static void load_link_keys_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -2659,6 +2720,70 @@ static void load_irks(struct btd_adapter *adapter, GSList *irks)
 		error("Failed to IRKs for hci%u", adapter->dev_id);
 }
 
+static void load_conn_params_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	struct btd_adapter *adapter = user_data;
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("hci%u Load Connection Parameters failed: %s (0x%02x)",
+				adapter->dev_id, mgmt_errstr(status), status);
+		return;
+	}
+
+	DBG("Connection Parameters loaded for hci%u", adapter->dev_id);
+}
+
+static void load_conn_params(struct btd_adapter *adapter, GSList *params)
+{
+	struct mgmt_cp_load_conn_param *cp;
+	struct mgmt_conn_param *param;
+	size_t param_count, cp_size;
+	unsigned int id;
+	GSList *l;
+
+	/*
+	 * If the controller does not support Low Energy operation,
+	 * there is no point in trying to load the connection
+	 * parameters into the kernel.
+	 */
+	if (!(adapter->supported_settings & MGMT_SETTING_LE))
+		return;
+
+	param_count = g_slist_length(params);
+
+	DBG("hci%u conn params %zu", adapter->dev_id, param_count);
+
+	cp_size = sizeof(*cp) + (param_count * sizeof(*param));
+
+	cp = g_try_malloc0(cp_size);
+	if (cp == NULL) {
+		error("Failed to allocate memory for connection parameters");
+		return;
+	}
+
+	cp->param_count = htobs(param_count);
+
+	for (l = params, param = cp->params; l; l = g_slist_next(l), param++) {
+		struct conn_param *info = l->data;
+
+		bacpy(&param->addr.bdaddr, &info->bdaddr);
+		param->addr.type = info->bdaddr_type;
+		param->min_interval = htobs(info->min_interval);
+		param->max_interval = htobs(info->max_interval);
+		param->latency = htobs(info->latency);
+		param->timeout = htobs(info->timeout);
+	}
+
+	id = mgmt_send(adapter->mgmt, MGMT_OP_LOAD_CONN_PARAM, adapter->dev_id,
+			cp_size, cp, load_conn_params_complete, adapter, NULL);
+
+	g_free(cp);
+
+	if (id == 0)
+		error("Load connection parameters failed");
+}
+
 static uint8_t get_le_addr_type(GKeyFile *keyfile)
 {
 	uint8_t addr_type;
@@ -2687,6 +2812,7 @@ static void load_devices(struct btd_adapter *adapter)
 	GSList *keys = NULL;
 	GSList *ltks = NULL;
 	GSList *irks = NULL;
+	GSList *params = NULL;
 	DIR *dir;
 	struct dirent *entry;
 
@@ -2708,6 +2834,7 @@ static void load_devices(struct btd_adapter *adapter)
 		struct link_key_info *key_info;
 		GSList *list, *ltk_info;
 		struct irk_info *irk_info;
+		struct conn_param *param;
 		uint8_t bdaddr_type;
 
 		if (entry->d_type != DT_DIR || bachk(entry->d_name) < 0)
@@ -2731,6 +2858,10 @@ static void load_devices(struct btd_adapter *adapter)
 		irk_info = get_irk_info(key_file, entry->d_name, bdaddr_type);
 		if (irk_info)
 			irks = g_slist_append(irks, irk_info);
+
+		param = get_conn_param(key_file, entry->d_name, bdaddr_type);
+		if (param)
+			params = g_slist_append(params, param);
 
 		list = g_slist_find_custom(adapter->devices, entry->d_name,
 							device_address_cmp);
@@ -2777,6 +2908,8 @@ free:
 	g_slist_free_full(ltks, g_free);
 	load_irks(adapter, irks);
 	g_slist_free_full(irks, g_free);
+	load_conn_params(adapter, params);
+	g_slist_free_full(params, g_free);
 }
 
 int btd_adapter_block_address(struct btd_adapter *adapter,
@@ -3016,10 +3149,18 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 	if (device == adapter->connect_le)
 		adapter->connect_le = NULL;
 
+	/*
+	 * If kernel background scanning is supported then the
+	 * adapter_auto_connect_add() function is used to maintain what to
+	 * connect.
+	 */
+	if (kernel_bg_scan)
+		return 0;
+
 	if (g_slist_find(adapter->connect_list, device)) {
 		DBG("ignoring already added device %s",
 						device_get_path(device));
-		return 0;
+		goto done;
 	}
 
 	if (!(adapter->supported_settings & MGMT_SETTING_LE)) {
@@ -3032,6 +3173,7 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 	DBG("%s added to %s's connect_list", device_get_path(device),
 							adapter->system_name);
 
+done:
 	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
 		return 0;
 
@@ -3050,6 +3192,9 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 	 */
 	if (device == adapter->connect_le)
 		adapter->connect_le = NULL;
+
+	if (kernel_bg_scan)
+		return;
 
 	if (!g_slist_find(adapter->connect_list, device)) {
 		DBG("device %s is not on the list, ignoring",
@@ -3070,6 +3215,127 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 		return;
 
 	trigger_passive_scanning(adapter);
+}
+
+static void add_device_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_rp_add_device *rp = param;
+	struct btd_adapter *adapter = user_data;
+	struct btd_device *dev;
+	char addr[18];
+
+	if (length < sizeof(*rp)) {
+		error("Too small Add Device complete event");
+		return;
+	}
+
+	ba2str(&rp->addr.bdaddr, addr);
+
+	dev = btd_adapter_find_device(adapter, &rp->addr.bdaddr,
+							rp->addr.type);
+	if (!dev) {
+		error("Add Device complete for unknown device %s", addr);
+		return;
+	}
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to add device %s (%u): %s (0x%02x)",
+			addr, rp->addr.type, mgmt_errstr(status), status);
+		adapter->connect_list = g_slist_remove(adapter->connect_list,
+									dev);
+		return;
+	}
+
+	DBG("%s (%u) added to kernel connect list", addr, rp->addr.type);
+}
+
+void adapter_auto_connect_add(struct btd_adapter *adapter,
+					struct btd_device *device)
+{
+	struct mgmt_cp_add_device cp;
+	const bdaddr_t *bdaddr;
+	uint8_t bdaddr_type;
+	unsigned int id;
+
+	if (!kernel_bg_scan)
+		return;
+
+	if (g_slist_find(adapter->connect_list, device)) {
+		DBG("ignoring already added device %s",
+						device_get_path(device));
+		return;
+	}
+
+	bdaddr = device_get_address(device);
+	bdaddr_type = btd_device_get_bdaddr_type(device);
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, bdaddr);
+	cp.addr.type = bdaddr_type;
+	cp.action = 0x01;
+
+	id = mgmt_send(adapter->mgmt, MGMT_OP_ADD_DEVICE,
+			adapter->dev_id, sizeof(cp), &cp, add_device_complete,
+			adapter, NULL);
+	if (id == 0)
+		return;
+
+	adapter->connect_list = g_slist_append(adapter->connect_list, device);
+}
+
+static void remove_device_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_rp_remove_device *rp = param;
+	char addr[18];
+
+	if (length < sizeof(*rp)) {
+		error("Too small Remove Device complete event");
+		return;
+	}
+
+	ba2str(&rp->addr.bdaddr, addr);
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to remove device %s (%u): %s (0x%02x)",
+			addr, rp->addr.type, mgmt_errstr(status), status);
+		return;
+	}
+
+	DBG("%s (%u) removed from kernel connect list", addr, rp->addr.type);
+}
+
+void adapter_auto_connect_remove(struct btd_adapter *adapter,
+					struct btd_device *device)
+{
+	struct mgmt_cp_remove_device cp;
+	const bdaddr_t *bdaddr;
+	uint8_t bdaddr_type;
+	unsigned int id;
+
+	if (!kernel_bg_scan)
+		return;
+
+	if (!g_slist_find(adapter->connect_list, device)) {
+		DBG("ignoring not added device %s", device_get_path(device));
+		return;
+	}
+
+	bdaddr = device_get_address(device);
+	bdaddr_type = btd_device_get_bdaddr_type(device);
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, bdaddr);
+	cp.addr.type = bdaddr_type;
+
+	id = mgmt_send(adapter->mgmt, MGMT_OP_REMOVE_DEVICE,
+			adapter->dev_id, sizeof(cp), &cp,
+			remove_device_complete, adapter, NULL);
+	if (id == 0)
+		return;
+
+	adapter->connect_list = g_slist_remove(adapter->connect_list, device);
 }
 
 static void adapter_start(struct btd_adapter *adapter)
@@ -4422,6 +4688,13 @@ connect_le:
 		return;
 
 	/*
+	 * If kernel background scan is used then the kernel is
+	 * responsible for connecting.
+	 */
+	if (kernel_bg_scan)
+		return;
+
+	/*
 	 * If this is an LE device that's not connected and part of the
 	 * connect_list stop passive scanning so that a connection
 	 * attempt to it can be made
@@ -4467,6 +4740,10 @@ static void device_found_callback(uint16_t index, uint16_t length,
 	ba2str(&ev->addr.bdaddr, addr);
 	DBG("hci%u addr %s, rssi %d flags 0x%04x eir_len %u",
 			index, addr, ev->rssi, flags, eir_len);
+
+	/* Ignore non-connectable events for now */
+	if (flags & MGMT_DEV_FOUND_NOT_CONNECTABLE)
+		return;
 
 	confirm_name = (flags & MGMT_DEV_FOUND_CONFIRM_NAME);
 	legacy = (flags & MGMT_DEV_FOUND_LEGACY_PAIRING);
@@ -4669,9 +4946,6 @@ static void svc_complete(struct btd_device *dev, int err, void *user_data)
 	struct btd_adapter *adapter = auth->adapter;
 
 	auth->svc_id = 0;
-
-	if (adapter->auths->length != 1)
-		return;
 
 	if (adapter->auth_idle_id != 0)
 		return;
@@ -5873,6 +6147,89 @@ static void new_irk_callback(uint16_t index, uint16_t length,
 		btd_device_set_temporary(device, FALSE);
 }
 
+static void store_conn_param(struct btd_adapter *adapter, const bdaddr_t *peer,
+				uint8_t bdaddr_type, uint16_t min_interval,
+				uint16_t max_interval, uint16_t latency,
+				uint16_t timeout)
+{
+	char adapter_addr[18];
+	char device_addr[18];
+	char filename[PATH_MAX + 1];
+	GKeyFile *key_file;
+	char *store_data;
+	size_t length = 0;
+
+	ba2str(&adapter->bdaddr, adapter_addr);
+	ba2str(peer, device_addr);
+
+	DBG("");
+
+	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
+								device_addr);
+	filename[PATH_MAX] = '\0';
+
+	key_file = g_key_file_new();
+	g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+	g_key_file_set_integer(key_file, "ConnectionParameters",
+						"MinInterval", min_interval);
+	g_key_file_set_integer(key_file, "ConnectionParameters",
+						"MaxInterval", max_interval);
+	g_key_file_set_integer(key_file, "ConnectionParameters",
+						"Latency", latency);
+	g_key_file_set_integer(key_file, "ConnectionParameters",
+						"Timeout", timeout);
+
+	create_file(filename, S_IRUSR | S_IWUSR);
+
+	store_data = g_key_file_to_data(key_file, &length, NULL);
+	g_file_set_contents(filename, store_data, length, NULL);
+	g_free(store_data);
+
+	g_key_file_free(key_file);
+}
+
+static void new_conn_param(uint16_t index, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_ev_new_conn_param *ev = param;
+	struct btd_adapter *adapter = user_data;
+	uint16_t min, max, latency, timeout;
+	struct btd_device *dev;
+	char dst[18];
+
+
+	if (length < sizeof(*ev)) {
+		error("Too small New Connection Parameter event");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, dst);
+
+	min = btohs(ev->min_interval);
+	max = btohs(ev->max_interval);
+	latency = btohs(ev->latency);
+	timeout = btohs(ev->timeout);
+
+	DBG("hci%u %s (%u) min 0x%04x max 0x%04x latency 0x%04x timeout 0x%04x",
+		adapter->dev_id, dst, ev->addr.type, min, max, latency, timeout);
+
+	dev = btd_adapter_get_device(adapter, &ev->addr.bdaddr, ev->addr.type);
+	if (!dev) {
+		error("Unable to get device object for %s", dst);
+		return;
+	}
+
+	if (!ev->store_hint) {
+		device_set_conn_param(dev, min, max, latency, timeout);
+		return;
+	}
+
+	store_conn_param(adapter, &ev->addr.bdaddr, ev->addr.type,
+					ev->min_interval, ev->max_interval,
+					ev->latency, ev->timeout);
+}
+
 int adapter_set_io_capability(struct btd_adapter *adapter, uint8_t io_cap)
 {
 	struct mgmt_cp_set_io_capability cp;
@@ -6400,6 +6757,37 @@ static void unpaired_callback(uint16_t index, uint16_t length,
 	device_set_unpaired(device, ev->addr.type);
 }
 
+static void clear_devices_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to clear devices: %s (0x%02x)",
+						mgmt_errstr(status), status);
+		return;
+	}
+}
+
+static int clear_devices(struct btd_adapter *adapter)
+{
+	struct mgmt_cp_remove_device cp;
+
+	if (!kernel_bg_scan)
+		return 0;
+
+	memset(&cp, 0, sizeof(cp));
+
+	DBG("sending clear devices command for index %u", adapter->dev_id);
+
+	if (mgmt_send(adapter->mgmt, MGMT_OP_REMOVE_DEVICE,
+				adapter->dev_id, sizeof(cp), &cp,
+				clear_devices_complete, adapter, NULL) > 0)
+		return 0;
+
+	error("Failed to clear devices for index %u", adapter->dev_id);
+
+	return -EIO;
+}
+
 static void read_info_complete(uint8_t status, uint16_t length,
 					const void *param, void *user_data)
 {
@@ -6443,6 +6831,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	adapter->current_settings = btohs(rp->current_settings);
 
 	clear_uuids(adapter);
+	clear_devices(adapter);
 
 	err = adapter_register(adapter);
 	if (err < 0) {
@@ -6522,6 +6911,11 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	mgmt_register(adapter->mgmt, MGMT_EV_NEW_IRK,
 						adapter->dev_id,
 						new_irk_callback,
+						adapter, NULL);
+
+	mgmt_register(adapter->mgmt, MGMT_EV_NEW_CONN_PARAM,
+						adapter->dev_id,
+						new_conn_param,
 						adapter, NULL);
 
 	mgmt_register(adapter->mgmt, MGMT_EV_DEVICE_BLOCKED,
@@ -6701,6 +7095,9 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 {
 	const struct mgmt_rp_read_commands *rp = param;
 	uint16_t num_commands, num_events;
+	const uint16_t *opcode;
+	size_t expected_len;
+	int i;
 
 	if (status != MGMT_STATUS_SUCCESS) {
 		error("Failed to read supported commands: %s (0x%02x)",
@@ -6718,6 +7115,26 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 
 	DBG("Number of commands: %d", num_commands);
 	DBG("Number of events: %d", num_events);
+
+	expected_len = sizeof(*rp) + num_commands * sizeof(uint16_t) +
+						num_events * sizeof(uint16_t);
+
+	if (length < expected_len) {
+		error("Too small reply for supported commands: (%u != %zu)",
+							length, expected_len);
+		return;
+	}
+
+	opcode = rp->opcodes;
+
+	for (i = 0; i < num_commands; i++) {
+		uint16_t op = get_le16(opcode++);
+
+		if (op == MGMT_OP_ADD_DEVICE) {
+			DBG("enabling kernel background scanning");
+			kernel_bg_scan = true;
+		}
+	}
 }
 
 static void read_version_complete(uint8_t status, uint16_t length,

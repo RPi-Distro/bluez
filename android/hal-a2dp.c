@@ -108,7 +108,7 @@ static bt_status_t init(btav_callbacks_t *callbacks)
 	cmd.mode = HAL_MODE_DEFAULT;
 
 	ret = hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
-					sizeof(cmd), &cmd, 0, NULL, NULL);
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	if (ret != BT_STATUS_SUCCESS) {
 		cbs = NULL;
@@ -118,7 +118,7 @@ static bt_status_t init(btav_callbacks_t *callbacks)
 	return ret;
 }
 
-static void cleanup()
+static void cleanup(void)
 {
 	struct hal_cmd_unregister_module cmd;
 
@@ -132,7 +132,7 @@ static void cleanup()
 	cmd.service_id = HAL_SERVICE_ID_A2DP;
 
 	hal_ipc_cmd(HAL_SERVICE_ID_CORE, HAL_OP_UNREGISTER_MODULE,
-					sizeof(cmd), &cmd, 0, NULL, NULL);
+					sizeof(cmd), &cmd, NULL, NULL, NULL);
 
 	hal_ipc_unregister(HAL_SERVICE_ID_A2DP);
 }
@@ -145,7 +145,7 @@ static btav_interface_t iface = {
 	.cleanup = cleanup
 };
 
-btav_interface_t *bt_get_a2dp_interface()
+btav_interface_t *bt_get_a2dp_interface(void)
 {
 	return &iface;
 }

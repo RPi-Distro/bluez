@@ -2351,7 +2351,7 @@ void mcap_sync_stop(struct mcap_mcl *mcl)
 
 static uint64_t time_us(struct timespec *tv)
 {
-	return tv->tv_sec * 1000000 + tv->tv_nsec / 1000;
+	return tv->tv_sec * 1000000ll + tv->tv_nsec / 1000ll;
 }
 
 static int64_t bt2us(int bt)
@@ -2442,7 +2442,8 @@ uint64_t mcap_get_timestamp(struct mcap_mcl *mcl,
 	if (given_time)
 		now = *given_time;
 	else
-		clock_gettime(CLK, &now);
+		if (clock_gettime(CLK, &now) < 0)
+			return MCAP_TMSTAMP_DONTSET;
 
 	tmstamp = time_us(&now) - time_us(&mcl->csp->base_time)
 		+ mcl->csp->base_tmstamp;
@@ -2648,12 +2649,14 @@ static gboolean get_all_clocks(struct mcap_mcl *mcl, uint32_t *btclock,
 
 	while (latency > caps(mcl)->preempt_thresh && --retry >= 0) {
 
-		clock_gettime(CLK, &t0);
+		if (clock_gettime(CLK, &t0) < 0)
+			return FALSE;
 
 		if (!read_btclock(mcl, btclock, &btres))
 			continue;
 
-		clock_gettime(CLK, base_time);
+		if (clock_gettime(CLK, base_time) < 0)
+			return FALSE;
 
 		/*
 		 * Tries to detect preemption between clock_gettime
@@ -2661,6 +2664,9 @@ static gboolean get_all_clocks(struct mcap_mcl *mcl, uint32_t *btclock,
 		 */
 		latency = time_us(base_time) - time_us(&t0);
 	}
+
+	if (retry < 0)
+		return FALSE;
 
 	*timestamp = mcap_get_timestamp(mcl, base_time);
 

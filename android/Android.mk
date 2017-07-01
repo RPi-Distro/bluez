@@ -35,6 +35,9 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := \
 	bluez/android/main.c \
 	bluez/android/bluetooth.c \
+	bluez/android/scpp.c \
+	bluez/android/dis.c \
+	bluez/android/bas.c \
 	bluez/android/hog.c \
 	bluez/android/hidhost.c \
 	bluez/android/socket.c \
@@ -178,6 +181,41 @@ LOCAL_SHARED_LIBRARIES := libhardware
 LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
 LOCAL_MODULE_TAGS := debug
 LOCAL_MODULE := haltest
+
+include $(BUILD_EXECUTABLE)
+
+#
+# mcaptest
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	bluez/src/log.c \
+	bluez/btio/btio.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+	bluez/android/mcap-lib.c \
+	bluez/android/mcaptest.c \
+
+LOCAL_C_INCLUDES := \
+	$(call include-path-for, glib) \
+	$(call include-path-for, glib)/glib \
+
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/bluez \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_SHARED_LIBRARIES := \
+	libglib \
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE := mcaptest
 
 include $(BUILD_EXECUTABLE)
 

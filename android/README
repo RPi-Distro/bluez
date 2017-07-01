@@ -227,7 +227,7 @@ gatt          bt_gatt.h          complete
               bt_gatt_server.h   complete
 handsfree     bt_hf.h            complete
 hidhost       bt_hh.h            complete
-health        bt_hl.h            initial
+health        bt_hl.h            complete
 pan           bt_pan.h           complete
 avrcp         bt_rc.h            complete
 socket        bt_sock.h          complete
@@ -312,6 +312,9 @@ BlueZ.
 https://android-review.googlesource.com/82757
 https://android-review.googlesource.com/87670
 https://android-review.googlesource.com/88384
+https://android-review.googlesource.com/99761
+https://android-review.googlesource.com/99850
+https://android-review.googlesource.com/100297
 
 
 Unimplemented Bluetooth features
@@ -333,3 +336,13 @@ HFP		In-band Ring Tone		+BSIR
 AVRCP		Player Settings			HAL API present but not used
 AVRCP		Browsing			No HAL API
 GATT		Read multiple characteristics	No HAL API
+
+
+Reporting Bugs
+==============
+
+Bugs should be reported at https://01.org/jira/browse/BA. When reporting
+a bug please attach logs from logcat (logcat -v time) and HCI trace. Daemon
+debug logs should be enabled. When reporting daemon crash please run it under
+valgrind if possible. For details on how to enabled debug logs and valgrind see
+"Enabling BlueZ debugs" section.
