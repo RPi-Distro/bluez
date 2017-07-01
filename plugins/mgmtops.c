@@ -450,7 +450,9 @@ static void mgmt_new_key(int sk, void *buf, size_t len)
 
 	btd_event_link_key_notify(&info->bdaddr, &ev->key.bdaddr,
 					ev->key.val, ev->key.type,
-					ev->key.pin_len, ev->old_key_type);
+					ev->key.pin_len);
+
+	btd_event_bonding_complete(&info->bdaddr, &ev->key.bdaddr, 0);
 }
 
 static void mgmt_device_connected(int sk, void *buf, size_t len)
@@ -477,7 +479,7 @@ static void mgmt_device_connected(int sk, void *buf, size_t len)
 
 	info = &controllers[index];
 
-	btd_event_conn_complete(&info->bdaddr, 0, &ev->bdaddr);
+	btd_event_conn_complete(&info->bdaddr, &ev->bdaddr);
 }
 
 static void mgmt_device_disconnected(int sk, void *buf, size_t len)
@@ -531,7 +533,10 @@ static void mgmt_connect_failed(int sk, void *buf, size_t len)
 
 	info = &controllers[index];
 
-	btd_event_conn_complete(&info->bdaddr, ev->status, &ev->bdaddr);
+	btd_event_conn_failed(&info->bdaddr, &ev->bdaddr, ev->status);
+
+	/* In the case of security mode 3 devices */
+	btd_event_bonding_complete(&info->bdaddr, &ev->bdaddr, ev->status);
 }
 
 static int mgmt_pincode_reply(int index, bdaddr_t *bdaddr, const char *pin)
@@ -612,6 +617,69 @@ static void mgmt_pin_code_request(int sk, void *buf, size_t len)
 	if (err < 0) {
 		error("btd_event_request_pin: %s", strerror(-err));
 		mgmt_pincode_reply(index, &ev->bdaddr, NULL);
+	}
+}
+
+static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, gboolean success)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_user_confirm_reply)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_user_confirm_reply *cp;
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("index %d addr %s success %d", index, addr, success);
+
+	memset(buf, 0, sizeof(buf));
+
+	if (success)
+		hdr->opcode = htobs(MGMT_OP_USER_CONFIRM_REPLY);
+	else
+		hdr->opcode = htobs(MGMT_OP_USER_CONFIRM_NEG_REPLY);
+
+	hdr->len = htobs(sizeof(*cp));
+
+	cp = (void *) &buf[sizeof(*hdr)];
+	cp->index = htobs(index);
+	bacpy(&cp->bdaddr, bdaddr);
+
+	if (write(mgmt_sock, buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static void mgmt_user_confirm_request(int sk, void *buf, size_t len)
+{
+	struct mgmt_ev_user_confirm_request *ev = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+	int err;
+
+	if (len < sizeof(*ev)) {
+		error("Too small user_confirm_request event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+	ba2str(&ev->bdaddr, addr);
+
+	DBG("hci%u %s", index, addr);
+
+	if (index > max_index) {
+		error("Unexpected index %u in user_confirm_request event",
+									index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	err = btd_event_user_confirm(&info->bdaddr, &ev->bdaddr,
+							btohl(ev->value));
+	if (err < 0) {
+		error("btd_event_user_confirm: %s", strerror(-err));
+		mgmt_confirm_reply(index, &ev->bdaddr, FALSE);
 	}
 }
 
@@ -929,6 +997,37 @@ static void disconnect_complete(int sk, void *buf, size_t len)
 	info = &controllers[index];
 
 	btd_event_disconn_complete(&info->bdaddr, &rp->bdaddr);
+
+	btd_event_bonding_complete(&info->bdaddr, &rp->bdaddr,
+						HCI_CONNECTION_TERMINATED);
+}
+
+static void pair_device_complete(int sk, void *buf, size_t len)
+{
+	struct mgmt_rp_pair_device *rp = buf;
+	struct controller_info *info;
+	uint16_t index;
+	char addr[18];
+
+	if (len < sizeof(*rp)) {
+		error("Too small pair_device complete event");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&rp->index));
+
+	ba2str(&rp->bdaddr, addr);
+
+	DBG("hci%d %s pairing complete status %u", index, addr, rp->status);
+
+	if (index > max_index) {
+		error("Unexpected index %u in pair_device complete", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_bonding_complete(&info->bdaddr, &rp->bdaddr, rp->status);
 }
 
 static void get_connections_complete(int sk, void *buf, size_t len)
@@ -1036,6 +1135,15 @@ static void mgmt_cmd_complete(int sk, void *buf, size_t len)
 	case MGMT_OP_SET_IO_CAPABILITY:
 		DBG("set_io_capability complete");
 		break;
+	case MGMT_OP_PAIR_DEVICE:
+		pair_device_complete(sk, ev->data, len - sizeof(*ev));
+		break;
+	case MGMT_OP_USER_CONFIRM_REPLY:
+		DBG("user_confirm_reply complete");
+		break;
+	case MGMT_OP_USER_CONFIRM_NEG_REPLY:
+		DBG("user_confirm_net_reply complete");
+		break;
 	default:
 		error("Unknown command complete for opcode %u", opcode);
 		break;
@@ -1070,6 +1178,31 @@ static void mgmt_controller_error(int sk, void *buf, size_t len)
 	index = btohs(bt_get_unaligned(&ev->index));
 
 	DBG("index %u error_code %u", index, ev->error_code);
+}
+
+static void mgmt_auth_failed(int sk, void *buf, size_t len)
+{
+	struct controller_info *info;
+	struct mgmt_ev_auth_failed *ev = buf;
+	uint16_t index;
+
+	if (len < sizeof(*ev)) {
+		error("Too small mgmt_auth_failed event packet");
+		return;
+	}
+
+	index = btohs(bt_get_unaligned(&ev->index));
+
+	DBG("hci%u auth failed status %u", index, ev->status);
+
+	if (index > max_index) {
+		error("Unexpected index %u in auth_failed event", index);
+		return;
+	}
+
+	info = &controllers[index];
+
+	btd_event_bonding_complete(&info->bdaddr, &ev->bdaddr, ev->status);
 }
 
 static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data)
@@ -1156,6 +1289,12 @@ static gboolean mgmt_event(GIOChannel *io, GIOCondition cond, gpointer user_data
 		break;
 	case MGMT_EV_PIN_CODE_REQUEST:
 		mgmt_pin_code_request(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_USER_CONFIRM_REQUEST:
+		mgmt_user_confirm_request(sk, buf + MGMT_HDR_SIZE, len);
+		break;
+	case MGMT_EV_AUTH_FAILED:
+		mgmt_auth_failed(sk, buf + MGMT_HDR_SIZE, len);
 		break;
 	default:
 		error("Unknown Management opcode %u", opcode);
@@ -1449,26 +1588,6 @@ static int mgmt_remove_bonding(int index, bdaddr_t *bdaddr)
 	return 0;
 }
 
-static int mgmt_request_authentication(int index, bdaddr_t *bdaddr)
-{
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("index %d %s", index, addr);
-
-	return -ENOSYS;
-}
-
-static int mgmt_confirm_reply(int index, bdaddr_t *bdaddr, gboolean success)
-{
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("index %d addr %s success %d", index, addr, success);
-
-	return -ENOSYS;
-}
-
 static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, uint32_t passkey)
 {
 	char addr[18];
@@ -1476,22 +1595,6 @@ static int mgmt_passkey_reply(int index, bdaddr_t *bdaddr, uint32_t passkey)
 	ba2str(bdaddr, addr);
 	DBG("index %d addr %s passkey %06u", index, addr, passkey);
 
-	return -ENOSYS;
-}
-
-static int mgmt_get_auth_info(int index, bdaddr_t *bdaddr, uint8_t *auth)
-{
-	char addr[18];
-
-	ba2str(bdaddr, addr);
-	DBG("index %d addr %s", index, addr);
-
-	return -ENOSYS;
-}
-
-static int mgmt_read_scan_enable(int index)
-{
-	DBG("index %d", index);
 	return -ENOSYS;
 }
 
@@ -1603,6 +1706,40 @@ static int mgmt_set_io_capability(int index, uint8_t io_capability)
 	return 0;
 }
 
+static int mgmt_create_bonding(int index, bdaddr_t *bdaddr, uint8_t io_cap)
+{
+	char buf[MGMT_HDR_SIZE + sizeof(struct mgmt_cp_pair_device)];
+	struct mgmt_hdr *hdr = (void *) buf;
+	struct mgmt_cp_pair_device *cp = (void *) &buf[sizeof(*hdr)];
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s io_cap 0x%02x", index, addr, io_cap);
+
+	memset(buf, 0, sizeof(buf));
+	hdr->opcode = htobs(MGMT_OP_PAIR_DEVICE);
+	hdr->len = htobs(sizeof(*cp));
+
+	cp->index = htobs(index);
+	bacpy(&cp->bdaddr, bdaddr);
+	cp->io_cap = io_cap;
+
+	if (write(mgmt_sock, &buf, sizeof(buf)) < 0)
+		return -errno;
+
+	return 0;
+}
+
+static int mgmt_cancel_bonding(int index, bdaddr_t *bdaddr)
+{
+	char addr[18];
+
+	ba2str(bdaddr, addr);
+	DBG("hci%d bdaddr %s", index, addr);
+
+	return -ENOSYS;
+}
+
 static struct btd_adapter_ops mgmt_ops = {
 	.setup = mgmt_setup,
 	.cleanup = mgmt_cleanup,
@@ -1628,12 +1765,9 @@ static struct btd_adapter_ops mgmt_ops = {
 	.read_local_features = mgmt_read_local_features,
 	.disconnect = mgmt_disconnect,
 	.remove_bonding = mgmt_remove_bonding,
-	.request_authentication = mgmt_request_authentication,
 	.pincode_reply = mgmt_pincode_reply,
 	.confirm_reply = mgmt_confirm_reply,
 	.passkey_reply = mgmt_passkey_reply,
-	.get_auth_info = mgmt_get_auth_info,
-	.read_scan_enable = mgmt_read_scan_enable,
 	.enable_le = mgmt_enable_le,
 	.encrypt_link = mgmt_encrypt_link,
 	.set_did = mgmt_set_did,
@@ -1643,6 +1777,8 @@ static struct btd_adapter_ops mgmt_ops = {
 	.restore_powered = mgmt_restore_powered,
 	.load_keys = mgmt_load_keys,
 	.set_io_capability = mgmt_set_io_capability,
+	.create_bonding = mgmt_create_bonding,
+	.cancel_bonding = mgmt_cancel_bonding,
 };
 
 static int mgmt_init(void)

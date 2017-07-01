@@ -108,8 +108,8 @@ AC_DEFUN([AC_PATH_DBUS], [
 ])
 
 AC_DEFUN([AC_PATH_GLIB], [
-	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.14, dummy=yes,
-				AC_MSG_ERROR(GLib library version 2.14 or later is required))
+	PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.16, dummy=yes,
+				AC_MSG_ERROR(GLib library version 2.16 or later is required))
 	AC_SUBST(GLIB_CFLAGS)
 	AC_SUBST(GLIB_LIBS)
 ])
@@ -151,6 +151,15 @@ AC_DEFUN([AC_PATH_SNDFILE], [
 	PKG_CHECK_MODULES(SNDFILE, sndfile, sndfile_found=yes, sndfile_found=no)
 	AC_SUBST(SNDFILE_CFLAGS)
 	AC_SUBST(SNDFILE_LIBS)
+])
+
+AC_DEFUN([AC_PATH_READLINE], [
+	AC_CHECK_HEADER(readline/readline.h,
+		AC_CHECK_LIB(readline, main,
+			[ readline_found=yes
+			AC_SUBST(READLINE_LIBS, "-lreadline")
+			], readline_found=no),
+		[])
 ])
 
 AC_DEFUN([AC_PATH_OUI], [
@@ -356,6 +365,7 @@ AC_DEFUN([AC_ARG_BLUEZ], [
 	AM_CONDITIONAL(HEALTHPLUGIN, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(MCAP, test "${health_enable}" = "yes")
 	AM_CONDITIONAL(HAL, test "${hal_enable}" = "yes")
+	AM_CONDITIONAL(READLINE, test "${readline_found}" = "yes")
 	AM_CONDITIONAL(ATTRIBPLUGIN, test "${attrib_enable}" = "yes")
 	AM_CONDITIONAL(ECHOPLUGIN, test "no" = "yes")
 	AM_CONDITIONAL(PNATPLUGIN, test "${pnat_enable}" = "yes")

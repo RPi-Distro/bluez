@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 13:3:10
+lib_libbluetooth_la_LDFLAGS = -version-info 13:5:10
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -175,12 +175,17 @@ builtin_sources += plugins/service.c
 endif
 
 if ATTRIBPLUGIN
+
+if READLINE
 bin_PROGRAMS += attrib/gatttool
 
 attrib_gatttool_SOURCES = attrib/gatttool.c attrib/att.c attrib/gatt.c \
-			  attrib/gattrib.c btio/btio.c \
-			  src/glib-helper.h src/glib-helper.c
-attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@
+				attrib/gattrib.c btio/btio.c \
+				src/glib-helper.h src/glib-helper.c \
+				attrib/gatttool.h attrib/interactive.c \
+				attrib/utils.c
+attrib_gatttool_LDADD = lib/libbluetooth.la @GLIB_LIBS@ @READLINE_LIBS@
+endif
 
 builtin_modules += attrib
 builtin_sources += attrib/main.c \
@@ -354,7 +359,7 @@ EXTRA_DIST += doc/manager-api.txt \
 		doc/service-api.txt doc/agent-api.txt doc/attribute-api.txt \
 		doc/serial-api.txt doc/network-api.txt \
 		doc/input-api.txt doc/audio-api.txt doc/control-api.txt \
-		doc/hfp-api.txt doc/assigned-numbers.txt
+		doc/hfp-api.txt doc/health-api.txt doc/assigned-numbers.txt
 
 AM_YFLAGS = -d
 

@@ -2349,25 +2349,36 @@ done:
 
 static struct option lescan_options[] = {
 	{ "help",	0, 0, 'h' },
+	{ "privacy",	0, 0, 'p' },
+	{ "passive",	0, 0, 'P' },
 	{ 0, 0, 0, 0 }
 };
 
 static const char *lescan_help =
 	"Usage:\n"
-	"\tlescan\n";
+	"\tlescan [--privacy] enable privacy\n"
+	"\tlescan [--passive] set scan type passive (default active)\n";
 
 static void cmd_lescan(int dev_id, int argc, char **argv)
 {
 	int err, opt, dd;
+	uint8_t own_type = 0x00;
+	uint8_t scan_type = 0x01;
 
 	for_each_opt(opt, lescan_options, NULL) {
 		switch (opt) {
+		case 'p':
+			own_type = 0x01; /* Random */
+			break;
+		case 'P':
+			scan_type = 0x00; /* Passive */
+			break;
 		default:
 			printf("%s", lescan_help);
 			return;
 		}
 	}
-	helper_arg(0, 0, &argc, &argv, lescan_help);
+	helper_arg(0, 1, &argc, &argv, lescan_help);
 
 	if (dev_id < 0)
 		dev_id = hci_get_route(NULL);
@@ -2378,8 +2389,8 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 		exit(1);
 	}
 
-	err = hci_le_set_scan_parameters(dd, 0x01, htobs(0x0010), htobs(0x0010),
-								0x00, 0x00);
+	err = hci_le_set_scan_parameters(dd, scan_type, htobs(0x0010),
+					htobs(0x0010), own_type, 0x00);
 	if (err < 0) {
 		perror("Set scan parameters failed");
 		exit(1);
@@ -2410,12 +2421,13 @@ static void cmd_lescan(int dev_id, int argc, char **argv)
 
 static struct option lecc_options[] = {
 	{ "help",	0, 0, 'h' },
+	{ "random",	0, 0, 'r' },
 	{ 0, 0, 0, 0 }
 };
 
 static const char *lecc_help =
 	"Usage:\n"
-	"\tlecc <bdaddr>\n";
+	"\tlecc [--random] <bdaddr>\n";
 
 static void cmd_lecc(int dev_id, int argc, char **argv)
 {
@@ -2425,8 +2437,13 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 	uint16_t min_interval, supervision_timeout, window, handle;
 	uint8_t initiator_filter, own_bdaddr_type, peer_bdaddr_type;
 
+	peer_bdaddr_type = 0x00; /* Public device address */
+
 	for_each_opt(opt, lecc_options, NULL) {
 		switch (opt) {
+		case 'r':
+			peer_bdaddr_type = 0x01; /* Random */
+			break;
 		default:
 			printf("%s", lecc_help);
 			return;
@@ -2448,7 +2465,6 @@ static void cmd_lecc(int dev_id, int argc, char **argv)
 	interval = htobs(0x0004);
 	window = htobs(0x0004);
 	initiator_filter = 0x00;
-	peer_bdaddr_type = 0x00;
 	own_bdaddr_type = 0x00;
 	min_interval = htobs(0x000F);
 	max_interval = htobs(0x000F);

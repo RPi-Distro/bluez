@@ -29,20 +29,16 @@ void btd_event_device_found(bdaddr_t *local, bdaddr_t *peer, uint32_t class,
 void btd_event_set_legacy_pairing(bdaddr_t *local, bdaddr_t *peer, gboolean legacy);
 void btd_event_remote_class(bdaddr_t *local, bdaddr_t *peer, uint32_t class);
 void btd_event_remote_name(bdaddr_t *local, bdaddr_t *peer, uint8_t status, char *name);
-void btd_event_conn_complete(bdaddr_t *local, uint8_t status, bdaddr_t *peer);
+void btd_event_conn_complete(bdaddr_t *local, bdaddr_t *peer);
+void btd_event_conn_failed(bdaddr_t *local, bdaddr_t *peer, uint8_t status);
 void btd_event_disconn_complete(bdaddr_t *local, bdaddr_t *peer);
-void btd_event_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer, uint8_t status);
+void btd_event_bonding_complete(bdaddr_t *local, bdaddr_t *peer,
+							uint8_t status);
 void btd_event_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer, uint8_t status);
-void btd_event_setscan_enable_complete(bdaddr_t *local);
 void btd_event_le_set_scan_enable_complete(bdaddr_t *local, uint8_t status);
 void btd_event_returned_link_key(bdaddr_t *local, bdaddr_t *peer);
-int btd_event_get_io_cap(bdaddr_t *local, bdaddr_t *remote,
-						uint8_t *cap, uint8_t *auth);
-int btd_event_set_io_cap(bdaddr_t *local, bdaddr_t *remote,
-						uint8_t cap, uint8_t auth);
 int btd_event_user_confirm(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey);
 int btd_event_user_passkey(bdaddr_t *sba, bdaddr_t *dba);
 int btd_event_user_notify(bdaddr_t *sba, bdaddr_t *dba, uint32_t passkey);
-int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer,
-				uint8_t *key, uint8_t key_type,
-				uint8_t pin_length, uint8_t old_key_type);
+int btd_event_link_key_notify(bdaddr_t *local, bdaddr_t *peer, uint8_t *key,
+					uint8_t key_type, uint8_t pin_length);

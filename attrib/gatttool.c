@@ -42,27 +42,26 @@
 #include "gattrib.h"
 #include "glib-helper.h"
 #include "gatt.h"
-
-/* Minimum MTU for L2CAP connections over BR/EDR */
-#define ATT_MIN_MTU_L2CAP 48
+#include "gatttool.h"
 
 static gchar *opt_src = NULL;
 static gchar *opt_dst = NULL;
 static gchar *opt_value = NULL;
-static gchar *opt_sec_level = "low";
+static gchar *opt_sec_level = NULL;
 static uuid_t *opt_uuid = NULL;
 static int opt_start = 0x0001;
 static int opt_end = 0xffff;
 static int opt_handle = -1;
 static int opt_mtu = 0;
-static int opt_psm = 0x1f;
+static int opt_psm = 0;
 static gboolean opt_primary = FALSE;
 static gboolean opt_characteristics = FALSE;
 static gboolean opt_char_read = FALSE;
 static gboolean opt_listen = FALSE;
 static gboolean opt_char_desc = FALSE;
-static gboolean opt_le = FALSE;
 static gboolean opt_char_write = FALSE;
+static gboolean opt_char_write_req = FALSE;
+static gboolean opt_interactive = FALSE;
 static GMainLoop *event_loop;
 static gboolean got_error = FALSE;
 
@@ -79,70 +78,6 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 		got_error = TRUE;
 		g_main_loop_quit(event_loop);
 	}
-}
-
-static GIOChannel *do_connect(gboolean le)
-{
-	GIOChannel *chan;
-	bdaddr_t sba, dba;
-	GError *err = NULL;
-	BtIOSecLevel sec_level;
-
-	/* This check is required because currently setsockopt() returns no
-	 * errors for MTU values smaller than the allowed minimum. */
-	if (opt_mtu != 0 && opt_mtu < ATT_MIN_MTU_L2CAP) {
-		g_printerr("MTU cannot be smaller than %d\n",
-							ATT_MIN_MTU_L2CAP);
-		return NULL;
-	}
-
-	/* Remote device */
-	if (opt_dst == NULL) {
-		g_printerr("Remote Bluetooth address required\n");
-		return NULL;
-	}
-	str2ba(opt_dst, &dba);
-
-	/* Local adapter */
-	if (opt_src != NULL) {
-		if (!strncmp(opt_src, "hci", 3))
-			hci_devba(atoi(opt_src + 3), &sba);
-		else
-			str2ba(opt_src, &sba);
-	} else
-		bacpy(&sba, BDADDR_ANY);
-
-	if (strcmp(opt_sec_level, "medium") == 0)
-		sec_level = BT_IO_SEC_MEDIUM;
-	else if (strcmp(opt_sec_level, "high") == 0)
-		sec_level = BT_IO_SEC_HIGH;
-	else
-		sec_level = BT_IO_SEC_LOW;
-
-	if (le)
-		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
-				BT_IO_OPT_SOURCE_BDADDR, &sba,
-				BT_IO_OPT_DEST_BDADDR, &dba,
-				BT_IO_OPT_CID, GATT_CID,
-				BT_IO_OPT_OMTU, opt_mtu,
-				BT_IO_OPT_SEC_LEVEL, sec_level,
-				BT_IO_OPT_INVALID);
-	else
-		chan = bt_io_connect(BT_IO_L2CAP, connect_cb, NULL, NULL, &err,
-				BT_IO_OPT_SOURCE_BDADDR, &sba,
-				BT_IO_OPT_DEST_BDADDR, &dba,
-				BT_IO_OPT_PSM, opt_psm,
-				BT_IO_OPT_OMTU, opt_mtu,
-				BT_IO_OPT_SEC_LEVEL, sec_level,
-				BT_IO_OPT_INVALID);
-
-	if (err) {
-		g_printerr("%s\n", err->message);
-		g_error_free(err);
-		return NULL;
-	}
-
-	return chan;
 }
 
 static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
@@ -436,6 +371,59 @@ error:
 	return FALSE;
 }
 
+static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
+							gpointer user_data)
+{
+	if (status != 0) {
+		g_printerr("Characteristic Write Request failed: "
+						"%s\n", att_ecode2str(status));
+		goto done;
+	}
+
+	if (!dec_write_resp(pdu, plen)) {
+		g_printerr("Protocol error\n");
+		goto done;
+	}
+
+	g_print("Characteristic value was written sucessfully\n");
+
+done:
+	if (opt_listen == FALSE)
+		g_main_loop_quit(event_loop);
+}
+
+static gboolean characteristics_write_req(gpointer user_data)
+{
+	GAttrib *attrib = user_data;
+	uint8_t *value;
+	size_t len;
+
+	if (opt_handle <= 0) {
+		g_printerr("A valid handle is required\n");
+		goto error;
+	}
+
+	if (opt_value == NULL || opt_value[0] == '\0') {
+		g_printerr("A value is required\n");
+		goto error;
+	}
+
+	len = attr_data_from_string(opt_value, &value);
+	if (len == 0) {
+		g_printerr("Invalid value\n");
+		goto error;
+	}
+
+	gatt_write_char(attrib, opt_handle, value, len, char_write_req_cb,
+									NULL);
+
+	return FALSE;
+
+error:
+	g_main_loop_quit(event_loop);
+	return FALSE;
+}
+
 static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 							gpointer user_data)
 {
@@ -530,13 +518,16 @@ static GOptionEntry gatt_options[] = {
 	{ "char-read", 0, 0, G_OPTION_ARG_NONE, &opt_char_read,
 		"Characteristics Value/Descriptor Read", NULL },
 	{ "char-write", 0, 0, G_OPTION_ARG_NONE, &opt_char_write,
-		"Characteristics Value Write", NULL },
+		"Characteristics Value Write Without Response (Write Command)",
+		NULL },
+	{ "char-write-req", 0, 0, G_OPTION_ARG_NONE, &opt_char_write_req,
+		"Characteristics Value Write (Write Request)", NULL },
 	{ "char-desc", 0, 0, G_OPTION_ARG_NONE, &opt_char_desc,
 		"Characteristics Descriptor Discovery", NULL },
 	{ "listen", 0, 0, G_OPTION_ARG_NONE, &opt_listen,
 		"Listen for notifications and indications", NULL },
-	{ "le", 0, 0, G_OPTION_ARG_NONE, &opt_le,
-		"Use Bluetooth Low Energy transport", NULL },
+	{ "interactive", 'I', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE,
+		&opt_interactive, "Use interactive mode", NULL },
 	{ NULL },
 };
 
@@ -562,6 +553,8 @@ int main(int argc, char *argv[])
 	GAttrib *attrib;
 	GIOChannel *chan;
 	GSourceFunc callback;
+
+	opt_sec_level = strdup("low");
 
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);
@@ -594,6 +587,11 @@ int main(int argc, char *argv[])
 		g_error_free(gerr);
 	}
 
+	if (opt_interactive) {
+		interactive(opt_dst, opt_psm);
+		goto done;
+	}
+
 	if (opt_primary)
 		callback = primary;
 	else if (opt_characteristics)
@@ -602,6 +600,8 @@ int main(int argc, char *argv[])
 		callback = characteristics_read;
 	else if (opt_char_write)
 		callback = characteristics_write;
+	else if (opt_char_write_req)
+		callback = characteristics_write_req;
 	else if (opt_char_desc)
 		callback = characteristics_desc;
 	else {
@@ -612,7 +612,8 @@ int main(int argc, char *argv[])
 		goto done;
 	}
 
-	chan = do_connect(opt_le);
+	chan = gatt_connect(opt_src, opt_dst, opt_sec_level,
+					opt_psm, opt_mtu, connect_cb);
 	if (chan == NULL) {
 		got_error = TRUE;
 		goto done;
@@ -641,6 +642,7 @@ done:
 	g_free(opt_src);
 	g_free(opt_dst);
 	g_free(opt_uuid);
+	g_free(opt_sec_level);
 
 	if (got_error)
 		exit(EXIT_FAILURE);

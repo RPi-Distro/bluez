@@ -169,6 +169,31 @@ struct mgmt_cp_set_io_capability {
 	uint8_t io_capability;
 } __packed;
 
+#define MGMT_OP_PAIR_DEVICE		0x0014
+struct mgmt_cp_pair_device {
+	uint16_t index;
+	bdaddr_t bdaddr;
+	uint8_t io_cap;
+} __packed;
+struct mgmt_rp_pair_device {
+	uint16_t index;
+	bdaddr_t bdaddr;
+	uint8_t status;
+} __packed;
+
+#define MGMT_OP_USER_CONFIRM_REPLY	0x0015
+struct mgmt_cp_user_confirm_reply {
+	uint16_t index;
+	bdaddr_t bdaddr;
+} __packed;
+struct mgmt_rp_user_confirm_reply {
+	uint16_t index;
+	bdaddr_t bdaddr;
+	uint8_t status;
+} __packed;
+
+#define MGMT_OP_USER_CONFIRM_NEG_REPLY	0x0016
+
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
 	uint16_t opcode;
@@ -235,4 +260,18 @@ struct mgmt_ev_connect_failed {
 struct mgmt_ev_pin_code_request {
 	uint16_t index;
 	bdaddr_t bdaddr;
+} __packed;
+
+#define MGMT_EV_USER_CONFIRM_REQUEST	0x000F
+struct mgmt_ev_user_confirm_request {
+	uint16_t index;
+	bdaddr_t bdaddr;
+	uint32_t value;
+} __packed;
+
+#define MGMT_EV_AUTH_FAILED		0x0010
+struct mgmt_ev_auth_failed {
+	uint16_t index;
+	bdaddr_t bdaddr;
+	uint8_t status;
 } __packed;

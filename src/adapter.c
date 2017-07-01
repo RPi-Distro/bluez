@@ -55,6 +55,7 @@
 #include "glib-helper.h"
 #include "agent.h"
 #include "storage.h"
+#include "attrib-server.h"
 #include "att.h"
 
 /* Flags Descriptions */
@@ -267,6 +268,10 @@ int adapter_resolve_names(struct btd_adapter *adapter)
 {
 	struct remote_dev_info *dev, match;
 	int err;
+
+	/* Do not attempt to resolve more names if on suspended state */
+	if (adapter->state & STATE_SUSPENDED)
+		return 0;
 
 	memset(&match, 0, sizeof(struct remote_dev_info));
 	bacpy(&match.bdaddr, BDADDR_ANY);
@@ -867,6 +872,12 @@ void btd_adapter_class_changed(struct btd_adapter *adapter, uint32_t new_class)
 
 	adapter->dev_class = new_class;
 
+	if (main_opts.attrib_server) {
+		/* Removes service class */
+		class[1] = class[1] & 0x1f;
+		attrib_gap_set(GATT_CHARAC_APPEARANCE, class, 2);
+	}
+
 	emit_property_changed(connection, adapter->path,
 				ADAPTER_INTERFACE, "Class",
 				DBUS_TYPE_UINT32, &new_class);
@@ -880,6 +891,10 @@ void adapter_update_local_name(struct btd_adapter *adapter, const char *name)
 		return;
 
 	strncpy(dev->name, name, MAX_NAME_LENGTH);
+
+	if (main_opts.attrib_server)
+		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
+			(const uint8_t *) dev->name, strlen(dev->name));
 
 	if (!adapter->name_stored) {
 		char *name_ptr = dev->name;
@@ -2643,6 +2658,10 @@ gboolean adapter_init(struct btd_adapter *adapter)
 		expand_name(adapter->dev.name, MAX_NAME_LENGTH, main_opts.name,
 							adapter->dev_id);
 
+	if (main_opts.attrib_server)
+		attrib_gap_set(GATT_CHARAC_DEVICE_NAME,
+			(const uint8_t *) dev->name, strlen(dev->name));
+
 	sdp_init_services_list(&adapter->bdaddr);
 	load_drivers(adapter);
 	clear_blocked(adapter);
@@ -3028,7 +3047,7 @@ static void dev_prepend_uuid(gpointer data, gpointer user_data)
 void adapter_update_device_from_info(struct btd_adapter *adapter,
 					bdaddr_t bdaddr, int8_t rssi,
 					uint8_t evt_type, const char *name,
-					GSList *services, uint8_t flags)
+					GSList *services, int flags)
 {
 	struct remote_dev_info *dev;
 	gboolean new_dev;
@@ -3049,7 +3068,8 @@ void adapter_update_device_from_info(struct btd_adapter *adapter,
 	g_slist_foreach(services, remove_same_uuid, dev);
 	g_slist_foreach(services, dev_prepend_uuid, dev);
 
-	dev->flags = flags;
+	if (flags >= 0)
+		dev->flags = flags;
 
 	if (name) {
 		g_free(dev->name);
@@ -3199,6 +3219,8 @@ void adapter_remove_connection(struct btd_adapter *adapter,
 						struct btd_device *device)
 {
 	bdaddr_t bdaddr;
+
+	DBG("");
 
 	if (!g_slist_find(adapter->connections, device)) {
 		error("No matching connection for device");
@@ -3426,11 +3448,10 @@ const char *adapter_any_get_path(void)
 
 const char *btd_adapter_any_request_path(void)
 {
-	if (adapter_any_refcount > 0)
+	if (adapter_any_refcount++ > 0)
 		return adapter_any_path;
 
 	adapter_any_path = g_strdup_printf("%s/any", manager_get_base_path());
-	adapter_any_refcount++;
 
 	return adapter_any_path;
 }
@@ -3596,12 +3617,6 @@ int btd_adapter_remove_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
 	return adapter_ops->remove_bonding(adapter->dev_id, bdaddr);
 }
 
-int btd_adapter_request_authentication(struct btd_adapter *adapter,
-							bdaddr_t *bdaddr)
-{
-	return adapter_ops->request_authentication(adapter->dev_id, bdaddr);
-}
-
 int btd_adapter_pincode_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 							const char *pin)
 {
@@ -3618,17 +3633,6 @@ int btd_adapter_passkey_reply(struct btd_adapter *adapter, bdaddr_t *bdaddr,
 							uint32_t passkey)
 {
 	return adapter_ops->passkey_reply(adapter->dev_id, bdaddr, passkey);
-}
-
-int btd_adapter_get_auth_info(struct btd_adapter *adapter, bdaddr_t *bdaddr,
-								uint8_t *auth)
-{
-	return adapter_ops->get_auth_info(adapter->dev_id, bdaddr, auth);
-}
-
-int btd_adapter_read_scan_enable(struct btd_adapter *adapter)
-{
-	return adapter_ops->read_scan_enable(adapter->dev_id);
 }
 
 void btd_adapter_update_local_ext_features(struct btd_adapter *adapter,
@@ -3649,4 +3653,15 @@ int btd_adapter_set_did(struct btd_adapter *adapter, uint16_t vendor,
 					uint16_t product, uint16_t version)
 {
 	return adapter_ops->set_did(adapter->dev_id, vendor, product, version);
+}
+
+int adapter_create_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr,
+								uint8_t io_cap)
+{
+	return adapter_ops->create_bonding(adapter->dev_id, bdaddr, io_cap);
+}
+
+int adapter_cancel_bonding(struct btd_adapter *adapter, bdaddr_t *bdaddr)
+{
+	return adapter_ops->cancel_bonding(adapter->dev_id, bdaddr);
 }
