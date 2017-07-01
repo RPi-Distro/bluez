@@ -145,86 +145,34 @@ static GIOChannel *do_connect(gboolean le)
 	return chan;
 }
 
-static void primary_all_cb(guint8 status, const guint8 *pdu, guint16 plen,
-							gpointer user_data)
+static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 {
-	GAttrib *attrib = user_data;
-	struct att_data_list *list;
-	unsigned int i;
-	uint16_t end;
+	GSList *l;
 
-	if (status == ATT_ECODE_ATTR_NOT_FOUND)
-		goto done;
-
-	if (status != 0) {
+	if (status) {
 		g_printerr("Discover all primary services failed: %s\n",
 							att_ecode2str(status));
 		goto done;
 	}
 
-	list = dec_read_by_grp_resp(pdu, plen);
-	if (list == NULL)
-		goto done;
-
-	for (i = 0, end = 0; i < list->num; i++) {
-		char uuidstr[MAX_LEN_UUID_STR];
-		uint8_t *value = list->data[i];
-		uint8_t length;
-		uint16_t start;
-		uuid_t uuid;
-
-		/* Each element contains: attribute handle, end group handle
-		 * and attribute value */
-		length = list->len - 2 * sizeof(uint16_t);
-		start = att_get_u16(value);
-		end = att_get_u16(&value[2]);
-
-		g_print("attr handle = 0x%04x, end grp handle = 0x%04x, ",
-								start, end);
-		if (length == 2)
-			sdp_uuid16_create(&uuid, att_get_u16(&value[4]));
-		else
-			sdp_uuid128_create(&uuid, value + 4);
-
-		sdp_uuid2strn(&uuid, uuidstr, MAX_LEN_UUID_STR);
-		g_print("attr value (UUID) = %s\n", uuidstr);
+	for (l = services; l; l = l->next) {
+		struct att_primary *prim = l->data;
+		g_print("attr handle = 0x%04x, end grp handle = 0x%04x "
+			"uuid: %s\n", prim->start, prim->end, prim->uuid);
 	}
 
-	att_data_list_free(list);
-
-	/* Don't go beyond the maximum handle value */
-	if (end == 0xffff)
-		goto done;
-
-	/*
-	 * Discover all primary services sub-procedure shall send another
-	 * Read by Group Type Request until Error Response is received and
-	 * the Error Code is set to Attribute Not Found.
-	 */
-
-	gatt_discover_primary(attrib, end + 1, opt_end, NULL, primary_all_cb,
-								attrib);
-	return;
-
 done:
-	if (opt_listen == FALSE)
-		g_main_loop_quit(event_loop);
+	g_main_loop_quit(event_loop);
 }
 
-static void primary_by_uuid_cb(guint8 status, const guint8 *pdu, guint16 plen,
+static void primary_by_uuid_cb(GSList *ranges, guint8 status,
 							gpointer user_data)
 {
-	GSList *ranges, *l;
+	GSList *l;
 
 	if (status != 0) {
 		g_printerr("Discover primary services by UUID failed: %s\n",
 							att_ecode2str(status));
-		goto done;
-	}
-
-	ranges = dec_find_by_type_resp(pdu, plen);
-	if (ranges == NULL) {
-		g_printerr("Protocol error!\n");
 		goto done;
 	}
 
@@ -233,9 +181,6 @@ static void primary_by_uuid_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		g_print("Starting handle: %04x Ending handle: %04x\n",
 						range->start, range->end);
 	}
-
-	g_slist_foreach(ranges, (GFunc) g_free, NULL);
-	g_slist_free(ranges);
 
 done:
 	g_main_loop_quit(event_loop);
@@ -272,7 +217,7 @@ static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
 	olen = enc_confirmation(opdu, sizeof(opdu));
 
 	if (olen > 0)
-		g_attrib_send(attrib, opdu[0], opdu, olen, NULL, NULL, NULL);
+		g_attrib_send(attrib, 0, opdu[0], opdu, olen, NULL, NULL, NULL);
 }
 
 static gboolean listen_start(gpointer user_data)
@@ -292,82 +237,42 @@ static gboolean primary(gpointer user_data)
 	GAttrib *attrib = user_data;
 
 	if (opt_uuid)
-		gatt_discover_primary(attrib, opt_start, opt_end, opt_uuid,
-						primary_by_uuid_cb, attrib);
+		gatt_discover_primary(attrib, opt_uuid, primary_by_uuid_cb,
+									NULL);
 	else
-		gatt_discover_primary(attrib, opt_start, opt_end, NULL,
-						primary_all_cb, attrib);
+		gatt_discover_primary(attrib, NULL, primary_all_cb, NULL);
 
 	return FALSE;
 }
 
-static void char_discovered_cb(guint8 status, const guint8 *pdu, guint16 plen,
+static void char_discovered_cb(GSList *characteristics, guint8 status,
 							gpointer user_data)
 {
-	struct characteristic_data *char_data = user_data;
-	struct att_data_list *list;
-	uint16_t last = char_data->start;
-	int i;
+	GSList *l;
 
-	if (status == ATT_ECODE_ATTR_NOT_FOUND)
-		goto done;
-
-	if (status != 0) {
+	if (status) {
 		g_printerr("Discover all characteristics failed: %s\n",
 							att_ecode2str(status));
 		goto done;
 	}
 
-	list = dec_read_by_type_resp(pdu, plen);
-	if (list == NULL)
-		return;
+	for (l = characteristics; l; l = l->next) {
+		struct att_char *chars = l->data;
 
-	for (i = 0; i < list->num; i++) {
-		uint8_t *value = list->data[i];
-		char uuidstr[MAX_LEN_UUID_STR];
-		uuid_t uuid;
-
-		last = att_get_u16(value);
-
-		g_print("handle = 0x%04x, char properties = 0x%02x, "
-			"char value handle = 0x%04x, ", last, value[2],
-			att_get_u16(&value[3]));
-
-		if (list->len == 7)
-			sdp_uuid16_create(&uuid, att_get_u16(&value[5]));
-		else
-			sdp_uuid128_create(&uuid, value + 5);
-
-		sdp_uuid2strn(&uuid, uuidstr, MAX_LEN_UUID_STR);
-		g_print("uuid = %s\n", uuidstr);
+		g_print("handle = 0x%04x, char properties = 0x%02x, char value "
+			"handle = 0x%04x, uuid = %s\n", chars->handle,
+			chars->properties, chars->value_handle, chars->uuid);
 	}
 
-	att_data_list_free(list);
-
-	/* Fetch remaining characteristics for the CURRENT primary service */
-	gatt_discover_char(char_data->attrib, last + 1, char_data->end,
-						char_discovered_cb, char_data);
-
-	return;
-
 done:
-	g_free(char_data);
-	if (opt_listen == FALSE)
-		g_main_loop_quit(event_loop);
+	g_main_loop_quit(event_loop);
 }
 
 static gboolean characteristics(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
-	struct characteristic_data *char_data;
 
-	char_data = g_new(struct characteristic_data, 1);
-	char_data->attrib = attrib;
-	char_data->start = opt_start;
-	char_data->end = opt_end;
-
-	gatt_discover_char(attrib, opt_start, opt_end, char_discovered_cb,
-								char_data);
+	gatt_discover_char(attrib, opt_start, opt_end, char_discovered_cb, NULL);
 
 	return FALSE;
 }

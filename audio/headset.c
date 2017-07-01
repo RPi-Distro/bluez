@@ -109,6 +109,12 @@ struct headset_state_callback {
 	unsigned int id;
 };
 
+struct headset_nrec_callback {
+	unsigned int id;
+	headset_nrec_cb cb;
+	void *user_data;
+};
+
 struct connect_cb {
 	unsigned int id;
 	headset_stream_cb_t cb;
@@ -167,6 +173,7 @@ struct headset {
 
 	headset_lock_t lock;
 	struct headset_slc *slc;
+	GSList *nrec_cbs;
 };
 
 struct event {
@@ -1096,8 +1103,17 @@ int telephony_nr_and_ec_rsp(void *telephony_device, cme_error_t err)
 	struct headset *hs = device->headset;
 	struct headset_slc *slc = hs->slc;
 
-	if (err == CME_ERROR_NONE)
+	if (err == CME_ERROR_NONE) {
+		GSList *l;
+
+		for (l = hs->nrec_cbs; l; l = l->next) {
+			struct headset_nrec_callback *nrec_cb = l->data;
+
+			nrec_cb->cb(device, slc->nrec_req, nrec_cb->user_data);
+		}
+
 		slc->nrec = hs->slc->nrec_req;
+	}
 
 	return telephony_generic_rsp(telephony_device, err);
 }
@@ -1235,8 +1251,9 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 	struct headset *hs;
 	struct headset_slc *slc;
 	unsigned char buf[BUF_SIZE];
-	gsize bytes_read = 0;
-	gsize free_space;
+	ssize_t bytes_read;
+	size_t free_space;
+	int fd;
 
 	if (cond & G_IO_NVAL)
 		return FALSE;
@@ -1249,14 +1266,16 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond,
 		goto failed;
 	}
 
-	if (g_io_channel_read(chan, (gchar *) buf, sizeof(buf) - 1,
-				&bytes_read) != G_IO_ERROR_NONE)
+	fd = g_io_channel_unix_get_fd(chan);
+
+	bytes_read = read(fd, buf, sizeof(buf) - 1);
+	if (bytes_read < 0)
 		return TRUE;
 
 	free_space = sizeof(slc->buf) - slc->data_start -
 			slc->data_length - 1;
 
-	if (free_space < bytes_read) {
+	if (free_space < (size_t) bytes_read) {
 		/* Very likely that the HS is sending us garbage so
 		 * just ignore the data and disconnect */
 		error("Too much data to fit incomming buffer");
@@ -2121,6 +2140,9 @@ static void headset_free(struct audio_device *dev)
 
 	headset_close_rfcomm(dev);
 
+	g_slist_foreach(hs->nrec_cbs, (GFunc) g_free, NULL);
+	g_slist_free(hs->nrec_cbs);
+
 	g_free(hs);
 	dev->headset = NULL;
 }
@@ -2636,6 +2658,40 @@ gboolean headset_get_nrec(struct audio_device *dev)
 		return TRUE;
 
 	return hs->slc->nrec;
+}
+
+unsigned int headset_add_nrec_cb(struct audio_device *dev,
+					headset_nrec_cb cb, void *user_data)
+{
+	struct headset *hs = dev->headset;
+	struct headset_nrec_callback *nrec_cb;
+	static unsigned int id = 0;
+
+	nrec_cb = g_new(struct headset_nrec_callback, 1);
+	nrec_cb->cb = cb;
+	nrec_cb->user_data = user_data;
+	nrec_cb->id = ++id;
+
+	hs->nrec_cbs = g_slist_prepend(hs->nrec_cbs, nrec_cb);
+
+	return nrec_cb->id;
+}
+
+gboolean headset_remove_nrec_cb(struct audio_device *dev, unsigned int id)
+{
+	struct headset *hs = dev->headset;
+	GSList *l;
+
+	for (l = hs->nrec_cbs; l != NULL; l = l->next) {
+		struct headset_nrec_callback *cb = l->data;
+		if (cb && cb->id == id) {
+			hs->nrec_cbs = g_slist_remove(hs->nrec_cbs, cb);
+			g_free(cb);
+			return TRUE;
+		}
+	}
+
+	return FALSE;
 }
 
 gboolean headset_get_inband(struct audio_device *dev)

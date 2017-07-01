@@ -44,15 +44,18 @@ GAttrib *g_attrib_new(GIOChannel *io);
 GAttrib *g_attrib_ref(GAttrib *attrib);
 void g_attrib_unref(GAttrib *attrib);
 
+GIOChannel *g_attrib_get_channel(GAttrib *attrib);
+
 gboolean g_attrib_set_disconnect_function(GAttrib *attrib,
 		GAttribDisconnectFunc disconnect, gpointer user_data);
 
 gboolean g_attrib_set_destroy_function(GAttrib *attrib,
 		GDestroyNotify destroy, gpointer user_data);
 
-guint g_attrib_send(GAttrib *attrib, guint8 opcode, const guint8 *pdu,
-				guint16 len, GAttribResultFunc func,
-				gpointer user_data, GDestroyNotify notify);
+guint g_attrib_send(GAttrib *attrib, guint id, guint8 opcode,
+			const guint8 *pdu, guint16 len, GAttribResultFunc func,
+			gpointer user_data, GDestroyNotify notify);
+
 gboolean g_attrib_cancel(GAttrib *attrib, guint id);
 gboolean g_attrib_cancel_all(GAttrib *attrib);
 

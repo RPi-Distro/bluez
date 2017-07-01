@@ -283,10 +283,16 @@ void btd_event_bonding_process_complete(bdaddr_t *local, bdaddr_t *peer,
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
+	gboolean create;
 
 	DBG("status=%02x", status);
 
-	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
+	create = status ? FALSE : TRUE;
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, create))
+		return;
+
+	if (!device)
 		return;
 
 	if (status == 0)
@@ -310,10 +316,16 @@ void btd_event_simple_pairing_complete(bdaddr_t *local, bdaddr_t *peer,
 {
 	struct btd_adapter *adapter;
 	struct btd_device *device;
+	gboolean create;
 
 	DBG("status=%02x", status);
 
-	if (!get_adapter_and_device(local, peer, &adapter, &device, TRUE))
+	create = status ? FALSE : TRUE;
+
+	if (!get_adapter_and_device(local, peer, &adapter, &device, create))
+		return;
+
+	if (!device)
 		return;
 
 	device_simple_pairing_complete(device, status);
@@ -793,11 +805,10 @@ void btd_event_conn_complete(bdaddr_t *local, uint8_t status, uint16_t handle,
 		if (device_is_temporary(device))
 			adapter_remove_device(conn, adapter, device, secmode3);
 		return;
-	} else
-		update_lastused(local, peer);
+	}
 
+	update_lastused(local, peer);
 
-	/* add in the device connetions list */
 	adapter_add_connection(adapter, device, handle);
 }
 

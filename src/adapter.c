@@ -360,7 +360,7 @@ static gboolean discov_timeout_handler(gpointer user_data)
 
 	adapter->discov_timeout_id = 0;
 
-	adapter_ops->set_connectable(adapter->dev_id, TRUE);
+	adapter_ops->set_discoverable(adapter->dev_id, FALSE);
 
 	return FALSE;
 }
@@ -429,7 +429,7 @@ static int adapter_set_mode(struct btd_adapter *adapter, uint8_t mode)
 	int err;
 
 	if (mode == MODE_CONNECTABLE)
-		err = adapter_ops->set_connectable(adapter->dev_id, TRUE);
+		err = adapter_ops->set_discoverable(adapter->dev_id, FALSE);
 	else
 		err = adapter_ops->set_discoverable(adapter->dev_id, TRUE);
 
@@ -546,6 +546,22 @@ static DBusMessage *set_powered(DBusConnection *conn, DBusMessage *msg,
 	return NULL;
 }
 
+void btd_adapter_pairable_changed(struct btd_adapter *adapter,
+							gboolean pairable)
+{
+	adapter->pairable = pairable;
+
+	write_device_pairable(&adapter->bdaddr, pairable);
+
+	emit_property_changed(connection, adapter->path,
+				ADAPTER_INTERFACE, "Pairable",
+				DBUS_TYPE_BOOLEAN, &pairable);
+
+	if (pairable && adapter->pairable_timeout)
+		adapter_set_pairable_timeout(adapter,
+						adapter->pairable_timeout);
+}
+
 static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
 				gboolean pairable, void *data)
 {
@@ -566,19 +582,7 @@ static DBusMessage *set_pairable(DBusConnection *conn, DBusMessage *msg,
 		return btd_error_failed(msg, strerror(-err));
 
 store:
-	adapter->pairable = pairable;
-
 	adapter_ops->set_pairable(adapter->dev_id, pairable);
-
-	write_device_pairable(&adapter->bdaddr, pairable);
-
-	emit_property_changed(connection, adapter->path,
-				ADAPTER_INTERFACE, "Pairable",
-				DBUS_TYPE_BOOLEAN, &pairable);
-
-	if (pairable && adapter->pairable_timeout)
-		adapter_set_pairable_timeout(adapter,
-						adapter->pairable_timeout);
 
 done:
 	return msg ? dbus_message_new_method_return(msg) : NULL;
@@ -638,16 +642,31 @@ static uint8_t get_needed_mode(struct btd_adapter *adapter, uint8_t mode)
 	return mode;
 }
 
+static GSList *remove_bredr(GSList *all)
+{
+	GSList *l, *le;
+
+	for (l = all, le = NULL; l; l = l->next) {
+		struct remote_dev_info *dev = l->data;
+		if (dev->le == FALSE) {
+			dev_info_free(dev);
+			continue;
+		}
+
+		le = g_slist_append(le, dev);
+	}
+
+	g_slist_free(all);
+
+	return le;
+}
+
 static void stop_discovery(struct btd_adapter *adapter, gboolean suspend)
 {
 	pending_remote_name_cancel(adapter);
 
-	if (suspend == FALSE) {
-		g_slist_foreach(adapter->found_devices,
-				(GFunc) dev_info_free, NULL);
-		g_slist_free(adapter->found_devices);
-		adapter->found_devices = NULL;
-	}
+	if (suspend == FALSE)
+		adapter->found_devices = remove_bredr(adapter->found_devices);
 
 	if (adapter->oor_devices) {
 		g_slist_free(adapter->oor_devices);
@@ -985,22 +1004,90 @@ static void adapter_emit_uuids_updated(struct btd_adapter *adapter)
 	g_strfreev(uuids);
 }
 
-void adapter_service_insert(struct btd_adapter *adapter, void *rec)
+static uint8_t get_uuid_mask(uuid_t *uuid)
 {
+	if (uuid->type != SDP_UUID16)
+		return 0;
+
+	switch (uuid->value.uuid16) {
+	case DIALUP_NET_SVCLASS_ID:
+	case CIP_SVCLASS_ID:
+		return 0x42;	/* Telephony & Networking */
+	case IRMC_SYNC_SVCLASS_ID:
+	case OBEX_OBJPUSH_SVCLASS_ID:
+	case OBEX_FILETRANS_SVCLASS_ID:
+	case IRMC_SYNC_CMD_SVCLASS_ID:
+	case PBAP_PSE_SVCLASS_ID:
+		return 0x10;	/* Object Transfer */
+	case HEADSET_SVCLASS_ID:
+	case HANDSFREE_SVCLASS_ID:
+		return 0x20;	/* Audio */
+	case CORDLESS_TELEPHONY_SVCLASS_ID:
+	case INTERCOM_SVCLASS_ID:
+	case FAX_SVCLASS_ID:
+	case SAP_SVCLASS_ID:
+	/*
+	 * Setting the telephony bit for the handsfree audio gateway
+	 * role is not required by the HFP specification, but the
+	 * Nokia 616 carkit is just plain broken! It will refuse
+	 * pairing without this bit set.
+	 */
+	case HANDSFREE_AGW_SVCLASS_ID:
+		return 0x40;	/* Telephony */
+	case AUDIO_SOURCE_SVCLASS_ID:
+	case VIDEO_SOURCE_SVCLASS_ID:
+		return 0x08;	/* Capturing */
+	case AUDIO_SINK_SVCLASS_ID:
+	case VIDEO_SINK_SVCLASS_ID:
+		return 0x04;	/* Rendering */
+	case PANU_SVCLASS_ID:
+	case NAP_SVCLASS_ID:
+	case GN_SVCLASS_ID:
+		return 0x02;	/* Networking */
+	default:
+		return 0;
+	}
+}
+
+static int uuid_cmp(const void *a, const void *b)
+{
+	const sdp_record_t *rec = a;
+	const uuid_t *uuid = b;
+
+	return sdp_uuid_cmp(&rec->svclass, uuid);
+}
+
+void adapter_service_insert(struct btd_adapter *adapter, void *r)
+{
+	sdp_record_t *rec = r;
+	gboolean new_uuid;
+
+	if (sdp_list_find(adapter->services, &rec->svclass, uuid_cmp) == NULL)
+		new_uuid = TRUE;
+	else
+		new_uuid = FALSE;
+
 	adapter->services = sdp_list_insert_sorted(adapter->services, rec,
 								record_sort);
+
+	if (new_uuid) {
+		uint8_t svc_hint = get_uuid_mask(&rec->svclass);
+		adapter_ops->add_uuid(adapter->dev_id, &rec->svclass, svc_hint);
+	}
+
 	adapter_emit_uuids_updated(adapter);
 }
 
-void adapter_service_remove(struct btd_adapter *adapter, void *rec)
+void adapter_service_remove(struct btd_adapter *adapter, void *r)
 {
+	sdp_record_t *rec = r;
+
 	adapter->services = sdp_list_remove(adapter->services, rec);
-	adapter_emit_uuids_updated(adapter);
-}
 
-sdp_list_t *adapter_get_services(struct btd_adapter *adapter)
-{
-	return adapter->services;
+	if (sdp_list_find(adapter->services, &rec->svclass, uuid_cmp) == NULL)
+		adapter_ops->remove_uuid(adapter->dev_id, &rec->svclass);
+
+	adapter_emit_uuids_updated(adapter);
 }
 
 static struct btd_device *adapter_create_device(DBusConnection *conn,
@@ -1140,6 +1227,13 @@ static DBusMessage *adapter_start_discovery(DBusConnection *conn,
 
 	if (adapter->disc_sessions)
 		goto done;
+
+	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
+	g_slist_free(adapter->found_devices);
+	adapter->found_devices = NULL;
+
+	g_slist_free(adapter->oor_devices);
+	adapter->oor_devices = NULL;
 
 	err = start_discovery(adapter);
 	if (err < 0)
@@ -2475,6 +2569,11 @@ static void adapter_free(gpointer user_data)
 
 	sdp_list_free(adapter->services, NULL);
 
+	g_slist_foreach(adapter->found_devices, (GFunc) dev_info_free, NULL);
+	g_slist_free(adapter->found_devices);
+
+	g_slist_free(adapter->oor_devices);
+
 	g_free(adapter->path);
 	g_free(adapter);
 }
@@ -2549,7 +2648,6 @@ gboolean adapter_init(struct btd_adapter *adapter)
 							adapter->dev_id);
 
 	sdp_init_services_list(&adapter->bdaddr);
-	btd_adapter_services_updated(adapter);
 	load_drivers(adapter);
 	clear_blocked(adapter);
 	load_devices(adapter);
@@ -3555,9 +3653,4 @@ int btd_adapter_set_did(struct btd_adapter *adapter, uint16_t vendor,
 					uint16_t product, uint16_t version)
 {
 	return adapter_ops->set_did(adapter->dev_id, vendor, product, version);
-}
-
-int btd_adapter_services_updated(struct btd_adapter *adapter)
-{
-	return adapter_ops->services_updated(adapter->dev_id);
 }

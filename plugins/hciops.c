@@ -35,6 +35,8 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
+#include <bluetooth/sdp.h>
+#include <bluetooth/sdp_lib.h>
 
 #include <glib.h>
 
@@ -59,6 +61,11 @@ enum {
 	PENDING_VERSION,
 	PENDING_FEATURES,
 	PENDING_NAME,
+};
+
+struct uuid_info {
+	uuid_t uuid;
+	uint8_t svc_hint;
 };
 
 static int max_dev = -1;
@@ -94,6 +101,8 @@ static struct dev_info {
 	gboolean debug_keys;
 	GSList *keys;
 	int pin_length;
+
+	GSList *uuids;
 } *devs = NULL;
 
 static int ignore_device(struct hci_dev_info *di)
@@ -306,8 +315,15 @@ static int hciops_set_discoverable(int index, gboolean discoverable)
 
 static int hciops_set_pairable(int index, gboolean pairable)
 {
+	struct btd_adapter *adapter;
+
 	DBG("hci%d pairable %d", index, pairable);
-	return -ENOSYS;
+
+	adapter = manager_find_adapter(&devs[index].bdaddr);
+	if (adapter)
+		btd_adapter_pairable_changed(adapter, pairable);
+
+	return 0;
 }
 
 static int hciops_power_off(int index)
@@ -327,48 +343,68 @@ static int hciops_power_off(int index)
 	return 0;
 }
 
+static void set_event_mask(int index)
+{
+	struct dev_info *dev = &devs[index];
+	/* The second byte is 0xff instead of 0x9f (two reserved bits
+	 * disabled) since a Broadcom 1.2 dongle doesn't respond to the
+	 * command otherwise */
+	uint8_t events[8] = { 0xff, 0xff, 0xfb, 0xff, 0x00, 0x00, 0x00, 0x00 };
+
+	/* Events for 1.2 and newer controllers */
+	if (dev->ver.lmp_ver > 1) {
+		events[4] |= 0x01; /* Flow Specification Complete */
+		events[4] |= 0x02; /* Inquiry Result with RSSI */
+		events[4] |= 0x04; /* Read Remote Extended Features Complete */
+		events[5] |= 0x08; /* Synchronous Connection Complete */
+		events[5] |= 0x10; /* Synchronous Connection Changed */
+	}
+
+	if (dev->features[3] & LMP_RSSI_INQ)
+		events[4] |= 0x04; /* Inquiry Result with RSSI */
+
+	if (dev->features[5] & LMP_SNIFF_SUBR)
+		events[5] |= 0x20; /* Sniff Subrating */
+
+	if (dev->features[5] & LMP_PAUSE_ENC)
+		events[5] |= 0x80; /* Encryption Key Refresh Complete */
+
+	if (dev->features[6] & LMP_EXT_INQ)
+		events[5] |= 0x40; /* Extended Inquiry Result */
+
+	if (dev->features[6] & LMP_NFLUSH_PKTS)
+		events[7] |= 0x01; /* Enhanced Flush Complete */
+
+	if (dev->features[7] & LMP_LSTO)
+		events[6] |= 0x80; /* Link Supervision Timeout Changed */
+
+	if (dev->features[6] & LMP_SIMPLE_PAIR) {
+		events[6] |= 0x01;	/* IO Capability Request */
+		events[6] |= 0x02;	/* IO Capability Response */
+		events[6] |= 0x04;	/* User Confirmation Request */
+		events[6] |= 0x08;	/* User Passkey Request */
+		events[6] |= 0x10;	/* Remote OOB Data Request */
+		events[6] |= 0x20;	/* Simple Pairing Complete */
+		events[7] |= 0x04;	/* User Passkey Notification */
+		events[7] |= 0x08;	/* Keypress Notification */
+		events[7] |= 0x10;	/* Remote Host Supported
+					 * Features Notification */
+	}
+
+	if (dev->features[4] & LMP_LE)
+		events[7] |= 0x20;	/* LE Meta-Event */
+
+	hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_SET_EVENT_MASK,
+						sizeof(events), events);
+}
+
 static void start_adapter(int index)
 {
 	struct dev_info *dev = &devs[index];
-	uint8_t events[8] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0x1f, 0x00, 0x00 };
 	uint8_t inqmode;
 	uint16_t link_policy;
 
-	if (dev->ver.lmp_ver > 1) {
-		if (dev->features[5] & LMP_SNIFF_SUBR)
-			events[5] |= 0x20;
-
-		if (dev->features[5] & LMP_PAUSE_ENC)
-			events[5] |= 0x80;
-
-		if (dev->features[6] & LMP_EXT_INQ)
-			events[5] |= 0x40;
-
-		if (dev->features[6] & LMP_NFLUSH_PKTS)
-			events[7] |= 0x01;
-
-		if (dev->features[7] & LMP_LSTO)
-			events[6] |= 0x80;
-
-		if (dev->features[6] & LMP_SIMPLE_PAIR) {
-			events[6] |= 0x01;	/* IO Capability Request */
-			events[6] |= 0x02;	/* IO Capability Response */
-			events[6] |= 0x04;	/* User Confirmation Request */
-			events[6] |= 0x08;	/* User Passkey Request */
-			events[6] |= 0x10;	/* Remote OOB Data Request */
-			events[6] |= 0x20;	/* Simple Pairing Complete */
-			events[7] |= 0x04;	/* User Passkey Notification */
-			events[7] |= 0x08;	/* Keypress Notification */
-			events[7] |= 0x10;	/* Remote Host Supported
-						 * Features Notification */
-		}
-
-		if (dev->features[4] & LMP_LE)
-			events[7] |= 0x20;	/* LE Meta-Event */
-
-		hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_SET_EVENT_MASK,
-						sizeof(events), events);
-	}
+	set_event_mask(index);
 
 	if (dev->features[6] & LMP_SIMPLE_PAIR)
 		init_ssp_mode(index);
@@ -995,8 +1031,7 @@ static void read_local_features_complete(int index,
 
 #define SIZEOF_UUID128 16
 
-static void eir_generate_uuid128(sdp_list_t *list,
-					uint8_t *ptr, uint16_t *eir_len)
+static void eir_generate_uuid128(GSList *list, uint8_t *ptr, uint16_t *eir_len)
 {
 	int i, k, uuid_count = 0;
 	uint16_t len = *eir_len;
@@ -1007,10 +1042,10 @@ static void eir_generate_uuid128(sdp_list_t *list,
 	uuid128 = ptr + 2;
 
 	for (; list; list = list->next) {
-		sdp_record_t *rec = list->data;
-		uint8_t *uuid128_data = rec->svclass.value.uuid128.data;
+		struct uuid_info *uuid = list->data;
+		uint8_t *uuid128_data = uuid->uuid.value.uuid128.data;
 
-		if (rec->svclass.type != SDP_UUID128)
+		if (uuid->uuid.type != SDP_UUID128)
 			continue;
 
 		/* Stop if not enough space to put next UUID128 */
@@ -1055,14 +1090,12 @@ static void eir_generate_uuid128(sdp_list_t *list,
 static void create_ext_inquiry_response(int index, uint8_t *data)
 {
 	struct dev_info *dev = &devs[index];
-	sdp_list_t *services;
-	sdp_list_t *list;
+	GSList *l;
 	uint8_t *ptr = data;
 	uint16_t eir_len = 0;
 	uint16_t uuid16[EIR_DATA_LENGTH / 2];
 	int i, uuid_count = 0;
 	gboolean truncated = FALSE;
-	struct btd_adapter *adapter;
 	size_t name_len;
 
 	name_len = strlen(dev->name);
@@ -1106,23 +1139,17 @@ static void create_ext_inquiry_response(int index, uint8_t *data)
 		eir_len += 10;
 	}
 
-	adapter = manager_find_adapter(&dev->bdaddr);
-	if (adapter == NULL)
-		return;
-
-	services = adapter_get_services(adapter);
-
 	/* Group all UUID16 types */
-	for (list = services; list; list = list->next) {
-		sdp_record_t *rec = list->data;
+	for (l = dev->uuids; l != NULL; l = g_slist_next(l)) {
+		struct uuid_info *uuid = l->data;
 
-		if (rec->svclass.type != SDP_UUID16)
+		if (uuid->uuid.type != SDP_UUID16)
 			continue;
 
-		if (rec->svclass.value.uuid16 < 0x1100)
+		if (uuid->uuid.value.uuid16 < 0x1100)
 			continue;
 
-		if (rec->svclass.value.uuid16 == PNP_INFO_SVCLASS_ID)
+		if (uuid->uuid.value.uuid16 == PNP_INFO_SVCLASS_ID)
 			continue;
 
 		/* Stop if not enough space to put next UUID16 */
@@ -1133,13 +1160,13 @@ static void create_ext_inquiry_response(int index, uint8_t *data)
 
 		/* Check for duplicates */
 		for (i = 0; i < uuid_count; i++)
-			if (uuid16[i] == rec->svclass.value.uuid16)
+			if (uuid16[i] == uuid->uuid.value.uuid16)
 				break;
 
 		if (i < uuid_count)
 			continue;
 
-		uuid16[uuid_count++] = rec->svclass.value.uuid16;
+		uuid16[uuid_count++] = uuid->uuid.value.uuid16;
 		eir_len += sizeof(uint16_t);
 	}
 
@@ -1160,7 +1187,7 @@ static void create_ext_inquiry_response(int index, uint8_t *data)
 
 	/* Group all UUID128 types */
 	if (eir_len <= EIR_DATA_LENGTH - 2)
-		eir_generate_uuid128(services, ptr, &eir_len);
+		eir_generate_uuid128(dev->uuids, ptr, &eir_len);
 }
 
 static void update_ext_inquiry_response(int index)
@@ -1828,6 +1855,9 @@ static void stop_hci_dev(int index)
 	g_slist_foreach(dev->keys, (GFunc) g_free, NULL);
 	g_slist_free(dev->keys);
 
+	g_slist_foreach(dev->uuids, (GFunc) g_free, NULL);
+	g_slist_free(dev->uuids);
+
 	init_dev_info(index, -1, dev->registered);
 }
 
@@ -1838,18 +1868,21 @@ static gboolean io_security_event(GIOChannel *chan, GIOCondition cond,
 	int type, index = GPOINTER_TO_INT(data);
 	struct dev_info *dev = &devs[index];
 	struct hci_dev_info di;
-	size_t len;
+	ssize_t len;
 	hci_event_hdr *eh;
-	GIOError err;
 	evt_cmd_status *evt;
+	int fd;
 
 	if (cond & (G_IO_NVAL | G_IO_HUP | G_IO_ERR)) {
 		stop_hci_dev(index);
 		return FALSE;
 	}
 
-	if ((err = g_io_channel_read(chan, (gchar *) buf, sizeof(buf), &len))) {
-		if (err == G_IO_ERROR_AGAIN)
+	fd = g_io_channel_unix_get_fd(chan);
+
+	len = read(fd, buf, sizeof(buf));
+	if (len < 0) {
+		if (errno == EAGAIN)
 			return TRUE;
 		stop_hci_dev(index);
 		return FALSE;
@@ -2094,7 +2127,7 @@ static void device_devup_setup(int index)
 	bacpy(&cp.bdaddr, BDADDR_ANY);
 	cp.read_all = 1;
 	hci_send_cmd(dev->sk, OGF_HOST_CTL, OCF_READ_STORED_LINK_KEY,
-			READ_STORED_LINK_KEY_CP_SIZE, (void *) &cp);
+					READ_STORED_LINK_KEY_CP_SIZE, &cp);
 
 	if (!dev->pending)
 		init_adapter(index);
@@ -2315,15 +2348,16 @@ static gboolean io_stack_event(GIOChannel *chan, GIOCondition cond,
 	evt_stack_internal *si;
 	evt_si_device *sd;
 	hci_event_hdr *eh;
-	int type;
-	size_t len;
-	GIOError err;
+	int type, fd;
+	ssize_t len;
 
 	ptr = buf;
 
-	err = g_io_channel_read(chan, (gchar *) buf, sizeof(buf), &len);
-	if (err) {
-		if (err == G_IO_ERROR_AGAIN)
+	fd = g_io_channel_unix_get_fd(chan);
+
+	len = read(fd, buf, sizeof(buf));
+	if (len < 0) {
+		if (errno == EAGAIN)
 			return TRUE;
 
 		error("Read from control socket failed: %s (%d)",
@@ -2473,25 +2507,6 @@ static int hciops_set_powered(int index, gboolean powered)
 					index, strerror(-err), -err);
 
 	return err;
-}
-
-static int hciops_set_connectable(int index, gboolean connectable)
-{
-	struct dev_info *dev = &devs[index];
-	uint8_t mode;
-
-	if (connectable)
-		mode = SCAN_PAGE;
-	else
-		mode = 0x00;
-
-	DBG("hci%d connectable %d", index, connectable);
-
-	if (hci_send_cmd(dev->sk, OGF_HOST_CTL,
-					OCF_WRITE_SCAN_ENABLE, 1, &mode) < 0)
-		return -errno;
-
-	return 0;
 }
 
 static int hciops_set_dev_class(int index, uint8_t major, uint8_t minor)
@@ -3015,10 +3030,28 @@ static int hciops_enable_le(int index)
 	return 0;
 }
 
-static int set_service_classes(int index, uint8_t value)
+static uint8_t generate_service_class(int index)
 {
 	struct dev_info *dev = &devs[index];
+	GSList *l;
+	uint8_t val = 0;
+
+	for (l = dev->uuids; l != NULL; l = g_slist_next(l)) {
+		struct uuid_info *uuid = l->data;
+
+		val |= uuid->svc_hint;
+	}
+
+	return val;
+}
+
+static int update_service_classes(int index)
+{
+	struct dev_info *dev = &devs[index];
+	uint8_t value;
 	int err;
+
+	value = generate_service_class(index);
 
 	DBG("hci%d value %u", index, value);
 
@@ -3048,70 +3081,36 @@ static int set_service_classes(int index, uint8_t value)
 	return err;
 }
 
-static int hciops_services_updated(int index)
+static int hciops_add_uuid(int index, uuid_t *uuid, uint8_t svc_hint)
 {
-	struct btd_adapter *adapter;
-	sdp_list_t *list;
-	uint8_t val = 0;
+	struct dev_info *dev = &devs[index];
+	struct uuid_info *info;
 
 	DBG("hci%d", index);
 
-	adapter = manager_find_adapter_by_id(index);
-	if (adapter == NULL)
-		return -ENODEV;
+	info = g_new0(struct uuid_info, 1);
+	memcpy(&info->uuid, uuid, sizeof(*uuid));
+	info->svc_hint = svc_hint;
 
-	for (list = adapter_get_services(adapter); list; list = list->next) {
-                sdp_record_t *rec = list->data;
+	dev->uuids = g_slist_append(dev->uuids, info);
 
-		if (rec->svclass.type != SDP_UUID16)
-			continue;
+	return update_service_classes(index);
+}
 
-		switch (rec->svclass.value.uuid16) {
-		case DIALUP_NET_SVCLASS_ID:
-		case CIP_SVCLASS_ID:
-			val |= 0x42;	/* Telephony & Networking */
-			break;
-		case IRMC_SYNC_SVCLASS_ID:
-		case OBEX_OBJPUSH_SVCLASS_ID:
-		case OBEX_FILETRANS_SVCLASS_ID:
-		case IRMC_SYNC_CMD_SVCLASS_ID:
-		case PBAP_PSE_SVCLASS_ID:
-			val |= 0x10;	/* Object Transfer */
-			break;
-		case HEADSET_SVCLASS_ID:
-		case HANDSFREE_SVCLASS_ID:
-			val |= 0x20;	/* Audio */
-			break;
-		case CORDLESS_TELEPHONY_SVCLASS_ID:
-		case INTERCOM_SVCLASS_ID:
-		case FAX_SVCLASS_ID:
-		case SAP_SVCLASS_ID:
-		/*
-		 * Setting the telephony bit for the handsfree audio gateway
-		 * role is not required by the HFP specification, but the
-		 * Nokia 616 carkit is just plain broken! It will refuse
-		 * pairing without this bit set.
-		 */
-		case HANDSFREE_AGW_SVCLASS_ID:
-			val |= 0x40;	/* Telephony */
-			break;
-		case AUDIO_SOURCE_SVCLASS_ID:
-		case VIDEO_SOURCE_SVCLASS_ID:
-			val |= 0x08;	/* Capturing */
-			break;
-		case AUDIO_SINK_SVCLASS_ID:
-		case VIDEO_SINK_SVCLASS_ID:
-			val |= 0x04;	/* Rendering */
-			break;
-		case PANU_SVCLASS_ID:
-		case NAP_SVCLASS_ID:
-		case GN_SVCLASS_ID:
-			val |= 0x02;	/* Networking */
-			break;
-		}
+static int hciops_remove_uuid(int index, uuid_t *uuid)
+{
+	struct dev_info *dev = &devs[index];
+	GSList *match;
+
+	match = g_slist_find_custom(dev->uuids, uuid, sdp_uuid_cmp);
+	if (match) {
+		g_free(match->data);
+		dev->uuids = g_slist_delete_link(dev->uuids, match);
 	}
 
-	return set_service_classes(index, val);
+	DBG("hci%d", index);
+
+	return update_service_classes(index);
 }
 
 static int hciops_disable_cod_cache(int index)
@@ -3168,7 +3167,6 @@ static struct btd_adapter_ops hci_ops = {
 	.setup = hciops_setup,
 	.cleanup = hciops_cleanup,
 	.set_powered = hciops_set_powered,
-	.set_connectable = hciops_set_connectable,
 	.set_discoverable = hciops_set_discoverable,
 	.set_pairable = hciops_set_pairable,
 	.set_limited_discoverable = hciops_set_limited_discoverable,
@@ -3199,7 +3197,8 @@ static struct btd_adapter_ops hci_ops = {
 	.enable_le = hciops_enable_le,
 	.encrypt_link = hciops_encrypt_link,
 	.set_did = hciops_set_did,
-	.services_updated = hciops_services_updated,
+	.add_uuid = hciops_add_uuid,
+	.remove_uuid = hciops_remove_uuid,
 	.disable_cod_cache = hciops_disable_cod_cache,
 	.restore_powered = hciops_restore_powered,
 	.load_keys = hciops_load_keys,

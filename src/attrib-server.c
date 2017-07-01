@@ -242,6 +242,7 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 
 		last_size = a->len;
 		old = cur;
+		last_handle = cur->handle;
 	}
 
 	if (groups == NULL)
@@ -545,6 +546,33 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 	return enc_read_resp(a->data, a->len, pdu, len);
 }
 
+static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
+					uint16_t offset, uint8_t *pdu, int len)
+{
+	struct attribute *a;
+	uint8_t status;
+	GSList *l;
+	guint h = handle;
+
+	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
+	if (!l)
+		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
+					ATT_ECODE_INVALID_HANDLE, pdu, len);
+
+	a = l->data;
+
+	if (a->len <= offset)
+		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle,
+					ATT_ECODE_INVALID_OFFSET, pdu, len);
+
+	status = att_check_reqs(channel, ATT_OP_READ_BLOB_REQ, a->read_reqs);
+	if (status)
+		return enc_error_resp(ATT_OP_READ_BLOB_REQ, handle, status,
+								pdu, len);
+
+	return enc_read_blob_resp(a->data, a->len, offset, pdu, len);
+}
+
 static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 						const uint8_t *value, int vlen,
 						uint8_t *pdu, int len)
@@ -598,7 +626,7 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 {
 	struct gatt_channel *channel = user_data;
 	uint8_t opdu[ATT_MAX_MTU], value[ATT_MAX_MTU];
-	uint16_t length, start, end, mtu;
+	uint16_t length, start, end, mtu, offset;
 	uuid_t uuid;
 	uint8_t status = 0;
 	int vlen;
@@ -632,6 +660,15 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 		}
 
 		length = read_value(channel, start, opdu, channel->mtu);
+		break;
+	case ATT_OP_READ_BLOB_REQ:
+		length = dec_read_blob_req(ipdu, len, &start, &offset);
+		if (length == 0) {
+			status = ATT_ECODE_INVALID_PDU;
+			goto done;
+		}
+
+		length = read_blob(channel, start, offset, opdu, channel->mtu);
 		break;
 	case ATT_OP_MTU_REQ:
 		length = dec_mtu_req(ipdu, len, &mtu);
@@ -678,7 +715,6 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 		length = find_by_type(start, end, &uuid, value, vlen,
 							opdu, channel->mtu);
 		break;
-	case ATT_OP_READ_BLOB_REQ:
 	case ATT_OP_READ_MULTI_REQ:
 	case ATT_OP_PREP_WRITE_REQ:
 	case ATT_OP_EXEC_WRITE_REQ:
@@ -694,7 +730,7 @@ done:
 	if (status)
 		length = enc_error_resp(ipdu[0], 0x0000, status, opdu, channel->mtu);
 
-	g_attrib_send(channel->attrib, opdu[0], opdu, length,
+	g_attrib_send(channel->attrib, 0, opdu[0], opdu, length,
 							NULL, NULL, NULL);
 }
 
@@ -748,6 +784,39 @@ static void confirm_event(GIOChannel *io, void *user_data)
 	return;
 }
 
+static void register_core_services(void)
+{
+	uint8_t atval[256];
+	uuid_t uuid;
+	int len;
+
+	/* GAP service: primary service definition */
+	sdp_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
+	att_put_u16(GENERIC_ACCESS_PROFILE_ID, &atval[0]);
+	attrib_db_add(0x0001, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 2);
+
+	/* GAP service: device name characteristic */
+	sdp_uuid16_create(&uuid, GATT_CHARAC_UUID);
+	atval[0] = ATT_CHAR_PROPER_READ;
+	att_put_u16(0x0006, &atval[1]);
+	att_put_u16(GATT_CHARAC_DEVICE_NAME, &atval[3]);
+	attrib_db_add(0x0004, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 5);
+
+	/* GAP service: device name attribute */
+	sdp_uuid16_create(&uuid, GATT_CHARAC_DEVICE_NAME);
+	len = strlen(main_opts.name);
+	attrib_db_add(0x0006, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
+					(uint8_t *) main_opts.name, len);
+
+	/* TODO: Implement Appearance characteristic. It is mandatory for
+	 * Peripheral/Central GAP roles. */
+
+	/* GATT service: primary service definition */
+	sdp_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
+	att_put_u16(GENERIC_ATTRIB_PROFILE_ID, &atval[0]);
+	attrib_db_add(0x0010, &uuid, ATT_NONE, ATT_NOT_PERMITTED, atval, 2);
+}
+
 int attrib_server_init(void)
 {
 	GError *gerr = NULL;
@@ -780,6 +849,8 @@ int attrib_server_init(void)
 	}
 
 	sdp_handle = record->handle;
+
+	register_core_services();
 
 	if (!main_opts.le)
 		return 0;
