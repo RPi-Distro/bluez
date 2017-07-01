@@ -4,7 +4,7 @@
  *
  *  Copyright (C) 2001-2002  Nokia Corporation
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
- *  Copyright (C) 2002-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *  Copyright (C) 2002-2003  Stephen Crane <steve.crane@rococosoft.com>
  *
  *
@@ -584,6 +584,20 @@ static inline int sdp_get_icon_url(const sdp_record_t *rec, char *str, int len)
 {
 	return sdp_get_string_attr(rec, SDP_ATTR_ICON_URL, str, len);
 }
+
+/*
+ * Set the supported features
+ * sf should be a list of list with each feature data
+ * Returns 0 on success -1 on fail
+ */
+int sdp_set_supp_feat(sdp_record_t *rec, const sdp_list_t *sf);
+
+/*
+ * Get the supported features
+ * seqp is set to a list of list with each feature data
+ * Returns 0 on success, if an error occurred -1 is returned and errno is set
+ */
+int sdp_get_supp_feat(const sdp_record_t *rec, sdp_list_t **seqp);
 
 sdp_record_t *sdp_extract_pdu(const uint8_t *pdata, int bufsize, int *scanned);
 sdp_record_t *sdp_copy_record(sdp_record_t *rec);

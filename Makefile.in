@@ -42,7 +42,8 @@ host_triplet = @host@
 bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3) \
 	$(am__EXEEXT_4) $(am__EXEEXT_5) $(am__EXEEXT_6)
 sbin_PROGRAMS = src/bluetoothd$(EXEEXT) $(am__EXEEXT_12) \
-	$(am__EXEEXT_13) $(am__EXEEXT_14) $(am__EXEEXT_15)
+	$(am__EXEEXT_13) $(am__EXEEXT_14) $(am__EXEEXT_15) \
+	$(am__EXEEXT_16)
 noinst_PROGRAMS = $(am__EXEEXT_7) $(am__EXEEXT_8) $(am__EXEEXT_9) \
 	$(am__EXEEXT_10) $(am__EXEEXT_11)
 @SBC_TRUE@am__append_1 = sbc/libsbc.la
@@ -117,40 +118,41 @@ DIST_COMMON = README $(am__configure_deps) \
 @TOOLS_FALSE@			tools/hciattach.8 tools/hciconfig.8 \
 @TOOLS_FALSE@			tools/hcitool.1 tools/sdptool.1 tools/ciptool.1
 
-@BCCMD_TRUE@am__append_24 = tools/bccmd
-@BCCMD_TRUE@@USB_TRUE@am__append_25 = tools/csr_usb.c
-@BCCMD_TRUE@@USB_TRUE@am__append_26 = @USB_LIBS@
-@BCCMD_TRUE@am__append_27 = tools/bccmd.8
-@BCCMD_FALSE@am__append_28 = tools/bccmd.8
-@HID2HCI_TRUE@am__append_29 = tools/hid2hci
-@HID2HCI_TRUE@am__append_30 = tools/hid2hci.8
-@HID2HCI_FALSE@am__append_31 = tools/hid2hci.8
-@DFUTOOL_TRUE@am__append_32 = tools/dfutool
-@DFUTOOL_TRUE@am__append_33 = tools/dfutool.1
-@DFUTOOL_FALSE@am__append_34 = tools/dfutool.1
-@USB_TRUE@am__append_35 = tools/dfubabel tools/avctrl
+@TRACER_TRUE@am__append_24 = tracer/hcitrace
+@BCCMD_TRUE@am__append_25 = tools/bccmd
+@BCCMD_TRUE@@USB_TRUE@am__append_26 = tools/csr_usb.c
+@BCCMD_TRUE@@USB_TRUE@am__append_27 = @USB_LIBS@
+@BCCMD_TRUE@am__append_28 = tools/bccmd.8
+@BCCMD_FALSE@am__append_29 = tools/bccmd.8
+@HID2HCI_TRUE@am__append_30 = tools/hid2hci
+@HID2HCI_TRUE@am__append_31 = tools/hid2hci.8
+@HID2HCI_FALSE@am__append_32 = tools/hid2hci.8
+@DFUTOOL_TRUE@am__append_33 = tools/dfutool
+@DFUTOOL_TRUE@am__append_34 = tools/dfutool.1
+@DFUTOOL_FALSE@am__append_35 = tools/dfutool.1
+@USB_TRUE@am__append_36 = tools/dfubabel tools/avctrl
 @CUPS_TRUE@cups_PROGRAMS = cups/bluetooth$(EXEEXT)
-@TEST_TRUE@am__append_36 = test/hciemu
-@TEST_TRUE@am__append_37 = test/l2test test/rctest
-@TEST_TRUE@am__append_38 = test/gaptest test/sdptest test/scotest \
+@TEST_TRUE@am__append_37 = test/hciemu
+@TEST_TRUE@am__append_38 = test/l2test test/rctest
+@TEST_TRUE@am__append_39 = test/gaptest test/sdptest test/scotest \
 @TEST_TRUE@			test/attest test/hstest test/avtest test/ipctest \
 @TEST_TRUE@					test/lmptest test/bdaddr test/agent \
 @TEST_TRUE@					test/btiotest test/test-textfile
 
-@TEST_TRUE@am__append_39 = test/rctest.1 test/hciemu.1
-@TEST_TRUE@am__append_40 = test/bdaddr.8
-@TEST_FALSE@am__append_41 = test/rctest.1 test/hciemu.1 test/bdaddr.8
-@HIDD_TRUE@am__append_42 = compat/hidd
-@HIDD_TRUE@am__append_43 = compat/hidd.1
-@HIDD_FALSE@am__append_44 = compat/hidd.1
-@PAND_TRUE@am__append_45 = compat/pand
-@PAND_TRUE@am__append_46 = compat/pand.1
-@PAND_FALSE@am__append_47 = compat/pand.1
-@DUND_TRUE@am__append_48 = compat/dund
-@DUND_TRUE@am__append_49 = compat/dund.1
-@DUND_FALSE@am__append_50 = compat/dund.1
-@HID2HCI_TRUE@@UDEVRULES_TRUE@am__append_51 = scripts/bluetooth-hid2hci.rules
-@PCMCIA_TRUE@@UDEVRULES_TRUE@am__append_52 = scripts/bluetooth-serial.rules
+@TEST_TRUE@am__append_40 = test/rctest.1 test/hciemu.1
+@TEST_TRUE@am__append_41 = test/bdaddr.8
+@TEST_FALSE@am__append_42 = test/rctest.1 test/hciemu.1 test/bdaddr.8
+@HIDD_TRUE@am__append_43 = compat/hidd
+@HIDD_TRUE@am__append_44 = compat/hidd.1
+@HIDD_FALSE@am__append_45 = compat/hidd.1
+@PAND_TRUE@am__append_46 = compat/pand
+@PAND_TRUE@am__append_47 = compat/pand.1
+@PAND_FALSE@am__append_48 = compat/pand.1
+@DUND_TRUE@am__append_49 = compat/dund
+@DUND_TRUE@am__append_50 = compat/dund.1
+@DUND_FALSE@am__append_51 = compat/dund.1
+@HID2HCI_TRUE@@UDEVRULES_TRUE@am__append_52 = scripts/bluetooth-hid2hci.rules
+@PCMCIA_TRUE@@UDEVRULES_TRUE@am__append_53 = scripts/bluetooth-serial.rules
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/acinclude.m4 \
@@ -330,9 +332,10 @@ sbc_libsbc_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 @TEST_TRUE@	test/btiotest$(EXEEXT) test/test-textfile$(EXEEXT)
 @TOOLS_TRUE@am__EXEEXT_12 = tools/hciattach$(EXEEXT) \
 @TOOLS_TRUE@	tools/hciconfig$(EXEEXT)
-@BCCMD_TRUE@am__EXEEXT_13 = tools/bccmd$(EXEEXT)
-@HID2HCI_TRUE@am__EXEEXT_14 = tools/hid2hci$(EXEEXT)
-@TEST_TRUE@am__EXEEXT_15 = test/hciemu$(EXEEXT)
+@TRACER_TRUE@am__EXEEXT_13 = tracer/hcitrace$(EXEEXT)
+@BCCMD_TRUE@am__EXEEXT_14 = tools/bccmd$(EXEEXT)
+@HID2HCI_TRUE@am__EXEEXT_15 = tools/hid2hci$(EXEEXT)
+@TEST_TRUE@am__EXEEXT_16 = test/hciemu$(EXEEXT)
 PROGRAMS = $(bin_PROGRAMS) $(cups_PROGRAMS) $(noinst_PROGRAMS) \
 	$(sbin_PROGRAMS)
 am__compat_dund_SOURCES_DIST = compat/dund.c compat/dund.h \
@@ -598,6 +601,11 @@ am__tools_sdptool_SOURCES_DIST = tools/sdptool.c src/sdp-xml.h \
 @TOOLS_TRUE@	src/sdp-xml.$(OBJEXT)
 tools_sdptool_OBJECTS = $(am_tools_sdptool_OBJECTS)
 @TOOLS_TRUE@tools_sdptool_DEPENDENCIES = lib/libbluetooth.la
+am__tracer_hcitrace_SOURCES_DIST = tracer/main.c src/logging.h \
+	src/logging.c
+@TRACER_TRUE@am_tracer_hcitrace_OBJECTS = tracer/main.$(OBJEXT) \
+@TRACER_TRUE@	src/logging.$(OBJEXT)
+tracer_hcitrace_OBJECTS = $(am_tracer_hcitrace_OBJECTS)
 am__dist_udev_SCRIPTS_DIST = scripts/bluetooth_serial
 SCRIPTS = $(dist_udev_SCRIPTS)
 DEFAULT_INCLUDES = -I.@am__isrc@
@@ -659,7 +667,8 @@ SOURCES = $(audio_libtelephony_a_SOURCES) \
 	tools/hcieventmask.c tools/hcisecfilter.c \
 	$(tools_hcitool_SOURCES) tools/hid2hci.c tools/l2ping.c \
 	tools/ppporc.c $(tools_rfcomm_SOURCES) \
-	$(EXTRA_tools_rfcomm_SOURCES) $(tools_sdptool_SOURCES)
+	$(EXTRA_tools_rfcomm_SOURCES) $(tools_sdptool_SOURCES) \
+	$(tracer_hcitrace_SOURCES)
 DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	$(am__audio_libasound_module_ctl_bluetooth_la_SOURCES_DIST) \
 	$(am__audio_libasound_module_pcm_bluetooth_la_SOURCES_DIST) \
@@ -686,7 +695,8 @@ DIST_SOURCES = $(am__audio_libtelephony_a_SOURCES_DIST) \
 	tools/hid2hci.c tools/l2ping.c tools/ppporc.c \
 	$(am__tools_rfcomm_SOURCES_DIST) \
 	$(am__EXTRA_tools_rfcomm_SOURCES_DIST) \
-	$(am__tools_sdptool_SOURCES_DIST)
+	$(am__tools_sdptool_SOURCES_DIST) \
+	$(am__tracer_hcitrace_SOURCES_DIST)
 man1dir = $(mandir)/man1
 man8dir = $(mandir)/man8
 NROFF = nroff
@@ -849,9 +859,9 @@ top_srcdir = @top_srcdir@
 AM_MAKEFLAGS = --no-print-directory
 lib_LTLIBRARIES = lib/libbluetooth.la
 noinst_LTLIBRARIES = $(am__append_1)
-dist_man_MANS = $(am__append_22) $(am__append_27) $(am__append_30) \
-	$(am__append_33) $(am__append_39) $(am__append_43) \
-	$(am__append_46) $(am__append_49)
+dist_man_MANS = $(am__append_22) $(am__append_28) $(am__append_31) \
+	$(am__append_34) $(am__append_40) $(am__append_44) \
+	$(am__append_47) $(am__append_50)
 dist_noinst_MANS = 
 CLEANFILES = $(local_headers) src/bluetooth.ver src/bluetooth.exp \
 	$(builtin_files) tools/lexer.c tools/parser.c tools/parser.h \
@@ -861,22 +871,22 @@ EXTRA_DIST = src/genbuiltin src/bluetooth.conf src/main.conf \
 	audio/audio.conf audio/telephony-dummy.c \
 	audio/telephony-maemo.c audio/telephony-ofono.c \
 	audio/bluetooth.conf $(am__append_23) tools/rfcomm.conf \
-	$(am__append_28) $(am__append_31) $(am__append_34) \
-	tools/dfubabel.1 tools/avctrl.8 $(am__append_40) \
-	$(am__append_41) test/apitest test/hsplay test/hsmicro \
+	$(am__append_29) $(am__append_32) $(am__append_35) \
+	tools/dfubabel.1 tools/avctrl.8 $(am__append_41) \
+	$(am__append_42) test/apitest test/hsplay test/hsmicro \
 	test/dbusdef.py test/monitor-bluetooth test/list-devices \
 	test/test-discovery test/test-manager test/test-adapter \
 	test/test-device test/test-service test/test-serial \
 	test/test-telephony test/test-network test/simple-agent \
-	test/simple-service test/service-record.dtd \
-	test/service-did.xml test/service-spp.xml test/service-opp.xml \
-	test/service-ftp.xml $(am__append_44) $(am__append_47) \
-	$(am__append_50) scripts/bluetooth.rules \
-	scripts/bluetooth-hid2hci.rules scripts/bluetooth-serial.rules \
-	doc/manager-api.txt doc/adapter-api.txt doc/device-api.txt \
-	doc/service-api.txt doc/agent-api.txt doc/serial-api.txt \
-	doc/network-api.txt doc/input-api.txt doc/audio-api.txt \
-	doc/control-api.txt
+	test/simple-service test/test-audio test/test-input \
+	test/service-record.dtd test/service-did.xml \
+	test/service-spp.xml test/service-opp.xml test/service-ftp.xml \
+	$(am__append_45) $(am__append_48) $(am__append_51) \
+	scripts/bluetooth.rules scripts/bluetooth-hid2hci.rules \
+	scripts/bluetooth-serial.rules doc/manager-api.txt \
+	doc/adapter-api.txt doc/device-api.txt doc/service-api.txt \
+	doc/agent-api.txt doc/serial-api.txt doc/network-api.txt \
+	doc/input-api.txt doc/audio-api.txt doc/control-api.txt
 include_HEADERS = $(lib_headers)
 @CONFIGFILES_TRUE@dbusdir = $(sysconfdir)/dbus-1/system.d
 @CONFIGFILES_TRUE@dbus_DATA = src/bluetooth.conf
@@ -894,7 +904,7 @@ local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 7:2:4
+lib_libbluetooth_la_LDFLAGS = -version-info 8:0:5
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 @SBC_TRUE@			sbc/sbc_primitives.h sbc/sbc_primitives.c \
@@ -1023,11 +1033,18 @@ man_MANS = src/bluetoothd.8
 @TOOLS_TRUE@tools_avinfo_LDADD = lib/libbluetooth.la
 @TOOLS_TRUE@tools_ppporc_LDADD = lib/libbluetooth.la
 @TOOLS_TRUE@tools_hcieventmask_LDADD = lib/libbluetooth.la
+@TRACER_TRUE@tracer_hcitrace_SOURCES = tracer/main.c \
+@TRACER_TRUE@				src/logging.h src/logging.c
+
+@TRACER_TRUE@tracer_hcitrace_LDADD = lib/libbluetooth.la \
+@TRACER_TRUE@				@GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@
+
+@TRACER_TRUE@tracer_hcitrace_DEPENDENCIES = lib/libbluetooth.la
 @BCCMD_TRUE@tools_bccmd_SOURCES = tools/bccmd.c tools/csr.h \
 @BCCMD_TRUE@	tools/csr.c tools/csr_hci.c tools/csr_h4.c \
 @BCCMD_TRUE@	tools/csr_3wire.c tools/csr_bcsp.c tools/ubcsp.h \
-@BCCMD_TRUE@	tools/ubcsp.c $(am__append_25)
-@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_26)
+@BCCMD_TRUE@	tools/ubcsp.c $(am__append_26)
+@BCCMD_TRUE@tools_bccmd_LDADD = lib/libbluetooth.la $(am__append_27)
 @HID2HCI_TRUE@tools_hid2hci_LDADD = @USB_LIBS@
 @DFUTOOL_TRUE@tools_dfutool_SOURCES = tools/dfutool.c tools/dfu.h tools/dfu.c
 @DFUTOOL_TRUE@tools_dfutool_LDADD = @USB_LIBS@
@@ -1072,8 +1089,8 @@ man_MANS = src/bluetoothd.8
 
 @DUND_TRUE@compat_dund_LDADD = lib/libbluetooth.la
 @UDEVRULES_TRUE@rulesdir = @UDEV_DATADIR@
-@UDEVRULES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_51) \
-@UDEVRULES_TRUE@	$(am__append_52)
+@UDEVRULES_TRUE@udev_files = scripts/bluetooth.rules $(am__append_52) \
+@UDEVRULES_TRUE@	$(am__append_53)
 @UDEVRULES_TRUE@rules_DATA = $(foreach file,$(udev_files), scripts/97-$(notdir $(file)))
 @PCMCIA_TRUE@udevdir = $(libexecdir)/udev
 @PCMCIA_TRUE@dist_udev_SCRIPTS = scripts/bluetooth_serial
@@ -1086,7 +1103,7 @@ INCLUDES = -I$(builddir)/lib -I$(builddir)/src -I$(srcdir)/src \
 
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = bluez.pc
-DISTCHECK_CONFIGURE_FLAGS = 
+DISTCHECK_CONFIGURE_FLAGS = --disable-udevrules
 DISTCLEANFILES = $(pkgconfig_DATA)
 MAINTAINERCLEANFILES = Makefile.in \
 	aclocal.m4 configure config.h.in config.sub config.guess \
@@ -1927,6 +1944,17 @@ tools/sdptool.$(OBJEXT): tools/$(am__dirstamp) \
 tools/sdptool$(EXEEXT): $(tools_sdptool_OBJECTS) $(tools_sdptool_DEPENDENCIES) tools/$(am__dirstamp)
 	@rm -f tools/sdptool$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(tools_sdptool_OBJECTS) $(tools_sdptool_LDADD) $(LIBS)
+tracer/$(am__dirstamp):
+	@$(MKDIR_P) tracer
+	@: > tracer/$(am__dirstamp)
+tracer/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) tracer/$(DEPDIR)
+	@: > tracer/$(DEPDIR)/$(am__dirstamp)
+tracer/main.$(OBJEXT): tracer/$(am__dirstamp) \
+	tracer/$(DEPDIR)/$(am__dirstamp)
+tracer/hcitrace$(EXEEXT): $(tracer_hcitrace_OBJECTS) $(tracer_hcitrace_DEPENDENCIES) tracer/$(am__dirstamp)
+	@rm -f tracer/hcitrace$(EXEEXT)
+	$(AM_V_CCLD)$(LINK) $(tracer_hcitrace_OBJECTS) $(tracer_hcitrace_LDADD) $(LIBS)
 install-dist_udevSCRIPTS: $(dist_udev_SCRIPTS)
 	@$(NORMAL_INSTALL)
 	test -z "$(udevdir)" || $(MKDIR_P) "$(DESTDIR)$(udevdir)"
@@ -2128,6 +2156,7 @@ mostlyclean-compile:
 	-rm -f tools/ppporc.$(OBJEXT)
 	-rm -f tools/sdptool.$(OBJEXT)
 	-rm -f tools/ubcsp.$(OBJEXT)
+	-rm -f tracer/main.$(OBJEXT)
 
 distclean-compile:
 	-rm -f *.tab.c
@@ -2275,6 +2304,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/ppporc.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/sdptool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@tools/$(DEPDIR)/ubcsp.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@tracer/$(DEPDIR)/main.Po@am__quote@
 
 .c.o:
 @am__fastdepCC_TRUE@	$(AM_V_CC)depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
@@ -2467,6 +2497,7 @@ clean-libtool:
 	-rm -rf src/.libs src/_libs
 	-rm -rf test/.libs test/_libs
 	-rm -rf tools/.libs tools/_libs
+	-rm -rf tracer/.libs tracer/_libs
 
 distclean-libtool:
 	-rm -f libtool config.lt
@@ -2956,6 +2987,8 @@ distclean-generic:
 	-rm -f test/$(am__dirstamp)
 	-rm -f tools/$(DEPDIR)/$(am__dirstamp)
 	-rm -f tools/$(am__dirstamp)
+	-rm -f tracer/$(DEPDIR)/$(am__dirstamp)
+	-rm -f tracer/$(am__dirstamp)
 	-test -z "$(DISTCLEANFILES)" || rm -f $(DISTCLEANFILES)
 
 maintainer-clean-generic:
@@ -2975,7 +3008,7 @@ clean-am: clean-alsaLTLIBRARIES clean-binPROGRAMS clean-cupsPROGRAMS \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR)
+	-rm -rf audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -3028,7 +3061,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR)
+	-rm -rf audio/$(DEPDIR) compat/$(DEPDIR) cups/$(DEPDIR) gdbus/$(DEPDIR) input/$(DEPDIR) lib/$(DEPDIR) network/$(DEPDIR) plugins/$(DEPDIR) sbc/$(DEPDIR) serial/$(DEPDIR) src/$(DEPDIR) test/$(DEPDIR) tools/$(DEPDIR) tracer/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 
@@ -3101,6 +3134,9 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 src/bluetooth.exp: $(src_bluetoothd_OBJECTS)
 	$(AM_V_GEN)$(NM) $^ | $(AWK) '{ print $$3 }' | sort -u | \
 				$(EGREP) -e '^btd_' -e '^g_dbus_' > $@
+	$(AM_V_at)echo -e "info" >> $@
+	$(AM_V_at)echo -e "error" >> $@
+	$(AM_V_at)echo -e "debug" >> $@
 
 src/bluetooth.ver: src/bluetooth.exp
 	$(AM_V_at)echo "{ global:" > $@

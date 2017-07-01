@@ -2,8 +2,8 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2006-2008  Nokia Corporation
- *  Copyright (C) 2004-2009  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2006-2010  Nokia Corporation
+ *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -139,10 +139,12 @@ static void agent_exited(DBusConnection *conn, void *user_data)
 
 	debug("Agent exited without calling Unregister");
 
-	agent_destroy(agent, TRUE);
+	agent->exited = TRUE;
+
+	agent_free(agent);
 }
 
-static void agent_free(struct agent *agent)
+void agent_free(struct agent *agent)
 {
 	if (!agent)
 		return;
@@ -204,16 +206,6 @@ struct agent *agent_create(struct btd_adapter *adapter, const char *name,
 							NULL);
 
 	return agent;
-}
-
-int agent_destroy(struct agent *agent, gboolean exited)
-{
-	if (!agent)
-		return 0;
-
-	agent->exited = exited;
-	agent_free(agent);
-	return 0;
 }
 
 static struct agent_request *agent_request_new(struct agent *agent,
