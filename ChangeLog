@@ -1,3 +1,31 @@
+ver 4.66:
+	Fix regression with full debug enabling via SIGUSR2.
+	Fix redundant speaker/microphone gains being sent.
+	Fix not emitting PropertyChanged for SpeakerGain/MicrophoneGain.
+	Fix issue with storage usage when a record is not found in memory.
+	Fix issue with DiscoverServices not retrieving any records.
+	Fix audio profile disconnection order to match whitepaper.
+	Fix auto-accept confirmation when local agent has NoInputNoOutput.
+	Fix remote just-works SSP when MITM protection is required.
+	Fix performing dedicated bonding without MITM requirement.
+	Add support for storing debug link keys in runtime memory.
+
+ver 4.65:
+	Fix issues with general bonding being default setting now.
+	Fix driver removal upon device removal.
+	Add new "Blocked" property to device objects.
+	Add hciconfig support for blacklisting.
+	Add support for dynamic debug feature.
+
+ver 4.64:
+	Fix invalid memory access in headset_get_nrec function.
+	Fix issue with disconnect event on higher protocol layers.
+	Fix issue with list parsing in sdp_set_supp_features function.
+	Fix device object reference counting for SDP browse requests.
+	Add missing memory checks whenever memory is allocated for SDP.
+	Add support for exporting local services via D-Bus.
+	Add more L2CAP Enhanced Retransmission test options.
+
 ver 4.63:
 	Fix avdtp_abort not canceling pending requests.
 	Fix stale connection when abort gets rejected.

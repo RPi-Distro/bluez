@@ -60,6 +60,8 @@ enum {
 	LSEND,
 	SENDDUMP,
 	LSENDDUMP,
+	LSENDRECV,
+	CSENDRECV,
 	INFOREQ,
 	PAIRING,
 };
@@ -72,6 +74,12 @@ static int omtu = 0;
 
 /* Default FCS option */
 static int fcs = 0x01;
+
+/* Default Transmission Window */
+static int txwin_size = 63;
+
+/* Default Max Transmission */
+static int max_transmit = 3;
 
 /* Default data size */
 static long data_size = -1;
@@ -220,10 +228,11 @@ static int do_connect(char *svr)
 	/* Set new options */
 	opts.omtu = omtu;
 	opts.imtu = imtu;
-	if (rfcmode > 0)
-		opts.mode = rfcmode;
+	opts.mode = rfcmode;
 
 	opts.fcs = fcs;
+	opts.txwin_size = txwin_size;
+	opts.max_tx = max_transmit;
 
 	if (setsockopt(sk, SOL_L2CAP, L2CAP_OPTIONS, &opts, sizeof(opts)) < 0) {
 		syslog(LOG_ERR, "Can't set L2CAP options: %s (%d)",
@@ -386,6 +395,8 @@ static void do_listen(void (*handler)(int sk))
 		opts.mode = rfcmode;
 
 	opts.fcs = fcs;
+	opts.txwin_size = txwin_size;
+	opts.max_tx = max_transmit;
 
 	if (setsockopt(sk, SOL_L2CAP, L2CAP_OPTIONS, &opts, sizeof(opts)) < 0) {
 		syslog(LOG_ERR, "Can't set L2CAP options: %s (%d)",
@@ -775,6 +786,22 @@ static void senddump_mode(int sk)
 	dump_mode(sk);
 }
 
+static void send_and_recv_mode(int sk)
+{
+	int flags;
+
+	if ((flags = fcntl(sk, F_GETFL, 0)) < 0)
+		flags = 0;
+	fcntl(sk, F_SETFL, flags | O_NONBLOCK);
+
+	/* fork for duplex channel */
+	if (fork())
+		send_mode(sk);
+	else
+		recv_mode(sk);
+	return;
+}
+
 static void reconnect_mode(char *svr)
 {
 	while (1) {
@@ -1024,6 +1051,8 @@ static void usage(void)
 		"\t-w listen and send\n"
 		"\t-d listen and dump incoming data\n"
 		"\t-x listen, then send, then dump incoming data\n"
+		"\t-t listen, then send and receive at the same time\n"
+		"\t-q connect, then send and receive at the same time\n"
 		"\t-s connect and send\n"
 		"\t-u connect and receive\n"
 		"\t-n connect and be silent\n"
@@ -1044,8 +1073,11 @@ static void usage(void)
 		"\t[-D milliseconds] delay after sending num frames (default = 0)\n"
 		"\t[-X mode] select retransmission/flow-control mode\n"
 		"\t[-F fcs] use CRC16 check (default = 1)\n"
+		"\t[-Q num] Max Transmit value (default = 3)\n"
+		"\t[-Z size] Transmission Window size (default = 63)\n"
 		"\t[-R] reliable mode\n"
 		"\t[-G] use connectionless channel (datagram)\n"
+		"\t[-U] use sock stream\n"
 		"\t[-A] request authentication\n"
 		"\t[-E] request encryption\n"
 		"\t[-S] secure connection\n"
@@ -1060,7 +1092,7 @@ int main(int argc, char *argv[])
 
 	bacpy(&bdaddr, BDADDR_ANY);
 
-	while ((opt=getopt(argc,argv,"rdscuwmnxyzpb:i:P:I:O:B:N:L:W:C:D:X:F:RGAESMT")) != EOF) {
+	while ((opt=getopt(argc,argv,"rdscuwmntqxyzpb:i:P:I:O:B:N:L:W:C:D:X:F:Q:Z:RUGAESMT")) != EOF) {
 		switch(opt) {
 		case 'r':
 			mode = RECV;
@@ -1096,6 +1128,15 @@ int main(int argc, char *argv[])
 
 		case 'm':
 			mode = MULTY;
+			need_addr = 1;
+			break;
+
+		case 't':
+			mode = LSENDRECV;
+			break;
+
+		case 'q':
+			mode = CSENDRECV;
 			need_addr = 1;
 			break;
 
@@ -1199,8 +1240,20 @@ int main(int argc, char *argv[])
 			socktype = SOCK_DGRAM;
 			break;
 
+		case 'U':
+			socktype = SOCK_STREAM;
+			break;
+
 		case 'T':
 			timestamp = 1;
+			break;
+
+		case 'Q':
+			max_transmit = atoi(optarg);
+			break;
+
+		case 'Z':
+			txwin_size = atoi(optarg);
 			break;
 
 		default:
@@ -1279,6 +1332,18 @@ int main(int argc, char *argv[])
 
 		case LSENDDUMP:
 			do_listen(senddump_mode);
+			break;
+
+		case LSENDRECV:
+			do_listen(send_and_recv_mode);
+			break;
+
+		case CSENDRECV:
+			sk = do_connect(argv[optind]);
+			if (sk < 0)
+				exit(1);
+
+			send_and_recv_mode(sk);
 			break;
 
 		case INFOREQ:

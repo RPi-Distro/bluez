@@ -628,6 +628,7 @@ static gboolean parse_set_opts(struct set_opts *opts, GError **err,
 	/* Set defaults */
 	opts->defer = DEFAULT_DEFER_TIMEOUT;
 	opts->master = -1;
+	opts->sec_level = BT_IO_SEC_MEDIUM;
 
 	while (opt != BT_IO_OPT_INVALID) {
 		switch (opt) {
@@ -889,6 +890,12 @@ static gboolean rfcomm_get(int sock, GError **err, BtIOOption opt1,
 		case BT_IO_OPT_CHANNEL:
 			*(va_arg(args, uint8_t *)) = src.rc_channel ?
 					src.rc_channel : dst.rc_channel;
+			break;
+		case BT_IO_OPT_SOURCE_CHANNEL:
+			*(va_arg(args, uint8_t *)) = src.rc_channel;
+			break;
+		case BT_IO_OPT_DEST_CHANNEL:
+			*(va_arg(args, uint8_t *)) = dst.rc_channel;
 			break;
 		case BT_IO_OPT_MASTER:
 			len = sizeof(flags);

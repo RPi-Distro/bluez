@@ -46,7 +46,7 @@
 #include <dbus/dbus.h>
 #include <gdbus.h>
 
-#include "logging.h"
+#include "log.h"
 #include "textfile.h"
 #include "uinput.h"
 
@@ -298,7 +298,7 @@ static gboolean rfcomm_io_cb(GIOChannel *chan, GIOCondition cond, gpointer data)
 		goto failed;
 	}
 
-	debug("Received: %s", buf);
+	DBG("Received: %s", buf);
 
 	if (g_io_channel_write(chan, ok, 6, &bwritten) != G_IO_ERROR_NONE) {
 		error("IO Channel write error");
@@ -596,8 +596,7 @@ failed:
 	close(req->ctrl_sock);
 
 cleanup:
-	if (req->rd_data)
-		free(req->rd_data);
+	free(req->rd_data);
 
 	g_free(req);
 }
@@ -662,8 +661,7 @@ static int hidp_add_connection(const struct input_device *idev,
 	err = ioctl_connadd(req);
 
 cleanup:
-	if (req->rd_data)
-		free(req->rd_data);
+	free(req->rd_data);
 	g_free(req);
 
 	return err;
@@ -886,6 +884,7 @@ static void control_connect_cb(GIOChannel *chan, GError *conn_err,
 				BT_IO_OPT_SOURCE_BDADDR, &idev->src,
 				BT_IO_OPT_DEST_BDADDR, &idev->dst,
 				BT_IO_OPT_PSM, L2CAP_PSM_HIDP_INTR,
+				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 				BT_IO_OPT_INVALID);
 	if (!io) {
 		error("%s", err->message);
@@ -964,6 +963,7 @@ static DBusMessage *input_device_connect(DBusConnection *conn,
 					BT_IO_OPT_SOURCE_BDADDR, &idev->src,
 					BT_IO_OPT_DEST_BDADDR, &idev->dst,
 					BT_IO_OPT_PSM, L2CAP_PSM_HIDP_CTRL,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
 		iconn->ctrl_io = io;
 	}
@@ -1002,7 +1002,7 @@ static void device_unregister(void *data)
 {
 	struct input_device *idev = data;
 
-	debug("Unregistered interface %s on path %s", INPUT_DEVICE_INTERFACE,
+	DBG("Unregistered interface %s on path %s", INPUT_DEVICE_INTERFACE,
 								idev->path);
 
 	devices = g_slist_remove(devices, idev);
@@ -1089,7 +1089,7 @@ static struct input_device *input_device_new(DBusConnection *conn,
 		return NULL;
 	}
 
-	debug("Registered interface %s on path %s",
+	DBG("Registered interface %s on path %s",
 			INPUT_DEVICE_INTERFACE, idev->path);
 
 	return idev;

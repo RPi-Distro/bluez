@@ -50,10 +50,10 @@ struct btd_adapter *device_get_adapter(struct btd_device *device);
 void device_get_address(struct btd_device *adapter, bdaddr_t *bdaddr);
 const gchar *device_get_path(struct btd_device *device);
 struct agent *device_get_agent(struct btd_device *device);
-void device_set_agent(struct btd_device *device, struct agent *agent);
 gboolean device_is_busy(struct btd_device *device);
 gboolean device_is_temporary(struct btd_device *device);
 gboolean device_is_paired(struct btd_device *device);
+gboolean device_is_trusted(struct btd_device *device);
 void device_set_paired(struct btd_device *device, gboolean paired);
 void device_set_temporary(struct btd_device *device, gboolean temporary);
 void device_set_cap(struct btd_device *device, uint8_t cap);
@@ -79,6 +79,8 @@ gboolean device_is_authenticating(struct btd_device *device);
 gboolean device_is_authorizing(struct btd_device *device);
 void device_set_authorizing(struct btd_device *device, gboolean auth);
 void device_set_renewed_key(struct btd_device *device, gboolean renewed);
+gboolean device_set_debug_key(struct btd_device *device, uint8_t *key);
+gboolean device_get_debug_key(struct btd_device *device, uint8_t *key);
 void device_add_connection(struct btd_device *device, DBusConnection *conn,
 				uint16_t handle);
 void device_remove_connection(struct btd_device *device, DBusConnection *conn,

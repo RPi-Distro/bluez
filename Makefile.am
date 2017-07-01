@@ -53,7 +53,7 @@ lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
-lib_libbluetooth_la_LDFLAGS = -version-info 9:0:6
+lib_libbluetooth_la_LDFLAGS = -version-info 11:0:8
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 
 CLEANFILES += $(local_headers)
@@ -132,7 +132,8 @@ builtin_nodist += audio/telephony.c
 noinst_LIBRARIES = audio/libtelephony.a
 
 audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
-                                audio/telephony-maemo5.c audio/telephony-ofono.c
+				audio/telephony-maemo5.c audio/telephony-ofono.c \
+				audio/telephony-maemo6.c
 endif
 
 if INPUTPLUGIN
@@ -179,7 +180,7 @@ builtin_sources += plugins/storage.c
 sbin_PROGRAMS += src/bluetoothd
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
-			src/main.c src/logging.h src/logging.c \
+			src/main.c src/log.h src/log.c \
 			src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
@@ -218,7 +219,8 @@ EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			src/main.conf network/network.conf \
 			input/input.conf serial/serial.conf \
 			audio/audio.conf audio/telephony-dummy.c \
-			audio/telephony-maemo5.c audio/telephony-ofono.c
+			audio/telephony-maemo5.c audio/telephony-ofono.c \
+			audio/telephony-maemo6.c
 
 
 if ALSA
@@ -253,7 +255,7 @@ gstreamerdir = $(libdir)/gstreamer-0.10
 
 gstreamer_LTLIBRARIES = audio/libgstbluetooth.la
 
-audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c \
+audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
 				audio/gstsbcenc.h audio/gstsbcenc.c \
 				audio/gstsbcdec.h audio/gstsbcdec.c \
 				audio/gstsbcparse.h audio/gstsbcparse.c \

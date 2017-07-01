@@ -34,7 +34,7 @@
 
 #include <gdbus.h>
 
-#include "logging.h"
+#include "log.h"
 #include "../src/adapter.h"
 #include "../src/device.h"
 
@@ -179,7 +179,7 @@ int input_manager_init(DBusConnection *conn, GKeyFile *config)
 		idle_timeout = g_key_file_get_integer(config, "General",
 						"IdleTimeout", &err);
 		if (err) {
-			debug("input.conf: %s", err->message);
+			DBG("input.conf: %s", err->message);
 			g_error_free(err);
 		}
 	}

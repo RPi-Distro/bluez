@@ -38,7 +38,7 @@
 #include <glib.h>
 #include <gdbus.h>
 
-#include "logging.h"
+#include "log.h"
 #include "glib-helper.h"
 #include "btio.h"
 #include "dbus-common.h"
@@ -539,7 +539,7 @@ static void path_unregister(void *data)
 {
 	struct network_peer *peer = data;
 
-	debug("Unregistered interface %s on path %s",
+	DBG("Unregistered interface %s on path %s",
 		NETWORK_PEER_INTERFACE, peer->path);
 
 	peers = g_slist_remove(peers, peer);
@@ -603,7 +603,7 @@ static struct network_peer *create_peer(struct btd_device *device,
 		return NULL;
 	}
 
-	debug("Registered interface %s on path %s",
+	DBG("Registered interface %s on path %s",
 		NETWORK_PEER_INTERFACE, path);
 
 	return peer;

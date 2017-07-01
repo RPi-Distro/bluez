@@ -45,7 +45,7 @@
 
 #include "hcid.h"
 #include "dbus-common.h"
-#include "logging.h"
+#include "log.h"
 #include "adapter.h"
 #include "error.h"
 #include "manager.h"
@@ -61,21 +61,9 @@ const char *manager_get_base_path(void)
 	return base_path;
 }
 
-void manager_update_svc(const bdaddr_t *bdaddr, uint8_t svc)
+void manager_update_svc(struct btd_adapter* adapter, uint8_t svc)
 {
-	GSList *l;
-	bdaddr_t src;
-
-	for (l = adapters; l != NULL; l = l->next) {
-		struct btd_adapter *adapter = l->data;
-
-		adapter_get_address(adapter, &src);
-
-		if (bacmp(bdaddr, BDADDR_ANY) != 0 && bacmp(bdaddr, &src) != 0)
-			continue;
-
-		adapter_update(adapter, svc);
-	}
+	adapter_update(adapter, svc);
 }
 
 static inline DBusMessage *invalid_args(DBusMessage *msg)
@@ -128,8 +116,8 @@ static DBusMessage *find_adapter(DBusConnection *conn,
 							DBUS_TYPE_INVALID))
 		return NULL;
 
-	/* hci_devid() would make sense to use here, except it
-	   is restricted to devices which are up */
+	/* hci_devid() would make sense to use here, except it is
+	 * restricted to devices which are up */
 	if (!strcmp(pattern, "any") || !strcmp(pattern, "00:00:00:00:00:00")) {
 		path = adapter_any_get_path();
 		if (path != NULL)
@@ -249,8 +237,8 @@ dbus_bool_t manager_init(DBusConnection *conn, const char *path)
 	snprintf(base_path, sizeof(base_path), "/org/bluez/%d", getpid());
 
 	return g_dbus_register_interface(conn, "/", MANAGER_INTERFACE,
-			manager_methods, manager_signals,
-			NULL, NULL, NULL);
+					manager_methods, manager_signals,
+					NULL, NULL, NULL);
 }
 
 static void manager_update_adapters(void)
@@ -389,7 +377,8 @@ struct btd_adapter *manager_find_adapter_by_id(int id)
 {
 	GSList *match;
 
-	match = g_slist_find_custom(adapters, GINT_TO_POINTER(id), adapter_id_cmp);
+	match = g_slist_find_custom(adapters, GINT_TO_POINTER(id),
+							adapter_id_cmp);
 	if (!match)
 		return NULL;
 
@@ -404,9 +393,9 @@ GSList *manager_get_adapters(void)
 void manager_add_adapter(const char *path)
 {
 	g_dbus_emit_signal(connection, "/",
-			MANAGER_INTERFACE, "AdapterAdded",
-			DBUS_TYPE_OBJECT_PATH, &path,
-			DBUS_TYPE_INVALID);
+				MANAGER_INTERFACE, "AdapterAdded",
+				DBUS_TYPE_OBJECT_PATH, &path,
+				DBUS_TYPE_INVALID);
 
 	manager_update_adapters();
 

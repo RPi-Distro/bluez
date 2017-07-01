@@ -46,7 +46,7 @@
 
 #include <dbus/dbus.h>
 
-#include "logging.h"
+#include "log.h"
 
 #include "hcid.h"
 #include "sdpd.h"
@@ -93,15 +93,15 @@ static void parse_config(GKeyFile *config)
 	if (!config)
 		return;
 
-	debug("parsing main.conf");
+	DBG("parsing main.conf");
 
 	val = g_key_file_get_integer(config, "General",
 						"DiscoverableTimeout", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("discovto=%d", val);
+		DBG("discovto=%d", val);
 		main_opts.discovto = val;
 		main_opts.flags |= 1 << HCID_SET_DISCOVTO;
 	}
@@ -109,29 +109,29 @@ static void parse_config(GKeyFile *config)
 	val = g_key_file_get_integer(config, "General",
 						"PairableTimeout", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("pairto=%d", val);
+		DBG("pairto=%d", val);
 		main_opts.pairto = val;
 	}
 
 	val = g_key_file_get_integer(config, "General", "PageTimeout", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("pageto=%d", val);
+		DBG("pageto=%d", val);
 		main_opts.pageto = val;
 		main_opts.flags |= 1 << HCID_SET_PAGETO;
 	}
 
 	str = g_key_file_get_string(config, "General", "Name", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("name=%s", str);
+		DBG("name=%s", str);
 		g_free(main_opts.name);
 		main_opts.name = g_strdup(str);
 		main_opts.flags |= 1 << HCID_SET_NAME;
@@ -140,10 +140,10 @@ static void parse_config(GKeyFile *config)
 
 	str = g_key_file_get_string(config, "General", "Class", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("class=%s", str);
+		DBG("class=%s", str);
 		main_opts.class = strtol(str, NULL, 16);
 		main_opts.flags |= 1 << HCID_SET_CLASS;
 		g_free(str);
@@ -152,17 +152,17 @@ static void parse_config(GKeyFile *config)
 	val = g_key_file_get_integer(config, "General",
 					"DiscoverSchedulerInterval", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("discov_interval=%d", val);
+		DBG("discov_interval=%d", val);
 		main_opts.discov_interval = val;
 	}
 
 	boolean = g_key_file_get_boolean(config, "General",
 						"InitiallyPowered", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else if (boolean == FALSE)
 		main_opts.mode = MODE_OFF;
@@ -170,17 +170,17 @@ static void parse_config(GKeyFile *config)
 	boolean = g_key_file_get_boolean(config, "General",
 						"RememberPowered", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else
 		main_opts.remember_powered = boolean;
 
 	str = g_key_file_get_string(config, "General", "DeviceID", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else {
-		debug("deviceid=%s", str);
+		DBG("deviceid=%s", str);
 		strncpy(main_opts.deviceid, str,
 					sizeof(main_opts.deviceid) - 1);
 		g_free(str);
@@ -189,7 +189,7 @@ static void parse_config(GKeyFile *config)
 	boolean = g_key_file_get_boolean(config, "General",
 						"ReverseServiceDiscovery", &err);
 	if (err) {
-		debug("%s", err->message);
+		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else
 		main_opts.reverse_sdp = boolean;
@@ -200,6 +200,13 @@ static void parse_config(GKeyFile *config)
 		g_clear_error(&err);
 	else
 		main_opts.name_resolv = boolean;
+
+	boolean = g_key_file_get_boolean(config, "General",
+						"DebugKeys", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.debug_keys = boolean;
 
 	main_opts.link_mode = HCI_LM_ACCEPT;
 
@@ -290,11 +297,11 @@ static void sig_term(int sig)
 
 static void sig_debug(int sig)
 {
-	toggle_debug();
+	__btd_toggle_debug();
 }
 
+static gchar *option_debug = NULL;
 static gboolean option_detach = TRUE;
-static gboolean option_debug = FALSE;
 static gboolean option_udev = FALSE;
 
 static guint last_adapter_timeout = 0;
@@ -327,12 +334,23 @@ void btd_stop_exit_timer(void)
 	last_adapter_timeout = 0;
 }
 
+static gboolean parse_debug(const char *key, const char *value, gpointer user_data, GError **error)
+{
+	if (value)
+		option_debug = g_strdup(value);
+	else
+		option_debug = g_strdup("*");
+
+	return TRUE;
+}
+
 static GOptionEntry options[] = {
 	{ "nodaemon", 'n', G_OPTION_FLAG_REVERSE,
 				G_OPTION_ARG_NONE, &option_detach,
 				"Don't run as daemon in background" },
-	{ "debug", 'd', 0, G_OPTION_ARG_NONE, &option_debug,
-				"Enable debug information output" },
+	{ "debug", 'd', G_OPTION_FLAG_OPTIONAL_ARG,
+				G_OPTION_ARG_CALLBACK, parse_debug,
+				"Enable debug information output", "DEBUG" },
 	{ "udev", 'u', 0, G_OPTION_ARG_NONE, &option_udev,
 				"Run from udev mode of operation" },
 	{ NULL },
@@ -392,7 +410,7 @@ int main(int argc, char *argv[])
 
 	umask(0077);
 
-	start_logging("bluetoothd", "Bluetooth daemon %s", VERSION);
+	__btd_log_init(option_debug, option_detach);
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_flags = SA_NOCLDSTOP;
@@ -405,11 +423,6 @@ int main(int argc, char *argv[])
 
 	sa.sa_handler = SIG_IGN;
 	sigaction(SIGPIPE, &sa, NULL);
-
-	if (option_debug == TRUE) {
-		info("Enabling debug information");
-		enable_debug();
-	}
 
 	config = load_config(CONFIGDIR "/main.conf");
 
@@ -446,7 +459,7 @@ int main(int argc, char *argv[])
 
 	rfkill_init();
 
-	debug("Entering main loop");
+	DBG("Entering main loop");
 
 	g_main_loop_run(event_loop);
 
@@ -469,7 +482,7 @@ int main(int argc, char *argv[])
 
 	info("Exit");
 
-	stop_logging();
+	__btd_log_cleanup();
 
 	return 0;
 }

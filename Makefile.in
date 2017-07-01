@@ -180,12 +180,13 @@ audio_libtelephony_a_AR = $(AR) $(ARFLAGS)
 audio_libtelephony_a_LIBADD =
 am__audio_libtelephony_a_SOURCES_DIST = audio/telephony.h \
 	audio/telephony-dummy.c audio/telephony-maemo5.c \
-	audio/telephony-ofono.c
+	audio/telephony-ofono.c audio/telephony-maemo6.c
 am__dirstamp = $(am__leading_dot)dirstamp
 @AUDIOPLUGIN_TRUE@am_audio_libtelephony_a_OBJECTS =  \
 @AUDIOPLUGIN_TRUE@	audio/telephony-dummy.$(OBJEXT) \
 @AUDIOPLUGIN_TRUE@	audio/telephony-maemo5.$(OBJEXT) \
-@AUDIOPLUGIN_TRUE@	audio/telephony-ofono.$(OBJEXT)
+@AUDIOPLUGIN_TRUE@	audio/telephony-ofono.$(OBJEXT) \
+@AUDIOPLUGIN_TRUE@	audio/telephony-maemo6.$(OBJEXT)
 audio_libtelephony_a_OBJECTS = $(am_audio_libtelephony_a_OBJECTS)
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -256,12 +257,12 @@ audio_libasound_module_pcm_bluetooth_la_LINK = $(LIBTOOL) $(AM_V_lt) \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@	sbc/libsbc.la \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@	lib/libbluetooth.la
 am__audio_libgstbluetooth_la_SOURCES_DIST = audio/gstbluetooth.c \
-	audio/gstsbcenc.h audio/gstsbcenc.c audio/gstsbcdec.h \
-	audio/gstsbcdec.c audio/gstsbcparse.h audio/gstsbcparse.c \
-	audio/gstavdtpsink.h audio/gstavdtpsink.c audio/gsta2dpsink.h \
-	audio/gsta2dpsink.c audio/gstsbcutil.h audio/gstsbcutil.c \
-	audio/gstrtpsbcpay.h audio/gstrtpsbcpay.c audio/rtp.h \
-	audio/ipc.h audio/ipc.c
+	audio/gstpragma.h audio/gstsbcenc.h audio/gstsbcenc.c \
+	audio/gstsbcdec.h audio/gstsbcdec.c audio/gstsbcparse.h \
+	audio/gstsbcparse.c audio/gstavdtpsink.h audio/gstavdtpsink.c \
+	audio/gsta2dpsink.h audio/gsta2dpsink.c audio/gstsbcutil.h \
+	audio/gstsbcutil.c audio/gstrtpsbcpay.h audio/gstrtpsbcpay.c \
+	audio/rtp.h audio/ipc.h audio/ipc.c
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@am_audio_libgstbluetooth_la_OBJECTS = audio/audio_libgstbluetooth_la-gstbluetooth.lo \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@	audio/audio_libgstbluetooth_la-gstsbcenc.lo \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@	audio/audio_libgstbluetooth_la-gstsbcdec.lo \
@@ -405,7 +406,7 @@ am__src_bluetoothd_SOURCES_DIST = gdbus/gdbus.h gdbus/mainloop.c \
 	network/server.h network/server.c network/bridge.h \
 	network/bridge.c network/connection.h network/connection.c \
 	plugins/service.c plugins/hciops.c plugins/hal.c \
-	plugins/storage.c src/main.c src/logging.h src/logging.c \
+	plugins/storage.c src/main.c src/log.h src/log.c \
 	src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
 	src/sdpd-server.c src/sdpd-request.c src/sdpd-service.c \
 	src/sdpd-database.c src/sdp-xml.h src/sdp-xml.c src/btio.h \
@@ -448,14 +449,14 @@ am__objects_10 = $(am__objects_3) $(am__objects_4) $(am__objects_5) \
 	$(am__objects_9) plugins/hciops.$(OBJEXT) \
 	plugins/hal.$(OBJEXT) plugins/storage.$(OBJEXT)
 am_src_bluetoothd_OBJECTS = $(am__objects_2) $(am__objects_10) \
-	src/main.$(OBJEXT) src/logging.$(OBJEXT) \
-	src/security.$(OBJEXT) src/rfkill.$(OBJEXT) \
-	src/sdpd-server.$(OBJEXT) src/sdpd-request.$(OBJEXT) \
-	src/sdpd-service.$(OBJEXT) src/sdpd-database.$(OBJEXT) \
-	src/sdp-xml.$(OBJEXT) src/btio.$(OBJEXT) \
-	src/textfile.$(OBJEXT) src/glib-helper.$(OBJEXT) \
-	src/oui.$(OBJEXT) src/plugin.$(OBJEXT) src/storage.$(OBJEXT) \
-	src/agent.$(OBJEXT) src/error.$(OBJEXT) src/manager.$(OBJEXT) \
+	src/main.$(OBJEXT) src/log.$(OBJEXT) src/security.$(OBJEXT) \
+	src/rfkill.$(OBJEXT) src/sdpd-server.$(OBJEXT) \
+	src/sdpd-request.$(OBJEXT) src/sdpd-service.$(OBJEXT) \
+	src/sdpd-database.$(OBJEXT) src/sdp-xml.$(OBJEXT) \
+	src/btio.$(OBJEXT) src/textfile.$(OBJEXT) \
+	src/glib-helper.$(OBJEXT) src/oui.$(OBJEXT) \
+	src/plugin.$(OBJEXT) src/storage.$(OBJEXT) src/agent.$(OBJEXT) \
+	src/error.$(OBJEXT) src/manager.$(OBJEXT) \
 	src/adapter.$(OBJEXT) src/device.$(OBJEXT) \
 	src/dbus-common.$(OBJEXT) src/dbus-hci.$(OBJEXT)
 @AUDIOPLUGIN_TRUE@am__objects_11 = audio/telephony.$(OBJEXT)
@@ -604,10 +605,8 @@ am__tools_sdptool_SOURCES_DIST = tools/sdptool.c src/sdp-xml.h \
 @TOOLS_TRUE@	src/sdp-xml.$(OBJEXT)
 tools_sdptool_OBJECTS = $(am_tools_sdptool_OBJECTS)
 @TOOLS_TRUE@tools_sdptool_DEPENDENCIES = lib/libbluetooth.la
-am__tracer_hcitrace_SOURCES_DIST = tracer/main.c src/logging.h \
-	src/logging.c
-@TRACER_TRUE@am_tracer_hcitrace_OBJECTS = tracer/main.$(OBJEXT) \
-@TRACER_TRUE@	src/logging.$(OBJEXT)
+am__tracer_hcitrace_SOURCES_DIST = tracer/main.c
+@TRACER_TRUE@am_tracer_hcitrace_OBJECTS = tracer/main.$(OBJEXT)
 tracer_hcitrace_OBJECTS = $(am_tracer_hcitrace_OBJECTS)
 am__dist_udev_SCRIPTS_DIST = scripts/bluetooth_serial
 SCRIPTS = $(dist_udev_SCRIPTS)
@@ -873,16 +872,16 @@ EXTRA_DIST = src/genbuiltin src/bluetooth.conf src/main.conf \
 	network/network.conf input/input.conf serial/serial.conf \
 	audio/audio.conf audio/telephony-dummy.c \
 	audio/telephony-maemo5.c audio/telephony-ofono.c \
-	audio/bluetooth.conf $(am__append_25) tools/rfcomm.conf \
-	$(am__append_31) $(am__append_34) $(am__append_37) \
-	tools/dfubabel.1 tools/avctrl.8 $(am__append_43) \
-	$(am__append_44) test/apitest test/hsplay test/hsmicro \
-	test/dbusdef.py test/monitor-bluetooth test/list-devices \
-	test/test-discovery test/test-manager test/test-adapter \
-	test/test-device test/test-service test/test-serial \
-	test/test-telephony test/test-network test/simple-agent \
-	test/simple-service test/test-audio test/test-input \
-	test/service-record.dtd test/service-did.xml \
+	audio/telephony-maemo6.c audio/bluetooth.conf $(am__append_25) \
+	tools/rfcomm.conf $(am__append_31) $(am__append_34) \
+	$(am__append_37) tools/dfubabel.1 tools/avctrl.8 \
+	$(am__append_43) $(am__append_44) test/apitest test/hsplay \
+	test/hsmicro test/dbusdef.py test/monitor-bluetooth \
+	test/list-devices test/test-discovery test/test-manager \
+	test/test-adapter test/test-device test/test-service \
+	test/test-serial test/test-telephony test/test-network \
+	test/simple-agent test/simple-service test/test-audio \
+	test/test-input test/service-record.dtd test/service-did.xml \
 	test/service-spp.xml test/service-opp.xml test/service-ftp.xml \
 	$(am__append_47) $(am__append_50) $(am__append_53) \
 	scripts/bluetooth.rules scripts/bluetooth-hid2hci.rules \
@@ -907,7 +906,7 @@ local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 lib_libbluetooth_la_SOURCES = $(lib_headers) \
 					lib/bluetooth.c lib/hci.c lib/sdp.c
 
-lib_libbluetooth_la_LDFLAGS = -version-info 9:0:6
+lib_libbluetooth_la_LDFLAGS = -version-info 11:0:8
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 @SBC_TRUE@sbc_libsbc_la_SOURCES = sbc/sbc.h sbc/sbc.c sbc/sbc_math.h sbc/sbc_tables.h \
 @SBC_TRUE@			sbc/sbc_primitives.h sbc/sbc_primitives.c \
@@ -939,10 +938,11 @@ builtin_sources = $(am__append_6) $(am__append_8) $(am__append_10) \
 builtin_nodist = $(am__append_11)
 @AUDIOPLUGIN_TRUE@noinst_LIBRARIES = audio/libtelephony.a
 @AUDIOPLUGIN_TRUE@audio_libtelephony_a_SOURCES = audio/telephony.h audio/telephony-dummy.c \
-@AUDIOPLUGIN_TRUE@                                audio/telephony-maemo5.c audio/telephony-ofono.c
+@AUDIOPLUGIN_TRUE@				audio/telephony-maemo5.c audio/telephony-ofono.c \
+@AUDIOPLUGIN_TRUE@				audio/telephony-maemo6.c
 
 src_bluetoothd_SOURCES = $(gdbus_sources) $(builtin_sources) \
-			src/main.c src/logging.h src/logging.c \
+			src/main.c src/log.h src/log.c \
 			src/security.c src/rfkill.c src/hcid.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
@@ -992,7 +992,7 @@ man_MANS = src/bluetoothd.8
 @ALSA_TRUE@@CONFIGFILES_TRUE@alsaconf_DATA = audio/bluetooth.conf
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamerdir = $(libdir)/gstreamer-0.10
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@gstreamer_LTLIBRARIES = audio/libgstbluetooth.la
-@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c \
+@AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@audio_libgstbluetooth_la_SOURCES = audio/gstbluetooth.c audio/gstpragma.h \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@				audio/gstsbcenc.h audio/gstsbcenc.c \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@				audio/gstsbcdec.h audio/gstsbcdec.c \
 @AUDIOPLUGIN_TRUE@@GSTREAMER_TRUE@				audio/gstsbcparse.h audio/gstsbcparse.c \
@@ -1037,9 +1037,7 @@ man_MANS = src/bluetoothd.8
 @TOOLS_TRUE@tools_avinfo_LDADD = lib/libbluetooth.la
 @TOOLS_TRUE@tools_ppporc_LDADD = lib/libbluetooth.la
 @TOOLS_TRUE@tools_hcieventmask_LDADD = lib/libbluetooth.la
-@TRACER_TRUE@tracer_hcitrace_SOURCES = tracer/main.c \
-@TRACER_TRUE@				src/logging.h src/logging.c
-
+@TRACER_TRUE@tracer_hcitrace_SOURCES = tracer/main.c
 @TRACER_TRUE@tracer_hcitrace_LDADD = lib/libbluetooth.la \
 @TRACER_TRUE@				@GLIB_LIBS@ @DBUS_LIBS@ @CAPNG_LIBS@
 
@@ -1191,6 +1189,8 @@ audio/telephony-dummy.$(OBJEXT): audio/$(am__dirstamp) \
 audio/telephony-maemo5.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 audio/telephony-ofono.$(OBJEXT): audio/$(am__dirstamp) \
+	audio/$(DEPDIR)/$(am__dirstamp)
+audio/telephony-maemo6.$(OBJEXT): audio/$(am__dirstamp) \
 	audio/$(DEPDIR)/$(am__dirstamp)
 audio/libtelephony.a: $(audio_libtelephony_a_OBJECTS) $(audio_libtelephony_a_DEPENDENCIES) audio/$(am__dirstamp)
 	$(AM_V_at)-rm -f audio/libtelephony.a
@@ -1709,8 +1709,7 @@ plugins/hal.$(OBJEXT): plugins/$(am__dirstamp) \
 plugins/storage.$(OBJEXT): plugins/$(am__dirstamp) \
 	plugins/$(DEPDIR)/$(am__dirstamp)
 src/main.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
-src/logging.$(OBJEXT): src/$(am__dirstamp) \
-	src/$(DEPDIR)/$(am__dirstamp)
+src/log.$(OBJEXT): src/$(am__dirstamp) src/$(DEPDIR)/$(am__dirstamp)
 src/security.$(OBJEXT): src/$(am__dirstamp) \
 	src/$(DEPDIR)/$(am__dirstamp)
 src/rfkill.$(OBJEXT): src/$(am__dirstamp) \
@@ -2037,6 +2036,7 @@ mostlyclean-compile:
 	-rm -f audio/source.$(OBJEXT)
 	-rm -f audio/telephony-dummy.$(OBJEXT)
 	-rm -f audio/telephony-maemo5.$(OBJEXT)
+	-rm -f audio/telephony-maemo6.$(OBJEXT)
 	-rm -f audio/telephony-ofono.$(OBJEXT)
 	-rm -f audio/telephony.$(OBJEXT)
 	-rm -f audio/unix.$(OBJEXT)
@@ -2104,7 +2104,7 @@ mostlyclean-compile:
 	-rm -f src/device.$(OBJEXT)
 	-rm -f src/error.$(OBJEXT)
 	-rm -f src/glib-helper.$(OBJEXT)
-	-rm -f src/logging.$(OBJEXT)
+	-rm -f src/log.$(OBJEXT)
 	-rm -f src/main.$(OBJEXT)
 	-rm -f src/manager.$(OBJEXT)
 	-rm -f src/oui.$(OBJEXT)
@@ -2194,6 +2194,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/source.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-dummy.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-maemo5.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-maemo6.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony-ofono.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/telephony.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@audio/$(DEPDIR)/unix.Po@am__quote@
@@ -2253,7 +2254,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/device.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/error.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/glib-helper.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/logging.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/log.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/manager.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/oui.Po@am__quote@
