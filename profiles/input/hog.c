@@ -40,19 +40,21 @@
 
 #include <glib.h>
 
-#include "log.h"
+#include "src/log.h"
 
 #include "lib/uuid.h"
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/profile.h"
 #include "src/service.h"
+#include "src/shared/util.h"
 
-#include "plugin.h"
+#include "src/plugin.h"
+
 #include "suspend.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
-#include "attio.h"
+#include "src/attio.h"
 #include "attrib/gatt.h"
 
 #define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
@@ -233,8 +235,8 @@ static void discover_descriptor_cb(guint8 status, const guint8 *pdu,
 		uint8_t *value;
 
 		value = list->data[i];
-		handle = att_get_u16(value);
-		uuid16 = att_get_u16(&value[2]);
+		handle = get_le16(value);
+		uuid16 = get_le16(&value[2]);
 
 		switch (uuid16) {
 		case GATT_CLIENT_CHARAC_CFG_UUID:
@@ -261,8 +263,8 @@ done:
 	att_data_list_free(list);
 
 	if (handle != 0xffff && handle < end)
-		gatt_find_info(attrib, handle + 1, end, discover_descriptor_cb,
-								ddcb_data);
+		gatt_discover_char_desc(attrib, handle + 1, end,
+					discover_descriptor_cb, ddcb_data);
 	else
 		g_free(ddcb_data);
 }
@@ -279,11 +281,12 @@ static void discover_descriptor(GAttrib *attrib, uint16_t start, uint16_t end,
 	ddcb_data->end = end;
 	ddcb_data->data = user_data;
 
-	gatt_find_info(attrib, start, end, discover_descriptor_cb, ddcb_data);
+	gatt_discover_char_desc(attrib, start, end, discover_descriptor_cb,
+								ddcb_data);
 }
 
-static void external_service_char_cb(GSList *chars, guint8 status,
-							gpointer user_data)
+static void external_service_char_cb(uint8_t status, GSList *chars,
+								void *user_data)
 {
 	struct hog_device *hogdev = user_data;
 	struct gatt_primary *prim = hogdev->hog_primary;
@@ -334,7 +337,7 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 		return;
 	}
 
-	uuid16 = att_get_u16(&pdu[1]);
+	uuid16 = get_le16(&pdu[1]);
 	DBG("External report reference read, external report characteristic "
 						"UUID: 0x%04x", uuid16);
 	bt_uuid16_create(&uuid, uuid16);
@@ -346,6 +349,7 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 							gpointer user_data)
 {
 	struct hog_device *hogdev = user_data;
+	struct btd_adapter *adapter = device_get_adapter(hogdev->device);
 	uint8_t value[HOG_REPORT_MAP_MAX_SIZE];
 	struct uhid_event ev;
 	uint16_t vendor_src, vendor, product, version;
@@ -390,7 +394,13 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	/* create uHID device */
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_CREATE;
-	strcpy((char *) ev.u.create.name, "bluez-hog-device");
+	if (device_name_known(hogdev->device))
+		device_get_name(hogdev->device, (char *) ev.u.create.name,
+						sizeof(ev.u.create.name));
+	else
+		strcpy((char *) ev.u.create.name, "bluez-hog-device");
+	ba2str(btd_adapter_get_address(adapter), (char *) ev.u.create.phys);
+	ba2str(device_get_address(hogdev->device), (char *) ev.u.create.uniq);
 	ev.u.create.vendor = vendor;
 	ev.u.create.product = product;
 	ev.u.create.version = version;
@@ -422,7 +432,7 @@ static void info_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		return;
 	}
 
-	hogdev->bcdhid = att_get_u16(&value[0]);
+	hogdev->bcdhid = get_le16(&value[0]);
 	hogdev->bcountrycode = value[2];
 	hogdev->flags = value[3];
 
@@ -455,19 +465,19 @@ static void proto_mode_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		DBG("HoG device 0x%04X is operating in Boot Procotol Mode",
 								hogdev->id);
 
-		gatt_write_char(hogdev->attrib, hogdev->proto_mode_handle, &nval,
+		gatt_write_cmd(hogdev->attrib, hogdev->proto_mode_handle, &nval,
 						sizeof(nval), NULL, NULL);
 	} else if (value == HOG_PROTO_MODE_REPORT)
 		DBG("HoG device 0x%04X is operating in Report Protocol Mode",
 								hogdev->id);
 }
 
-static void char_discovered_cb(GSList *chars, guint8 status, gpointer user_data)
+static void char_discovered_cb(uint8_t status, GSList *chars, void *user_data)
 {
 	struct hog_device *hogdev = user_data;
 	struct gatt_primary *prim = hogdev->hog_primary;
-	bt_uuid_t report_uuid, report_map_uuid, info_uuid, proto_mode_uuid,
-		  ctrlpt_uuid;
+	bt_uuid_t report_uuid, report_map_uuid, info_uuid;
+	bt_uuid_t proto_mode_uuid, ctrlpt_uuid;
 	struct report *report;
 	GSList *l;
 	uint16_t info_handle = 0, proto_mode_handle = 0;
@@ -588,11 +598,11 @@ static void forward_report(struct hog_device *hogdev,
 	if (hogdev->attrib == NULL)
 		return;
 
-	if (report->decl->properties & ATT_CHAR_PROPER_WRITE)
+	if (report->decl->properties & GATT_CHR_PROP_WRITE)
 		gatt_write_char(hogdev->attrib, report->decl->value_handle,
 				data, size, output_written_cb, hogdev);
-	else if (report->decl->properties & ATT_CHAR_PROPER_WRITE_WITHOUT_RESP)
-		gatt_write_char(hogdev->attrib, report->decl->value_handle,
+	else if (report->decl->properties & GATT_CHR_PROP_WRITE_WITHOUT_RESP)
+		gatt_write_cmd(hogdev->attrib, report->decl->value_handle,
 						data, size, NULL, NULL);
 }
 
@@ -620,12 +630,43 @@ static gboolean uhid_event_cb(GIOChannel *io, GIOCondition cond,
 	DBG("uHID event type %d received", ev.type);
 
 	switch (ev.type) {
+	case UHID_START:
+	case UHID_STOP:
+		/* These are called to start and stop the underlying hardware.
+		 * For HoG we open the channels before creating the device so
+		 * the hardware is always ready. No need to handle these.
+		 * Note that these are also called when the kernel switches
+		 * between device-drivers loaded on the HID device. But we can
+		 * simply keep the hardware alive during transitions and it
+		 * works just fine.
+		 * The kernel never destroys a device itself! Only an explicit
+		 * UHID_DESTROY request can remove a device. */
+		break;
+	case UHID_OPEN:
+	case UHID_CLOSE:
+		/* OPEN/CLOSE are sent whenever user-space opens any interface
+		 * provided by the kernel HID device. Whenever the open-count
+		 * is non-zero we must be ready for I/O. As long as it is zero,
+		 * we can decide to drop all I/O and put the device
+		 * asleep This is optional, though. Moreover, some
+		 * special device drivers are buggy in that regard, so
+		 * maybe we just keep I/O always awake like HIDP in the
+		 * kernel does. */
+		break;
 	case UHID_OUTPUT:
 	case UHID_FEATURE:
 		forward_report(hogdev, &ev);
 		break;
 	case UHID_OUTPUT_EV:
-		DBG("uHID output event: type %d code %d value %d",
+		/* This is only sent by kernels prior to linux-3.11. It
+		 * requires us to parse HID-descriptors in user-space to
+		 * properly handle it. This is redundant as the kernel
+		 * does it already. That's why newer kernels assemble
+		 * the output-reports and send it to us via UHID_OUTPUT.
+		 * We never implemented this, so we rely on users to use
+		 * recent-enough kernels if they want this feature. No reason
+		 * to implement this for older kernels. */
+		DBG("Unsupported uHID output event: type %d code %d value %d",
 			ev.u.output_ev.type, ev.u.output_ev.code,
 			ev.u.output_ev.value);
 		break;
@@ -646,6 +687,8 @@ static void attio_connected_cb(GAttrib *attrib, gpointer user_data)
 	struct hog_device *hogdev = user_data;
 	struct gatt_primary *prim = hogdev->hog_primary;
 	GSList *l;
+
+	DBG("HoG connected");
 
 	hogdev->attrib = g_attrib_ref(attrib);
 
@@ -670,6 +713,8 @@ static void attio_disconnected_cb(gpointer user_data)
 {
 	struct hog_device *hogdev = user_data;
 	GSList *l;
+
+	DBG("HoG disconnected");
 
 	for (l = hogdev->reports; l; l = l->next) {
 		struct report *r = l->data;
@@ -789,7 +834,7 @@ static int set_control_point(struct hog_device *hogdev, gboolean suspend)
 	if (hogdev->ctrlpt_handle == 0)
 		return -ENOTSUP;
 
-	gatt_write_char(hogdev->attrib, hogdev->ctrlpt_handle, &value,
+	gatt_write_cmd(hogdev->attrib, hogdev->ctrlpt_handle, &value,
 					sizeof(value), NULL, NULL);
 
 	return 0;

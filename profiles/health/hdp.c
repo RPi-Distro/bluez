@@ -27,19 +27,20 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <sdpd.h>
 #include <unistd.h>
 
 #include <glib.h>
 
+#include <bluetooth/bluetooth.h>
 #include <bluetooth/l2cap.h>
 #include <gdbus/gdbus.h>
-#include <dbus-common.h>
-#include <log.h>
-#include <error.h>
-#include <adapter.h>
-#include <device.h>
-#include <btio/btio.h>
+#include "src/dbus-common.h"
+#include "src/log.h"
+#include "src/error.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/sdpd.h"
+#include "btio/btio.h"
 
 #include "mcap_lib.h"
 #include "hdp_types.h"
@@ -1205,8 +1206,8 @@ static void mcl_connected(struct mcap_mcl *mcl, gpointer data)
 		struct hdp_adapter *hdp_adapter = data;
 		struct btd_device *device;
 
-		device = adapter_get_device(hdp_adapter->btd_adapter, &addr,
-								BDADDR_BREDR);
+		device = btd_adapter_get_device(hdp_adapter->btd_adapter,
+							&addr, BDADDR_BREDR);
 		if (!device)
 			return;
 		hdp_device = create_health_device(device);
@@ -1322,6 +1323,7 @@ static void release_adapter_instance(struct hdp_adapter *hdp_adapter)
 static gboolean update_adapter(struct hdp_adapter *hdp_adapter)
 {
 	GError *err = NULL;
+	const bdaddr_t *src;
 
 	if (applications == NULL) {
 		release_adapter_instance(hdp_adapter);
@@ -1331,8 +1333,9 @@ static gboolean update_adapter(struct hdp_adapter *hdp_adapter)
 	if (hdp_adapter->mi != NULL)
 		goto update;
 
-	hdp_adapter->mi = mcap_create_instance(
-				adapter_get_address(hdp_adapter->btd_adapter),
+	src = btd_adapter_get_address(hdp_adapter->btd_adapter);
+
+	hdp_adapter->mi = mcap_create_instance(src,
 				BT_IO_SEC_MEDIUM, 0, 0,
 				mcl_connected, mcl_reconnected,
 				mcl_disconnected, mcl_uncached,
@@ -1403,7 +1406,7 @@ void hdp_adapter_unregister(struct btd_adapter *adapter)
 	hdp_adapter = l->data;
 	adapters = g_slist_remove(adapters, hdp_adapter);
 	if (hdp_adapter->sdp_handler > 0)
-		remove_record_from_server(hdp_adapter->sdp_handler);
+		adapter_service_remove(adapter, hdp_adapter->sdp_handler);
 	release_adapter_instance(hdp_adapter);
 	btd_adapter_unref(hdp_adapter->btd_adapter);
 	g_free(hdp_adapter);
@@ -2142,7 +2145,8 @@ static struct hdp_device *create_health_device(struct btd_device *device)
 	if (!g_dbus_register_interface(btd_get_dbus_connection(),
 					path, HEALTH_DEVICE,
 					health_device_methods,
-					health_device_signals, NULL,
+					health_device_signals,
+					health_device_properties,
 					dev, health_device_destroy)) {
 		error("D-Bus failed to register %s interface", HEALTH_DEVICE);
 		goto fail;

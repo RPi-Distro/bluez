@@ -6,13 +6,16 @@ from __future__ import absolute_import, print_function, unicode_literals
 Cycling Speed and Cadence test script
 '''
 
-import gobject
-
+from optparse import OptionParser, make_option
 import sys
 import dbus
 import dbus.service
 import dbus.mainloop.glib
-from optparse import OptionParser, make_option
+try:
+  from gi.repository import GObject
+except ImportError:
+  import gobject as GObject
+import bluezutils
 
 BUS_NAME = 'org.bluez'
 CYCLINGSPEED_MANAGER_INTERFACE = 'org.bluez.CyclingSpeedManager1'
@@ -141,7 +144,7 @@ if __name__ == "__main__":
 	device_path = device.object_path
 
 	cscmanager = dbus.Interface(bus.get_object(BUS_NAME, adapter_path),
-						CYCLINGSPEED_WATCHER_INTERFACE)
+						CYCLINGSPEED_MANAGER_INTERFACE)
 
 	watcher_path = "/test/watcher"
 	watcher = Watcher(bus, watcher_path)
@@ -169,13 +172,13 @@ if __name__ == "__main__":
 
 	if len(args) > 0:
 		if args[0] == "ShowSupportedLocations":
-			if properties["MultipleSensorLocationsSupported"]:
+			if properties["MultipleLocationsSupported"]:
 				print("Supported locations: ", properties["SupportedLocations"])
 			else:
 				print("Multiple sensor locations not supported")
 
 		elif args[0] == "SetLocation":
-			if properties["MultipleSensorLocationsSupported"]:
+			if properties["MultipleLocationsSupported"]:
 				device_prop.Set(CYCLINGSPEED_INTERFACE, "Location", args[1])
 			else:
 				print("Multiple sensor locations not supported")
@@ -190,5 +193,5 @@ if __name__ == "__main__":
 			print("Unknown command")
 			sys.exit(1)
 
-	mainloop = gobject.MainLoop()
+	mainloop = GObject.MainLoop()
 	mainloop.run()

@@ -50,8 +50,6 @@ guint g_obex_send_req(GObex *obex, GObexPacket *req, int timeout,
 gboolean g_obex_cancel_req(GObex *obex, guint req_id,
 						gboolean remove_callback);
 
-gboolean g_obex_pending_req_abort(GObex *obex, GError **err);
-
 gboolean g_obex_send_rsp(GObex *obex, guint8 rspcode, GError **err,
 						guint8 first_hdr_type, ...);
 
@@ -76,6 +74,9 @@ void g_obex_unref(GObex *obex);
 
 guint g_obex_connect(GObex *obex, GObexResponseFunc func, gpointer user_data,
 				GError **err, guint8 first_hdr_id, ...);
+
+guint g_obex_disconnect(GObex *obex, GObexResponseFunc func, gpointer user_data,
+								GError **err);
 
 guint g_obex_setpath(GObex *obex, const char *path, GObexResponseFunc func,
 					gpointer user_data, GError **err);

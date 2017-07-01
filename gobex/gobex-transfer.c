@@ -195,9 +195,11 @@ static void transfer_response(GObex *obex, GError *err, GObexPacket *rsp,
 	struct transfer *transfer = user_data;
 	GObexPacket *req;
 	gboolean rspcode, final;
+	guint id;
 
 	g_obex_debug(G_OBEX_DEBUG_TRANSFER, "transfer %u", transfer->id);
 
+	id = transfer->req_id;
 	transfer->req_id = 0;
 
 	if (err != NULL) {
@@ -207,8 +209,8 @@ static void transfer_response(GObex *obex, GError *err, GObexPacket *rsp,
 
 	rspcode = g_obex_packet_get_operation(rsp, &final);
 	if (rspcode != G_OBEX_RSP_SUCCESS && rspcode != G_OBEX_RSP_CONTINUE) {
-		err = g_error_new(G_OBEX_ERROR, rspcode,
-					"Transfer failed (0x%02x)", rspcode);
+		err = g_error_new(G_OBEX_ERROR, rspcode, "%s",
+						g_obex_strerror(rspcode));
 		goto failed;
 	}
 
@@ -230,8 +232,11 @@ static void transfer_response(GObex *obex, GError *err, GObexPacket *rsp,
 	} else if (!g_obex_srm_active(transfer->obex)) {
 		req = g_obex_packet_new(transfer->opcode, TRUE,
 							G_OBEX_HDR_INVALID);
-	} else
+	} else {
+		/* Keep id since request still outstanting */
+		transfer->req_id = id;
 		return;
+	}
 
 	transfer->req_id = g_obex_send_req(obex, req, -1, transfer_response,
 							transfer, &err);
@@ -390,7 +395,7 @@ static void transfer_put_req(GObex *obex, GObexPacket *req, gpointer user_data)
 
 	rspcode = put_get_bytes(transfer, req);
 
-	/* Don't send continue while in SRM */
+	/* Don't send continue while SRM is active */
 	if (g_obex_srm_active(transfer->obex) &&
 				rspcode == G_OBEX_RSP_CONTINUE)
 		goto done;
@@ -644,7 +649,10 @@ gboolean g_obex_cancel_transfer(guint id, GObexFunc complete_func,
 	transfer->complete_func = complete_func;
 	transfer->user_data = user_data;
 
-	ret = g_obex_pending_req_abort(transfer->obex, NULL);
+	if (transfer->req_id == 0)
+		goto done;
+
+	ret = g_obex_cancel_req(transfer->obex, transfer->req_id, FALSE);
 	if (ret)
 		return TRUE;
 

@@ -128,31 +128,52 @@ Methods		void Play()
 
 			Resume playback.
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		void Pause()
 
 			Pause playback.
+
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
 
 		void Stop()
 
 			Stop playback.
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		void Next()
 
 			Next item.
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		void Previous()
 
 			Previous item.
+
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
 
 		void FastForward()
 
 			Fast forward playback, this action is only stopped
 			when another method in this interface is called.
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		void Rewind()
 
 			Rewind playback, this action is only stopped
 			when another method in this interface is called.
+
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
 
 Properties	string Equalizer [readwrite]
 
@@ -230,6 +251,26 @@ Properties	string Equalizer [readwrite]
 
 			Player name
 
+		string Type [readonly]
+
+			Player type
+
+			Possible values:
+
+				"Audio"
+				"Video"
+				"Audio Broadcasting"
+				"Video Broadcasting"
+
+		string Subtype [readonly]
+
+			Player subtype
+
+			Possible values:
+
+				"Audio Book"
+				"Podcast"
+
 		boolean Browsable [readonly]
 
 			If present indicates the player can be browsed using
@@ -280,9 +321,16 @@ Methods		object Search(string value, dict filter)
 			To list the items found use the folder object returned
 			and pass to ChangeFolder.
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		array{objects, properties} ListItems(dict filter)
 
 			Return a list of items found
+
+			Possible Errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
 
 		void ChangeFolder(object folder)
 
@@ -293,11 +341,15 @@ Methods		object Search(string value, dict filter)
 			exception is NowPlaying folder which should be always
 			present while the player is active.
 
-Properties	uint32 NumberOfItems:
+			Possible Errors: org.bluez.Error.InvalidArguments
+					 org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
+Properties	uint32 NumberOfItems [readonly]
 
 			Number of items in the folder
 
-		string Name:
+		string Name [readonly]
 
 			Folder name:
 
@@ -348,11 +400,21 @@ Methods		void Play()
 
 			Play item
 
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
 		void AddtoNowPlaying()
 
 			Add item to now playing list
 
-Properties	string Name [readonly]
+			Possible Errors: org.bluez.Error.NotSupported
+					 org.bluez.Error.Failed
+
+Properties	object Player [readonly]
+
+			Player object path the item belongs to
+
+		string Name [readonly]
 
 			Item displayable name
 
@@ -376,47 +438,60 @@ Properties	string Name [readonly]
 
 			Available if property Type is "folder"
 
-		string Title [readonly, optional]
+		dict Metadata [readonly]
 
-			Item title name
+			Item metadata.
 
-			Available if property Type is "audio" or "video"
+			Possible values:
 
-		string Artist [readonly, optional]
+				string Title
 
-			Item artist name
+					Item title name
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
 
-		string Album [readonly, optional]
+				string Artist
 
-			Item album name
+					Item artist name
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
 
-		string Genre [readonly, optional]
+				string Album
 
-			Item genre name
+					Item album name
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
 
-		uint32 NumberOfTracks [readonly, optional]
+				string Genre
 
-			Item album number of tracks in total
+					Item genre name
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
 
-		uint32 Number [readonly, optional]
+				uint32 NumberOfTracks
 
-			Item album number
+					Item album number of tracks in total
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
 
-		uint32 Duration [readonly, optional]
+				uint32 Number
 
-			Item duration in milliseconds
+					Item album number
 
-			Available if property Type is "audio" or "video"
+					Available if property Type is "audio"
+					or "video"
+
+				uint32 Duration
+
+					Item duration in milliseconds
+
+					Available if property Type is "audio"
+					or "video"
 
 MediaEndpoint1 hierarchy
 ========================

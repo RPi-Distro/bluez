@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2012  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
  *
  *  This library is free software; you can redistribute it and/or
@@ -23,6 +23,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#define MGMT_VERSION(v, r) (((v) << 16) + (r))
 
 typedef void (*mgmt_destroy_func_t)(void *user_data);
 

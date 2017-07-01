@@ -1180,12 +1180,16 @@ response:
 		switch (status) {
 		case 0x00:
 			printf("(POWER_ON)\n");
+			break;
 		case 0x01:
 			printf("(POWER_OFF)\n");
+			break;
 		case 0x02:
 			printf("(UNPLUGGED)\n");
+			break;
 		default:
 			printf("(UNKOWN)\n");
+			break;
 		}
 		break;
 	case AVRCP_EVENT_PLAYER_APPLICATION_SETTING_CHANGED:
@@ -1383,7 +1387,7 @@ static void avrcp_play_item_dump(int level, struct frame *frm,
 	}
 
 	scope = get_u8(frm);
-	printf("Scope: 0x%02x (%s)", scope, scope2str(scope));
+	printf("Scope: 0x%02x (%s)\n", scope, scope2str(scope));
 
 	p_indent(level, frm);
 
@@ -2108,15 +2112,15 @@ static void avrcp_search_dump(int level, struct frame *frm, uint8_t hdr,
 								uint16_t len)
 {
 	uint32_t uidcounter, items;
-	uint16_t charset;
-	uint8_t namelen, status;
+	uint16_t charset, namelen;
+	uint8_t status;
 
 	p_indent(level, frm);
 
 	if (hdr & 0x02)
 		goto response;
 
-	if (len < 3) {
+	if (len < 4) {
 		printf("PDU Malformed\n");
 		raw_dump(level, frm);
 		return;
@@ -2127,8 +2131,8 @@ static void avrcp_search_dump(int level, struct frame *frm, uint8_t hdr,
 
 	p_indent(level, frm);
 
-	namelen = get_u8(frm);
-	printf("Length: 0x%02x (%u)\n", namelen, namelen);
+	namelen = get_u16(frm);
+	printf("Length: 0x%04x (%u)\n", namelen, namelen);
 
 	p_indent(level, frm);
 
@@ -2137,6 +2141,7 @@ static void avrcp_search_dump(int level, struct frame *frm, uint8_t hdr,
 		uint8_t c = get_u8(frm);
 		printf("%1c", isprint(c) ? c : '.');
 	}
+	printf("\n");
 
 	return;
 

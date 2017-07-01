@@ -35,9 +35,10 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/hci_lib.h>
 
+#include "src/shared/util.h"
 #include "lib/uuid.h"
 #include "att.h"
-#include <btio/btio.h>
+#include "btio/btio.h"
 #include "gattrib.h"
 #include "gatt.h"
 #include "gatttool.h"
@@ -78,7 +79,7 @@ static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
 	uint16_t handle, i, olen = 0;
 	size_t plen;
 
-	handle = att_get_u16(&pdu[1]);
+	handle = get_le16(&pdu[1]);
 
 	switch (pdu[0]) {
 	case ATT_OP_HANDLE_NOTIFY:
@@ -137,7 +138,7 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 	operation(attrib);
 }
 
-static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
+static void primary_all_cb(uint8_t status, GSList *services, void *user_data)
 {
 	GSList *l;
 
@@ -157,8 +158,7 @@ done:
 	g_main_loop_quit(event_loop);
 }
 
-static void primary_by_uuid_cb(GSList *ranges, guint8 status,
-							gpointer user_data)
+static void primary_by_uuid_cb(uint8_t status, GSList *ranges, void *user_data)
 {
 	GSList *l;
 
@@ -191,8 +191,8 @@ static gboolean primary(gpointer user_data)
 	return FALSE;
 }
 
-static void char_discovered_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void char_discovered_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	GSList *l;
 
@@ -255,13 +255,8 @@ done:
 static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data)
 {
-	struct characteristic_data *char_data = user_data;
 	struct att_data_list *list;
 	int i;
-
-	if (status == ATT_ECODE_ATTR_NOT_FOUND &&
-					char_data->start != opt_start)
-		goto done;
 
 	if (status != 0) {
 		g_printerr("Read characteristics by UUID failed: %s\n",
@@ -277,9 +272,7 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 		uint8_t *value = list->data[i];
 		int j;
 
-		char_data->start = att_get_u16(value) + 1;
-
-		g_print("handle: 0x%04x \t value: ", att_get_u16(value));
+		g_print("handle: 0x%04x \t value: ", get_le16(value));
 		value += 2;
 		for (j = 0; j < list->len - 2; j++, value++)
 			g_print("%02x ", *value);
@@ -289,7 +282,6 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 	att_data_list_free(list);
 
 done:
-	g_free(char_data);
 	g_main_loop_quit(event_loop);
 }
 
@@ -298,15 +290,9 @@ static gboolean characteristics_read(gpointer user_data)
 	GAttrib *attrib = user_data;
 
 	if (opt_uuid != NULL) {
-		struct characteristic_data *char_data;
-
-		char_data = g_new(struct characteristic_data, 1);
-		char_data->attrib = attrib;
-		char_data->start = opt_start;
-		char_data->end = opt_end;
 
 		gatt_read_char_by_uuid(attrib, opt_start, opt_end, opt_uuid,
-						char_read_by_uuid_cb, char_data);
+						char_read_by_uuid_cb, NULL);
 
 		return FALSE;
 	}
@@ -438,12 +424,17 @@ static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		bt_uuid_t uuid;
 
 		value = list->data[i];
-		handle = att_get_u16(value);
+		handle = get_le16(value);
 
 		if (format == 0x01)
-			uuid = att_get_uuid16(&value[2]);
-		else
-			uuid = att_get_uuid128(&value[2]);
+			bt_uuid16_create(&uuid, get_le16(&value[2]));
+		else {
+			uint128_t u128;
+
+			/* Converts from LE to BE byte order */
+			bswap_128(&value[2], &u128);
+			bt_uuid128_create(&uuid, u128);
+		}
 
 		bt_uuid_to_string(&uuid, uuidstr, MAX_LEN_UUID_STR);
 		g_print("handle = 0x%04x, uuid = %s\n", handle, uuidstr);
@@ -460,7 +451,7 @@ static gboolean characteristics_desc(gpointer user_data)
 {
 	GAttrib *attrib = user_data;
 
-	gatt_find_info(attrib, opt_start, opt_end, char_desc_cb, NULL);
+	gatt_discover_char_desc(attrib, opt_start, opt_end, char_desc_cb, NULL);
 
 	return FALSE;
 }

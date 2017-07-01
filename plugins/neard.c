@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#include <stdlib.h>
 #include <errno.h>
 #include <gdbus/gdbus.h>
 
@@ -32,14 +33,14 @@
 #include <bluetooth/hci.h>
 #include <bluetooth/sdp.h>
 
-#include "plugin.h"
-#include "log.h"
-#include "dbus-common.h"
-#include "adapter.h"
-#include "device.h"
-#include "eir.h"
-#include "agent.h"
-#include "hcid.h"
+#include "src/plugin.h"
+#include "src/log.h"
+#include "src/dbus-common.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/eir.h"
+#include "src/agent.h"
+#include "src/hcid.h"
 
 #define NEARD_NAME "org.neard"
 #define NEARD_PATH "/"
@@ -77,7 +78,7 @@ struct oob_params {
 
 static void free_oob_params(struct oob_params *params)
 {
-	g_slist_free_full(params->services, g_free);
+	g_slist_free_full(params->services, free);
 	g_free(params->name);
 	g_free(params->hash);
 	g_free(params->randomizer);
@@ -158,7 +159,7 @@ static void register_agent(bool append_carrier)
 		dbus_message_append_args(message, DBUS_TYPE_STRING, &carrier,
 							DBUS_TYPE_INVALID);
 
-	if (!dbus_connection_send_with_reply(btd_get_dbus_connection(),
+	if (!g_dbus_send_message_with_reply(btd_get_dbus_connection(),
 							message, &call, -1)) {
 		dbus_message_unref(message);
 		error("D-Bus send failed");
@@ -227,7 +228,7 @@ static DBusMessage *create_request_oob_reply(struct btd_adapter *adapter,
 	uint8_t *peir = eir;
 	int len;
 
-	len = eir_create_oob(adapter_get_address(adapter),
+	len = eir_create_oob(btd_adapter_get_address(adapter),
 				btd_adapter_get_name(adapter),
 				btd_adapter_get_class(adapter), hash,
 				randomizer, main_opts.did_vendor,
@@ -326,7 +327,7 @@ static int check_device(struct btd_device *device)
 		return -ENOENT;
 
 	/* If already paired */
-	if (device_is_paired(device)) {
+	if (device_is_paired(device, BDADDR_BREDR)) {
 		DBG("already paired");
 		return -EALREADY;
 	}
@@ -640,10 +641,11 @@ static void store_params(struct btd_adapter *adapter, struct btd_device *device,
 
 	if (params->name) {
 		device_store_cached_name(device, params->name);
-		device_set_name(device, params->name);
+		btd_device_device_set_name(device, params->name);
 	}
 
-	/* TODO handle UUIDs? */
+	if (params->services)
+		device_add_eir_uuids(device, params->services);
 
 	if (params->hash) {
 		btd_adapter_add_remote_oob_data(adapter, &params->address,
@@ -701,7 +703,8 @@ static DBusMessage *push_oob(DBusConnection *conn, DBusMessage *msg, void *data)
 		return error_reply(msg, EINVAL);
 	}
 
-	device = adapter_get_device(adapter, &remote.address, BDADDR_BREDR);
+	device = btd_adapter_get_device(adapter, &remote.address,
+								BDADDR_BREDR);
 
 	err = check_device(device);
 	if (err < 0) {
@@ -766,40 +769,38 @@ static DBusMessage *request_oob(DBusConnection *conn, DBusMessage *msg,
 	if (err < 0)
 		return error_reply(msg, -err);
 
-	if (bacmp(&remote.address, BDADDR_ANY) == 0)
-		goto read_local;
+	if (bacmp(&remote.address, BDADDR_ANY) == 0) {
+		if (btd_adapter_get_powered(adapter))
+			goto read_local;
 
-	device = adapter_get_device(adapter, &remote.address, BDADDR_BREDR);
-
-	err = check_device(device);
-	if (err < 0) {
-		free_oob_params(&remote);
-
-		if (err == -EALREADY)
-			return create_request_oob_reply(adapter, NULL, NULL,
-									msg);
-
-		return error_reply(msg, -err);
+		goto done;
 	}
 
-	if (!btd_adapter_get_pairable(adapter)) {
-		free_oob_params(&remote);
+	device = btd_adapter_get_device(adapter, &remote.address, BDADDR_BREDR);
 
-		return error_reply(msg, ENONET);
+	err = check_device(device);
+	if (err < 0)
+		goto done;
+
+	if (!btd_adapter_get_pairable(adapter)) {
+		err = -ENONET;
+		goto done;
 	}
 
 	store_params(adapter, device, &remote);
 
-	if (!remote.hash || !btd_adapter_get_powered(adapter)) {
-		free_oob_params(&remote);
-		return create_request_oob_reply(adapter, NULL, NULL, msg);
-	}
+	if (remote.hash && btd_adapter_get_powered(adapter))
+		goto read_local;
+done:
+	free_oob_params(&remote);
+
+	if (err < 0 && err != -EALREADY)
+		return error_reply(msg, -err);
+
+	return create_request_oob_reply(adapter, NULL, NULL, msg);
 
 read_local:
 	free_oob_params(&remote);
-
-	if (!btd_adapter_get_powered(adapter))
-		return create_request_oob_reply(adapter, NULL, NULL, msg);
 
 	err = btd_adapter_read_local_oob_data(adapter);
 	if (err < 0)

@@ -2,22 +2,22 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2011-2012  Intel Corporation
- *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2011-2014  Intel Corporation
+ *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ *  This library is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU Lesser General Public
+ *  License as published by the Free Software Foundation; either
+ *  version 2.1 of the License, or (at your option) any later version.
  *
- *  This program is distributed in the hope that it will be useful,
+ *  This library is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
+ *  You should have received a copy of the GNU Lesser General Public
+ *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
@@ -40,13 +40,16 @@
 #include "lib/hci.h"
 #include "lib/mgmt.h"
 
+#include "src/shared/util.h"
+#include "src/shared/btsnoop.h"
 #include "mainloop.h"
 #include "display.h"
 #include "packet.h"
-#include "btsnoop.h"
 #include "hcidump.h"
+#include "ellisys.h"
 #include "control.h"
 
+static struct btsnoop *btsnoop_file = NULL;
 static bool hcidump_fallback = false;
 
 #define MAX_PACKET_SIZE		(1486 + 4)
@@ -104,7 +107,8 @@ static void mgmt_controller_error(uint16_t len, const void *buf)
 
 static const char *settings_str[] = {
 	"powered", "connectable", "fast-connectable", "discoverable",
-	"pairable", "link-security", "ssp", "br/edr", "hs", "le"
+	"pairable", "link-security", "ssp", "br/edr", "hs", "le",
+	"advertising", "secure-conn", "debug-keys", "privacy",
 };
 
 static void mgmt_new_settings(uint16_t len, const void *buf)
@@ -117,7 +121,7 @@ static void mgmt_new_settings(uint16_t len, const void *buf)
 		return;
 	}
 
-	settings = bt_get_le32(buf);
+	settings = get_le32(buf);
 
 	printf("@ New Settings: 0x%4.4x\n", settings);
 
@@ -203,7 +207,8 @@ static void mgmt_new_long_term_key(uint16_t len, const void *buf)
 
 	ba2str(&ev->key.addr.bdaddr, str);
 
-	printf("@ New Long Term Key: %s (%d)\n", str, ev->key.addr.type);
+	printf("@ New Long Term Key: %s (%d) %s\n", str, ev->key.addr.type,
+					ev->key.master ? "Master" : "Slave");
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -222,7 +227,7 @@ static void mgmt_device_connected(uint16_t len, const void *buf)
 		return;
 	}
 
-	flags = btohl(ev->flags);
+	flags = le32_to_cpu(ev->flags);
 	ba2str(&ev->addr.bdaddr, str);
 
 	printf("@ Device Connected: %s (%d) flags 0x%4.4x\n",
@@ -380,7 +385,7 @@ static void mgmt_device_found(uint16_t len, const void *buf)
 		return;
 	}
 
-	flags = btohl(ev->flags);
+	flags = le32_to_cpu(ev->flags);
 	ba2str(&ev->addr.bdaddr, str);
 
 	printf("@ Device Found: %s (%d) rssi %d flags 0x%4.4x\n",
@@ -482,10 +487,52 @@ static void mgmt_passkey_notify(uint16_t len, const void *buf)
 
 	ba2str(&ev->addr.bdaddr, str);
 
-	passkey = btohl(ev->passkey);
+	passkey = le32_to_cpu(ev->passkey);
 
 	printf("@ Passkey Notify: %s (%d) passkey %06u entered %u\n",
 				str, ev->addr.type, passkey, ev->entered);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_new_irk(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_new_irk *ev = buf;
+	char addr[18], rpa[18];
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed New IRK control\n");
+		return;
+	}
+
+	ba2str(&ev->rpa, rpa);
+	ba2str(&ev->key.addr.bdaddr, addr);
+
+	printf("@ New IRK: %s (%d) %s\n", addr, ev->key.addr.type, rpa);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_new_csrk(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_new_csrk *ev = buf;
+	char addr[18];
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed New CSRK control\n");
+		return;
+	}
+
+	ba2str(&ev->key.addr.bdaddr, addr);
+
+	printf("@ New CSRK: %s (%d) %s\n", addr, ev->key.addr.type,
+					ev->key.master ? "Master" : "Slave");
 
 	buf += sizeof(*ev);
 	len -= sizeof(*ev);
@@ -559,6 +606,12 @@ void control_message(uint16_t opcode, const void *data, uint16_t size)
 	case MGMT_EV_PASSKEY_NOTIFY:
 		mgmt_passkey_notify(size, data);
 		break;
+	case MGMT_EV_NEW_IRK:
+		mgmt_new_irk(size, data);
+		break;
+	case MGMT_EV_NEW_CSRK:
+		mgmt_new_csrk(size, data);
+		break;
 	default:
 		printf("* Unknown control (code %d len %d)\n", opcode, size);
 		packet_hexdump(data, size);
@@ -615,9 +668,9 @@ static void data_callback(int fd, uint32_t events, void *user_data)
 			}
 		}
 
-		opcode = btohs(hdr.opcode);
-		index  = btohs(hdr.index);
-		pktlen = btohs(hdr.len);
+		opcode = le16_to_cpu(hdr.opcode);
+		index  = le16_to_cpu(hdr.index);
+		pktlen = le16_to_cpu(hdr.len);
 
 		switch (data->channel) {
 		case HCI_CHANNEL_CONTROL:
@@ -625,7 +678,10 @@ static void data_callback(int fd, uint32_t events, void *user_data)
 			break;
 		case HCI_CHANNEL_MONITOR:
 			packet_monitor(tv, index, opcode, data->buf, pktlen);
-			btsnoop_write(tv, index, opcode, data->buf, pktlen);
+			btsnoop_write_hci(btsnoop_file, tv, index, opcode,
+							data->buf, pktlen);
+			ellisys_inject_hci(tv, index, opcode,
+							data->buf, pktlen);
 			break;
 		}
 	}
@@ -709,11 +765,11 @@ static void client_callback(int fd, uint32_t events, void *user_data)
 
 	if (data->offset > MGMT_HDR_SIZE) {
 		struct mgmt_hdr *hdr = (struct mgmt_hdr *) data->buf;
-		uint16_t pktlen = btohs(hdr->len);
+		uint16_t pktlen = le16_to_cpu(hdr->len);
 
 		if (data->offset > pktlen + MGMT_HDR_SIZE) {
-			uint16_t opcode = btohs(hdr->opcode);
-			uint16_t index = btohs(hdr->index);
+			uint16_t opcode = le16_to_cpu(hdr->opcode);
+			uint16_t index = le16_to_cpu(hdr->index);
 
 			packet_monitor(NULL, index, opcode,
 					data->buf + MGMT_HDR_SIZE, pktlen);
@@ -806,27 +862,73 @@ void control_server(const char *path)
 	server_fd = fd;
 }
 
+void control_writer(const char *path)
+{
+	btsnoop_file = btsnoop_create(path, BTSNOOP_TYPE_MONITOR);
+}
+
 void control_reader(const char *path)
 {
 	unsigned char buf[MAX_PACKET_SIZE];
-	uint16_t index, opcode, pktlen;
+	uint16_t pktlen;
+	uint32_t type;
 	struct timeval tv;
 
-	if (btsnoop_open(path) < 0)
+	btsnoop_file = btsnoop_open(path, BTSNOOP_FLAG_PKLG_SUPPORT);
+	if (!btsnoop_file)
 		return;
+
+	type = btsnoop_get_type(btsnoop_file);
+
+	switch (type) {
+	case BTSNOOP_TYPE_HCI:
+	case BTSNOOP_TYPE_UART:
+	case BTSNOOP_TYPE_SIMULATOR:
+		packet_del_filter(PACKET_FILTER_SHOW_INDEX);
+		break;
+
+	case BTSNOOP_TYPE_MONITOR:
+		packet_add_filter(PACKET_FILTER_SHOW_INDEX);
+		break;
+	}
 
 	open_pager();
 
-	while (1) {
-		if (btsnoop_read(&tv, &index, &opcode, buf, &pktlen) < 0)
-			break;
+	switch (type) {
+	case BTSNOOP_TYPE_HCI:
+	case BTSNOOP_TYPE_UART:
+	case BTSNOOP_TYPE_MONITOR:
+		while (1) {
+			uint16_t index, opcode;
 
-		packet_monitor(&tv, index, opcode, buf, pktlen);
+			if (!btsnoop_read_hci(btsnoop_file, &tv, &index,
+							&opcode, buf, &pktlen))
+				break;
+
+			if (opcode == 0xffff)
+				continue;
+
+			packet_monitor(&tv, index, opcode, buf, pktlen);
+			ellisys_inject_hci(&tv, index, opcode, buf, pktlen);
+		}
+		break;
+
+	case BTSNOOP_TYPE_SIMULATOR:
+		while (1) {
+			uint16_t frequency;
+
+			if (!btsnoop_read_phy(btsnoop_file, &tv, &frequency,
+								buf, &pktlen))
+				break;
+
+			packet_simulator(&tv, frequency, buf, pktlen);
+		}
+		break;
 	}
 
 	close_pager();
 
-	btsnoop_close();
+	btsnoop_unref(btsnoop_file);
 }
 
 int control_tracing(void)

@@ -2,22 +2,22 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2011-2012  Intel Corporation
+ *  Copyright (C) 2011-2014  Intel Corporation
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
+ *  This library is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU Lesser General Public
+ *  License as published by the Free Software Foundation; either
+ *  version 2.1 of the License, or (at your option) any later version.
  *
- *  This program is distributed in the hope that it will be useful,
+ *  This library is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *  Lesser General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
+ *  You should have received a copy of the GNU Lesser General Public
+ *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
@@ -222,9 +222,6 @@ int mainloop_modify_fd(int fd, uint32_t events)
 	if (!data)
 		return -ENXIO;
 
-	if (data->events == events)
-		return 0;
-
 	memset(&ev, 0, sizeof(ev));
 	ev.events = events;
 	ev.data.ptr = data;
@@ -290,20 +287,21 @@ static void timeout_callback(int fd, uint32_t events, void *user_data)
 		data->callback(data->fd, data->user_data);
 }
 
-static inline int timeout_set(int fd, unsigned int seconds)
+static inline int timeout_set(int fd, unsigned int msec)
 {
 	struct itimerspec itimer;
+	unsigned int sec = msec / 1000;
 
 	memset(&itimer, 0, sizeof(itimer));
 	itimer.it_interval.tv_sec = 0;
 	itimer.it_interval.tv_nsec = 0;
-	itimer.it_value.tv_sec = seconds;
-	itimer.it_value.tv_nsec = 0;
+	itimer.it_value.tv_sec = sec;
+	itimer.it_value.tv_nsec = (msec - (sec * 1000)) * 1000;
 
 	return timerfd_settime(fd, 0, &itimer, NULL);
 }
 
-int mainloop_add_timeout(unsigned int seconds, mainloop_timeout_func callback,
+int mainloop_add_timeout(unsigned int msec, mainloop_timeout_func callback,
 				void *user_data, mainloop_destroy_func destroy)
 {
 	struct timeout_data *data;
@@ -326,8 +324,8 @@ int mainloop_add_timeout(unsigned int seconds, mainloop_timeout_func callback,
 		return -EIO;
 	}
 
-	if (seconds > 0) {
-		if (timeout_set(data->fd, seconds) < 0) {
+	if (msec > 0) {
+		if (timeout_set(data->fd, msec) < 0) {
 			close(data->fd);
 			free(data);
 			return -EIO;
@@ -344,10 +342,10 @@ int mainloop_add_timeout(unsigned int seconds, mainloop_timeout_func callback,
 	return data->fd;
 }
 
-int mainloop_modify_timeout(int id, unsigned int seconds)
+int mainloop_modify_timeout(int id, unsigned int msec)
 {
-	if (seconds > 0) {
-		if (timeout_set(id, seconds) < 0)
+	if (msec > 0) {
+		if (timeout_set(id, msec) < 0)
 			return -EIO;
 	}
 

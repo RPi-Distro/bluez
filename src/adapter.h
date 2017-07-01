@@ -36,6 +36,7 @@
 #define INVALID_PASSKEY		0xffffffff
 
 struct btd_adapter;
+struct btd_device;
 
 struct btd_adapter *btd_adapter_get_default(void);
 bool btd_adapter_is_default(struct btd_adapter *adapter);
@@ -58,31 +59,12 @@ struct oob_handler {
 	void *user_data;
 };
 
-struct link_key_info {
-	bdaddr_t bdaddr;
-	unsigned char key[16];
-	uint8_t type;
-	uint8_t pin_len;
-};
-
-struct smp_ltk_info {
-	bdaddr_t bdaddr;
-	uint8_t bdaddr_type;
-	uint8_t authenticated;
-	uint8_t master;
-	uint8_t enc_size;
-	uint16_t ediv;
-	uint8_t rand[8];
-	uint8_t val[16];
-};
-
 int adapter_init(void);
 void adapter_cleanup(void);
 void adapter_shutdown(void);
 
 struct btd_adapter *adapter_find(const bdaddr_t *sba);
 struct btd_adapter *adapter_find_by_id(int id);
-struct btd_adapter *adapter_get_default(void);
 void adapter_foreach(adapter_cb func, gpointer user_data);
 
 bool btd_adapter_get_pairable(struct btd_adapter *adapter);
@@ -91,19 +73,23 @@ bool btd_adapter_get_connectable(struct btd_adapter *adapter);
 
 uint32_t btd_adapter_get_class(struct btd_adapter *adapter);
 const char *btd_adapter_get_name(struct btd_adapter *adapter);
-struct btd_device *adapter_get_device(struct btd_adapter *adapter,
+void btd_adapter_remove_device(struct btd_adapter *adapter,
+				struct btd_device *dev);
+struct btd_device *btd_adapter_get_device(struct btd_adapter *adapter,
 					const bdaddr_t *addr,
 					uint8_t addr_type);
 sdp_list_t *btd_adapter_get_services(struct btd_adapter *adapter);
 
-struct btd_device *adapter_find_device(struct btd_adapter *adapter,
-							const bdaddr_t *dst);
+struct btd_device *btd_adapter_find_device(struct btd_adapter *adapter,
+							const bdaddr_t *dst,
+							uint8_t dst_type);
 
 const char *adapter_get_path(struct btd_adapter *adapter);
-const bdaddr_t *adapter_get_address(struct btd_adapter *adapter);
+const bdaddr_t *btd_adapter_get_address(struct btd_adapter *adapter);
 int adapter_set_name(struct btd_adapter *adapter, const char *name);
-void adapter_service_insert(struct btd_adapter *adapter, void *rec);
-void adapter_service_remove(struct btd_adapter *adapter, void *rec);
+
+int adapter_service_add(struct btd_adapter *adapter, sdp_record_t *rec);
+void adapter_service_remove(struct btd_adapter *adapter, uint32_t handle);
 
 struct agent *adapter_get_agent(struct btd_adapter *adapter);
 
@@ -132,7 +118,7 @@ int btd_cancel_authorization(guint id);
 int btd_adapter_restore_powered(struct btd_adapter *adapter);
 
 typedef ssize_t (*btd_adapter_pin_cb_t) (struct btd_adapter *adapter,
-			struct btd_device *dev, char *out, gboolean *display,
+			struct btd_device *dev, char *out, bool *display,
 							unsigned int attempt);
 void btd_adapter_register_pin_cb(struct btd_adapter *adapter,
 						btd_adapter_pin_cb_t cb);

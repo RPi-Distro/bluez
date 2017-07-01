@@ -31,20 +31,23 @@
 
 #include <gdbus/gdbus.h>
 
-#include <adapter.h>
-#include <device.h>
-
-#include <sdpd.h>
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
-#include <sdp-client.h>
-#include <glib-helper.h>
+
+#include "src/adapter.h"
+#include "src/device.h"
+
+#include "src/sdpd.h"
+#include "src/sdp-client.h"
+#include "src/uuid-helper.h"
 
 #include "lib/uuid.h"
 #include "btio/btio.h"
 
-#include "log.h"
+#include "src/log.h"
+#include "src/dbus-common.h"
 
-#include "dbus-common.h"
 #include "mcap.h"
 #include "mcap_lib.h"
 #include "hdp_types.h"
@@ -693,7 +696,8 @@ gboolean hdp_update_sdp_record(struct hdp_adapter *adapter, GSList *app_list)
 	sdp_record_t *sdp_record;
 
 	if (adapter->sdp_handler > 0)
-		remove_record_from_server(adapter->sdp_handler);
+		adapter_service_remove(adapter->btd_adapter,
+					adapter->sdp_handler);
 
 	if (app_list == NULL) {
 		adapter->sdp_handler = 0;
@@ -733,8 +737,7 @@ gboolean hdp_update_sdp_record(struct hdp_adapter *adapter, GSList *app_list)
 	if (sdp_set_record_state(sdp_record, adapter->record_state++) < 0)
 		goto fail;
 
-	if (add_record_to_server(adapter_get_address(adapter->btd_adapter),
-					sdp_record) < 0)
+	if (adapter_service_add(adapter->btd_adapter, sdp_record) < 0)
 		goto fail;
 	adapter->sdp_handler = sdp_record->handle;
 	return TRUE;
@@ -853,7 +856,7 @@ gboolean hdp_get_mdep(struct hdp_device *device, struct hdp_application *app,
 	const bdaddr_t *dst;
 	uuid_t uuid;
 
-	src = adapter_get_address(device_get_adapter(device->dev));
+	src = btd_adapter_get_address(device_get_adapter(device->dev));
 	dst = device_get_address(device->dev);
 
 	mdep_data = g_new0(struct get_mdep_data, 1);
@@ -864,7 +867,7 @@ gboolean hdp_get_mdep(struct hdp_device *device, struct hdp_application *app,
 
 	bt_string2uuid(&uuid, HDP_UUID);
 	if (bt_search_service(src, dst, &uuid, get_mdep_cb, mdep_data,
-							free_mdep_data) < 0) {
+						free_mdep_data, 0) < 0) {
 		g_set_error(err, HDP_ERROR, HDP_CONNECTION_ERROR,
 						"Can't get remote SDP record");
 		g_free(mdep_data);
@@ -1080,7 +1083,7 @@ gboolean hdp_establish_mcl(struct hdp_device *device,
 	const bdaddr_t *dst;
 	uuid_t uuid;
 
-	src = adapter_get_address(device_get_adapter(device->dev));
+	src = btd_adapter_get_address(device_get_adapter(device->dev));
 	dst = device_get_address(device->dev);
 
 	conn_data = g_new0(struct conn_mcl_data, 1);
@@ -1092,7 +1095,7 @@ gboolean hdp_establish_mcl(struct hdp_device *device,
 
 	bt_string2uuid(&uuid, HDP_UUID);
 	if (bt_search_service(src, dst, &uuid, search_cb, conn_data,
-						destroy_con_mcl_data) < 0) {
+					destroy_con_mcl_data, 0) < 0) {
 		g_set_error(err, HDP_ERROR, HDP_CONNECTION_ERROR,
 						"Can't get remote SDP record");
 		g_free(conn_data);
@@ -1151,7 +1154,7 @@ gboolean hdp_get_dcpsm(struct hdp_device *device, hdp_continue_dcpsm_f func,
 	const bdaddr_t *dst;
 	uuid_t uuid;
 
-	src = adapter_get_address(device_get_adapter(device->dev));
+	src = btd_adapter_get_address(device_get_adapter(device->dev));
 	dst = device_get_address(device->dev);
 
 	dcpsm_data = g_new0(struct get_dcpsm_data, 1);
@@ -1161,7 +1164,7 @@ gboolean hdp_get_dcpsm(struct hdp_device *device, hdp_continue_dcpsm_f func,
 
 	bt_string2uuid(&uuid, HDP_UUID);
 	if (bt_search_service(src, dst, &uuid, get_dcpsm_cb, dcpsm_data,
-							free_dcpsm_data) < 0) {
+						free_dcpsm_data, 0) < 0) {
 		g_set_error(err, HDP_ERROR, HDP_CONNECTION_ERROR,
 						"Can't get remote SDP record");
 		g_free(dcpsm_data);

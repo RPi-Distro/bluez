@@ -77,6 +77,13 @@ struct bt_security {
 #define BT_FLUSHABLE_OFF	0
 #define BT_FLUSHABLE_ON		1
 
+#define BT_POWER		9
+struct bt_power {
+	uint8_t force_active;
+};
+#define BT_POWER_FORCE_ACTIVE_OFF 0
+#define BT_POWER_FORCE_ACTIVE_ON  1
+
 #define BT_CHANNEL_POLICY	10
 
 /* BR/EDR only (default policy)
@@ -103,6 +110,17 @@ struct bt_security {
  *     than BR/EDR.
  */
 #define BT_CHANNEL_POLICY_AMP_PREFERRED		2
+
+#define BT_VOICE		11
+struct bt_voice {
+	uint16_t setting;
+};
+
+#define BT_SNDMTU		12
+#define BT_RCVMTU		13
+
+#define BT_VOICE_TRANSPARENT			0x0003
+#define BT_VOICE_CVSD_16BIT			0x0060
 
 /* Connection and socket states */
 enum {

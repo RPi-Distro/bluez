@@ -35,7 +35,9 @@
 
 #include <glib.h>
 
-#include <btio/btio.h>
+#include <bluetooth/bluetooth.h>
+
+#include "btio/btio.h"
 
 #define DEFAULT_ACCEPT_TIMEOUT 2
 static int opt_update_sec = 0;
@@ -46,6 +48,7 @@ struct io_data {
 	int reject;
 	int disconn;
 	int accept;
+	int voice;
 };
 
 static void io_data_unref(struct io_data *data)
@@ -238,6 +241,14 @@ static void confirm_cb(GIOChannel *io, gpointer user_data)
 		return;
 	}
 
+	if (data->voice) {
+		if (!bt_io_set(io, &err, BT_IO_OPT_VOICE, data->voice,
+							BT_IO_OPT_INVALID)) {
+			printf("bt_io_set(OPT_VOICE): %s\n", err->message);
+			g_clear_error(&err);
+		}
+	}
+
 	data->io = g_io_channel_ref(io);
 	io_data_ref(data);
 
@@ -265,16 +276,23 @@ static void l2cap_connect(const char *src, const char *dst, uint8_t addr_type,
 {
 	struct io_data *data;
 	GError *err = NULL;
+	uint8_t src_type;
 
 	printf("Connecting to %s L2CAP PSM %u\n", dst, psm);
 
 	data = io_data_new(NULL, -1, disconn, -1);
+
+	if (addr_type != BDADDR_BREDR)
+		src_type = BDADDR_LE_PUBLIC;
+	else
+		src_type = BDADDR_BREDR;
 
 	if (src)
 		data->io = bt_io_connect(connect_cb, data,
 					(GDestroyNotify) io_data_unref,
 					&err,
 					BT_IO_OPT_SOURCE, src,
+					BT_IO_OPT_SOURCE_TYPE, src_type,
 					BT_IO_OPT_DEST, dst,
 					BT_IO_OPT_DEST_TYPE, addr_type,
 					BT_IO_OPT_PSM, psm,
@@ -286,6 +304,7 @@ static void l2cap_connect(const char *src, const char *dst, uint8_t addr_type,
 		data->io = bt_io_connect(connect_cb, data,
 					(GDestroyNotify) io_data_unref,
 					&err,
+					BT_IO_OPT_SOURCE_TYPE, src_type,
 					BT_IO_OPT_DEST, dst,
 					BT_IO_OPT_DEST_TYPE, addr_type,
 					BT_IO_OPT_PSM, psm,
@@ -301,9 +320,10 @@ static void l2cap_connect(const char *src, const char *dst, uint8_t addr_type,
 	}
 }
 
-static void l2cap_listen(const char *src, uint16_t psm, int defer,
-				int reject, int disconn, int accept,
-				int sec, gboolean master)
+static void l2cap_listen(const char *src, uint8_t addr_type, uint16_t psm,
+				uint16_t cid, int defer, int reject,
+				int disconn, int accept, int sec,
+				gboolean master)
 {
 	struct io_data *data;
 	BtIOConnect conn;
@@ -319,7 +339,11 @@ static void l2cap_listen(const char *src, uint16_t psm, int defer,
 		cfm = NULL;
 	}
 
-	printf("Listening on L2CAP PSM %u\n", psm);
+	if (cid)
+		printf("Listening on L2CAP CID 0x%04x (%u)\n", cid, cid);
+	else
+		printf("Listening on L2CAP PSM 0x%04x (%u)\n", psm, psm);
+
 
 	data = io_data_new(NULL, reject, disconn, accept);
 
@@ -328,7 +352,9 @@ static void l2cap_listen(const char *src, uint16_t psm, int defer,
 					(GDestroyNotify) io_data_unref,
 					&err,
 					BT_IO_OPT_SOURCE, src,
+					BT_IO_OPT_SOURCE_TYPE, addr_type,
 					BT_IO_OPT_PSM, psm,
+					BT_IO_OPT_CID, cid,
 					BT_IO_OPT_SEC_LEVEL, sec,
 					BT_IO_OPT_MASTER, master,
 					BT_IO_OPT_INVALID);
@@ -336,7 +362,9 @@ static void l2cap_listen(const char *src, uint16_t psm, int defer,
 		l2_srv = bt_io_listen(conn, cfm, data,
 					(GDestroyNotify) io_data_unref,
 					&err,
+					BT_IO_OPT_SOURCE_TYPE, addr_type,
 					BT_IO_OPT_PSM, psm,
+					BT_IO_OPT_CID, cid,
 					BT_IO_OPT_SEC_LEVEL, sec,
 					BT_IO_OPT_MASTER, master,
 					BT_IO_OPT_INVALID);
@@ -436,7 +464,8 @@ static void rfcomm_listen(const char *src, uint8_t ch, gboolean defer,
 	g_io_channel_unref(rc_srv);
 }
 
-static void sco_connect(const char *src, const char *dst, int disconn)
+static void sco_connect(const char *src, const char *dst, int disconn,
+								int voice)
 {
 	struct io_data *data;
 	GError *err = NULL;
@@ -451,12 +480,14 @@ static void sco_connect(const char *src, const char *dst, int disconn)
 						&err,
 						BT_IO_OPT_SOURCE, src,
 						BT_IO_OPT_DEST, dst,
+						BT_IO_OPT_VOICE, voice,
 						BT_IO_OPT_INVALID);
 	else
 		data->io = bt_io_connect(connect_cb, data,
 						(GDestroyNotify) io_data_unref,
 						&err,
 						BT_IO_OPT_DEST, dst,
+						BT_IO_OPT_VOICE, voice,
 						BT_IO_OPT_INVALID);
 
 	if (!data->io) {
@@ -467,7 +498,7 @@ static void sco_connect(const char *src, const char *dst, int disconn)
 }
 
 static void sco_listen(const char *src, gboolean defer, int reject,
-				int disconn, int accept)
+				int disconn, int accept, int voice)
 {
 	struct io_data *data;
 	BtIOConnect conn;
@@ -487,16 +518,21 @@ static void sco_listen(const char *src, gboolean defer, int reject,
 
 	data = io_data_new(NULL, reject, disconn, accept);
 
+	data->voice = voice;
+
 	if (src)
 		sco_srv = bt_io_listen(conn, cfm, data,
 					(GDestroyNotify) io_data_unref,
 					&err,
 					BT_IO_OPT_SOURCE, src,
+					BT_IO_OPT_VOICE, voice,
 					BT_IO_OPT_INVALID);
 	else
 		sco_srv = bt_io_listen(conn, cfm, data,
 					(GDestroyNotify) io_data_unref,
-					&err, BT_IO_OPT_INVALID);
+					&err,
+					BT_IO_OPT_VOICE, voice,
+					BT_IO_OPT_INVALID);
 
 	if (!sco_srv) {
 		printf("Listening failed: %s\n", err->message);
@@ -511,6 +547,7 @@ static int opt_channel = -1;
 static int opt_psm = 0;
 static gboolean opt_sco = FALSE;
 static gboolean opt_defer = FALSE;
+static gint opt_voice = 0;
 static char *opt_dev = NULL;
 static int opt_reject = -1;
 static int opt_disconn = -1;
@@ -537,6 +574,9 @@ static GOptionEntry options[] = {
 				"Use SCO" },
 	{ "defer", 'd', 0, G_OPTION_ARG_NONE, &opt_defer,
 				"Use DEFER_SETUP for incoming connections" },
+	{ "voice", 'V', 0, G_OPTION_ARG_INT, &opt_voice,
+				"Voice setting "
+				"(0x0060 CVSD, 0x0003 Transparent)" },
 	{ "sec-level", 'S', 0, G_OPTION_ARG_INT, &opt_sec,
 				"Security level" },
 	{ "update-sec-level", 'U', 0, G_OPTION_ARG_INT, &opt_update_sec,
@@ -575,9 +615,9 @@ int main(int argc, char *argv[])
 
 	g_option_context_free(context);
 
-	printf("accept=%d, reject=%d, discon=%d, defer=%d, sec=%d,"
-		" update_sec=%d, prio=%d\n", opt_accept, opt_reject,
-		opt_disconn, opt_defer, opt_sec, opt_update_sec, opt_priority);
+	printf("accept=%d reject=%d discon=%d defer=%d sec=%d update_sec=%d"
+		" prio=%d voice=0x%04x\n", opt_accept, opt_reject, opt_disconn,
+		opt_defer, opt_sec, opt_update_sec, opt_priority, opt_voice);
 
 	if (opt_psm || opt_cid) {
 		if (argc > 1)
@@ -585,9 +625,9 @@ int main(int argc, char *argv[])
 					opt_psm, opt_cid, opt_disconn,
 					opt_sec, opt_priority);
 		else
-			l2cap_listen(opt_dev, opt_psm, opt_defer, opt_reject,
-					opt_disconn, opt_accept, opt_sec,
-					opt_master);
+			l2cap_listen(opt_dev, opt_addr_type, opt_psm, opt_cid,
+					opt_defer, opt_reject, opt_disconn,
+					opt_accept, opt_sec, opt_master);
 	}
 
 	if (opt_channel != -1) {
@@ -602,10 +642,10 @@ int main(int argc, char *argv[])
 
 	if (opt_sco) {
 		if (argc > 1)
-			sco_connect(opt_dev, argv[1], opt_disconn);
+			sco_connect(opt_dev, argv[1], opt_disconn, opt_voice);
 		else
 			sco_listen(opt_dev, opt_defer, opt_reject,
-					opt_disconn, opt_accept);
+					opt_disconn, opt_accept, opt_voice);
 	}
 
 	signal(SIGTERM, sig_term);

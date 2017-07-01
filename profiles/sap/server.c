@@ -35,11 +35,12 @@
 
 #include "lib/uuid.h"
 #include "btio/btio.h"
-#include "adapter.h"
-#include "sdpd.h"
-#include "log.h"
-#include "error.h"
-#include "dbus-common.h"
+#include "src/adapter.h"
+#include "src/sdpd.h"
+#include "src/log.h"
+#include "src/error.h"
+#include "src/dbus-common.h"
+#include "src/shared/util.h"
 #include "sap.h"
 #include "server.h"
 
@@ -73,7 +74,7 @@ struct sap_connection {
 };
 
 struct sap_server {
-	char *path;
+	struct btd_adapter *adapter;
 	uint32_t record_id;
 	GIOChannel *listen_io;
 	struct sap_connection *conn;
@@ -312,7 +313,7 @@ static void connect_req(struct sap_server *server,
 
 	stop_guard_timer(server);
 
-	maxmsgsize = bt_get_be16(&param->val);
+	maxmsgsize = get_be16(&param->val);
 
 	DBG("Connect MaxMsgSize: 0x%04x", maxmsgsize);
 
@@ -620,7 +621,8 @@ static void sap_set_connected(struct sap_server *server)
 {
 	server->conn->state = SAP_STATE_CONNECTED;
 
-	g_dbus_emit_property_changed(btd_get_dbus_connection(), server->path,
+	g_dbus_emit_property_changed(btd_get_dbus_connection(),
+					adapter_get_path(server->adapter),
 					SAP_SERVER_INTERFACE, "Connected");
 }
 
@@ -666,7 +668,7 @@ int sap_connect_rsp(void *sap_device, uint8_t status)
 		param = (struct sap_parameter *) &buf[size];
 		param->id = SAP_PARAM_ID_MAX_MSG_SIZE;
 		param->len = htons(SAP_PARAM_ID_MAX_MSG_SIZE_LEN);
-		bt_put_be16(SAP_BUF_SIZE, &param->val);
+		put_be16(SAP_BUF_SIZE, &param->val);
 		size += PARAMETER_SIZE(SAP_PARAM_ID_MAX_MSG_SIZE_LEN);
 
 		/* fall */
@@ -1144,7 +1146,8 @@ static void sap_io_destroy(void *data)
 	if (conn->state != SAP_STATE_CONNECT_IN_PROGRESS &&
 				conn->state != SAP_STATE_CONNECT_MODEM_BUSY)
 		g_dbus_emit_property_changed(btd_get_dbus_connection(),
-					server->path, SAP_SERVER_INTERFACE,
+					adapter_get_path(server->adapter),
+					SAP_SERVER_INTERFACE,
 					"Connected");
 
 	if (conn->state == SAP_STATE_CONNECT_IN_PROGRESS ||
@@ -1318,7 +1321,7 @@ static void server_remove(struct sap_server *server)
 
 	sap_server_remove_conn(server);
 
-	remove_record_from_server(server->record_id);
+	adapter_service_remove(server->adapter, server->record_id);
 
 	if (server->listen_io) {
 		g_io_channel_shutdown(server->listen_io, TRUE, NULL);
@@ -1326,7 +1329,7 @@ static void server_remove(struct sap_server *server)
 		server->listen_io = NULL;
 	}
 
-	g_free(server->path);
+	btd_adapter_unref(server->adapter);
 	g_free(server);
 }
 
@@ -1335,12 +1338,12 @@ static void destroy_sap_interface(void *data)
 	struct sap_server *server = data;
 
 	DBG("Unregistered interface %s on path %s", SAP_SERVER_INTERFACE,
-								server->path);
+					adapter_get_path(server->adapter));
 
 	server_remove(server);
 }
 
-int sap_server_register(const char *path, const bdaddr_t *src)
+int sap_server_register(struct btd_adapter *adapter)
 {
 	sdp_record_t *record = NULL;
 	GError *gerr = NULL;
@@ -1358,19 +1361,20 @@ int sap_server_register(const char *path, const bdaddr_t *src)
 		goto sdp_err;
 	}
 
-	if (add_record_to_server(src, record) < 0) {
+	if (adapter_service_add(adapter, record) < 0) {
 		error("Adding SAP SDP record to the SDP server failed.");
 		sdp_record_free(record);
 		goto sdp_err;
 	}
 
 	server = g_new0(struct sap_server, 1);
-	server->path = g_strdup(path);
+	server->adapter = btd_adapter_ref(adapter);
 	server->record_id = record->handle;
 
 	io = bt_io_listen(NULL, connect_confirm_cb, server,
 			NULL, &gerr,
-			BT_IO_OPT_SOURCE_BDADDR, src,
+			BT_IO_OPT_SOURCE_BDADDR,
+			btd_adapter_get_address(adapter),
 			BT_IO_OPT_CHANNEL, SAP_SERVER_CHANNEL,
 			BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_HIGH,
 			BT_IO_OPT_MASTER, TRUE,
@@ -1383,7 +1387,8 @@ int sap_server_register(const char *path, const bdaddr_t *src)
 	server->listen_io = io;
 
 	if (!g_dbus_register_interface(btd_get_dbus_connection(),
-					server->path, SAP_SERVER_INTERFACE,
+					adapter_get_path(server->adapter),
+					SAP_SERVER_INTERFACE,
 					server_methods, NULL,
 					server_properties, server,
 					destroy_sap_interface)) {

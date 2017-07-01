@@ -2,7 +2,7 @@
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
- *  Copyright (C) 2012  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
  *
  *  This library is free software; you can redistribute it and/or
@@ -30,12 +30,12 @@
 #include <string.h>
 #include <errno.h>
 
-#include <glib.h>
-
 #include "lib/bluetooth.h"
 #include "lib/mgmt.h"
 #include "lib/hci.h"
 
+#include "src/shared/io.h"
+#include "src/shared/queue.h"
 #include "src/shared/util.h"
 #include "src/shared/mgmt.h"
 
@@ -43,16 +43,15 @@ struct mgmt {
 	int ref_count;
 	int fd;
 	bool close_on_unref;
-	GIOChannel *io;
-	guint read_watch;
-	guint write_watch;
-	GQueue *request_queue;
-	GQueue *reply_queue;
-	GList *pending_list;
-	GList *notify_list;
-	GList *notify_destroyed;
+	struct io *io;
+	bool writer_active;
+	struct queue *request_queue;
+	struct queue *reply_queue;
+	struct queue *pending_list;
+	struct queue *notify_list;
 	unsigned int next_request_id;
 	unsigned int next_notify_id;
+	bool need_notify_cleanup;
 	bool in_notify;
 	bool destroyed;
 	void *buf;
@@ -77,75 +76,103 @@ struct mgmt_notify {
 	unsigned int id;
 	uint16_t event;
 	uint16_t index;
-	bool destroyed;
+	bool removed;
 	mgmt_notify_func_t callback;
 	mgmt_destroy_func_t destroy;
 	void *user_data;
 };
 
-static void destroy_request(gpointer data, gpointer user_data)
+static void destroy_request(void *data)
 {
 	struct mgmt_request *request = data;
 
 	if (request->destroy)
 		request->destroy(request->user_data);
 
-	g_free(request->buf);
-	g_free(request);
+	free(request->buf);
+	free(request);
 }
 
-static int compare_request_id(gconstpointer a, gconstpointer b)
+static bool match_request_id(const void *a, const void *b)
 {
 	const struct mgmt_request *request = a;
-	unsigned int id = GPOINTER_TO_UINT(b);
+	unsigned int id = PTR_TO_UINT(b);
 
-	return request->id - id;
+	return request->id == id;
 }
 
-static void destroy_notify(gpointer data, gpointer user_data)
+static bool match_request_index(const void *a, const void *b)
+{
+	const struct mgmt_request *request = a;
+	uint16_t index = PTR_TO_UINT(b);
+
+	return request->index == index;
+}
+
+static void destroy_notify(void *data)
 {
 	struct mgmt_notify *notify = data;
 
 	if (notify->destroy)
 		notify->destroy(notify->user_data);
 
-	g_free(notify);
+	free(notify);
 }
 
-static int compare_notify_id(gconstpointer a, gconstpointer b)
+static bool match_notify_id(const void *a, const void *b)
 {
 	const struct mgmt_notify *notify = a;
-	unsigned int id = GPOINTER_TO_UINT(b);
+	unsigned int id = PTR_TO_UINT(b);
 
-	return notify->id - id;
+	return notify->id == id;
 }
 
-static void write_watch_destroy(gpointer user_data)
+static bool match_notify_index(const void *a, const void *b)
+{
+	const struct mgmt_notify *notify = a;
+	uint16_t index = PTR_TO_UINT(b);
+
+	return notify->index == index;
+}
+
+static bool match_notify_removed(const void *a, const void *b)
+{
+	const struct mgmt_notify *notify = a;
+
+	return notify->removed;
+}
+
+static void mark_notify_removed(void *data , void *user_data)
+{
+	struct mgmt_notify *notify = data;
+	uint16_t index = PTR_TO_UINT(user_data);
+
+	if (notify->index == index || index == MGMT_INDEX_NONE)
+		notify->removed = true;
+}
+
+static void write_watch_destroy(void *user_data)
 {
 	struct mgmt *mgmt = user_data;
 
-	mgmt->write_watch = 0;
+	mgmt->writer_active = false;
 }
 
-static gboolean can_write_data(GIOChannel *channel, GIOCondition cond,
-							gpointer user_data)
+static bool can_write_data(struct io *io, void *user_data)
 {
 	struct mgmt *mgmt = user_data;
 	struct mgmt_request *request;
 	ssize_t bytes_written;
 
-	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
-		return FALSE;
-
-	request = g_queue_pop_head(mgmt->reply_queue);
+	request = queue_pop_head(mgmt->reply_queue);
 	if (!request) {
 		/* only reply commands can jump the queue */
-		if (mgmt->pending_list)
-			return FALSE;
+		if (!queue_isempty(mgmt->pending_list))
+			return false;
 
-		request = g_queue_pop_head(mgmt->request_queue);
+		request = queue_pop_head(mgmt->request_queue);
 		if (!request)
-			return FALSE;
+			return false;
 	}
 
 	bytes_written = write(mgmt->fd, request->buf, request->len);
@@ -155,8 +182,8 @@ static gboolean can_write_data(GIOChannel *channel, GIOCondition cond,
 		if (request->callback)
 			request->callback(MGMT_STATUS_FAILED, 0, NULL,
 							request->user_data);
-		destroy_request(request, NULL);
-		return TRUE;
+		destroy_request(request);
+		return true;
 	}
 
 	util_debug(mgmt->debug_callback, mgmt->debug_data,
@@ -166,61 +193,56 @@ static gboolean can_write_data(GIOChannel *channel, GIOCondition cond,
 	util_hexdump('<', request->buf, bytes_written,
 				mgmt->debug_callback, mgmt->debug_data);
 
-	mgmt->pending_list = g_list_append(mgmt->pending_list, request);
+	queue_push_tail(mgmt->pending_list, request);
 
-	return FALSE;
+	return false;
 }
 
 static void wakeup_writer(struct mgmt *mgmt)
 {
-	if (mgmt->pending_list) {
+	if (!queue_isempty(mgmt->pending_list)) {
 		/* only queued reply commands trigger wakeup */
-		if (g_queue_get_length(mgmt->reply_queue) == 0)
+		if (queue_isempty(mgmt->reply_queue))
 			return;
 	}
 
-	if (mgmt->write_watch > 0)
+	if (mgmt->writer_active)
 		return;
 
-	mgmt->write_watch = g_io_add_watch_full(mgmt->io, G_PRIORITY_HIGH,
-				G_IO_OUT | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				can_write_data, mgmt, write_watch_destroy);
+	io_set_write_handler(mgmt->io, can_write_data, mgmt,
+						write_watch_destroy);
 }
 
-static GList *lookup_pending(struct mgmt *mgmt, uint16_t opcode, uint16_t index)
+struct opcode_index {
+	uint16_t opcode;
+	uint16_t index;
+};
+
+static bool match_request_opcode_index(const void *a, const void *b)
 {
-	GList *list;
+	const struct mgmt_request *request = a;
+	const struct opcode_index *match = b;
 
-	for (list = g_list_first(mgmt->pending_list); list;
-						list = g_list_next(list)) {
-		struct mgmt_request *request = list->data;
-
-		if (request->opcode == opcode && request->index == index)
-			return list;
-	}
-
-	return NULL;
+	return request->opcode == match->opcode &&
+					request->index == match->index;
 }
 
 static void request_complete(struct mgmt *mgmt, uint8_t status,
 					uint16_t opcode, uint16_t index,
 					uint16_t length, const void *param)
 {
+	struct opcode_index match = { .opcode = opcode, .index = index };
 	struct mgmt_request *request;
-	GList *list;
 
-	list = lookup_pending(mgmt, opcode, index);
-	if (!list)
-		return;
+	request = queue_remove_if(mgmt->pending_list,
+					match_request_opcode_index, &match);
+	if (request) {
+		if (request->callback)
+			request->callback(status, length, param,
+							request->user_data);
 
-	request = list->data;
-
-	mgmt->pending_list = g_list_delete_link(mgmt->pending_list, list);
-
-	if (request->callback)
-		request->callback(status, length, param, request->user_data);
-
-	destroy_request(request, NULL);
+		destroy_request(request);
+	}
 
 	if (mgmt->destroyed)
 		return;
@@ -228,56 +250,63 @@ static void request_complete(struct mgmt *mgmt, uint8_t status,
 	wakeup_writer(mgmt);
 }
 
+struct event_index {
+	uint16_t event;
+	uint16_t index;
+	uint16_t length;
+	const void *param;
+};
+
+static void notify_handler(void *data, void *user_data)
+{
+	struct mgmt_notify *notify = data;
+	struct event_index *match = user_data;
+
+	if (notify->removed)
+		return;
+
+	if (notify->event != match->event)
+		return;
+
+	if (notify->index != match->index && notify->index != MGMT_INDEX_NONE)
+		return;
+
+	if (notify->callback)
+		notify->callback(match->index, match->length, match->param,
+							notify->user_data);
+}
+
 static void process_notify(struct mgmt *mgmt, uint16_t event, uint16_t index,
 					uint16_t length, const void *param)
 {
-	GList *list;
+	struct event_index match = { .event = event, .index = index,
+					.length = length, .param = param };
 
 	mgmt->in_notify = true;
 
-	for (list = g_list_first(mgmt->notify_list); list;
-						list = g_list_next(list)) {
-		struct mgmt_notify *notify = list->data;
-
-		if (notify->destroyed)
-			continue;
-
-		if (notify->event != event)
-			continue;
-
-		if (notify->index != index && notify->index != MGMT_INDEX_NONE)
-			continue;
-
-		if (notify->callback)
-			notify->callback(index, length, param,
-							notify->user_data);
-
-		if (mgmt->destroyed)
-			break;
-	}
+	queue_foreach(mgmt->notify_list, notify_handler, &match);
 
 	mgmt->in_notify = false;
 
-	g_list_foreach(mgmt->notify_destroyed, destroy_notify, NULL);
-	g_list_free(mgmt->notify_destroyed);
-
-	mgmt->notify_destroyed = NULL;
+	if (mgmt->need_notify_cleanup) {
+		queue_remove_all(mgmt->notify_list, match_notify_removed,
+							NULL, destroy_notify);
+		mgmt->need_notify_cleanup = false;
+	}
 }
 
-static void read_watch_destroy(gpointer user_data)
+static void read_watch_destroy(void *user_data)
 {
 	struct mgmt *mgmt = user_data;
 
 	if (mgmt->destroyed) {
-		g_free(mgmt);
-		return;
+		queue_destroy(mgmt->notify_list, NULL);
+		queue_destroy(mgmt->pending_list, NULL);
+		free(mgmt);
 	}
-
-	mgmt->read_watch = 0;
 }
 
-static gboolean received_data(GIOChannel *channel, GIOCondition cond,
-							gpointer user_data)
+static bool can_read_data(struct io *io, void *user_data)
 {
 	struct mgmt *mgmt = user_data;
 	struct mgmt_hdr *hdr;
@@ -286,18 +315,15 @@ static gboolean received_data(GIOChannel *channel, GIOCondition cond,
 	ssize_t bytes_read;
 	uint16_t opcode, event, index, length;
 
-	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
-		return FALSE;
-
 	bytes_read = read(mgmt->fd, mgmt->buf, mgmt->len);
 	if (bytes_read < 0)
-		return TRUE;
+		return false;
 
 	util_hexdump('>', mgmt->buf, bytes_read,
 				mgmt->debug_callback, mgmt->debug_data);
 
 	if (bytes_read < MGMT_HDR_SIZE)
-		return TRUE;
+		return true;
 
 	hdr = mgmt->buf;
 	event = btohs(hdr->opcode);
@@ -305,7 +331,7 @@ static gboolean received_data(GIOChannel *channel, GIOCondition cond,
 	length = btohs(hdr->len);
 
 	if (bytes_read < length + MGMT_HDR_SIZE)
-		return TRUE;
+		return true;
 
 	switch (event) {
 	case MGMT_EV_CMD_COMPLETE:
@@ -339,9 +365,9 @@ static gboolean received_data(GIOChannel *channel, GIOCondition cond,
 	}
 
 	if (mgmt->destroyed)
-		return FALSE;
+		return false;
 
-	return TRUE;
+	return true;
 }
 
 struct mgmt *mgmt_new(int fd)
@@ -351,7 +377,7 @@ struct mgmt *mgmt_new(int fd)
 	if (fd < 0)
 		return NULL;
 
-	mgmt = g_try_new0(struct mgmt, 1);
+	mgmt = new0(struct mgmt, 1);
 	if (!mgmt)
 		return NULL;
 
@@ -359,23 +385,70 @@ struct mgmt *mgmt_new(int fd)
 	mgmt->close_on_unref = false;
 
 	mgmt->len = 512;
-	mgmt->buf = g_try_malloc(mgmt->len);
+	mgmt->buf = malloc(mgmt->len);
 	if (!mgmt->buf) {
-		g_free(mgmt);
+		free(mgmt);
 		return NULL;
 	}
 
-	mgmt->io = g_io_channel_unix_new(mgmt->fd);
+	mgmt->io = io_new(fd);
+	if (!mgmt->io) {
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
 
-	g_io_channel_set_encoding(mgmt->io, NULL, NULL);
-	g_io_channel_set_buffered(mgmt->io, FALSE);
+	mgmt->request_queue = queue_new();
+	if (!mgmt->request_queue) {
+		io_destroy(mgmt->io);
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
 
-	mgmt->request_queue = g_queue_new();
-	mgmt->reply_queue = g_queue_new();
+	mgmt->reply_queue = queue_new();
+	if (!mgmt->reply_queue) {
+		queue_destroy(mgmt->request_queue, NULL);
+		io_destroy(mgmt->io);
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
 
-	mgmt->read_watch = g_io_add_watch_full(mgmt->io, G_PRIORITY_DEFAULT,
-				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				received_data, mgmt, read_watch_destroy);
+	mgmt->pending_list = queue_new();
+	if (!mgmt->pending_list) {
+		queue_destroy(mgmt->reply_queue, NULL);
+		queue_destroy(mgmt->request_queue, NULL);
+		io_destroy(mgmt->io);
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
+
+	mgmt->notify_list = queue_new();
+	if (!mgmt->notify_list) {
+		queue_destroy(mgmt->pending_list, NULL);
+		queue_destroy(mgmt->reply_queue, NULL);
+		queue_destroy(mgmt->request_queue, NULL);
+		io_destroy(mgmt->io);
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
+
+	if (!io_set_read_handler(mgmt->io, can_read_data, mgmt,
+						read_watch_destroy)) {
+		queue_destroy(mgmt->notify_list, NULL);
+		queue_destroy(mgmt->pending_list, NULL);
+		queue_destroy(mgmt->reply_queue, NULL);
+		queue_destroy(mgmt->request_queue, NULL);
+		io_destroy(mgmt->io);
+		free(mgmt->buf);
+		free(mgmt);
+		return NULL;
+	}
+
+	mgmt->writer_active = false;
 
 	return mgmt_ref(mgmt);
 }
@@ -383,7 +456,10 @@ struct mgmt *mgmt_new(int fd)
 struct mgmt *mgmt_new_default(void)
 {
 	struct mgmt *mgmt;
-	struct sockaddr_hci addr;
+	union {
+		struct sockaddr common;
+		struct sockaddr_hci hci;
+	} addr;
 	int fd;
 
 	fd = socket(PF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK,
@@ -392,11 +468,11 @@ struct mgmt *mgmt_new_default(void)
 		return NULL;
 
 	memset(&addr, 0, sizeof(addr));
-	addr.hci_family = AF_BLUETOOTH;
-	addr.hci_dev = HCI_DEV_NONE;
-	addr.hci_channel = HCI_CHANNEL_CONTROL;
+	addr.hci.hci_family = AF_BLUETOOTH;
+	addr.hci.hci_dev = HCI_DEV_NONE;
+	addr.hci.hci_channel = HCI_CHANNEL_CONTROL;
 
-	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+	if (bind(fd, &addr.common, sizeof(addr.hci)) < 0) {
 		close(fd);
 		return NULL;
 	}
@@ -433,16 +509,13 @@ void mgmt_unref(struct mgmt *mgmt)
 	mgmt_unregister_all(mgmt);
 	mgmt_cancel_all(mgmt);
 
-	g_queue_free(mgmt->reply_queue);
-	g_queue_free(mgmt->request_queue);
+	queue_destroy(mgmt->reply_queue, NULL);
+	queue_destroy(mgmt->request_queue, NULL);
 
-	if (mgmt->write_watch > 0)
-		g_source_remove(mgmt->write_watch);
+	io_set_write_handler(mgmt->io, NULL, NULL, NULL);
+	io_set_read_handler(mgmt->io, NULL, NULL, NULL);
 
-	if (mgmt->read_watch > 0)
-		g_source_remove(mgmt->read_watch);
-
-	g_io_channel_unref(mgmt->io);
+	io_destroy(mgmt->io);
 	mgmt->io = NULL;
 
 	if (mgmt->close_on_unref)
@@ -451,11 +524,13 @@ void mgmt_unref(struct mgmt *mgmt)
 	if (mgmt->debug_destroy)
 		mgmt->debug_destroy(mgmt->debug_data);
 
-	g_free(mgmt->buf);
+	free(mgmt->buf);
 	mgmt->buf = NULL;
 
 	if (!mgmt->in_notify) {
-		g_free(mgmt);
+		queue_destroy(mgmt->notify_list, NULL);
+		queue_destroy(mgmt->pending_list, NULL);
+		free(mgmt);
 		return;
 	}
 
@@ -502,14 +577,14 @@ static struct mgmt_request *create_request(uint16_t opcode, uint16_t index,
 	if (length > 0 && !param)
 		return NULL;
 
-	request = g_try_new0(struct mgmt_request, 1);
+	request = new0(struct mgmt_request, 1);
 	if (!request)
 		return NULL;
 
 	request->len = length + MGMT_HDR_SIZE;
-	request->buf = g_try_malloc(request->len);
+	request->buf = malloc(request->len);
 	if (!request->buf) {
-		g_free(request);
+		free(request);
 		return NULL;
 	}
 
@@ -551,7 +626,11 @@ unsigned int mgmt_send(struct mgmt *mgmt, uint16_t opcode, uint16_t index,
 
 	request->id = mgmt->next_request_id++;
 
-	g_queue_push_tail(mgmt->request_queue, request);
+	if (!queue_push_tail(mgmt->request_queue, request)) {
+		free(request->buf);
+		free(request);
+		return 0;
+	}
 
 	wakeup_writer(mgmt);
 
@@ -578,7 +657,11 @@ unsigned int mgmt_reply(struct mgmt *mgmt, uint16_t opcode, uint16_t index,
 
 	request->id = mgmt->next_request_id++;
 
-	g_queue_push_tail(mgmt->reply_queue, request);
+	if (!queue_push_tail(mgmt->reply_queue, request)) {
+		free(request->buf);
+		free(request);
+		return 0;
+	}
 
 	wakeup_writer(mgmt);
 
@@ -588,38 +671,27 @@ unsigned int mgmt_reply(struct mgmt *mgmt, uint16_t opcode, uint16_t index,
 bool mgmt_cancel(struct mgmt *mgmt, unsigned int id)
 {
 	struct mgmt_request *request;
-	GList *list;
 
 	if (!mgmt || !id)
 		return false;
 
-	list = g_queue_find_custom(mgmt->request_queue, GUINT_TO_POINTER(id),
-							compare_request_id);
-	if (list) {
-		request = list->data;
-		g_queue_delete_link(mgmt->request_queue, list);
+	request = queue_remove_if(mgmt->request_queue, match_request_id,
+							UINT_TO_PTR(id));
+	if (request)
 		goto done;
-	}
 
-	list = g_queue_find_custom(mgmt->reply_queue, GUINT_TO_POINTER(id),
-							compare_request_id);
-	if (list) {
-		request = list->data;
-		g_queue_delete_link(mgmt->reply_queue, list);
+	request = queue_remove_if(mgmt->reply_queue, match_request_id,
+							UINT_TO_PTR(id));
+	if (request)
 		goto done;
-	}
 
-	list = g_list_find_custom(mgmt->pending_list, GUINT_TO_POINTER(id),
-							compare_request_id);
-	if (!list)
+	request = queue_remove_if(mgmt->pending_list, match_request_id,
+							UINT_TO_PTR(id));
+	if (!request)
 		return false;
 
-	request = list->data;
-
-	mgmt->pending_list = g_list_delete_link(mgmt->pending_list, list);
-
 done:
-	destroy_request(request, NULL);
+	destroy_request(request);
 
 	wakeup_writer(mgmt);
 
@@ -628,52 +700,15 @@ done:
 
 bool mgmt_cancel_index(struct mgmt *mgmt, uint16_t index)
 {
-	GList *list, *next;
-
 	if (!mgmt)
 		return false;
 
-	for (list = g_queue_peek_head_link(mgmt->request_queue); list;
-								list = next) {
-		struct mgmt_request *request = list->data;
-
-		next = g_list_next(list);
-
-		if (request->index != index)
-			continue;
-
-		g_queue_delete_link(mgmt->request_queue, list);
-
-		destroy_request(request, NULL);
-	}
-
-	for (list = g_queue_peek_head_link(mgmt->reply_queue); list;
-								list = next) {
-		struct mgmt_request *request = list->data;
-
-		next = g_list_next(list);
-
-		if (request->index != index)
-			continue;
-
-		g_queue_delete_link(mgmt->reply_queue, list);
-
-		destroy_request(request, NULL);
-	}
-
-	for (list = g_list_first(mgmt->pending_list); list; list = next) {
-		struct mgmt_request *request = list->data;
-
-		next = g_list_next(list);
-
-		if (request->index != index)
-			continue;
-
-		mgmt->pending_list = g_list_delete_link(mgmt->pending_list,
-									list);
-
-		destroy_request(request, NULL);
-	}
+	queue_remove_all(mgmt->request_queue, match_request_index,
+					UINT_TO_PTR(index), destroy_request);
+	queue_remove_all(mgmt->reply_queue, match_request_index,
+					UINT_TO_PTR(index), destroy_request);
+	queue_remove_all(mgmt->pending_list, match_request_index,
+					UINT_TO_PTR(index), destroy_request);
 
 	return true;
 }
@@ -683,15 +718,9 @@ bool mgmt_cancel_all(struct mgmt *mgmt)
 	if (!mgmt)
 		return false;
 
-	g_list_foreach(mgmt->pending_list, destroy_request, NULL);
-	g_list_free(mgmt->pending_list);
-	mgmt->pending_list = NULL;
-
-	g_queue_foreach(mgmt->reply_queue, destroy_request, NULL);
-	g_queue_clear(mgmt->reply_queue);
-
-	g_queue_foreach(mgmt->request_queue, destroy_request, NULL);
-	g_queue_clear(mgmt->request_queue);
+	queue_remove_all(mgmt->pending_list, NULL, NULL, destroy_request);
+	queue_remove_all(mgmt->reply_queue, NULL, NULL, destroy_request);
+	queue_remove_all(mgmt->request_queue, NULL, NULL, destroy_request);
 
 	return true;
 }
@@ -705,7 +734,7 @@ unsigned int mgmt_register(struct mgmt *mgmt, uint16_t event, uint16_t index,
 	if (!mgmt || !event)
 		return 0;
 
-	notify = g_try_new0(struct mgmt_notify, 1);
+	notify = new0(struct mgmt_notify, 1);
 	if (!notify)
 		return 0;
 
@@ -721,7 +750,10 @@ unsigned int mgmt_register(struct mgmt *mgmt, uint16_t event, uint16_t index,
 
 	notify->id = mgmt->next_notify_id++;
 
-	mgmt->notify_list = g_list_append(mgmt->notify_list, notify);
+	if (!queue_push_tail(mgmt->notify_list, notify)) {
+		free(notify);
+		return 0;
+	}
 
 	return notify->id;
 }
@@ -729,70 +761,40 @@ unsigned int mgmt_register(struct mgmt *mgmt, uint16_t event, uint16_t index,
 bool mgmt_unregister(struct mgmt *mgmt, unsigned int id)
 {
 	struct mgmt_notify *notify;
-	GList *list;
 
 	if (!mgmt || !id)
 		return false;
 
-	list = g_list_find_custom(mgmt->notify_list,
-				GUINT_TO_POINTER(id), compare_notify_id);
-	if (!list)
+	notify = queue_remove_if(mgmt->notify_list, match_notify_id,
+							UINT_TO_PTR(id));
+	if (!notify)
 		return false;
 
-	notify = list->data;
-
-	mgmt->notify_list = g_list_remove_link(mgmt->notify_list, list);
-
 	if (!mgmt->in_notify) {
-		g_list_free_1(list);
-		destroy_notify(notify, NULL);
+		destroy_notify(notify);
 		return true;
 	}
 
-	notify->destroyed = true;
-
-	mgmt->notify_destroyed = g_list_concat(mgmt->notify_destroyed, list);
+	notify->removed = true;
+	mgmt->need_notify_cleanup = true;
 
 	return true;
 }
 
 bool mgmt_unregister_index(struct mgmt *mgmt, uint16_t index)
 {
-	GList *list, *next;
-
 	if (!mgmt)
 		return false;
 
-	for (list = g_list_first(mgmt->notify_list); list; list = next) {
-		struct mgmt_notify *notify = list->data;
-
-		next = g_list_next(list);
-
-		if (notify->index != index)
-			continue;
-
-		mgmt->notify_list = g_list_remove_link(mgmt->notify_list, list);
-
-		if (!mgmt->in_notify) {
-			g_list_free_1(list);
-			destroy_notify(notify, NULL);
-			continue;
-		}
-
-		notify->destroyed = true;
-
-		mgmt->notify_destroyed = g_list_concat(mgmt->notify_destroyed,
-									list);
-	}
+	if (mgmt->in_notify) {
+		queue_foreach(mgmt->notify_list, mark_notify_removed,
+							UINT_TO_PTR(index));
+		mgmt->need_notify_cleanup = true;
+	} else
+		queue_remove_all(mgmt->notify_list, match_notify_index,
+					UINT_TO_PTR(index), destroy_notify);
 
 	return true;
-}
-
-static void mark_notify(gpointer data, gpointer user_data)
-{
-	struct mgmt_notify *notify = data;
-
-	notify->destroyed = true;
 }
 
 bool mgmt_unregister_all(struct mgmt *mgmt)
@@ -800,16 +802,12 @@ bool mgmt_unregister_all(struct mgmt *mgmt)
 	if (!mgmt)
 		return false;
 
-	if (!mgmt->in_notify) {
-		g_list_foreach(mgmt->notify_list, destroy_notify, NULL);
-		g_list_free(mgmt->notify_list);
-	} else {
-		g_list_foreach(mgmt->notify_list, mark_notify, NULL);
-		mgmt->notify_destroyed = g_list_concat(mgmt->notify_destroyed,
-							mgmt->notify_list);
-	}
-
-	mgmt->notify_list = NULL;
+	if (mgmt->in_notify) {
+		queue_foreach(mgmt->notify_list, mark_notify_removed,
+						UINT_TO_PTR(MGMT_INDEX_NONE));
+		mgmt->need_notify_cleanup = true;
+	} else
+		queue_remove_all(mgmt->notify_list, NULL, NULL, destroy_notify);
 
 	return true;
 }

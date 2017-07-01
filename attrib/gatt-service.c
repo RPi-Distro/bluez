@@ -27,17 +27,17 @@
 #endif
 
 #include <glib.h>
-#include <bluetooth/sdp.h>
-#include <adapter.h>
 
+#include "src/adapter.h"
+#include "src/shared/util.h"
 #include "lib/uuid.h"
-#include "gattrib.h"
-#include "att.h"
-#include "gatt.h"
-#include "att-database.h"
-#include "attrib-server.h"
-#include "gatt-service.h"
-#include "log.h"
+#include "attrib/gattrib.h"
+#include "attrib/att.h"
+#include "attrib/gatt.h"
+#include "attrib/att-database.h"
+#include "src/attrib-server.h"
+#include "attrib/gatt-service.h"
+#include "src/log.h"
 
 struct gatt_info {
 	bt_uuid_t uuid;
@@ -56,6 +56,15 @@ struct attrib_cb {
 	void *user_data;
 };
 
+static inline void put_uuid_le(const bt_uuid_t *src, void *dst)
+{
+	if (src->type == BT_UUID16)
+		put_le16(src->value.u16, dst);
+	else
+		/* Convert from 128-bit BE to LE */
+		bswap_128(&src->value.u128, dst);
+}
+
 static GSList *parse_opts(gatt_option opt1, va_list args)
 {
 	gatt_option opt = opt1;
@@ -68,16 +77,22 @@ static GSList *parse_opts(gatt_option opt1, va_list args)
 
 	while (opt != GATT_OPT_INVALID) {
 		switch (opt) {
-		case GATT_OPT_CHR_UUID:
+		case GATT_OPT_CHR_UUID16:
 			bt_uuid16_create(&info->uuid, va_arg(args, int));
+			/* characteristic declaration and value */
+			info->num_attrs += 2;
+			break;
+		case GATT_OPT_CHR_UUID:
+			memcpy(&info->uuid, va_arg(args, bt_uuid_t *),
+							sizeof(bt_uuid_t));
 			/* characteristic declaration and value */
 			info->num_attrs += 2;
 			break;
 		case GATT_OPT_CHR_PROPS:
 			info->props = va_arg(args, int);
 
-			if (info->props & (ATT_CHAR_PROPER_NOTIFY |
-						ATT_CHAR_PROPER_INDICATE))
+			if (info->props & (GATT_CHR_PROP_NOTIFY |
+						GATT_CHR_PROP_INDICATE))
 				/* client characteristic configuration */
 				info->num_attrs += 1;
 
@@ -108,7 +123,7 @@ static GSList *parse_opts(gatt_option opt1, va_list args)
 		}
 
 		opt = va_arg(args, gatt_option);
-		if (opt == GATT_OPT_CHR_UUID) {
+		if (opt == GATT_OPT_CHR_UUID16 || opt == GATT_OPT_CHR_UUID) {
 			info = g_new0(struct gatt_info, 1);
 			l = g_slist_append(l, info);
 		}
@@ -124,14 +139,8 @@ static struct attribute *add_service_declaration(struct btd_adapter *adapter,
 	uint8_t atval[16];
 	int len;
 
-	if (uuid->type == BT_UUID16) {
-		att_put_u16(uuid->value.u16, &atval[0]);
-		len = 2;
-	} else if (uuid->type == BT_UUID128) {
-		att_put_u128(uuid->value.u128, &atval[0]);
-		len = 16;
-	} else
-		return NULL;
+	put_uuid_le(uuid, &atval[0]);
+	len = bt_uuid_len(uuid);
 
 	bt_uuid16_create(&bt_uuid, svc);
 
@@ -147,7 +156,7 @@ static int att_read_req(int authorization, int authentication, uint8_t props)
 	else if (authentication == GATT_CHR_VALUE_READ ||
 				authentication == GATT_CHR_VALUE_BOTH)
 		return ATT_AUTHENTICATION;
-	else if (!(props & ATT_CHAR_PROPER_READ))
+	else if (!(props & GATT_CHR_PROP_READ))
 		return ATT_NOT_PERMITTED;
 
 	return ATT_NONE;
@@ -161,8 +170,8 @@ static int att_write_req(int authorization, int authentication, uint8_t props)
 	else if (authentication == GATT_CHR_VALUE_WRITE ||
 				authentication == GATT_CHR_VALUE_BOTH)
 		return ATT_AUTHENTICATION;
-	else if (!(props & (ATT_CHAR_PROPER_WRITE |
-					ATT_CHAR_PROPER_WRITE_WITHOUT_RESP)))
+	else if (!(props & (GATT_CHR_PROP_WRITE |
+					GATT_CHR_PROP_WRITE_WITHOUT_RESP)))
 		return ATT_NOT_PERMITTED;
 
 	return ATT_NONE;
@@ -183,10 +192,11 @@ static gboolean add_characteristic(struct btd_adapter *adapter,
 	uint16_t h = *handle;
 	struct attribute *a;
 	bt_uuid_t bt_uuid;
-	uint8_t atval[5];
+	uint8_t atval[ATT_MAX_VALUE_LEN];
 	GSList *l;
 
-	if (!info->uuid.value.u16 || !info->props) {
+	if ((info->uuid.type != BT_UUID16 && info->uuid.type != BT_UUID128) ||
+								!info->props) {
 		error("Characteristic UUID or properties are missing");
 		return FALSE;
 	}
@@ -221,10 +231,10 @@ static gboolean add_characteristic(struct btd_adapter *adapter,
 	/* characteristic declaration */
 	bt_uuid16_create(&bt_uuid, GATT_CHARAC_UUID);
 	atval[0] = info->props;
-	att_put_u16(h + 1, &atval[1]);
-	att_put_u16(info->uuid.value.u16, &atval[3]);
+	put_le16(h + 1, &atval[1]);
+	put_uuid_le(&info->uuid, &atval[3]);
 	if (attrib_db_add(adapter, h++, &bt_uuid, ATT_NONE, ATT_NOT_PERMITTED,
-						atval, sizeof(atval)) == NULL)
+				atval, 3 + info->uuid.type / 8) == NULL)
 		return FALSE;
 
 	/* characteristic value */
@@ -252,7 +262,7 @@ static gboolean add_characteristic(struct btd_adapter *adapter,
 		*info->value_handle = a->handle;
 
 	/* client characteristic configuration descriptor */
-	if (info->props & (ATT_CHAR_PROPER_NOTIFY | ATT_CHAR_PROPER_INDICATE)) {
+	if (info->props & (GATT_CHR_PROP_NOTIFY | GATT_CHR_PROP_INDICATE)) {
 		uint8_t cfg_val[2];
 
 		bt_uuid16_create(&bt_uuid, GATT_CLIENT_CHARAC_CFG_UUID);
@@ -341,7 +351,7 @@ gboolean gatt_service_add(struct btd_adapter *adapter, uint16_t uuid,
 	}
 
 	g_assert(size < USHRT_MAX);
-	g_assert(h - start_handle == (uint16_t) size);
+	g_assert(h == 0 || (h - start_handle == (uint16_t) size));
 	g_slist_free_full(chrs, free_gatt_info);
 
 	return TRUE;

@@ -39,20 +39,20 @@
 
 #include <gdbus/gdbus.h>
 
-#include "log.h"
+#include "src/log.h"
 
-#include "../src/adapter.h"
-#include "../src/device.h"
-#include "../src/profile.h"
-#include "../src/service.h"
-#include "../src/storage.h"
-#include "../src/dbus-common.h"
+#include "btio/btio.h"
+#include "lib/uuid.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+#include "src/storage.h"
+#include "src/dbus-common.h"
+#include "src/error.h"
+#include "src/sdp-client.h"
 
 #include "device.h"
-#include "error.h"
-#include <btio/btio.h>
-
-#include "sdp-client.h"
 
 #define INPUT_INTERFACE "org.bluez.Input1"
 
@@ -78,13 +78,11 @@ struct input_device {
 	struct hidp_connadd_req *req;
 	guint			dc_id;
 	bool			disable_sdp;
-	char			*name;
 	enum reconnect_mode_t	reconnect_mode;
 	guint			reconnect_timer;
 	uint32_t		reconnect_attempt;
 };
 
-static GSList *devices = NULL;
 static int idle_timeout = 0;
 
 void input_set_idle_timeout(int timeout)
@@ -94,18 +92,6 @@ void input_set_idle_timeout(int timeout)
 
 static void input_device_enter_reconnect_mode(struct input_device *idev);
 
-static struct input_device *find_device_by_path(GSList *list, const char *path)
-{
-	for (; list; list = list->next) {
-		struct input_device *idev = list->data;
-
-		if (!strcmp(idev->path, path))
-			return idev;
-	}
-
-	return NULL;
-}
-
 static void input_device_free(struct input_device *idev)
 {
 	if (idev->dc_id)
@@ -113,7 +99,6 @@ static void input_device_free(struct input_device *idev)
 
 	btd_service_unref(idev->service);
 	btd_device_unref(idev->device);
-	g_free(idev->name);
 	g_free(idev->path);
 
 	if (idev->ctrl_watch > 0)
@@ -170,6 +155,8 @@ static gboolean intr_watch_cb(GIOChannel *chan, GIOCondition cond, gpointer data
 	/* Close control channel */
 	if (idev->ctrl_io && !(cond & G_IO_NVAL))
 		g_io_channel_shutdown(idev->ctrl_io, TRUE, NULL);
+
+	btd_service_disconnecting_complete(idev->service, 0);
 
 	/* Enter the auto-reconnect mode if needed */
 	input_device_enter_reconnect_mode(idev);
@@ -431,8 +418,8 @@ static int hidp_add_connection(struct input_device *idev)
 	req->product = btd_device_get_product(idev->device);
 	req->version = btd_device_get_version(idev->device);
 
-	if (idev->name)
-		strncpy(req->name, idev->name, sizeof(req->name) - 1);
+	if (device_name_known(idev->device))
+		device_get_name(idev->device, req->name, sizeof(req->name));
 
 	/* Encryption is mandatory for keyboards */
 	if (req->subclass & 0x40) {
@@ -677,7 +664,7 @@ static gboolean input_device_auto_reconnect(gpointer user_data)
 	/* Stop the recurrent reconnection attempts if the device is reconnected
 	 * or is marked for removal. */
 	if (device_is_temporary(idev->device) ||
-					device_is_connected(idev->device))
+					btd_device_is_connected(idev->device))
 		return FALSE;
 
 	/* Only attempt an auto-reconnect for at most 3 minutes (6 * 30s). */
@@ -723,7 +710,7 @@ static void input_device_enter_reconnect_mode(struct input_device *idev)
 	/* If the device is temporary we are not required to reconnect with the
 	 * device. This is likely the case of a removing device. */
 	if (device_is_temporary(idev->device) ||
-					device_is_connected(idev->device))
+					btd_device_is_connected(idev->device))
 		return;
 
 	if (idev->reconnect_timer > 0)
@@ -739,6 +726,8 @@ static void input_device_enter_reconnect_mode(struct input_device *idev)
 int input_device_connect(struct btd_service *service)
 {
 	struct input_device *idev;
+
+	DBG("");
 
 	idev = btd_service_get_user_data(service);
 
@@ -756,13 +745,13 @@ int input_device_disconnect(struct btd_service *service)
 	struct input_device *idev;
 	int err;
 
+	DBG("");
+
 	idev = btd_service_get_user_data(service);
 
 	err = connection_disconnect(idev, 0);
 	if (err < 0)
 		return err;
-
-	btd_service_disconnecting_complete(service, 0);
 
 	return 0;
 }
@@ -817,20 +806,18 @@ static struct input_device *input_device_new(struct btd_service *service)
 	const sdp_record_t *rec = btd_device_get_record(device, p->remote_uuid);
 	struct btd_adapter *adapter = device_get_adapter(device);
 	struct input_device *idev;
-	char name[HCI_MAX_NAME_LENGTH + 1];
+
+	if (!rec)
+		return NULL;
 
 	idev = g_new0(struct input_device, 1);
-	bacpy(&idev->src, adapter_get_address(adapter));
+	bacpy(&idev->src, btd_adapter_get_address(adapter));
 	bacpy(&idev->dst, device_get_address(device));
 	idev->service = btd_service_ref(service);
 	idev->device = btd_device_ref(device);
 	idev->path = g_strdup(path);
 	idev->handle = rec->handle;
 	idev->disable_sdp = is_device_sdp_disable(rec);
-
-	device_get_name(device, name, HCI_MAX_NAME_LENGTH);
-	if (strlen(name) > 0)
-		idev->name = g_strdup(name);
 
 	/* Initialize device properties */
 	extract_hid_props(idev, rec);
@@ -863,10 +850,6 @@ int input_device_register(struct btd_service *service)
 
 	DBG("%s", path);
 
-	idev = find_device_by_path(devices, path);
-	if (idev)
-		return -EEXIST;
-
 	idev = input_device_new(service);
 	if (!idev)
 		return -EINVAL;
@@ -883,24 +866,24 @@ int input_device_register(struct btd_service *service)
 
 	btd_service_set_user_data(service, idev);
 
-	devices = g_slist_append(devices, idev);
-
 	return 0;
 }
 
 static struct input_device *find_device(const bdaddr_t *src,
 					const bdaddr_t *dst)
 {
-	GSList *list;
+	struct btd_device *device;
+	struct btd_service *service;
 
-	for (list = devices; list != NULL; list = list->next) {
-		struct input_device *idev = list->data;
+	device = btd_adapter_find_device(adapter_find(src), dst, BDADDR_BREDR);
+	if (device == NULL)
+		return NULL;
 
-		if (!bacmp(&idev->src, src) && !bacmp(&idev->dst, dst))
-			return idev;
-	}
+	service = btd_device_get_service(device, HID_UUID);
+	if (service == NULL)
+		return NULL;
 
-	return NULL;
+	return btd_service_get_user_data(service);
 }
 
 void input_device_unregister(struct btd_service *service)
@@ -914,7 +897,6 @@ void input_device_unregister(struct btd_service *service)
 	g_dbus_unregister_interface(btd_get_dbus_connection(),
 						idev->path, INPUT_INTERFACE);
 
-	devices = g_slist_remove(devices, idev);
 	input_device_free(idev);
 }
 
@@ -943,10 +925,20 @@ error:
 	return err;
 }
 
+bool input_device_exists(const bdaddr_t *src, const bdaddr_t *dst)
+{
+	if (find_device(src, dst))
+		return true;
+
+	return false;
+}
+
 int input_device_set_channel(const bdaddr_t *src, const bdaddr_t *dst, int psm,
 								GIOChannel *io)
 {
 	struct input_device *idev = find_device(src, dst);
+
+	DBG("idev %p psm %d", idev, psm);
 
 	if (!idev)
 		return -ENOENT;

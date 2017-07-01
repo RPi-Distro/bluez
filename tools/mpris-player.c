@@ -43,10 +43,14 @@
 #define BLUEZ_ADAPTER_INTERFACE "org.bluez.Adapter1"
 #define BLUEZ_MEDIA_INTERFACE "org.bluez.Media1"
 #define BLUEZ_MEDIA_PLAYER_INTERFACE "org.bluez.MediaPlayer1"
+#define BLUEZ_MEDIA_FOLDER_INTERFACE "org.bluez.MediaFolder1"
+#define BLUEZ_MEDIA_ITEM_INTERFACE "org.bluez.MediaItem1"
 #define BLUEZ_MEDIA_TRANSPORT_INTERFACE "org.bluez.MediaTransport1"
 #define MPRIS_BUS_NAME "org.mpris.MediaPlayer2."
 #define MPRIS_INTERFACE "org.mpris.MediaPlayer2"
 #define MPRIS_PLAYER_INTERFACE "org.mpris.MediaPlayer2.Player"
+#define MPRIS_TRACKLIST_INTERFACE "org.mpris.MediaPlayer2.TrackList"
+#define MPRIS_PLAYLISTS_INTERFACE "org.mpris.MediaPlayer2.Playlists"
 #define MPRIS_PLAYER_PATH "/org/mpris/MediaPlayer2"
 #define ERROR_INTERFACE "org.mpris.MediaPlayer2.Error"
 
@@ -61,12 +65,20 @@ static GSList *transports = NULL;
 static gboolean option_version = FALSE;
 static gboolean option_export = FALSE;
 
+struct tracklist {
+	GDBusProxy *proxy;
+	GSList *items;
+};
+
 struct player {
 	char *bus_name;
 	DBusConnection *conn;
 	GDBusProxy *proxy;
+	GDBusProxy *folder;
 	GDBusProxy *device;
 	GDBusProxy *transport;
+	GDBusProxy *playlist;
+	struct tracklist *tracklist;
 };
 
 typedef int (* parse_metadata_func) (DBusMessageIter *iter, const char *key,
@@ -170,45 +182,56 @@ static void dict_append_array(DBusMessageIter *dict, const char *key, int type,
 	dbus_message_iter_close_container(dict, &entry);
 }
 
+static void append_basic(DBusMessageIter *base, DBusMessageIter *iter,
+								int type)
+{
+	const void *value;
+
+	dbus_message_iter_get_basic(iter, &value);
+	dbus_message_iter_append_basic(base, type, &value);
+}
+
+static void append_iter(DBusMessageIter *base, DBusMessageIter *iter);
+static void append_container(DBusMessageIter *base, DBusMessageIter *iter,
+								int type)
+{
+	DBusMessageIter iter_sub, base_sub;
+	char *sig;
+
+	dbus_message_iter_recurse(iter, &iter_sub);
+
+	switch (type) {
+	case DBUS_TYPE_ARRAY:
+	case DBUS_TYPE_VARIANT:
+		sig = dbus_message_iter_get_signature(&iter_sub);
+		break;
+	default:
+		sig = NULL;
+		break;
+	}
+
+	dbus_message_iter_open_container(base, type, sig, &base_sub);
+
+	if (sig != NULL)
+		dbus_free(sig);
+
+	append_iter(&base_sub, &iter_sub);
+
+	dbus_message_iter_close_container(base, &base_sub);
+}
+
 static void append_iter(DBusMessageIter *base, DBusMessageIter *iter)
 {
 	int type;
 
-	type = dbus_message_iter_get_arg_type(iter);
-
-	if (dbus_type_is_basic(type)) {
-		const void *value;
-
-		dbus_message_iter_get_basic(iter, &value);
-		dbus_message_iter_append_basic(base, type, &value);
-	} else if (dbus_type_is_container(type)) {
-		DBusMessageIter iter_sub, base_sub;
-		char *sig;
-
-		dbus_message_iter_recurse(iter, &iter_sub);
-
-		switch (type) {
-		case DBUS_TYPE_ARRAY:
-		case DBUS_TYPE_VARIANT:
-			sig = dbus_message_iter_get_signature(&iter_sub);
-			break;
-		default:
-			sig = NULL;
-			break;
-		}
-
-		dbus_message_iter_open_container(base, type, sig, &base_sub);
-
-		if (sig != NULL)
-			dbus_free(sig);
-
-		while (dbus_message_iter_get_arg_type(&iter_sub) !=
+	while ((type = dbus_message_iter_get_arg_type(iter)) !=
 							DBUS_TYPE_INVALID) {
-			append_iter(&base_sub, &iter_sub);
-			dbus_message_iter_next(&iter_sub);
-		}
+		if (dbus_type_is_basic(type))
+			append_basic(base, iter, type);
+		else if (dbus_type_is_container(type))
+			append_container(base, iter, type);
 
-		dbus_message_iter_close_container(base, &base_sub);
+		dbus_message_iter_next(iter);
 	}
 }
 
@@ -317,127 +340,6 @@ static void dict_append_entry(DBusMessageIter *dict, const char *key, int type,
 	dbus_message_iter_close_container(dict, &entry);
 }
 
-static dbus_bool_t emit_properties_changed(DBusConnection *conn,
-					const char *path,
-					const char *interface,
-					const char *name,
-					int type, void *value)
-{
-	DBusMessage *signal;
-	DBusMessageIter iter, dict, array;
-	dbus_bool_t result;
-
-	signal = dbus_message_new_signal(path, DBUS_INTERFACE_PROPERTIES,
-							"PropertiesChanged");
-
-	if (!signal) {
-		fprintf(stderr, "Unable to allocate new %s.PropertyChanged"
-							" signal", interface);
-		return FALSE;
-	}
-
-	dbus_message_iter_init_append(signal, &iter);
-	dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &interface);
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
-			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
-			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
-
-	dict_append_entry(&dict, name, type, value);
-
-	dbus_message_iter_close_container(&iter, &dict);
-
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
-				DBUS_TYPE_STRING_AS_STRING, &array);
-	dbus_message_iter_close_container(&iter, &array);
-
-	result = dbus_connection_send(conn, signal, NULL);
-	dbus_message_unref(signal);
-
-	return result;
-}
-
-static int parse_property(DBusConnection *conn, const char *path,
-						const char *key,
-						DBusMessageIter *entry,
-						DBusMessageIter *properties)
-{
-	DBusMessageIter var;
-	const void *value;
-	int type;
-
-	printf("property %s found\n", key);
-
-	if (dbus_message_iter_get_arg_type(entry) != DBUS_TYPE_VARIANT)
-		return -EINVAL;
-
-	dbus_message_iter_recurse(entry, &var);
-
-	if (strcasecmp(key, "Metadata") == 0) {
-		if (properties)
-			dict_append_entry(properties, key,
-						DBUS_TYPE_DICT_ENTRY, &var);
-		else
-			emit_properties_changed(sys, path,
-					MPRIS_PLAYER_INTERFACE, key,
-					DBUS_TYPE_DICT_ENTRY, &var);
-
-		return 0;
-	}
-
-	type = dbus_message_iter_get_arg_type(&var);
-	if (!dbus_type_is_basic(type))
-		return -EINVAL;
-
-	dbus_message_iter_get_basic(&var, &value);
-
-	if (properties)
-		dict_append_entry(properties, key, type, &value);
-	else
-		emit_properties_changed(sys, path,
-					MPRIS_PLAYER_INTERFACE, key,
-					type, &value);
-
-	return 0;
-}
-
-static int parse_properties(DBusConnection *conn, const char *path,
-						DBusMessageIter *args,
-						DBusMessageIter *properties)
-{
-	DBusMessageIter dict;
-	int ctype;
-
-	ctype = dbus_message_iter_get_arg_type(args);
-	if (ctype != DBUS_TYPE_ARRAY)
-		return -EINVAL;
-
-	dbus_message_iter_recurse(args, &dict);
-
-	while ((ctype = dbus_message_iter_get_arg_type(&dict)) !=
-							DBUS_TYPE_INVALID) {
-		DBusMessageIter entry;
-		const char *key;
-
-		if (ctype != DBUS_TYPE_DICT_ENTRY)
-			return -EINVAL;
-
-		dbus_message_iter_recurse(&dict, &entry);
-		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_STRING)
-			return -EINVAL;
-
-		dbus_message_iter_get_basic(&entry, &key);
-		dbus_message_iter_next(&entry);
-
-		if (parse_property(conn, path, key, &entry, properties) < 0)
-			return -EINVAL;
-
-		dbus_message_iter_next(&dict);
-	}
-
-	return 0;
-}
-
 static char *sender2path(const char *sender)
 {
 	char *path;
@@ -459,7 +361,7 @@ static void copy_reply(DBusPendingCall *call, void *user_data)
 		return;
 	}
 
-	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_init_append(copy, &iter);
 
 	if (!dbus_message_iter_init(reply, &args))
 		goto done;
@@ -490,7 +392,7 @@ static DBusHandlerResult player_message(DBusConnection *conn,
 	if (copy == NULL)
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
-	dbus_message_iter_init_append(msg, &iter);
+	dbus_message_iter_init_append(copy, &iter);
 	append_iter(&iter, &args);
 
 	if (!dbus_connection_send_with_reply(session, copy, &call, -1))
@@ -529,7 +431,7 @@ static void add_player(DBusConnection *conn, const char *name,
 {
 	DBusMessage *reply = NULL;
 	DBusMessage *msg;
-	DBusMessageIter iter, args, properties;
+	DBusMessageIter iter, args;
 	DBusError err;
 	char *path, *owner;
 	struct player *player;
@@ -571,15 +473,7 @@ static void add_player(DBusConnection *conn, const char *name,
 						&iter))
 			goto done;
 	} else {
-		dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
-				DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-				DBUS_TYPE_STRING_AS_STRING
-				DBUS_TYPE_VARIANT_AS_STRING
-				DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
-				&properties);
-		if (parse_properties(conn, path, &args, &properties) < 0)
-			goto done;
-		dbus_message_iter_close_container(&iter, &properties);
+		append_iter(&iter, &args);
 		dbus_message_unref(reply);
 	}
 
@@ -646,13 +540,14 @@ static void remove_player(DBusConnection *conn, const char *sender)
 
 	dbus_message_unref(msg);
 	g_free(path);
+	g_free(owner);
 }
 
-static gboolean properties_changed(DBusConnection *conn,
-					DBusMessage *msg, void *user_data)
+static gboolean player_signal(DBusConnection *conn, DBusMessage *msg,
+								void *user_data)
 {
-	DBusMessageIter iter;
-	const char *iface;
+	DBusMessage *signal;
+	DBusMessageIter iter, args;
 	char *path, *owner;
 
 	dbus_message_iter_init(msg, &iter);
@@ -663,16 +558,21 @@ static gboolean properties_changed(DBusConnection *conn,
 	if (owner == NULL)
 		goto done;
 
-	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
-		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	signal = dbus_message_new_signal(path, dbus_message_get_interface(msg),
+						dbus_message_get_member(msg));
+	if (signal == NULL) {
+		fprintf(stderr, "Unable to allocate new %s.%s signal",
+						dbus_message_get_interface(msg),
+						dbus_message_get_member(msg));
+		goto done;
+	}
 
-	dbus_message_iter_get_basic(&iter, &iface);
+	dbus_message_iter_init_append(signal, &args);
 
-	printf("PropertiesChanged interface %s\n", iface);
+	append_iter(&args, &iter);
 
-	dbus_message_iter_next(&iter);
-
-	parse_properties(conn, path, &iter, NULL);
+	dbus_connection_send(sys, signal, NULL);
+	dbus_message_unref(signal);
 
 done:
 	g_free(path);
@@ -856,9 +756,22 @@ static void disconnect_handler(DBusConnection *connection, void *user_data)
 	printf("org.bluez disappeared\n");
 }
 
+static void unregister_tracklist(struct player *player)
+{
+	struct tracklist *tracklist = player->tracklist;
+
+	g_slist_free(tracklist->items);
+	g_dbus_proxy_unref(tracklist->proxy);
+	g_free(tracklist);
+	player->tracklist = NULL;
+}
+
 static void player_free(void *data)
 {
 	struct player *player = data;
+
+	if (player->tracklist != NULL)
+		unregister_tracklist(player);
 
 	if (player->conn) {
 		dbus_connection_close(player->conn);
@@ -870,6 +783,9 @@ static void player_free(void *data)
 
 	if (player->transport)
 		g_dbus_proxy_unref(player->transport);
+
+	if (player->playlist)
+		g_dbus_proxy_unref(player->playlist);
 
 	g_free(player->bus_name);
 	g_free(player);
@@ -1301,6 +1217,21 @@ static gboolean parse_int32_metadata(DBusMessageIter *iter, const char *key,
 	return TRUE;
 }
 
+static gboolean parse_path_metadata(DBusMessageIter *iter, const char *key,
+						DBusMessageIter *metadata)
+{
+	const char *value;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_OBJECT_PATH)
+		return FALSE;
+
+	dbus_message_iter_get_basic(iter, &value);
+
+	dict_append_entry(metadata, key, DBUS_TYPE_OBJECT_PATH, &value);
+
+	return TRUE;
+}
+
 static int parse_track_entry(DBusMessageIter *entry, const char *key,
 						DBusMessageIter *metadata)
 {
@@ -1328,6 +1259,9 @@ static int parse_track_entry(DBusMessageIter *entry, const char *key,
 			return -EINVAL;
 	} else if (strcasecmp(key, "TrackNumber") == 0) {
 		if (!parse_int32_metadata(&var, "xesam:trackNumber", metadata))
+			return -EINVAL;
+	} else if (strcasecmp(key, "Item") == 0) {
+		if (!parse_path_metadata(&var, "mpris:trackid", metadata))
 			return -EINVAL;
 	}
 
@@ -1464,13 +1398,469 @@ static const GDBusMethodTable mpris_methods[] = {
 	{ }
 };
 
+static gboolean get_tracklist(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct player *player = data;
+	dbus_bool_t value;
+
+	value = player->tracklist != NULL ? TRUE : FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &value);
+
+	return TRUE;
+}
+
 static const GDBusPropertyTable mpris_properties[] = {
 	{ "CanQuit", "b", get_disable, NULL, NULL },
 	{ "Fullscreen", "b", get_disable, NULL, NULL },
 	{ "CanSetFullscreen", "b", get_disable, NULL, NULL },
 	{ "CanRaise", "b", get_disable, NULL, NULL },
-	{ "HasTrackList", "b", get_disable, NULL, NULL },
+	{ "HasTrackList", "b", get_tracklist, NULL, NULL },
 	{ "Identity", "s", get_name, NULL, NULL },
+	{ }
+};
+
+static GDBusProxy *find_item(struct player *player, const char *path)
+{
+	struct tracklist *tracklist = player->tracklist;
+	GSList *l;
+
+	for (l = tracklist->items; l; l = l->next) {
+		GDBusProxy *proxy = l->data;
+		const char *p = g_dbus_proxy_get_path(proxy);
+
+		if (g_str_equal(path, p))
+			return proxy;
+	}
+
+	return NULL;
+}
+
+static void append_item_metadata(void *data, void *user_data)
+{
+	GDBusProxy *item = data;
+	DBusMessageIter *iter = user_data;
+	DBusMessageIter var, metadata;
+	const char *path = g_dbus_proxy_get_path(item);
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &metadata);
+
+	dict_append_entry(&metadata, "mpris:trackid", DBUS_TYPE_OBJECT_PATH,
+									&path);
+
+	if (g_dbus_proxy_get_property(item, "Metadata", &var))
+		parse_metadata(&var, &metadata, parse_track_entry);
+
+	dbus_message_iter_close_container(iter, &metadata);
+
+	return;
+}
+
+static DBusMessage *tracklist_get_metadata(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	struct player *player = data;
+	DBusMessage *reply;
+	DBusMessageIter args, array;
+	GSList *l = NULL;
+
+	dbus_message_iter_init(msg, &args);
+
+	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_ARRAY)
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	dbus_message_iter_recurse(&args, &array);
+
+	while (dbus_message_iter_get_arg_type(&array) ==
+						DBUS_TYPE_OBJECT_PATH) {
+		const char *path;
+		GDBusProxy *item;
+
+		dbus_message_iter_get_basic(&array, &path);
+
+		item = find_item(player, path);
+		if (item == NULL)
+			return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+		l = g_slist_append(l, item);
+
+		dbus_message_iter_next(&array);
+	}
+
+	reply = dbus_message_new_method_return(msg);
+
+	dbus_message_iter_init_append(reply, &args);
+
+	dbus_message_iter_open_container(&args, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_ARRAY_AS_STRING
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&array);
+
+	g_slist_foreach(l, append_item_metadata, &array);
+
+	dbus_message_iter_close_container(&args, &array);
+
+	return reply;
+}
+
+static void item_play_reply(DBusMessage *message, void *user_data)
+{
+	struct pending_call *p = user_data;
+	struct player *player = p->player;
+	DBusMessage *msg = p->msg;
+	DBusMessage *reply;
+	DBusError err;
+
+	dbus_error_init(&err);
+	if (dbus_set_error_from_message(&err, message)) {
+		fprintf(stderr, "error: %s", err.name);
+		reply = g_dbus_create_error(msg, err.name, "%s", err.message);
+		dbus_error_free(&err);
+	} else
+		reply = g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+
+	g_dbus_send_message(player->conn, reply);
+}
+
+static void item_play(struct player *player, DBusMessage *msg,
+							GDBusProxy *item)
+{
+	struct pending_call *p;
+
+	p = g_new0(struct pending_call, 1);
+	p->player = player;
+	p->msg = dbus_message_ref(msg);
+
+	g_dbus_proxy_method_call(item, "Play", NULL, item_play_reply,
+						p, pending_call_free);
+}
+
+static DBusMessage *tracklist_goto(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	struct player *player = data;
+	GDBusProxy *item;
+	const char *path;
+
+	if (!dbus_message_get_args(msg, NULL,
+					DBUS_TYPE_OBJECT_PATH, &path,
+					DBUS_TYPE_INVALID))
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments");
+
+	item = find_item(player, path);
+	if (item == NULL)
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments");
+
+	item_play(player, msg, item);
+
+	return NULL;
+}
+
+static DBusMessage *tracklist_add_track(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotImplemented",
+					"Not implemented");
+}
+
+static DBusMessage *tracklist_remove_track(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	return g_dbus_create_error(msg, ERROR_INTERFACE ".NotImplemented",
+					"Not implemented");
+}
+
+static const GDBusMethodTable tracklist_methods[] = {
+	{ GDBUS_METHOD("GetTracksMetadata",
+			GDBUS_ARGS({ "tracks", "ao" }),
+			GDBUS_ARGS({ "metadata", "aa{sv}" }),
+			tracklist_get_metadata) },
+	{ GDBUS_METHOD("AddTrack",
+			GDBUS_ARGS({ "uri", "s" }, { "after", "o" },
+						{ "current", "b" }),
+			NULL,
+			tracklist_add_track) },
+	{ GDBUS_METHOD("RemoveTrack",
+			GDBUS_ARGS({ "track", "o" }), NULL,
+			tracklist_remove_track) },
+	{ GDBUS_ASYNC_METHOD("GoTo",
+			GDBUS_ARGS({ "track", "o" }), NULL,
+			tracklist_goto) },
+	{ },
+};
+
+static const GDBusSignalTable tracklist_signals[] = {
+	{ GDBUS_SIGNAL("TrackAdded", GDBUS_ARGS({"metadata", "a{sv}"},
+						{"after", "o"})) },
+	{ GDBUS_SIGNAL("TrackRemoved", GDBUS_ARGS({"track", "o"})) },
+	{ GDBUS_SIGNAL("TrackMetadataChanged", GDBUS_ARGS({"track", "o"},
+						{"metadata", "a{sv}"})) },
+	{ }
+};
+
+static gboolean tracklist_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct player *player = data;
+
+	return player->tracklist != NULL;
+}
+
+static void append_path(gpointer data, gpointer user_data)
+{
+	GDBusProxy *proxy = data;
+	DBusMessageIter *iter = user_data;
+	const char *path = g_dbus_proxy_get_path(proxy);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &path);
+}
+
+static gboolean get_tracks(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct player *player = data;
+	struct tracklist *tracklist = player->tracklist;
+	DBusMessageIter value;
+
+	if (tracklist == NULL)
+		return FALSE;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_OBJECT_PATH_AS_STRING,
+					&value);
+	g_slist_foreach(player->tracklist->items, append_path, &value);
+	dbus_message_iter_close_container(iter, &value);
+
+	return TRUE;
+}
+
+static const GDBusPropertyTable tracklist_properties[] = {
+	{ "Tracks", "ao", get_tracks, NULL, tracklist_exists },
+	{ "CanEditTracks", "b", get_disable, NULL, NULL },
+	{ }
+};
+
+static void list_items_setup(DBusMessageIter *iter, void *user_data)
+{
+	DBusMessageIter dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_STRING_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+	dbus_message_iter_close_container(iter, &dict);
+}
+
+static void change_folder_reply(DBusMessage *message, void *user_data)
+{
+	struct player *player = user_data;
+	struct tracklist *tracklist = player->tracklist;
+	DBusError err;
+
+	dbus_error_init(&err);
+	if (dbus_set_error_from_message(&err, message)) {
+		fprintf(stderr, "error: %s", err.name);
+		return;
+	}
+
+	g_dbus_emit_property_changed(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_PLAYLISTS_INTERFACE,
+						"ActivePlaylist");
+
+	g_dbus_proxy_method_call(tracklist->proxy, "ListItems",
+					list_items_setup, NULL, NULL, NULL);
+}
+
+static void change_folder_setup(DBusMessageIter *iter, void *user_data)
+{
+	struct player *player = user_data;
+	const char *path;
+
+	path = g_dbus_proxy_get_path(player->playlist);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH, &path);
+}
+
+static DBusMessage *playlist_activate(DBusConnection *conn,
+						DBusMessage *msg, void *data)
+{
+	struct player *player = data;
+	struct tracklist *tracklist = player->tracklist;
+	const char *path;
+
+	if (player->playlist == NULL || tracklist == NULL)
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	if (!dbus_message_get_args(msg, NULL,
+					DBUS_TYPE_OBJECT_PATH, &path,
+					DBUS_TYPE_INVALID))
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	if (!g_str_equal(path, g_dbus_proxy_get_path(player->playlist)))
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	g_dbus_proxy_method_call(tracklist->proxy, "ChangeFolder",
+				change_folder_setup, change_folder_reply,
+				player, NULL);
+
+	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
+}
+
+static DBusMessage *playlist_get(DBusConnection *conn, DBusMessage *msg,
+								void *data)
+{
+	struct player *player = data;
+	uint32_t index, count;
+	const char *order;
+	dbus_bool_t reverse;
+	DBusMessage *reply;
+	DBusMessageIter iter, entry, value, name;
+	const char *string, *path;
+	const char *empty = "";
+
+	if (player->playlist == NULL)
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	if (!dbus_message_get_args(msg, NULL,
+					DBUS_TYPE_UINT32, &index,
+					DBUS_TYPE_UINT32, &count,
+					DBUS_TYPE_STRING, &order,
+					DBUS_TYPE_BOOLEAN, &reverse,
+					DBUS_TYPE_INVALID))
+		return g_dbus_create_error(msg,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid Arguments");
+
+	path = g_dbus_proxy_get_path(player->playlist);
+
+	reply = dbus_message_new_method_return(msg);
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(oss)",
+								&entry);
+	dbus_message_iter_open_container(&entry, DBUS_TYPE_STRUCT, NULL,
+								&value);
+	dbus_message_iter_append_basic(&value, DBUS_TYPE_OBJECT_PATH, &path);
+	if (g_dbus_proxy_get_property(player->playlist, "Name", &name)) {
+		dbus_message_iter_get_basic(&name, &string);
+		dbus_message_iter_append_basic(&value, DBUS_TYPE_STRING,
+								&string);
+	} else {
+		dbus_message_iter_append_basic(&value, DBUS_TYPE_STRING,
+								&path);
+	}
+	dbus_message_iter_append_basic(&value, DBUS_TYPE_STRING, &empty);
+	dbus_message_iter_close_container(&entry, &value);
+	dbus_message_iter_close_container(&iter, &entry);
+
+	return reply;
+}
+
+static const GDBusMethodTable playlist_methods[] = {
+	{ GDBUS_METHOD("ActivatePlaylist",
+			GDBUS_ARGS({ "playlist", "o" }), NULL,
+			playlist_activate) },
+	{ GDBUS_METHOD("GetPlaylists",
+			GDBUS_ARGS({ "index", "u" }, { "maxcount", "u"},
+					{ "order", "s" }, { "reverse", "b" }),
+			GDBUS_ARGS({ "playlists", "a(oss)"}),
+			playlist_get) },
+	{ },
+};
+
+static gboolean playlist_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct player *player = data;
+
+	return player->playlist != NULL;
+}
+
+static gboolean get_playlist_count(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct player *player = data;
+	uint32_t count = 1;
+
+	if (player->playlist == NULL)
+		return FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &count);
+
+	return TRUE;
+}
+
+static gboolean get_orderings(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	DBusMessageIter value;
+	const char *order = "User";
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_OBJECT_PATH_AS_STRING,
+					&value);
+	dbus_message_iter_append_basic(&value, DBUS_TYPE_STRING, &order);
+	dbus_message_iter_close_container(iter, &value);
+
+	return TRUE;
+}
+
+static gboolean get_active_playlist(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct player *player = data;
+	DBusMessageIter value, entry;
+	dbus_bool_t enabled = TRUE;
+	const char *path, *empty = "";
+
+	if (player->playlist == NULL)
+		return FALSE;
+
+	path = g_dbus_proxy_get_path(player->playlist);
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_STRUCT,
+							NULL, &value);
+	dbus_message_iter_append_basic(&value, DBUS_TYPE_BOOLEAN, &enabled);
+	dbus_message_iter_open_container(&value, DBUS_TYPE_STRUCT, NULL,
+								&entry);
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_OBJECT_PATH, &path);
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &path);
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &empty);
+	dbus_message_iter_close_container(&value, &entry);
+	dbus_message_iter_close_container(iter, &value);
+
+	return TRUE;
+}
+
+static const GDBusPropertyTable playlist_properties[] = {
+	{ "PlaylistCount", "u", get_playlist_count, NULL, playlist_exists },
+	{ "Orderings", "as", get_orderings, NULL, NULL },
+	{ "ActivePlaylist", "(b(oss))", get_active_playlist, NULL,
+							playlist_exists },
 	{ }
 };
 
@@ -1507,6 +1897,55 @@ static GDBusProxy *find_transport_by_path(const char *path)
 	}
 
 	return NULL;
+}
+
+static struct player *find_player(GDBusProxy *proxy)
+{
+	GSList *l;
+
+	for (l = players; l; l = l->next) {
+		struct player *player = l->data;
+		const char *path, *p;
+
+		if (player->proxy == proxy)
+			return player;
+
+		path = g_dbus_proxy_get_path(proxy);
+		p = g_dbus_proxy_get_path(player->proxy);
+		if (g_str_equal(path, p))
+			return player;
+	}
+
+	return NULL;
+}
+
+static void register_tracklist(GDBusProxy *proxy)
+{
+	struct player *player;
+	struct tracklist *tracklist;
+
+	player = find_player(proxy);
+	if (player == NULL)
+		return;
+
+	if (player->tracklist != NULL)
+		return;
+
+	tracklist = g_new0(struct tracklist, 1);
+	tracklist->proxy = g_dbus_proxy_ref(proxy);
+
+	player->tracklist = tracklist;
+
+	g_dbus_emit_property_changed(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_INTERFACE,
+						"HasTrackList");
+
+	if (player->playlist == NULL)
+		return;
+
+	g_dbus_proxy_method_call(player->tracklist->proxy, "ChangeFolder",
+				change_folder_setup, change_folder_reply,
+				player, NULL);
 }
 
 static void register_player(GDBusProxy *proxy)
@@ -1578,6 +2017,28 @@ static void register_player(GDBusProxy *proxy)
 		goto fail;
 	}
 
+	if (!g_dbus_register_interface(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_TRACKLIST_INTERFACE,
+						tracklist_methods,
+						tracklist_signals,
+						tracklist_properties,
+						player, NULL)) {
+		fprintf(stderr, "Could not register interface %s",
+						MPRIS_TRACKLIST_INTERFACE);
+		goto fail;
+	}
+
+	if (!g_dbus_register_interface(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_PLAYLISTS_INTERFACE,
+						playlist_methods,
+						NULL,
+						playlist_properties,
+						player, NULL)) {
+		fprintf(stderr, "Could not register interface %s",
+						MPRIS_PLAYLISTS_INTERFACE);
+		goto fail;
+	}
+
 	transport = find_transport_by_path(path);
 	if (transport)
 		player->transport = g_dbus_proxy_ref(transport);
@@ -1630,28 +2091,146 @@ static void register_transport(GDBusProxy *proxy)
 	player->transport = g_dbus_proxy_ref(proxy);
 }
 
+static struct player *find_player_by_item(const char *item)
+{
+	GSList *l;
+
+	for (l = players; l; l = l->next) {
+		struct player *player = l->data;
+		const char *path = g_dbus_proxy_get_path(player->proxy);
+
+		if (g_str_has_prefix(item, path))
+			return player;
+	}
+
+	return NULL;
+}
+
+static void register_playlist(struct player *player, GDBusProxy *proxy)
+{
+	const char *path;
+	DBusMessageIter iter;
+
+	if (!g_dbus_proxy_get_property(player->proxy, "Playlist", &iter))
+		return;
+
+	dbus_message_iter_get_basic(&iter, &path);
+
+	if (!g_str_equal(path, g_dbus_proxy_get_path(proxy)))
+		return;
+
+	player->playlist = g_dbus_proxy_ref(proxy);
+
+	g_dbus_emit_property_changed(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_PLAYLISTS_INTERFACE,
+						"PlaylistCount");
+
+	if (player->tracklist == NULL)
+		return;
+
+	g_dbus_proxy_method_call(player->tracklist->proxy, "ChangeFolder",
+				change_folder_setup, change_folder_reply,
+				player, NULL);
+}
+
+static void register_item(struct player *player, GDBusProxy *proxy)
+{
+	struct tracklist *tracklist;
+	const char *path, *playlist;
+	DBusMessage *signal;
+	DBusMessageIter iter, args, metadata;
+	GSList *l;
+	GDBusProxy *after;
+
+	if (player->playlist == NULL) {
+		register_playlist(player, proxy);
+		return;
+	}
+
+	tracklist = player->tracklist;
+	if (tracklist == NULL)
+		return;
+
+	path = g_dbus_proxy_get_path(proxy);
+	playlist = g_dbus_proxy_get_path(player->playlist);
+	if (!g_str_has_prefix(path, playlist))
+		return;
+
+	l = g_slist_last(tracklist->items);
+	tracklist->items = g_slist_append(tracklist->items, proxy);
+
+	g_dbus_emit_property_changed(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_TRACKLIST_INTERFACE,
+						"Tracks");
+
+	if (l == NULL)
+		return;
+
+	signal = dbus_message_new_signal(MPRIS_PLAYER_PATH,
+					MPRIS_TRACKLIST_INTERFACE,
+					"TrackAdded");
+	if (!signal) {
+		fprintf(stderr, "Unable to allocate new %s.TrackAdded signal",
+						MPRIS_TRACKLIST_INTERFACE);
+		return;
+	}
+
+	dbus_message_iter_init_append(signal, &args);
+
+	if (!g_dbus_proxy_get_property(proxy, "Metadata", &iter)) {
+		dbus_message_unref(signal);
+		return;
+	}
+
+	dbus_message_iter_open_container(&args, DBUS_TYPE_ARRAY,
+			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &metadata);
+
+	parse_metadata(&iter, &metadata, parse_track_entry);
+
+	dbus_message_iter_close_container(&args, &metadata);
+
+	after = l->data;
+	path = g_dbus_proxy_get_path(after);
+	dbus_message_iter_append_basic(&args, DBUS_TYPE_OBJECT_PATH, &path);
+
+	g_dbus_send_message(player->conn, signal);
+}
+
 static void proxy_added(GDBusProxy *proxy, void *user_data)
 {
 	const char *interface;
+	const char *path;
 
 	interface = g_dbus_proxy_get_interface(proxy);
+	path = g_dbus_proxy_get_path(proxy);
 
 	if (!strcmp(interface, BLUEZ_ADAPTER_INTERFACE)) {
 		if (adapter != NULL)
 			return;
 
-		printf("Bluetooth Adapter %s found\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Adapter %s found\n", path);
 		adapter = proxy;
 		list_names(session);
 	} else if (!strcmp(interface, BLUEZ_MEDIA_PLAYER_INTERFACE)) {
-		printf("Bluetooth Player %s found\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Player %s found\n", path);
 		register_player(proxy);
 	} else if (!strcmp(interface, BLUEZ_MEDIA_TRANSPORT_INTERFACE)) {
-		printf("Bluetooth Transport %s found\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Transport %s found\n", path);
 		register_transport(proxy);
+	} else if (!strcmp(interface, BLUEZ_MEDIA_FOLDER_INTERFACE)) {
+		printf("Bluetooth Folder %s found\n", path);
+		register_tracklist(proxy);
+	} else if (!strcmp(interface, BLUEZ_MEDIA_ITEM_INTERFACE)) {
+		struct player *player;
+
+		player = find_player_by_item(path);
+		if (player == NULL)
+			return;
+
+		printf("Bluetooth Item %s found\n", path);
+		register_item(player, proxy);
 	}
 }
 
@@ -1659,25 +2238,18 @@ static void unregister_player(struct player *player)
 {
 	players = g_slist_remove(players, player);
 
+	if (player->tracklist != NULL) {
+		g_dbus_unregister_interface(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_PLAYLISTS_INTERFACE);
+		g_dbus_unregister_interface(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_TRACKLIST_INTERFACE);
+	}
+
 	g_dbus_unregister_interface(player->conn, MPRIS_PLAYER_PATH,
 						MPRIS_INTERFACE);
 
 	g_dbus_unregister_interface(player->conn, MPRIS_PLAYER_PATH,
 						MPRIS_PLAYER_INTERFACE);
-}
-
-static struct player *find_player(GDBusProxy *proxy)
-{
-	GSList *l;
-
-	for (l = players; l; l = l->next) {
-		struct player *player = l->data;
-
-		if (player->proxy == proxy)
-			return player;
-	}
-
-	return NULL;
 }
 
 static struct player *find_player_by_transport(GDBusProxy *proxy)
@@ -1711,21 +2283,70 @@ static void unregister_transport(GDBusProxy *proxy)
 	player->transport = NULL;
 }
 
+static void unregister_item(struct player *player, GDBusProxy *proxy)
+{
+	struct tracklist *tracklist = player->tracklist;
+	const char *path;
+
+	if (tracklist == NULL)
+		return;
+
+	if (g_slist_find(tracklist->items, proxy) == NULL)
+		return;
+
+	path = g_dbus_proxy_get_path(proxy);
+
+	tracklist->items = g_slist_remove(tracklist->items, proxy);
+
+	g_dbus_emit_property_changed(player->conn, MPRIS_PLAYER_PATH,
+						MPRIS_TRACKLIST_INTERFACE,
+						"Tracks");
+
+	g_dbus_emit_signal(player->conn, MPRIS_PLAYER_PATH,
+				MPRIS_TRACKLIST_INTERFACE, "TrackRemoved",
+				DBUS_TYPE_OBJECT_PATH, &path,
+				DBUS_TYPE_INVALID);
+}
+
+static void remove_players(DBusConnection *conn)
+{
+	char **paths;
+	int i;
+
+	dbus_connection_list_registered(conn, "/", &paths);
+
+	for (i = 0; paths[i]; i++) {
+		char *path;
+		void *data;
+
+		path = g_strdup_printf("/%s", paths[i]);
+		dbus_connection_get_object_path_data(sys, path, &data);
+		dbus_connection_unregister_object_path(sys, path);
+
+		g_free(path);
+		g_free(data);
+	}
+
+	dbus_free_string_array(paths);
+}
+
 static void proxy_removed(GDBusProxy *proxy, void *user_data)
 {
 	const char *interface;
+	const char *path;
 
 	if (adapter == NULL)
 		return;
 
 	interface = g_dbus_proxy_get_interface(proxy);
+	path = g_dbus_proxy_get_path(proxy);
 
 	if (strcmp(interface, BLUEZ_ADAPTER_INTERFACE) == 0) {
 		if (adapter != proxy)
 			return;
-		printf("Bluetooth Adapter %s removed\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Adapter %s removed\n", path);
 		adapter = NULL;
+		remove_players(sys);
 	} else if (strcmp(interface, BLUEZ_MEDIA_PLAYER_INTERFACE) == 0) {
 		struct player *player;
 
@@ -1733,13 +2354,20 @@ static void proxy_removed(GDBusProxy *proxy, void *user_data)
 		if (player == NULL)
 			return;
 
-		printf("Bluetooth Player %s removed\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Player %s removed\n", path);
 		unregister_player(player);
 	} else if (strcmp(interface, BLUEZ_MEDIA_TRANSPORT_INTERFACE) == 0) {
-		printf("Bluetooth Transport %s removed\n",
-						g_dbus_proxy_get_path(proxy));
+		printf("Bluetooth Transport %s removed\n", path);
 		unregister_transport(proxy);
+	} else if (strcmp(interface, BLUEZ_MEDIA_ITEM_INTERFACE) == 0) {
+		struct player *player;
+
+		player = find_player_by_item(path);
+		if (player == NULL)
+			return;
+
+		printf("Bluetooth Item %s removed\n", path);
+		unregister_item(player, proxy);
 	}
 }
 
@@ -1825,6 +2453,41 @@ static void transport_property_changed(GDBusProxy *proxy, const char *name,
 						name);
 }
 
+static void item_property_changed(GDBusProxy *proxy, const char *name,
+					DBusMessageIter *iter, void *user_data)
+{
+	struct player *player;
+	DBusMessage *signal;
+	DBusMessageIter args;
+	const char *path;
+
+	path = g_dbus_proxy_get_path(proxy);
+
+	player = find_player_by_item(path);
+	if (player == NULL)
+		return;
+
+	if (strcasecmp(name, "Metadata") != 0)
+		return;
+
+	signal = dbus_message_new_signal(MPRIS_PLAYER_PATH,
+					MPRIS_TRACKLIST_INTERFACE,
+					"TrackMetadataChanged");
+	if (!signal) {
+		fprintf(stderr, "Unable to allocate new %s.TrackAdded signal",
+						MPRIS_TRACKLIST_INTERFACE);
+		return;
+	}
+
+	dbus_message_iter_init_append(signal, &args);
+
+	dbus_message_iter_append_basic(&args, DBUS_TYPE_OBJECT_PATH, &path);
+
+	append_iter(&args, iter);
+
+	g_dbus_send_message(player->conn, signal);
+}
+
 static void property_changed(GDBusProxy *proxy, const char *name,
 					DBusMessageIter *iter, void *user_data)
 {
@@ -1838,13 +2501,16 @@ static void property_changed(GDBusProxy *proxy, const char *name,
 	if (strcmp(interface, BLUEZ_MEDIA_TRANSPORT_INTERFACE) == 0)
 		return transport_property_changed(proxy, name, iter,
 								user_data);
+
+	if (strcmp(interface, BLUEZ_MEDIA_ITEM_INTERFACE) == 0)
+		return item_property_changed(proxy, name, iter, user_data);
 }
 
 int main(int argc, char *argv[])
 {
 	GOptionContext *context;
 	GError *error = NULL;
-	guint owner_watch, properties_watch;
+	guint owner_watch, properties_watch, signal_watch;
 	struct sigaction sa;
 
 	context = g_option_context_new(NULL);
@@ -1886,10 +2552,14 @@ int main(int argc, char *argv[])
 						name_owner_changed,
 						NULL, NULL);
 
-
 	properties_watch = g_dbus_add_properties_watch(session, NULL, NULL,
 							MPRIS_PLAYER_INTERFACE,
-							properties_changed,
+							player_signal,
+							NULL, NULL);
+
+	signal_watch = g_dbus_add_signal_watch(session, NULL, NULL,
+							MPRIS_PLAYER_INTERFACE,
+							NULL, player_signal,
 							NULL, NULL);
 
 	memset(&sa, 0, sizeof(sa));
@@ -1910,6 +2580,7 @@ int main(int argc, char *argv[])
 
 	g_dbus_remove_watch(session, owner_watch);
 	g_dbus_remove_watch(session, properties_watch);
+	g_dbus_remove_watch(session, signal_watch);
 
 	g_dbus_client_unref(client);
 

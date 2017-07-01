@@ -38,20 +38,20 @@
 
 #include <glib.h>
 #include <gdbus/gdbus.h>
-#include <btio/btio.h>
 
+#include "btio/btio.h"
 #include "lib/uuid.h"
-#include "../src/dbus-common.h"
-#include "../src/adapter.h"
+#include "src/dbus-common.h"
+#include "src/adapter.h"
+#include "src/log.h"
+#include "src/error.h"
+#include "src/sdpd.h"
 
-#include "log.h"
-#include "error.h"
-#include "sdpd.h"
-
-#include "common.h"
+#include "bnep.h"
 #include "server.h"
 
 #define NETWORK_SERVER_INTERFACE "org.bluez.NetworkServer1"
+#define BNEP_INTERFACE "bnep%d"
 #define SETUP_TIMEOUT		1
 
 /* Pending Authorization */
@@ -251,115 +251,6 @@ static sdp_record_t *server_record_new(const char *name, uint16_t id)
 	return record;
 }
 
-static ssize_t send_bnep_ctrl_rsp(int sk, uint16_t val)
-{
-	struct bnep_control_rsp rsp;
-
-	rsp.type = BNEP_CONTROL;
-	rsp.ctrl = BNEP_SETUP_CONN_RSP;
-	rsp.resp = htons(val);
-
-	return send(sk, &rsp, sizeof(rsp), 0);
-}
-
-static int server_connadd(struct network_server *ns,
-				struct network_session *session,
-				uint16_t dst_role)
-{
-	char devname[16];
-	int err, nsk;
-
-	memset(devname, 0, sizeof(devname));
-	strcpy(devname, "bnep%d");
-
-	nsk = g_io_channel_unix_get_fd(session->io);
-	err = bnep_connadd(nsk, dst_role, devname);
-	if (err < 0)
-		return err;
-
-	info("Added new connection: %s", devname);
-
-	if (bnep_add_to_bridge(devname, ns->bridge) < 0) {
-		error("Can't add %s to the bridge %s: %s(%d)",
-				devname, ns->bridge, strerror(errno), errno);
-		return -EPERM;
-	}
-
-	bnep_if_up(devname);
-
-	strncpy(session->dev, devname, sizeof(devname));
-
-	ns->sessions = g_slist_append(ns->sessions, session);
-
-	return 0;
-}
-
-static uint16_t bnep_setup_chk(uint16_t dst_role, uint16_t src_role)
-{
-	/* Allowed PAN Profile scenarios */
-	switch (dst_role) {
-	case BNEP_SVC_NAP:
-	case BNEP_SVC_GN:
-		if (src_role == BNEP_SVC_PANU)
-			return 0;
-		return BNEP_CONN_INVALID_SRC;
-	case BNEP_SVC_PANU:
-		if (src_role == BNEP_SVC_PANU ||
-				src_role == BNEP_SVC_GN ||
-				src_role == BNEP_SVC_NAP)
-			return 0;
-
-		return BNEP_CONN_INVALID_SRC;
-	}
-
-	return BNEP_CONN_INVALID_DST;
-}
-
-static uint16_t bnep_setup_decode(struct bnep_setup_conn_req *req,
-				uint16_t *dst_role, uint16_t *src_role)
-{
-	const uint8_t bt_base[] = { 0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
-				0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB };
-	uint8_t *dest, *source;
-	uint32_t val;
-
-	dest = req->service;
-	source = req->service + req->uuid_size;
-
-	switch (req->uuid_size) {
-	case 2: /* UUID16 */
-		*dst_role = bt_get_be16(dest);
-		*src_role = bt_get_be16(source);
-		break;
-	case 16: /* UUID128 */
-		/* Check that the bytes in the UUID, except the service ID
-		 * itself, are correct. The service ID is checked in
-		 * bnep_setup_chk(). */
-		if (memcmp(&dest[4], bt_base, sizeof(bt_base)) != 0)
-			return BNEP_CONN_INVALID_DST;
-		if (memcmp(&source[4], bt_base, sizeof(bt_base)) != 0)
-			return BNEP_CONN_INVALID_SRC;
-
-		/* Intentional no-break */
-
-	case 4: /* UUID32 */
-		val = bt_get_be32(dest);
-		if (val > 0xffff)
-			return BNEP_CONN_INVALID_DST;
-		*dst_role = val;
-
-		val = bt_get_be32(source);
-		if (val > 0xffff)
-			return BNEP_CONN_INVALID_SRC;
-		*src_role = val;
-		break;
-	default:
-		return BNEP_CONN_INVALID_SVC;
-	}
-
-	return BNEP_SUCCESS;
-}
-
 static void session_free(void *data)
 {
 	struct network_session *session = data;
@@ -457,7 +348,11 @@ static gboolean bnep_setup(GIOChannel *chan,
 		goto reply;
 	}
 
-	if (server_connadd(ns, na->setup, dst_role) < 0)
+	strncpy(na->setup->dev, BNEP_INTERFACE, 16);
+	na->setup->dev[15] = '\0';
+
+	if (bnep_server_add(sk, dst_role, ns->bridge, na->setup->dev,
+							&na->setup->dst) < 0)
 		goto reply;
 
 	na->setup = NULL;
@@ -465,7 +360,7 @@ static gboolean bnep_setup(GIOChannel *chan,
 	rsp = BNEP_SUCCESS;
 
 reply:
-	send_bnep_ctrl_rsp(sk, rsp);
+	bnep_send_ctrl_rsp(sk, BNEP_CONTROL, BNEP_SETUP_CONN_RSP, rsp);
 
 	return FALSE;
 }
@@ -573,10 +468,6 @@ int server_init(gboolean secure)
 	return 0;
 }
 
-void server_exit(void)
-{
-}
-
 static uint32_t register_server_record(struct network_server *ns)
 {
 	sdp_record_t *record;
@@ -587,7 +478,7 @@ static uint32_t register_server_record(struct network_server *ns)
 		return 0;
 	}
 
-	if (add_record_to_server(&ns->src, record) < 0) {
+	if (adapter_service_add(ns->na->adapter, record) < 0) {
 		error("Failed to register service record");
 		sdp_record_free(record);
 		return 0;
@@ -608,10 +499,7 @@ static void server_remove_sessions(struct network_server *ns)
 		if (*session->dev == '\0')
 			continue;
 
-		bnep_del_from_bridge(session->dev, ns->bridge);
-		bnep_if_down(session->dev);
-
-		bnep_kill_connection(&session->dst);
+		bnep_server_delete(ns->bridge, session->dev, &session->dst);
 	}
 
 	g_slist_free_full(ns->sessions, session_free);
@@ -628,7 +516,7 @@ static void server_disconnect(DBusConnection *conn, void *user_data)
 	ns->watch_id = 0;
 
 	if (ns->record_id) {
-		remove_record_from_server(ns->record_id);
+		adapter_service_remove(ns->na->adapter, ns->record_id);
 		ns->record_id = 0;
 	}
 
@@ -722,8 +610,9 @@ static void server_free(void *data)
 	server_remove_sessions(ns);
 
 	if (ns->record_id)
-		remove_record_from_server(ns->record_id);
+		adapter_service_remove(ns->na->adapter, ns->record_id);
 
+	g_dbus_remove_watch(btd_get_dbus_connection(), ns->watch_id);
 	g_free(ns->name);
 	g_free(ns->bridge);
 
@@ -764,7 +653,7 @@ static struct network_adapter *create_adapter(struct btd_adapter *adapter)
 	na->io = bt_io_listen(NULL, confirm_event, na,
 				NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR,
-				adapter_get_address(adapter),
+				btd_adapter_get_address(adapter),
 				BT_IO_OPT_PSM, BNEP_PSM,
 				BT_IO_OPT_OMTU, BNEP_MTU,
 				BT_IO_OPT_IMTU, BNEP_MTU,
@@ -822,7 +711,7 @@ int server_register(struct btd_adapter *adapter, uint16_t id)
 									path);
 
 done:
-	bacpy(&ns->src, adapter_get_address(adapter));
+	bacpy(&ns->src, btd_adapter_get_address(adapter));
 	ns->id = id;
 	ns->na = na;
 	ns->record_id = 0;

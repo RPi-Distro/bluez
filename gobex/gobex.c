@@ -105,6 +105,7 @@ struct pending_pkt {
 	GObexResponseFunc rsp_func;
 	gpointer rsp_data;
 	gboolean cancelled;
+	gboolean suspended;
 };
 
 struct req_handler {
@@ -355,9 +356,20 @@ done:
 	obex->srm = NULL;
 }
 
+static gboolean g_obex_srm_enabled(GObex *obex)
+{
+	if (!obex->use_srm)
+		return FALSE;
+
+	if (obex->srm == NULL)
+		return FALSE;
+
+	return obex->srm->enabled;
+}
+
 static void check_srm_final(GObex *obex, guint8 op)
 {
-	if (obex->srm == NULL || !obex->srm->enabled)
+	if (!g_obex_srm_enabled(obex))
 		return;
 
 	switch (obex->srm->op) {
@@ -388,7 +400,8 @@ static void setup_srm(GObex *obex, GObexPacket *pkt, gboolean outgoing)
 		g_obex_header_get_uint8(hdr, &srm);
 		g_obex_debug(G_OBEX_DEBUG_COMMAND, "srm 0x%02x", srm);
 		set_srm(obex, op, srm);
-	}
+	} else if (!g_obex_srm_enabled(obex))
+		set_srm(obex, op, G_OBEX_SRM_DISABLE);
 
 	hdr = g_obex_packet_get_header(pkt, G_OBEX_HDR_SRMP);
 	if (hdr != NULL) {
@@ -396,7 +409,9 @@ static void setup_srm(GObex *obex, GObexPacket *pkt, gboolean outgoing)
 		g_obex_header_get_uint8(hdr, &srmp);
 		g_obex_debug(G_OBEX_DEBUG_COMMAND, "srmp 0x%02x", srmp);
 		set_srmp(obex, srmp, outgoing);
-	} else
+	} else if (obex->pending_req && obex->pending_req->suspended)
+		g_obex_packet_add_uint8(pkt, G_OBEX_HDR_SRMP, G_OBEX_SRMP_WAIT);
+	else
 		set_srmp(obex, -1, outgoing);
 
 	if (final)
@@ -423,7 +438,7 @@ static gboolean write_data(GIOChannel *io, GIOCondition cond,
 
 		setup_srm(obex, p->pkt, TRUE);
 
-		if (g_obex_srm_active(obex))
+		if (g_obex_srm_enabled(obex))
 			goto encode;
 
 		/* Can't send a request while there's a pending one */
@@ -646,7 +661,7 @@ guint g_obex_send_req(GObex *obex, GObexPacket *req, int timeout,
 	if (obex->rx_last_op == G_OBEX_RSP_CONTINUE)
 		goto create_pending;
 
-	if (g_obex_srm_active(obex) && obex->pending_req != NULL)
+	if (g_obex_srm_enabled(obex) && obex->pending_req != NULL)
 		goto create_pending;
 
 	hdr = g_obex_packet_get_header(req, G_OBEX_HDR_CONNECTION);
@@ -685,7 +700,7 @@ static int pending_pkt_cmp(gconstpointer a, gconstpointer b)
 	return (p->id - id);
 }
 
-gboolean g_obex_pending_req_abort(GObex *obex, GError **err)
+static gboolean pending_req_abort(GObex *obex, GError **err)
 {
 	struct pending_pkt *p = obex->pending_req;
 	GObexPacket *req;
@@ -729,7 +744,7 @@ gboolean g_obex_cancel_req(GObex *obex, guint req_id, gboolean remove_callback)
 	struct pending_pkt *p;
 
 	if (obex->pending_req && obex->pending_req->id == req_id) {
-		if (!g_obex_pending_req_abort(obex, NULL)) {
+		if (!pending_req_abort(obex, NULL)) {
 			p = obex->pending_req;
 			obex->pending_req = NULL;
 			goto immediate_completion;
@@ -834,24 +849,73 @@ gboolean g_obex_remove_request_function(GObex *obex, guint id)
 	return TRUE;
 }
 
+static void g_obex_srm_suspend(GObex *obex)
+{
+	struct pending_pkt *p = obex->pending_req;
+	GObexPacket *req;
+
+	g_source_remove(p->timeout_id);
+	p->suspended = TRUE;
+
+	req = g_obex_packet_new(G_OBEX_OP_GET, TRUE,
+					G_OBEX_HDR_SRMP, G_OBEX_SRMP_WAIT,
+					G_OBEX_HDR_INVALID);
+
+	g_obex_send(obex, req, NULL);
+}
+
 void g_obex_suspend(GObex *obex)
 {
+	struct pending_pkt *req = obex->pending_req;
+
 	g_obex_debug(G_OBEX_DEBUG_COMMAND, "conn %u", obex->conn_id);
+
+	if (!g_obex_srm_active(obex) || !req)
+		goto done;
+
+	/* Send SRMP wait in case of GET */
+	if (g_obex_packet_get_operation(req->pkt, NULL) == G_OBEX_OP_GET) {
+		g_obex_srm_suspend(obex);
+		return;
+	}
+
+done:
+	obex->suspended = TRUE;
 
 	if (obex->write_source > 0) {
 		g_source_remove(obex->write_source);
 		obex->write_source = 0;
 	}
+}
 
-	obex->suspended = TRUE;
+static void g_obex_srm_resume(GObex *obex)
+{
+	struct pending_pkt *p = obex->pending_req;
+	GObexPacket *req;
+
+	p->timeout_id = g_timeout_add_seconds(p->timeout, req_timeout, obex);
+	p->suspended = FALSE;
+
+	req = g_obex_packet_new(G_OBEX_OP_GET, TRUE, G_OBEX_HDR_INVALID);
+
+	g_obex_send(obex, req, NULL);
 }
 
 void g_obex_resume(GObex *obex)
 {
+	struct pending_pkt *req = obex->pending_req;
+
 	g_obex_debug(G_OBEX_DEBUG_COMMAND, "conn %u", obex->conn_id);
 
 	obex->suspended = FALSE;
 
+	if (g_obex_srm_active(obex) || !req)
+		goto done;
+
+	if (g_obex_packet_get_operation(req->pkt, NULL) == G_OBEX_OP_GET)
+		g_obex_srm_resume(obex);
+
+done:
 	if (g_queue_get_length(obex->tx_queue) > 0 || obex->tx_data > 0)
 		enable_tx(obex);
 }
@@ -860,10 +924,7 @@ gboolean g_obex_srm_active(GObex *obex)
 {
 	gboolean ret = FALSE;
 
-	if (!obex->use_srm)
-		return FALSE;
-
-	if (obex->srm == NULL || !obex->srm->enabled)
+	if (!g_obex_srm_enabled(obex))
 		goto done;
 
 	if (obex->srm->srmp <= G_OBEX_SRMP_NEXT_WAIT)
@@ -912,7 +973,7 @@ static gboolean parse_response(GObex *obex, GObexPacket *rsp)
 
 	setup_srm(obex, rsp, FALSE);
 
-	if (!g_obex_srm_active(obex))
+	if (!g_obex_srm_enabled(obex))
 		return final;
 
 	/*
@@ -1380,6 +1441,18 @@ guint g_obex_connect(GObex *obex, GObexResponseFunc func, gpointer user_data,
 
 	init_connect_data(obex, &data);
 	g_obex_packet_set_data(req, &data, sizeof(data), G_OBEX_DATA_COPY);
+
+	return g_obex_send_req(obex, req, -1, func, user_data, err);
+}
+
+guint g_obex_disconnect(GObex *obex, GObexResponseFunc func, gpointer user_data,
+								GError **err)
+{
+	GObexPacket *req;
+
+	g_obex_debug(G_OBEX_DEBUG_COMMAND, "");
+
+	req = g_obex_packet_new(G_OBEX_OP_DISCONNECT, TRUE, G_OBEX_HDR_INVALID);
 
 	return g_obex_send_req(obex, req, -1, func, user_data, err);
 }

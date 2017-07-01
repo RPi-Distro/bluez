@@ -32,27 +32,27 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "log.h"
-#include "plugin.h"
+#include "src/log.h"
+#include "src/plugin.h"
 
 #include "lib/uuid.h"
-#include "../src/adapter.h"
-#include "../src/device.h"
-#include "../src/profile.h"
-#include "../src/service.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
 
 #include "device.h"
 #include "server.h"
 
 static int hid_server_probe(struct btd_profile *p, struct btd_adapter *adapter)
 {
-	return server_start(adapter_get_address(adapter));
+	return server_start(btd_adapter_get_address(adapter));
 }
 
 static void hid_server_remove(struct btd_profile *p,
 						struct btd_adapter *adapter)
 {
-	server_stop(adapter_get_address(adapter));
+	server_stop(btd_adapter_get_address(adapter));
 }
 
 static struct btd_profile input_profile = {

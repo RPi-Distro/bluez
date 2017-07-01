@@ -29,13 +29,16 @@
 #include <gdbus.h>
 
 #define SERVICE_NAME "org.bluez.unit.test-gdbus-client"
+#define SERVICE_NAME1 "org.bluez.unit.test-gdbus-client1"
 #define SERVICE_PATH "/org/bluez/unit/test_gdbus_client"
 
 struct context {
 	GMainLoop *main_loop;
 	DBusConnection *dbus_conn;
 	GDBusClient *dbus_client;
+	GDBusProxy *proxy;
 	void *data;
+	gboolean client_ready;
 	guint timeout_source;
 };
 
@@ -83,6 +86,7 @@ static struct context *create_context(void)
 	dbus_connection_set_exit_on_disconnect(context->dbus_conn, FALSE);
 
 	g_dbus_attach_object_manager(context->dbus_conn);
+	context->client_ready = FALSE;
 
 	return context;
 }
@@ -99,6 +103,7 @@ static void destroy_context(struct context *context)
 
 	dbus_connection_flush(context->dbus_conn);
 	dbus_connection_close(context->dbus_conn);
+	dbus_connection_unref(context->dbus_conn);
 
 	g_main_loop_unref(context->main_loop);
 
@@ -779,6 +784,238 @@ static void client_string_changed(void)
 	destroy_context(context);
 }
 
+static void property_check_order(const DBusError *err, void *user_data)
+{
+	struct context *context = user_data;
+	GDBusProxy *proxy = context->proxy;
+	DBusMessageIter iter;
+	const char *string;
+
+	g_assert(!dbus_error_is_set(err));
+
+	g_assert(g_dbus_proxy_get_property(proxy, "String", &iter));
+
+	dbus_message_iter_get_basic(&iter, &string);
+	g_assert(g_strcmp0(string, "value1") == 0);
+
+	g_dbus_client_unref(context->dbus_client);
+}
+
+static void proxy_check_order(GDBusProxy *proxy, void *user_data)
+{
+	struct context *context = user_data;
+	const char *string;
+
+	if (g_test_verbose())
+		g_print("proxy %s found\n",
+					g_dbus_proxy_get_interface(proxy));
+
+	context->proxy = proxy;
+	string = "value1";
+	g_assert(g_dbus_proxy_set_property_basic(proxy, "String",
+					DBUS_TYPE_STRING, &string,
+					property_check_order, context,
+					NULL));
+}
+
+static void client_check_order(void)
+{
+	struct context *context = create_context();
+	static const GDBusPropertyTable string_properties[] = {
+		{ "String", "s", get_string, set_string, string_exists },
+		{ },
+	};
+
+	if (context == NULL)
+		return;
+
+	context->data = g_strdup("value");
+	g_dbus_register_interface(context->dbus_conn,
+				SERVICE_PATH, SERVICE_NAME,
+				methods, signals, string_properties,
+				context, NULL);
+
+	context->dbus_client = g_dbus_client_new(context->dbus_conn,
+						SERVICE_NAME, SERVICE_PATH);
+
+	g_dbus_client_set_disconnect_watch(context->dbus_client,
+						disconnect_handler, context);
+	g_dbus_client_set_proxy_handlers(context->dbus_client,
+						proxy_check_order, NULL, NULL,
+						context);
+
+	g_main_loop_run(context->main_loop);
+
+	g_dbus_unregister_interface(context->dbus_conn,
+					SERVICE_PATH, SERVICE_NAME);
+
+	destroy_context(context);
+}
+
+static void proxy_removed(GDBusProxy *proxy, void *user_data)
+{
+	struct context *context = user_data;
+
+	if (g_test_verbose())
+		g_print("proxy removed\n");
+
+	g_main_loop_quit(context->main_loop);
+}
+
+static void proxy_set_removed(GDBusProxy *proxy, void *user_data)
+{
+	struct context *context = user_data;
+
+	if (g_test_verbose())
+		g_print("proxy %s found\n",
+					g_dbus_proxy_get_interface(proxy));
+
+	g_assert(g_dbus_proxy_set_removed_watch(proxy, proxy_removed, context));
+
+	context->timeout_source = g_timeout_add_seconds(2, timeout_test,
+								context);
+
+	g_dbus_unregister_interface(context->dbus_conn, SERVICE_PATH,
+								SERVICE_NAME);
+}
+
+static void client_proxy_removed(void)
+{
+	struct context *context = create_context();
+	static const GDBusPropertyTable string_properties[] = {
+		{ "String", "s", get_string, set_string, string_exists },
+		{ },
+	};
+
+	if (context == NULL)
+		return;
+
+	g_dbus_register_interface(context->dbus_conn,
+				SERVICE_PATH, SERVICE_NAME,
+				methods, signals, string_properties,
+				context, NULL);
+
+	context->dbus_client = g_dbus_client_new(context->dbus_conn,
+						SERVICE_NAME, SERVICE_PATH);
+
+	g_dbus_client_set_proxy_handlers(context->dbus_client,
+						proxy_set_removed, NULL, NULL,
+						context);
+
+	g_main_loop_run(context->main_loop);
+
+	destroy_context(context);
+}
+
+static void proxy_force_disconnect(GDBusProxy *proxy, void *user_data)
+{
+	struct context *context = user_data;
+	DBusConnection *conn = context->data;
+
+	if (g_test_verbose())
+		g_print("proxy %s found\n",
+					g_dbus_proxy_get_interface(proxy));
+
+	g_assert(g_dbus_proxy_set_removed_watch(proxy, proxy_removed, context));
+
+	context->timeout_source = g_timeout_add_seconds(2, timeout_test,
+								context);
+
+	dbus_connection_flush(conn);
+	dbus_connection_close(conn);
+	context->data = NULL;
+}
+
+static void client_force_disconnect(void)
+{
+	struct context *context = create_context();
+	DBusConnection *conn;
+	static const GDBusPropertyTable string_properties[] = {
+		{ "String", "s", get_string, set_string, string_exists },
+		{ },
+	};
+
+	if (context == NULL)
+		return;
+
+	conn = g_dbus_setup_private(DBUS_BUS_SESSION, SERVICE_NAME1, NULL);
+	g_assert(conn != NULL);
+
+	/* Avoid D-Bus library calling _exit() before next test finishes. */
+	dbus_connection_set_exit_on_disconnect(conn, FALSE);
+	g_dbus_attach_object_manager(conn);
+	context->data = conn;
+
+	g_dbus_register_interface(conn, SERVICE_PATH, SERVICE_NAME1,
+					methods, signals, string_properties,
+					context, NULL);
+
+	context->dbus_client = g_dbus_client_new(context->dbus_conn,
+						SERVICE_NAME1, SERVICE_PATH);
+
+	g_dbus_client_set_proxy_handlers(context->dbus_client,
+					proxy_force_disconnect, NULL, NULL,
+					context);
+
+	g_main_loop_run(context->main_loop);
+
+	g_dbus_unregister_interface(conn, SERVICE_PATH, SERVICE_NAME1);
+	g_dbus_detach_object_manager(conn);
+	dbus_connection_unref(conn);
+
+	destroy_context(context);
+}
+
+static void client_ready_watch(GDBusClient *client, void *user_data)
+{
+	struct context *context = user_data;
+
+	context->client_ready = TRUE;
+}
+
+static void proxy_added(GDBusProxy *proxy, void *user_data)
+{
+	struct context *context = user_data;
+
+	/*
+	 * Proxy added callback should not be called after Client ready
+	 * watch. Ready means that all objects has been reported to the
+	 * upper-layer.
+	 */
+	g_assert(context->client_ready == FALSE);
+
+	g_main_loop_quit(context->main_loop);
+}
+
+static void client_ready(void)
+{
+	struct context *context = create_context();
+	static const GDBusPropertyTable string_properties[] = {
+		{ "String", "s", get_string, set_string, string_exists },
+		{ },
+	};
+
+	if (context == NULL)
+		return;
+
+	g_dbus_register_interface(context->dbus_conn,
+				SERVICE_PATH, SERVICE_NAME,
+				methods, signals, string_properties,
+				context, NULL);
+
+	context->dbus_client = g_dbus_client_new(context->dbus_conn,
+						SERVICE_NAME, SERVICE_PATH);
+
+	g_dbus_client_set_ready_watch(context->dbus_client, client_ready_watch,
+								context);
+	g_dbus_client_set_proxy_handlers(context->dbus_client,
+						proxy_added, NULL, NULL, context);
+
+	g_main_loop_run(context->main_loop);
+
+	destroy_context(context);
+}
+
 int main(int argc, char *argv[])
 {
 	g_test_init(&argc, &argv, NULL);
@@ -808,6 +1045,15 @@ int main(int argc, char *argv[])
 
 	g_test_add_func("/gdbus/client_string_changed",
 						client_string_changed);
+
+	g_test_add_func("/gdbus/client_check_order", client_check_order);
+
+	g_test_add_func("/gdbus/client_proxy_removed", client_proxy_removed);
+
+	g_test_add_func("/gdbus/client_force_disconnect",
+						client_force_disconnect);
+
+	g_test_add_func("/gdbus/client_ready", client_ready);
 
 	return g_test_run();
 }

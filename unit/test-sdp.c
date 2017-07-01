@@ -37,6 +37,7 @@
 #include "lib/sdp_lib.h"
 
 #include "src/shared/util.h"
+#include "src/log.h"
 #include "src/sdpd.h"
 
 struct sdp_pdu {
@@ -72,7 +73,7 @@ struct test_data {
 #define define_test(name, _mtu, args...) \
 	do {								\
 		const struct sdp_pdu pdus[] = {				\
-			args, { }, { }					\
+			args, { }					\
 		};							\
 		static struct test_data data;				\
 		data.mtu = _mtu;					\
@@ -126,41 +127,6 @@ static void sdp_debug(const char *str, void *user_data)
 	const char *prefix = user_data;
 
 	g_print("%s%s\n", prefix, str);
-}
-
-void btd_debug(const char *format, ...);
-
-void btd_debug(const char *format, ...)
-{
-}
-
-struct btd_adapter;
-
-typedef void (*adapter_cb) (struct btd_adapter *adapter, gpointer user_data);
-
-void adapter_foreach(adapter_cb func, gpointer user_data);
-
-void adapter_foreach(adapter_cb func, gpointer user_data)
-{
-}
-
-struct btd_adapter *adapter_find(const bdaddr_t *sba);
-
-struct btd_adapter *adapter_find(const bdaddr_t *sba)
-{
-	return NULL;
-}
-
-void adapter_service_insert(struct btd_adapter *adapter, void *rec);
-
-void adapter_service_insert(struct btd_adapter *adapter, void *rec)
-{
-}
-
-void adapter_service_remove(struct btd_adapter *adapter, void *rec);
-
-void adapter_service_remove(struct btd_adapter *adapter, void *rec)
-{
 }
 
 static void context_quit(struct context *context)
@@ -825,6 +791,9 @@ static void test_sdp_de_attr(gconstpointer data)
 int main(int argc, char *argv[])
 {
 	g_test_init(&argc, &argv, NULL);
+
+	if (g_test_verbose())
+		__btd_log_init("*", 0);
 
 	/*
 	 * Service Search Request

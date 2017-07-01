@@ -30,6 +30,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -40,14 +42,12 @@
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include <glib.h>
-
-#include "src/shared/mgmt.h"
-#include "glib-helper.h"
+#include "src/uuid-helper.h"
 #include "lib/mgmt.h"
-#include "eir.h"
 
-static GMainLoop *event_loop = NULL;
+#include "monitor/mainloop.h"
+#include "src/shared/util.h"
+#include "src/shared/mgmt.h"
 
 static bool monitor = false;
 static bool discovery = false;
@@ -94,7 +94,11 @@ static const char *settings_str[] = {
 				"ssp",
 				"br/edr",
 				"hs",
-				"le" ,
+				"le",
+				"advertising",
+				"secure-conn",
+				"debug-keys",
+				"privacy",
 };
 
 static void print_settings(uint32_t settings)
@@ -119,7 +123,7 @@ static void new_settings(uint16_t index, uint16_t len,
 
 	if (monitor) {
 		printf("hci%u new_settings: ", index);
-		print_settings(bt_get_le32(ev));
+		print_settings(get_le32(ev));
 		printf("\n");
 	}
 }
@@ -136,7 +140,7 @@ static void discovering(uint16_t index, uint16_t len, const void *param,
 	}
 
 	if (ev->discovering == 0 && discovery) {
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -187,7 +191,7 @@ static void connected(uint16_t index, uint16_t len, const void *param,
 		return;
 	}
 
-	eir_len = bt_get_le16(&ev->eir_len);
+	eir_len = get_le16(&ev->eir_len);
 	if (len != sizeof(*ev) + eir_len) {
 		fprintf(stderr, "Invalid connected event length "
 			"(%u bytes, eir_len %u bytes)\n", len, eir_len);
@@ -310,14 +314,41 @@ static void confirm_name_rsp(uint8_t status, uint16_t len,
 		printf("confirm_name succeeded for %s\n", addr);
 }
 
+static char *eir_get_name(const uint8_t *eir, uint16_t eir_len)
+{
+	uint8_t parsed = 0;
+
+	if (eir_len < 2)
+		return NULL;
+
+	while (parsed < eir_len - 1) {
+		uint8_t field_len = eir[0];
+
+		if (field_len == 0)
+			break;
+
+		parsed += field_len + 1;
+
+		if (parsed > eir_len)
+			break;
+
+		/* Check for short of complete name */
+		if (eir[1] == 0x09 || eir[1] == 0x08)
+			return strndup((char *) &eir[2], field_len - 1);
+
+		eir += field_len + 1;
+	}
+
+	return NULL;
+}
+
 static void device_found(uint16_t index, uint16_t len, const void *param,
 							void *user_data)
 {
 	const struct mgmt_ev_device_found *ev = param;
 	struct mgmt *mgmt = user_data;
-	uint32_t flags;
 	uint16_t eir_len;
-	struct eir_data eir;
+	uint32_t flags;
 
 	if (len < sizeof(*ev)) {
 		fprintf(stderr,
@@ -327,30 +358,29 @@ static void device_found(uint16_t index, uint16_t len, const void *param,
 
 	flags = btohl(ev->flags);
 
-	eir_len = bt_get_le16(&ev->eir_len);
+	eir_len = get_le16(&ev->eir_len);
 	if (len != sizeof(*ev) + eir_len) {
 		fprintf(stderr, "dev_found: expected %zu bytes, got %u bytes\n",
 						sizeof(*ev) + eir_len, len);
 		return;
 	}
 
-	memset(&eir, 0, sizeof(eir));
-	eir_parse(&eir, ev->eir, eir_len);
-
 	if (monitor || discovery) {
-		char addr[18];
+		char addr[18], *name;
+
 		ba2str(&ev->addr.bdaddr, addr);
 		printf("hci%u dev_found: %s type %s rssi %d "
 			"flags 0x%04x ", index, addr,
 			typestr(ev->addr.type), ev->rssi, flags);
 
-		if (eir.name)
-			printf("name %s\n", eir.name);
+		name = eir_get_name(ev->eir, eir_len);
+		if (name)
+			printf("name %s\n", name);
 		else
 			printf("eir_len %u\n", eir_len);
-	}
 
-	eir_data_free(&eir);
+		free(name);
+	}
 
 	if (discovery && (flags & MGMT_DEV_FOUND_CONFIRM_NAME)) {
 		struct mgmt_cp_confirm_name cp;
@@ -374,7 +404,7 @@ static void pin_rsp(uint8_t status, uint16_t len, const void *param,
 		fprintf(stderr,
 			"PIN Code reply failed with status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -403,7 +433,7 @@ static void pin_neg_rsp(uint8_t status, uint16_t len, const void *param,
 		fprintf(stderr,
 			"PIN Neg reply failed with status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -468,7 +498,7 @@ static void confirm_rsp(uint8_t status, uint16_t len, const void *param,
 		fprintf(stderr,
 			"User Confirm reply failed. status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -494,7 +524,7 @@ static void confirm_neg_rsp(uint8_t status, uint16_t len, const void *param,
 		fprintf(stderr,
 			"Confirm Neg reply failed. status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -531,7 +561,7 @@ static void user_confirm(uint16_t index, uint16_t len, const void *param,
 	}
 
 	ba2str(&ev->addr.bdaddr, addr);
-	val = bt_get_le32(&ev->value);
+	val = get_le32(&ev->value);
 
 	if (monitor)
 		printf("hci%u %s User Confirm %06u hint %u\n", index, addr,
@@ -552,10 +582,8 @@ static void user_confirm(uint16_t index, uint16_t len, const void *param,
 	}
 
 	rsp_len = strlen(rsp);
-	if (rsp[rsp_len - 1] == '\n') {
+	if (rsp[rsp_len - 1] == '\n')
 		rsp[rsp_len - 1] = '\0';
-		rsp_len--;
-	}
 
 	if (rsp[0] == 'y' || rsp[0] == 'Y')
 		mgmt_confirm_reply(mgmt, index, &ev->addr.bdaddr);
@@ -587,10 +615,10 @@ static void version_rsp(uint8_t status, uint16_t len, const void *param,
 	}
 
 	printf("MGMT Version %u, revision %u\n", rp->version,
-						bt_get_le16(&rp->revision));
+						get_le16(&rp->revision));
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_version(struct mgmt *mgmt, uint16_t index, int argc,
@@ -623,8 +651,8 @@ static void commands_rsp(uint8_t status, uint16_t len, const void *param,
 		goto done;
 	}
 
-	num_commands = bt_get_le16(&rp->num_commands);
-	num_events = bt_get_le16(&rp->num_events);
+	num_commands = get_le16(&rp->num_commands);
+	num_events = get_le16(&rp->num_events);
 
 	expected_len = sizeof(*rp) + num_commands * sizeof(uint16_t) +
 						num_events * sizeof(uint16_t);
@@ -639,18 +667,18 @@ static void commands_rsp(uint8_t status, uint16_t len, const void *param,
 
 	printf("%u commands:\n", num_commands);
 	for (i = 0; i < num_commands; i++) {
-		uint16_t op = bt_get_le16(opcode++);
+		uint16_t op = get_le16(opcode++);
 		printf("\t%s (0x%04x)\n", mgmt_opstr(op), op);
 	}
 
 	printf("%u events:\n", num_events);
 	for (i = 0; i < num_events; i++) {
-		uint16_t ev = bt_get_le16(opcode++);
+		uint16_t ev = get_le16(opcode++);
 		printf("\t%s (0x%04x)\n", mgmt_evstr(ev), ev);
 	}
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_commands(struct mgmt *mgmt, uint16_t index, int argc,
@@ -667,7 +695,7 @@ static void info_rsp(uint8_t status, uint16_t len, const void *param,
 							void *user_data)
 {
 	const struct mgmt_rp_read_info *rp = param;
-	int id = GPOINTER_TO_INT(user_data);
+	uint16_t index = PTR_TO_UINT(user_data);
 	char addr[18];
 
 	pending--;
@@ -675,7 +703,7 @@ static void info_rsp(uint8_t status, uint16_t len, const void *param,
 	if (status != 0) {
 		fprintf(stderr,
 			"Reading hci%u info failed with status 0x%02x (%s)\n",
-					id, status, mgmt_errstr(status));
+					index, status, mgmt_errstr(status));
 		goto done;
 	}
 
@@ -686,15 +714,15 @@ static void info_rsp(uint8_t status, uint16_t len, const void *param,
 
 	ba2str(&rp->bdaddr, addr);
 	printf("hci%u:\taddr %s version %u manufacturer %u"
-			" class 0x%02x%02x%02x\n",
-			id, addr, rp->version, bt_get_le16(&rp->manufacturer),
+			" class 0x%02x%02x%02x\n", index,
+			addr, rp->version, get_le16(&rp->manufacturer),
 			rp->dev_class[2], rp->dev_class[1], rp->dev_class[0]);
 
 	printf("\tsupported settings: ");
-	print_settings(bt_get_le32(&rp->supported_settings));
+	print_settings(get_le32(&rp->supported_settings));
 
 	printf("\n\tcurrent settings: ");
-	print_settings(bt_get_le32(&rp->current_settings));
+	print_settings(get_le32(&rp->current_settings));
 
 	printf("\n\tname %s\n", rp->name);
 	printf("\tshort name %s\n", rp->short_name);
@@ -703,7 +731,7 @@ static void info_rsp(uint8_t status, uint16_t len, const void *param,
 		return;
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void index_rsp(uint8_t status, uint16_t len, const void *param,
@@ -727,7 +755,7 @@ static void index_rsp(uint8_t status, uint16_t len, const void *param,
 		goto done;
 	}
 
-	count = bt_get_le16(&rp->num_controllers);
+	count = get_le16(&rp->num_controllers);
 
 	if (len < sizeof(*rp) + count * sizeof(uint16_t)) {
 		fprintf(stderr,
@@ -750,12 +778,12 @@ static void index_rsp(uint8_t status, uint16_t len, const void *param,
 		uint16_t index;
 		void *data;
 
-		index = bt_get_le16(&rp->index[i]);
+		index = get_le16(&rp->index[i]);
 
 		if (monitor)
 			printf("hci%u ", index);
 
-		data = GINT_TO_POINTER((int) index);
+		data = UINT_TO_PTR(index);
 
 		if (mgmt_send(mgmt, MGMT_OP_READ_INFO, index, 0, NULL,
 						info_rsp, data, NULL) == 0) {
@@ -772,7 +800,7 @@ static void index_rsp(uint8_t status, uint16_t len, const void *param,
 	return;
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_info(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
@@ -790,7 +818,7 @@ static void cmd_info(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 		return;
 	}
 
-	data = GINT_TO_POINTER((int) index);
+	data = UINT_TO_PTR(index);
 
 	if (mgmt_send(mgmt, MGMT_OP_READ_INFO, index, 0, NULL, info_rsp,
 							data, NULL) == 0) {
@@ -824,14 +852,17 @@ static unsigned int send_cmd(struct mgmt *mgmt, uint16_t op, uint16_t id,
 	struct command_data *data;
 	unsigned int send_id;
 
-	data = g_new0(struct command_data, 1);
+	data = new0(struct command_data, 1);
+	if (!data)
+		return 0;
+
 	data->id = id;
 	data->op = op;
 	data->callback = cb;
 
-	send_id = mgmt_send(mgmt, op, id, len, param, cmd_rsp, data, g_free);
+	send_id = mgmt_send(mgmt, op, id, len, param, cmd_rsp, data, free);
 	if (send_id == 0)
-		g_free(data);
+		free(data);
 
 	return send_id;
 }
@@ -855,11 +886,11 @@ static void setting_rsp(uint16_t op, uint16_t id, uint8_t status, uint16_t len,
 	}
 
 	printf("hci%u %s complete, settings: ", id, mgmt_opstr(op));
-	print_settings(bt_get_le32(rp));
+	print_settings(get_le32(rp));
 	printf("\n");
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_setting(struct mgmt *mgmt, uint16_t index, uint16_t op,
@@ -899,7 +930,7 @@ static void cmd_discov(struct mgmt *mgmt, uint16_t index, int argc,
 	struct mgmt_cp_set_discoverable cp;
 
 	if (argc < 2) {
-		printf("Usage: btmgmt %s <yes/no> [timeout]\n", argv[0]);
+		printf("Usage: btmgmt %s <yes/no/limited> [timeout]\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -909,6 +940,8 @@ static void cmd_discov(struct mgmt *mgmt, uint16_t index, int argc,
 		cp.val = 1;
 	else if (strcasecmp(argv[1], "off") == 0)
 		cp.val = 0;
+	else if (strcasecmp(argv[1], "limited") == 0)
+		cp.val = 2;
 	else
 		cp.val = atoi(argv[1]);
 
@@ -954,6 +987,34 @@ static void cmd_ssp(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 	cmd_setting(mgmt, index, MGMT_OP_SET_SSP, argc, argv);
 }
 
+static void cmd_sc(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
+{
+	uint8_t val;
+
+	if (argc < 2) {
+		printf("Specify \"on\" or \"off\" or \"only\"\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (strcasecmp(argv[1], "on") == 0 || strcasecmp(argv[1], "yes") == 0)
+		val = 1;
+	else if (strcasecmp(argv[1], "off") == 0)
+		val = 0;
+	else if (strcasecmp(argv[1], "only") == 0)
+		val = 2;
+	else
+		val = atoi(argv[1]);
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	if (send_cmd(mgmt, MGMT_OP_SET_SECURE_CONN, index,
+					sizeof(val), &val, setting_rsp) == 0) {
+		fprintf(stderr, "Unable to send set_secure_conn cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
 static void cmd_hs(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 {
 	cmd_setting(mgmt, index, MGMT_OP_SET_HS, argc, argv);
@@ -962,6 +1023,59 @@ static void cmd_hs(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 static void cmd_le(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 {
 	cmd_setting(mgmt, index, MGMT_OP_SET_LE, argc, argv);
+}
+
+static void cmd_advertising(struct mgmt *mgmt, uint16_t index, int argc,
+								char **argv)
+{
+	cmd_setting(mgmt, index, MGMT_OP_SET_ADVERTISING, argc, argv);
+}
+
+static void cmd_bredr(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
+{
+	cmd_setting(mgmt, index, MGMT_OP_SET_BREDR, argc, argv);
+}
+
+static void cmd_privacy(struct mgmt *mgmt, uint16_t index, int argc,
+								char **argv)
+{
+	struct mgmt_cp_set_privacy cp;
+	int fd;
+
+	if (argc < 2) {
+		printf("Specify \"on\" or \"off\"\n");
+		exit(EXIT_FAILURE);
+	}
+
+	if (strcasecmp(argv[1], "on") == 0 || strcasecmp(argv[1], "yes") == 0)
+		cp.privacy = 0x01;
+	else if (strcasecmp(argv[1], "off") == 0)
+		cp.privacy = 0x00;
+	else
+		cp.privacy = atoi(argv[1]);
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0) {
+		fprintf(stderr, "open(/dev/urandom): %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
+	if (read(fd, cp.irk, sizeof(cp.irk)) != sizeof(cp.irk)) {
+		fprintf(stderr, "Reading from urandom failed\n");
+		close(fd);
+		exit(EXIT_FAILURE);
+	}
+
+	close(fd);
+
+	if (send_cmd(mgmt, MGMT_OP_SET_PRIVACY, index, sizeof(cp), &cp,
+							setting_rsp) == 0) {
+		fprintf(stderr, "Unable to send Set Privacy command\n");
+		exit(EXIT_FAILURE);
+	}
 }
 
 static void class_rsp(uint16_t op, uint16_t id, uint8_t status, uint16_t len,
@@ -984,7 +1098,7 @@ static void class_rsp(uint16_t op, uint16_t id, uint8_t status, uint16_t len,
 		rp->class_of_dev[2], rp->class_of_dev[1], rp->class_of_dev[0]);
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_class(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
@@ -1037,7 +1151,7 @@ static void disconnect_rsp(uint8_t status, uint16_t len, const void *param,
 				addr, status, mgmt_errstr(status));
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_disconnect(struct mgmt *mgmt, uint16_t index, int argc,
@@ -1074,7 +1188,7 @@ static void con_rsp(uint8_t status, uint16_t len, const void *param,
 		goto done;
 	}
 
-	count = bt_get_le16(&rp->conn_count);
+	count = get_le16(&rp->conn_count);
 	if (len != sizeof(*rp) + count * sizeof(struct mgmt_addr_info)) {
 		fprintf(stderr, "Invalid get_connections length "
 					" (count=%u, len=%u)\n", count, len);
@@ -1090,7 +1204,7 @@ static void con_rsp(uint8_t status, uint16_t len, const void *param,
 	}
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_con(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
@@ -1112,7 +1226,7 @@ static void find_rsp(uint8_t status, uint16_t len, const void *param,
 		fprintf(stderr,
 			"Unable to start discovery. status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
-		g_main_loop_quit(event_loop);
+		mainloop_quit();
 		return;
 	}
 
@@ -1188,7 +1302,7 @@ static void name_rsp(uint8_t status, uint16_t len, const void *param,
 						"with status 0x%02x (%s)\n",
 						status, mgmt_errstr(status));
 
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_name(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
@@ -1243,10 +1357,10 @@ static void pair_rsp(uint8_t status, uint16_t len, const void *param,
 		goto done;
 	}
 
-	printf("Paired with %s\n", addr);
+	printf("Paired with %s (%s)\n", addr, typestr(rp->addr.type));
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void pair_usage(void)
@@ -1266,6 +1380,7 @@ static void cmd_pair(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 	struct mgmt_cp_pair_device cp;
 	uint8_t cap = 0x01;
 	uint8_t type = BDADDR_BREDR;
+	char addr[18];
 	int opt;
 
 	while ((opt = getopt_long(argc, argv, "+c:t:h", pair_options,
@@ -1300,6 +1415,9 @@ static void cmd_pair(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 	str2ba(argv[0], &cp.addr.bdaddr);
 	cp.addr.type = type;
 	cp.io_cap = cap;
+
+	ba2str(&cp.addr.bdaddr, addr);
+	printf("Pairing with %s (%s)\n", addr, typestr(cp.addr.type));
 
 	if (mgmt_send(mgmt, MGMT_OP_PAIR_DEVICE, index, sizeof(cp), &cp,
 						pair_rsp, NULL, NULL) == 0) {
@@ -1338,7 +1456,7 @@ static void cancel_pair_rsp(uint8_t status, uint16_t len, const void *param,
 	printf("Pairing Cancelled with %s\n", addr);
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cancel_pair_usage(void)
@@ -1424,16 +1542,46 @@ static void unpair_rsp(uint8_t status, uint16_t len, const void *param,
 	printf("%s unpaired\n", addr);
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
+
+static void unpair_usage(void)
+{
+	printf("Usage: btmgmt unpair [-t type] <remote address>\n");
+}
+
+static struct option unpair_options[] = {
+	{ "help",	0, 0, 'h' },
+	{ "type",	1, 0, 't' },
+	{ 0, 0, 0, 0 }
+};
 
 static void cmd_unpair(struct mgmt *mgmt, uint16_t index, int argc,
 								char **argv)
 {
 	struct mgmt_cp_unpair_device cp;
+	uint8_t type = BDADDR_BREDR;
+	int opt;
 
-	if (argc < 2) {
-		printf("Usage: btmgmt %s <remote address>\n", argv[0]);
+	while ((opt = getopt_long(argc, argv, "+t:h", unpair_options,
+								NULL)) != -1) {
+		switch (opt) {
+		case 't':
+			type = strtol(optarg, NULL, 0);
+			break;
+		case 'h':
+		default:
+			unpair_usage();
+			exit(EXIT_SUCCESS);
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+	optind = 0;
+
+	if (argc < 1) {
+		unpair_usage();
 		exit(EXIT_FAILURE);
 	}
 
@@ -1441,7 +1589,8 @@ static void cmd_unpair(struct mgmt *mgmt, uint16_t index, int argc,
 		index = 0;
 
 	memset(&cp, 0, sizeof(cp));
-	str2ba(argv[1], &cp.addr.bdaddr);
+	str2ba(argv[0], &cp.addr.bdaddr);
+	cp.addr.type = type;
 	cp.disconnect = 1;
 
 	if (mgmt_send(mgmt, MGMT_OP_UNPAIR_DEVICE, index, sizeof(cp), &cp,
@@ -1460,7 +1609,7 @@ static void keys_rsp(uint8_t status, uint16_t len, const void *param,
 	else
 		printf("Keys successfully loaded\n");
 
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void cmd_keys(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
@@ -1475,6 +1624,62 @@ static void cmd_keys(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
 	if (mgmt_send(mgmt, MGMT_OP_LOAD_LINK_KEYS, index, sizeof(cp), &cp,
 						keys_rsp, NULL, NULL) == 0) {
 		fprintf(stderr, "Unable to send load_keys cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void ltks_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0)
+		fprintf(stderr, "Load keys failed with status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+	else
+		printf("Long term keys successfully loaded\n");
+
+	mainloop_quit();
+}
+
+static void cmd_ltks(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_load_long_term_keys cp;
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	memset(&cp, 0, sizeof(cp));
+
+	if (mgmt_send(mgmt, MGMT_OP_LOAD_LONG_TERM_KEYS, index, sizeof(cp), &cp,
+						ltks_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send load_ltks cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void irks_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0)
+		fprintf(stderr, "Load IRKs failed with status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+	else
+		printf("Identity Resolving Keys successfully loaded\n");
+
+	mainloop_quit();
+}
+
+static void cmd_irks(struct mgmt *mgmt, uint16_t index, int argc, char **argv)
+{
+	struct mgmt_cp_load_irks cp;
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	memset(&cp, 0, sizeof(cp));
+
+	if (mgmt_send(mgmt, MGMT_OP_LOAD_IRKS, index, sizeof(cp), &cp,
+						irks_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send load_irks cmd\n");
 		exit(EXIT_FAILURE);
 	}
 }
@@ -1508,7 +1713,7 @@ static void block_rsp(uint16_t op, uint16_t id, uint8_t status, uint16_t len,
 	printf("%s %s succeeded\n", mgmt_opstr(op), addr);
 
 done:
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void block_usage(void)
@@ -1699,6 +1904,66 @@ static void cmd_clr_uuids(struct mgmt *mgmt, uint16_t index, int argc,
 	cmd_remove_uuid(mgmt, index, 2, rm_argv);
 }
 
+static void local_oob_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	const struct mgmt_rp_read_local_oob_data *rp = param;
+	const struct mgmt_rp_read_local_oob_ext_data *rp_ext = param;
+	int i;
+
+	if (status != 0) {
+		fprintf(stderr, "Read Local OOB Data failed "
+						"with status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+		goto done;
+	}
+
+	if (len < sizeof(*rp)) {
+		fprintf(stderr, "Too small (%u bytes) read_local_oob rsp\n",
+									len);
+		goto done;
+	}
+
+	printf("Hash C from P-192: ");
+	for (i = 0; i < 16; i++)
+		printf("%02x", rp->hash[i]);
+	printf("\n");
+
+	printf("Randomizer R with P-192: ");
+	for (i = 0; i < 16; i++)
+		printf("%02x", rp->randomizer[i]);
+	printf("\n");
+
+	if (len < sizeof(*rp_ext))
+		goto done;
+
+	printf("Hash C from P-256: ");
+	for (i = 0; i < 16; i++)
+		printf("%02x", rp_ext->hash256[i]);
+	printf("\n");
+
+	printf("Randomizer R with P-256: ");
+	for (i = 0; i < 16; i++)
+		printf("%02x", rp_ext->randomizer256[i]);
+	printf("\n");
+
+done:
+	mainloop_quit();
+}
+
+static void cmd_local_oob(struct mgmt *mgmt, uint16_t index,
+						int argc, char **argv)
+{
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	if (mgmt_send(mgmt, MGMT_OP_READ_LOCAL_OOB_DATA, index, 0, NULL,
+					local_oob_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send read_local_oob cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
 static void did_rsp(uint8_t status, uint16_t len, const void *param,
 							void *user_data)
 {
@@ -1709,7 +1974,7 @@ static void did_rsp(uint8_t status, uint16_t len, const void *param,
 	else
 		printf("Device ID successfully set\n");
 
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static void did_usage(void)
@@ -1757,9 +2022,55 @@ done:
 
 	if (mgmt_send(mgmt, MGMT_OP_SET_DEVICE_ID, index, sizeof(cp), &cp,
 						did_rsp, NULL, NULL) == 0) {
-		fprintf(stderr, "Unable to send set_dev_class cmd\n");
+		fprintf(stderr, "Unable to send set_device_id cmd\n");
 		exit(EXIT_FAILURE);
 	}
+}
+
+static void static_addr_rsp(uint8_t status, uint16_t len, const void *param,
+							void *user_data)
+{
+	if (status != 0)
+		fprintf(stderr, "Set static address failed "
+						"with status 0x%02x (%s)\n",
+						status, mgmt_errstr(status));
+	else
+		printf("Static address successfully set\n");
+
+	mainloop_quit();
+}
+
+static void static_addr_usage(void)
+{
+	printf("Usage: btmgmt static-addr <address>\n");
+}
+
+static void cmd_static_addr(struct mgmt *mgmt, uint16_t index,
+							int argc, char **argv)
+{
+	struct mgmt_cp_set_static_address cp;
+
+	if (argc < 2) {
+		static_addr_usage();
+		exit(EXIT_FAILURE);
+	}
+
+	if (index == MGMT_INDEX_NONE)
+		index = 0;
+
+	str2ba(argv[1], &cp.bdaddr);
+
+	if (mgmt_send(mgmt, MGMT_OP_SET_STATIC_ADDRESS, index, sizeof(cp), &cp,
+					static_addr_rsp, NULL, NULL) == 0) {
+		fprintf(stderr, "Unable to send set_static_address cmd\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+static void cmd_debug_keys(struct mgmt *mgmt, uint16_t index,
+						int argc, char **argv)
+{
+	cmd_setting(mgmt, index, MGMT_OP_SET_DEBUG_KEYS, argc, argv);
 }
 
 static struct {
@@ -1778,8 +2089,12 @@ static struct {
 	{ "pairable",	cmd_pairable,	"Toggle pairable state"		},
 	{ "linksec",	cmd_linksec,	"Toggle link level security"	},
 	{ "ssp",	cmd_ssp,	"Toggle SSP mode"		},
-	{ "hs",		cmd_hs,		"Toggle HS Support"		},
-	{ "le",		cmd_le,		"Toggle LE Support"		},
+	{ "sc",		cmd_sc,		"Toogle SC support"		},
+	{ "hs",		cmd_hs,		"Toggle HS support"		},
+	{ "le",		cmd_le,		"Toggle LE support"		},
+	{ "advertising",cmd_advertising,"Toggle LE advertising",	},
+	{ "bredr",      cmd_bredr,      "Toggle BR/EDR support",	},
+	{ "privacy",	cmd_privacy,	"Toggle privacy support"	},
 	{ "class",	cmd_class,	"Set device major/minor class"	},
 	{ "disconnect", cmd_disconnect, "Disconnect device"		},
 	{ "con",	cmd_con,	"List connections"		},
@@ -1788,14 +2103,19 @@ static struct {
 	{ "pair",	cmd_pair,	"Pair with a remote device"	},
 	{ "cancelpair",	cmd_cancel_pair,"Cancel pairing"		},
 	{ "unpair",	cmd_unpair,	"Unpair device"			},
-	{ "keys",	cmd_keys,	"Load Keys"			},
+	{ "keys",	cmd_keys,	"Load Link Keys"		},
+	{ "ltks",	cmd_ltks,	"Load Long Term Keys"		},
+	{ "irks",	cmd_irks,	"Load Identity Resolving Keys"	},
 	{ "block",	cmd_block,	"Block Device"			},
 	{ "unblock",	cmd_unblock,	"Unblock Device"		},
 	{ "add-uuid",	cmd_add_uuid,	"Add UUID"			},
-	{ "rm-uuid",	cmd_remove_uuid, "Remove UUID"			},
-	{ "clr-uuids",	cmd_clr_uuids,	"Clear UUIDs",			},
-	{ "did",	cmd_did,	"Set Device ID",		},
-	{ NULL, NULL, 0 }
+	{ "rm-uuid",	cmd_remove_uuid,"Remove UUID"			},
+	{ "clr-uuids",	cmd_clr_uuids,	"Clear UUIDs"			},
+	{ "local-oob",	cmd_local_oob,	"Local OOB data"		},
+	{ "did",	cmd_did,	"Set Device ID"			},
+	{ "static-addr",cmd_static_addr,"Set static address"		},
+	{ "debug-keys",	cmd_debug_keys,	"Toogle debug keys"		},
+	{ }
 };
 
 static void usage(void)
@@ -1832,6 +2152,7 @@ int main(int argc, char *argv[])
 	int opt, i;
 	uint16_t index = MGMT_INDEX_NONE;
 	struct mgmt *mgmt;
+	int exit_status;
 
 	while ((opt = getopt_long(argc, argv, "+hvi:",
 						main_options, NULL)) != -1) {
@@ -1862,13 +2183,12 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	event_loop = g_main_loop_new(NULL, FALSE);
+	mainloop_init();
 
 	mgmt = mgmt_new_default();
 	if (!mgmt) {
 		fprintf(stderr, "Unable to open mgmt_socket\n");
-		g_main_loop_unref(event_loop);
-		return -1;
+		return EXIT_FAILURE;
 	}
 
 	for (i = 0; command[i].cmd; i++) {
@@ -1882,8 +2202,7 @@ int main(int argc, char *argv[])
 	if (command[i].cmd == NULL) {
 		fprintf(stderr, "Unknown command: %s\n", argv[0]);
 		mgmt_unref(mgmt);
-		g_main_loop_unref(event_loop);
-		return -1;
+		return EXIT_FAILURE;
 	}
 
 	mgmt_register(mgmt, MGMT_EV_CONTROLLER_ERROR, index, controller_error,
@@ -1915,13 +2234,11 @@ int main(int argc, char *argv[])
 	mgmt_register(mgmt, MGMT_EV_USER_CONFIRM_REQUEST, index, user_confirm,
 								mgmt, NULL);
 
-	g_main_loop_run(event_loop);
+	exit_status = mainloop_run();
 
 	mgmt_cancel_all(mgmt);
 	mgmt_unregister_all(mgmt);
 	mgmt_unref(mgmt);
 
-	g_main_loop_unref(event_loop);
-
-	return 0;
+	return exit_status;
 }

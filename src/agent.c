@@ -66,7 +66,6 @@ typedef enum {
 	AGENT_REQUEST_AUTHORIZATION,
 	AGENT_REQUEST_PINCODE,
 	AGENT_REQUEST_AUTHORIZE_SERVICE,
-	AGENT_REQUEST_CONFIRM_MODE,
 	AGENT_REQUEST_DISPLAY_PINCODE,
 } agent_request_type_t;
 
@@ -157,6 +156,11 @@ static void set_default_agent(struct agent *agent)
 {
 	if (default_agent == agent)
 		return;
+
+	if (agent)
+		DBG("Default agent set to %s %s", agent->owner, agent->path);
+	else
+		DBG("Default agent cleared");
 
 	default_agent = agent;
 
@@ -314,6 +318,9 @@ static void simple_agent_reply(DBusPendingCall *call, void *user_data)
 	 * is only called after a reply has been received */
 	message = dbus_pending_call_steal_reply(call);
 
+	/* Protect from the callback freeing the agent */
+	agent_ref(agent);
+
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
 		DBG("agent error reply: %s, %s", err.name, err.message);
@@ -322,9 +329,9 @@ static void simple_agent_reply(DBusPendingCall *call, void *user_data)
 
 		if (dbus_error_has_name(&err, DBUS_ERROR_NO_REPLY)) {
 			error("Timed out waiting for reply from agent");
-			agent_cancel(agent);
 			dbus_message_unref(message);
 			dbus_error_free(&err);
+			agent_unref(agent);
 			return;
 		}
 
@@ -345,6 +352,7 @@ done:
 
 	agent->request = NULL;
 	agent_request_free(req, TRUE);
+	agent_unref(agent);
 }
 
 static int agent_call_authorize_service(struct agent_request *req,
@@ -365,7 +373,7 @@ static int agent_call_authorize_service(struct agent_request *req,
 				DBUS_TYPE_STRING, &uuid,
 				DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(),
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(),
 						req->msg, &req->call,
 						REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
@@ -416,6 +424,9 @@ static void pincode_reply(DBusPendingCall *call, void *user_data)
 	 * is only called after a reply has been received */
 	message = dbus_pending_call_steal_reply(call);
 
+	/* Protect from the callback freeing the agent */
+	agent_ref(agent);
+
 	dbus_error_init(&err);
 	if (dbus_set_error_from_message(&err, message)) {
 		error("Agent %s replied with an error: %s, %s",
@@ -455,6 +466,7 @@ done:
 	dbus_pending_call_cancel(req->call);
 	agent->request = NULL;
 	agent_request_free(req, TRUE);
+	agent_unref(agent);
 }
 
 static int pincode_request_new(struct agent_request *req, const char *device_path,
@@ -475,7 +487,7 @@ static int pincode_request_new(struct agent_request *req, const char *device_pat
 	dbus_message_append_args(req->msg, DBUS_TYPE_OBJECT_PATH, &device_path,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(), req->msg,
 					&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -569,7 +581,7 @@ static int passkey_request_new(struct agent_request *req,
 	dbus_message_append_args(req->msg, DBUS_TYPE_OBJECT_PATH, &device_path,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(), req->msg,
 					&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -627,7 +639,7 @@ static int confirmation_request_new(struct agent_request *req,
 				DBUS_TYPE_UINT32, &passkey,
 				DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(), req->msg,
 				&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -684,7 +696,7 @@ static int authorization_request_new(struct agent_request *req,
 				DBUS_TYPE_OBJECT_PATH, &device_path,
 				DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(), req->msg,
 				&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;
@@ -818,7 +830,7 @@ static int display_pincode_request_new(struct agent_request *req,
 					DBUS_TYPE_STRING, &pincode,
 					DBUS_TYPE_INVALID);
 
-	if (dbus_connection_send_with_reply(btd_get_dbus_connection(), req->msg,
+	if (g_dbus_send_message_with_reply(btd_get_dbus_connection(), req->msg,
 				&req->call, REQUEST_TIMEOUT) == FALSE) {
 		error("D-Bus send failed");
 		return -EIO;

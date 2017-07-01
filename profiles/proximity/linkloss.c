@@ -27,23 +27,25 @@
 #include <stdbool.h>
 
 #include <glib.h>
-#include <adapter.h>
 
 #include <dbus/dbus.h>
 #include <gdbus/gdbus.h>
 
 #include "lib/uuid.h"
-#include "log.h"
+#include "src/log.h"
+#include "src/adapter.h"
+#include "src/device.h"
 #include "attrib/att-database.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
 #include "attrib/gatt-service.h"
-#include "attrib-server.h"
-#include "device.h"
-#include "profile.h"
-#include "attio.h"
-#include "dbus-common.h"
+#include "src/attrib-server.h"
+#include "src/service.h"
+#include "src/profile.h"
+#include "src/attio.h"
+#include "src/dbus-common.h"
+
 #include "reporter.h"
 #include "linkloss.h"
 
@@ -290,9 +292,9 @@ void link_loss_register(struct btd_adapter *adapter)
 	svc_added = gatt_service_add(adapter,
 			GATT_PRIM_SVC_UUID, &uuid,
 			/* Alert level characteristic */
-			GATT_OPT_CHR_UUID, ALERT_LEVEL_CHR_UUID,
+			GATT_OPT_CHR_UUID16, ALERT_LEVEL_CHR_UUID,
 			GATT_OPT_CHR_PROPS,
-				ATT_CHAR_PROPER_READ | ATT_CHAR_PROPER_WRITE,
+				GATT_CHR_PROP_READ | GATT_CHR_PROP_WRITE,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_READ,
 				link_loss_alert_lvl_read, lladapter,
 			GATT_OPT_CHR_VALUE_CB, ATTRIB_WRITE,

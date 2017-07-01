@@ -108,7 +108,7 @@ Service		unique name
 Interface	org.bluez.Profile1
 Object path	freely definable
 
-Methods		void Release()
+Methods		void Release() [noreply]
 
 			This method gets called when the service daemon
 			unregisters the profile. A profile can use it to do
@@ -145,11 +145,3 @@ Methods		void Release()
 
 			Possible errors: org.bluez.Error.Rejected
 			                 org.bluez.Error.Canceled
-
-		void Cancel()
-
-			This method gets called to indicate that the profile
-			request failed before a reply was returned.
-
-			All request are queued and there will be only one
-			pending pequest at a time per profile.

@@ -30,12 +30,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 
 #include <glib.h>
 #include <gdbus/gdbus.h>
-#include <btio/btio.h>
 
+#include "btio/btio.h"
 #include "lib/uuid.h"
 
 #include "obexd.h"
@@ -132,6 +133,18 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 
 	dbus_message_iter_get_basic(&args, &fd);
 
+	if (fd < 0) {
+		error("bluetooth: NewConnection invalid fd");
+		return invalid_args(msg);
+	}
+
+	/* Read fd flags to make sure it can be used */
+	if (fcntl(fd, F_GETFD) < 0) {
+		error("bluetooth: fcntl(%d, F_GETFD): %s (%d)", fd,
+						strerror(errno), errno);
+		return invalid_args(msg);
+	}
+
 	io = g_io_channel_unix_new(fd);
 	if (io == NULL)
 		return invalid_args(msg);
@@ -139,6 +152,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	DBG("device %s", device);
 
 	connect_event(io, NULL, data);
+	g_io_channel_unref(io);
 
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
@@ -172,12 +186,19 @@ static const GDBusMethodTable profile_methods[] = {
 	{ }
 };
 
+static void unregister_profile(struct bluetooth_profile *profile)
+{
+	g_dbus_unregister_interface(connection, profile->path,
+						"org.bluez.Profile1");
+	g_free(profile->path);
+	profile->path = NULL;
+}
+
 static void register_profile_reply(DBusPendingCall *call, void *user_data)
 {
 	struct bluetooth_profile *profile = user_data;
 	DBusMessage *reply = dbus_pending_call_steal_reply(call);
 	DBusError derr;
-	GError *err = NULL;
 
 	dbus_error_init(&derr);
 	if (!dbus_set_error_from_message(&derr, reply)) {
@@ -185,22 +206,13 @@ static void register_profile_reply(DBusPendingCall *call, void *user_data)
 		goto done;
 	}
 
-	g_free(profile->path);
-	profile->path = NULL;
+	unregister_profile(profile);
 
 	error("bluetooth: RequestProfile error: %s, %s", derr.name,
 								derr.message);
 	dbus_error_free(&derr);
 done:
 	dbus_message_unref(reply);
-}
-
-static void unregister_profile(struct bluetooth_profile *profile)
-{
-	g_dbus_unregister_interface(connection, profile->path,
-						"org.bluez.Profile1");
-	g_free(profile->path);
-	profile->path = NULL;
 }
 
 static void profile_free(void *data)
@@ -227,7 +239,7 @@ static void append_variant(DBusMessageIter *iter, int type, void *val)
 }
 
 
-void dict_append_entry(DBusMessageIter *dict,
+static void dict_append_entry(DBusMessageIter *dict,
 			const char *key, int type, void *val)
 {
 	DBusMessageIter entry;
@@ -304,7 +316,7 @@ static int register_profile(struct bluetooth_profile *profile)
 	}
 	dbus_message_iter_close_container(&iter, &opt);
 
-	if (!dbus_connection_send_with_reply(connection, msg, &call, -1)) {
+	if (!g_dbus_send_message_with_reply(connection, msg, &call, -1)) {
 		ret = -1;
 		unregister_profile(profile);
 		goto failed;
@@ -351,7 +363,6 @@ static void name_acquired(DBusConnection *conn, void *user_data)
 
 	for (l = profiles; l; l = l->next) {
 		struct bluetooth_profile *profile = l->data;
-		const char *uuid;
 
 		if (profile->path != NULL)
 			continue;
@@ -373,7 +384,6 @@ static void name_released(DBusConnection *conn, void *user_data)
 
 	for (l = profiles; l; l = l->next) {
 		struct bluetooth_profile *profile = l->data;
-		const char *uuid;
 
 		if (profile->path == NULL)
 			continue;
@@ -384,7 +394,6 @@ static void name_released(DBusConnection *conn, void *user_data)
 
 static void *bluetooth_start(struct obex_server *server, int *err)
 {
-	GSList *ios = NULL;
 	const GSList *l;
 
 	for (l = server->drivers; l; l = l->next) {
@@ -431,10 +440,29 @@ static int bluetooth_getpeername(GIOChannel *io, char **name)
 	return 0;
 }
 
+static int bluetooth_getsockname(GIOChannel *io, char **name)
+{
+	GError *gerr = NULL;
+	char address[18];
+
+	bt_io_get(io, &gerr, BT_IO_OPT_SOURCE, address, BT_IO_OPT_INVALID);
+
+	if (gerr) {
+		error("%s", gerr->message);
+		g_error_free(gerr);
+		return -EINVAL;
+	}
+
+	*name = g_strdup(address);
+
+	return 0;
+}
+
 static struct obex_transport_driver driver = {
 	.name = "bluetooth",
 	.start = bluetooth_start,
 	.getpeername = bluetooth_getpeername,
+	.getsockname = bluetooth_getsockname,
 	.stop = bluetooth_stop
 };
 

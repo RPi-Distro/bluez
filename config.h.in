@@ -1,5 +1,8 @@
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Directory for the Android daemon storage files */
+#undef ANDROID_STORAGEDIR
+
 /* Directory for the configuration files */
 #undef CONFIGDIR
 
@@ -8,9 +11,6 @@
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
-
-/* Define to 1 if you have USB library. */
-#undef HAVE_LIBUSB
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
@@ -48,12 +48,6 @@
 
 /* Define if threading support is required */
 #undef NEED_THREADS
-
-/* Define to 1 if you need the usb_get_busses() function. */
-#undef NEED_USB_GET_BUSSES
-
-/* Define to 1 if you need the usb_interrupt_read() functi on. */
-#undef NEED_USB_INTERRUPT_READ
 
 /* Define to 1 if your C compiler doesn't accept -c and -o together. */
 #undef NO_MINUS_C_MINUS_O

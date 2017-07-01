@@ -38,27 +38,7 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 
-#define MONITOR_NEW_INDEX	0
-#define MONITOR_DEL_INDEX	1
-#define MONITOR_COMMAND_PKT	2
-#define MONITOR_EVENT_PKT	3
-#define MONITOR_ACL_TX_PKT	4
-#define MONITOR_ACL_RX_PKT	5
-#define MONITOR_SCO_TX_PKT	6
-#define MONITOR_SCO_RX_PKT	7
-
-static inline uint64_t ntoh64(uint64_t n)
-{
-	uint64_t h;
-	uint64_t tmp = ntohl(n & 0x00000000ffffffff);
-
-	h = ntohl(n >> 32);
-	h |= tmp << 32;
-
-	return h;
-}
-
-#define hton64(x)     ntoh64(x)
+#include "src/shared/btsnoop.h"
 
 struct btsnoop_hdr {
 	uint8_t		id[8];		/* Identification Pattern */
@@ -82,7 +62,7 @@ static const uint8_t btsnoop_id[] = { 0x62, 0x74, 0x73, 0x6e,
 
 static const uint32_t btsnoop_version = 1;
 
-static int btsnoop_create(const char *path)
+static int create_btsnoop(const char *path)
 {
 	struct btsnoop_hdr hdr;
 	ssize_t written;
@@ -96,8 +76,8 @@ static int btsnoop_create(const char *path)
 	}
 
 	memcpy(hdr.id, btsnoop_id, sizeof(btsnoop_id));
-	hdr.version = htonl(btsnoop_version);
-	hdr.type = htonl(2001);
+	hdr.version = htobe32(btsnoop_version);
+	hdr.type = htobe32(2001);
 
 	written = write(fd, &hdr, BTSNOOP_HDR_SIZE);
 	if (written < 0) {
@@ -109,7 +89,7 @@ static int btsnoop_create(const char *path)
 	return fd;
 }
 
-static int btsnoop_open(const char *path, uint32_t *type)
+static int open_btsnoop(const char *path, uint32_t *type)
 {
 	struct btsnoop_hdr hdr;
 	ssize_t len;
@@ -134,14 +114,14 @@ static int btsnoop_open(const char *path, uint32_t *type)
 		return -1;
 	}
 
-	if (ntohl(hdr.version) != btsnoop_version) {
+	if (be32toh(hdr.version) != btsnoop_version) {
 		fprintf(stderr, "invalid btsnoop version\n");
 		close(fd);
 		return -1;
 	}
 
 	if (type)
-		*type = ntohl(hdr.type);
+		*type = be32toh(hdr.type);
 
 	return fd;
 }
@@ -167,7 +147,7 @@ static void command_merge(const char *output, int argc, char *argv[])
 		uint32_t type;
 		int fd;
 
-		fd = btsnoop_open(argv[i], &type);
+		fd = open_btsnoop(argv[i], &type);
 		if (fd < 0)
 			break;
 
@@ -186,7 +166,7 @@ static void command_merge(const char *output, int argc, char *argv[])
 		goto close_input;
 	}
 
-	output_fd = btsnoop_create(output);
+	output_fd = create_btsnoop(output);
 	if (output_fd < 0)
 		goto close_input;
 
@@ -212,17 +192,17 @@ next_packet:
 			continue;
 		}
 
-		ts = ntoh64(input_pkt[i].ts);
+		ts = be64toh(input_pkt[i].ts);
 
-		if (ts < ntoh64(input_pkt[select_input].ts))
+		if (ts < be64toh(input_pkt[select_input].ts))
 			select_input = i;
 	}
 
 	if (select_input < 0)
 		goto close_output;
 
-	toread = ntohl(input_pkt[select_input].size);
-	flags = ntohl(input_pkt[select_input].flags);
+	toread = be32toh(input_pkt[select_input].size);
+	flags = be32toh(input_pkt[select_input].flags);
 
 	len = read(input_fd[select_input], buf, toread);
 	if (len < 0 || len != (ssize_t) toread) {
@@ -231,34 +211,34 @@ next_packet:
 		goto next_packet;
 	}
 
-	written = input_pkt[select_input].size = htonl(toread - 1);
-	written = input_pkt[select_input].len = htonl(toread - 1);
+	written = input_pkt[select_input].size = htobe32(toread - 1);
+	written = input_pkt[select_input].len = htobe32(toread - 1);
 
 	switch (buf[0]) {
 	case 0x01:
-		opcode = MONITOR_COMMAND_PKT;
+		opcode = BTSNOOP_OPCODE_COMMAND_PKT;
 		break;
 	case 0x02:
 		if (flags & 0x01)
-			opcode = MONITOR_ACL_RX_PKT;
+			opcode = BTSNOOP_OPCODE_ACL_RX_PKT;
 		else
-			opcode = MONITOR_ACL_TX_PKT;
+			opcode = BTSNOOP_OPCODE_ACL_TX_PKT;
 		break;
 	case 0x03:
 		if (flags & 0x01)
-			opcode = MONITOR_SCO_RX_PKT;
+			opcode = BTSNOOP_OPCODE_SCO_RX_PKT;
 		else
-			opcode = MONITOR_ACL_TX_PKT;
+			opcode = BTSNOOP_OPCODE_ACL_TX_PKT;
 		break;
 	case 0x04:
-		opcode = MONITOR_EVENT_PKT;
+		opcode = BTSNOOP_OPCODE_EVENT_PKT;
 		break;
 	default:
 		goto skip_write;
 	}
 
 	index = select_input;
-	input_pkt[select_input].flags = htonl((index << 16) | opcode);
+	input_pkt[select_input].flags = htobe32((index << 16) | opcode);
 
 	written = write(output_fd, &input_pkt[select_input], BTSNOOP_PKT_SIZE);
 	if (written != BTSNOOP_PKT_SIZE) {
@@ -299,7 +279,7 @@ static void command_extract_eir(const char *input)
 	uint16_t opcode;
 	int fd, count = 0;
 
-	fd = btsnoop_open(input, &type);
+	fd = open_btsnoop(input, &type);
 	if (fd < 0)
 		return;
 
@@ -314,8 +294,8 @@ next_packet:
 	if (len < 0 || len != BTSNOOP_PKT_SIZE)
 		goto close_input;
 
-	toread = ntohl(pkt.size);
-	flags = ntohl(pkt.flags);
+	toread = be32toh(pkt.size);
+	flags = be32toh(pkt.flags);
 
 	opcode = flags & 0x00ff;
 
@@ -326,7 +306,7 @@ next_packet:
 	}
 
 	switch (opcode) {
-	case MONITOR_EVENT_PKT:
+	case BTSNOOP_OPCODE_EVENT_PKT:
 		/* extended inquiry result event */
 		if (buf[0] == 0x2f) {
 			uint8_t *eir_ptr, eir_len, i;
@@ -372,7 +352,7 @@ static void command_extract_ad(const char *input)
 	uint16_t opcode;
 	int fd, count = 0;
 
-	fd = btsnoop_open(input, &type);
+	fd = open_btsnoop(input, &type);
 	if (fd < 0)
 		return;
 
@@ -387,8 +367,8 @@ next_packet:
 	if (len < 0 || len != BTSNOOP_PKT_SIZE)
 		goto close_input;
 
-	toread = ntohl(pkt.size);
-	flags = ntohl(pkt.flags);
+	toread = be32toh(pkt.size);
+	flags = be32toh(pkt.flags);
 
 	opcode = flags & 0x00ff;
 
@@ -399,7 +379,7 @@ next_packet:
 	}
 
 	switch (opcode) {
-	case MONITOR_EVENT_PKT:
+	case BTSNOOP_OPCODE_EVENT_PKT:
 		/* advertising report */
 		if (buf[0] == 0x3e && buf[2] == 0x02) {
 			uint8_t *ad_ptr, ad_len, i;
@@ -449,7 +429,7 @@ static void command_extract_sdp(const char *input)
 	bool pdu_first = false;
 	int fd, count = 0;
 
-	fd = btsnoop_open(input, &type);
+	fd = open_btsnoop(input, &type);
 	if (fd < 0)
 		return;
 
@@ -464,7 +444,7 @@ next_packet:
 	if (len < 0 || len != BTSNOOP_PKT_SIZE)
 		goto close_input;
 
-	toread = ntohl(pkt.size);
+	toread = be32toh(pkt.size);
 
 	len = read(fd, buf, toread);
 	if (len < 0 || len != (ssize_t) toread) {
@@ -604,7 +584,7 @@ int main(int argc, char *argv[])
 		}
 
 		if (!type) {
-			fprintf(stderr, "not extract type specified\n");
+			fprintf(stderr, "no extract type specified\n");
 			return EXIT_FAILURE;
 		}
 

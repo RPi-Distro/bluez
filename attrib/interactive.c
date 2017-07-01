@@ -38,8 +38,9 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+#include "src/shared/util.h"
 #include "lib/uuid.h"
-#include <btio/btio.h>
+#include "btio/btio.h"
 #include "att.h"
 #include "gattrib.h"
 #include "gatt.h"
@@ -59,13 +60,6 @@ static int opt_psm = 0;
 static int opt_mtu = 0;
 static int start;
 static int end;
-
-struct characteristic_data {
-	uint16_t orig_start;
-	uint16_t start;
-	uint16_t end;
-	bt_uuid_t uuid;
-};
 
 static void cmd_help(int argcp, char **argvp);
 
@@ -120,7 +114,7 @@ static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
 	size_t plen;
 	GString *s;
 
-	handle = att_get_u16(&pdu[1]);
+	handle = get_le16(&pdu[1]);
 
 	switch (pdu[0]) {
 	case ATT_OP_HANDLE_NOTIFY:
@@ -187,7 +181,7 @@ static void disconnect_io()
 	set_state(STATE_DISCONNECTED);
 }
 
-static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
+static void primary_all_cb(uint8_t status, GSList *services, void *user_data)
 {
 	GSList *l;
 
@@ -209,8 +203,7 @@ static void primary_all_cb(GSList *services, guint8 status, gpointer user_data)
 	}
 }
 
-static void primary_by_uuid_cb(GSList *ranges, guint8 status,
-							gpointer user_data)
+static void primary_by_uuid_cb(uint8_t status, GSList *ranges, void *user_data)
 {
 	GSList *l;
 
@@ -232,7 +225,7 @@ static void primary_by_uuid_cb(GSList *ranges, guint8 status,
 	}
 }
 
-static void included_cb(GSList *includes, guint8 status, gpointer user_data)
+static void included_cb(uint8_t status, GSList *includes, void *user_data)
 {
 	GSList *l;
 
@@ -256,7 +249,7 @@ static void included_cb(GSList *includes, guint8 status, gpointer user_data)
 	}
 }
 
-static void char_cb(GSList *characteristics, guint8 status, gpointer user_data)
+static void char_cb(uint8_t status, GSList *characteristics, void *user_data)
 {
 	GSList *l;
 
@@ -300,12 +293,17 @@ static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		bt_uuid_t uuid;
 
 		value = list->data[i];
-		handle = att_get_u16(value);
+		handle = get_le16(value);
 
 		if (format == 0x01)
-			uuid = att_get_uuid16(&value[2]);
-		else
-			uuid = att_get_uuid128(&value[2]);
+			bt_uuid16_create(&uuid, get_le16(&value[2]));
+		else {
+			uint128_t u128;
+
+			/* Converts from LE to BE byte order */
+			bswap_128(&value[2], &u128);
+			bt_uuid128_create(&uuid, u128);
+		}
 
 		bt_uuid_to_string(&uuid, uuidstr, MAX_LEN_UUID_STR);
 		rl_printf("handle: 0x%04x, uuid: %s\n", handle, uuidstr);
@@ -314,7 +312,8 @@ static void char_desc_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	att_data_list_free(list);
 
 	if (handle != 0xffff && handle < end)
-		gatt_find_info(attrib, handle + 1, end, char_desc_cb, NULL);
+		gatt_discover_char_desc(attrib, handle + 1, end, char_desc_cb,
+									NULL);
 }
 
 static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -348,33 +347,27 @@ static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 					guint16 plen, gpointer user_data)
 {
-	struct characteristic_data *char_data = user_data;
 	struct att_data_list *list;
 	int i;
 	GString *s;
 
-	if (status == ATT_ECODE_ATTR_NOT_FOUND &&
-				char_data->start != char_data->orig_start)
-		goto done;
-
 	if (status != 0) {
 		error("Read characteristics by UUID failed: %s\n",
 							att_ecode2str(status));
-		goto done;
+		return;
 	}
 
 	list = dec_read_by_type_resp(pdu, plen);
 	if (list == NULL)
-		goto done;
+		return;
 
 	s = g_string_new(NULL);
 	for (i = 0; i < list->num; i++) {
 		uint8_t *value = list->data[i];
 		int j;
 
-		char_data->start = att_get_u16(value) + 1;
 		g_string_printf(s, "handle: 0x%04x \t value: ",
-							att_get_u16(value));
+							get_le16(value));
 		value += 2;
 		for (j = 0; j < list->len - 2; j++, value++)
 			g_string_append_printf(s, "%02x ", *value);
@@ -384,9 +377,6 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 
 	att_data_list_free(list);
 	g_string_free(s, TRUE);
-
-done:
-	g_free(char_data);
 }
 
 static void cmd_exit(int argcp, char **argvp)
@@ -574,7 +564,7 @@ static void cmd_char_desc(int argcp, char **argvp)
 	} else
 		end = 0xffff;
 
-	gatt_find_info(attrib, start, end, char_desc_cb, NULL);
+	gatt_discover_char_desc(attrib, start, end, char_desc_cb, NULL);
 }
 
 static void cmd_read_hnd(int argcp, char **argvp)
@@ -602,7 +592,6 @@ static void cmd_read_hnd(int argcp, char **argvp)
 
 static void cmd_read_uuid(int argcp, char **argvp)
 {
-	struct characteristic_data *char_data;
 	int start = 0x0001;
 	int end = 0xffff;
 	bt_uuid_t uuid;
@@ -638,14 +627,8 @@ static void cmd_read_uuid(int argcp, char **argvp)
 		}
 	}
 
-	char_data = g_new(struct characteristic_data, 1);
-	char_data->orig_start = start;
-	char_data->start = start;
-	char_data->end = end;
-	char_data->uuid = uuid;
-
-	gatt_read_char_by_uuid(attrib, start, end, &char_data->uuid,
-					char_read_by_uuid_cb, char_data);
+	gatt_read_char_by_uuid(attrib, start, end, &uuid, char_read_by_uuid_cb,
+									NULL);
 }
 
 static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -697,7 +680,7 @@ static void cmd_char_write(int argcp, char **argvp)
 		gatt_write_char(attrib, handle, value, plen,
 					char_write_req_cb, NULL);
 	else
-		gatt_write_char(attrib, handle, value, plen, NULL, NULL);
+		gatt_write_cmd(attrib, handle, value, plen, NULL, NULL);
 
 	g_free(value);
 }
@@ -867,7 +850,8 @@ static void parse_line(char *line_read)
 
 	add_history(line_read);
 
-	g_shell_parse_argv(line_read, &argcp, &argvp, NULL);
+	if (g_shell_parse_argv(line_read, &argcp, &argvp, NULL) == FALSE)
+		goto done;
 
 	for (i = 0; commands[i].cmd; i++)
 		if (strcasecmp(commands[i].cmd, argvp[0]) == 0)

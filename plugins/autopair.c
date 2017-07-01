@@ -27,15 +27,18 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include <bluetooth/bluetooth.h>
 #include <glib.h>
 
-#include "plugin.h"
-#include "adapter.h"
-#include "device.h"
-#include "log.h"
-#include "storage.h"
+#include "src/plugin.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/log.h"
+#include "src/storage.h"
 
 /*
  * Plugin to handle automatic pairing of devices with reduced user
@@ -49,9 +52,9 @@
  */
 
 static ssize_t autopair_pincb(struct btd_adapter *adapter,
-					struct btd_device *device,
-					char *pinbuf, gboolean *display,
-					unsigned int attempt)
+						struct btd_device *device,
+						char *pinbuf, bool *display,
+						unsigned int attempt)
 {
 	char addr[18];
 	char pinstr[7];
@@ -107,7 +110,7 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 
 			snprintf(pinstr, sizeof(pinstr), "%06d",
 						rand() % 1000000);
-			*display = TRUE;
+			*display = true;
 			memcpy(pinbuf, pinstr, 6);
 			return 6;
 
@@ -118,6 +121,14 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 			return 4;
 		}
 
+		break;
+	case 0x06:		/* Imaging */
+		if (class & 0x80) {	/* Printer */
+			if (attempt > 1)
+				return 0;
+			memcpy(pinbuf, "0000", 4);
+			return 4;
+		}
 		break;
 	}
 
@@ -146,14 +157,28 @@ static struct btd_adapter_driver autopair_driver = {
 static int autopair_init(void)
 {
 	/* Initialize the random seed from /dev/urandom */
-	unsigned int seed = time(NULL);
-	FILE *f;
+	unsigned int seed;
+	int fd, err;
+	ssize_t n;
 
-	f = fopen("/dev/urandom", "rb");
-	if (f != NULL) {
-		fread(&seed, sizeof(seed), 1, f);
-		fclose(f);
+	fd = open("/dev/urandom", O_RDONLY);
+	if (fd < 0) {
+		err = -errno;
+		error("Failed to open /dev/urandom: %s (%d)", strerror(-err),
+									-err);
+		return err;
 	}
+
+	n = read(fd, &seed, sizeof(seed));
+	if (n < (ssize_t) sizeof(seed)) {
+		err = (n == -1) ? -errno : -EIO;
+		error("Failed to read %zu bytes from /dev/urandom",
+								sizeof(seed));
+		close(fd);
+		return err;
+	}
+
+	close(fd);
 
 	srand(seed);
 

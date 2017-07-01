@@ -32,24 +32,27 @@
 #include <string.h>
 #include <unistd.h>
 #include <glib.h>
-#include <sys/file.h>
+#include <sys/stat.h>
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/sdp.h>
 #include <bluetooth/sdp_lib.h>
 
-#include "lib/uuid.h"
 #include <gdbus/gdbus.h>
+
+#include "lib/uuid.h"
+#include "btio/btio.h"
 #include "log.h"
-#include <btio/btio.h>
 #include "sdpd.h"
 #include "hcid.h"
 #include "adapter.h"
 #include "device.h"
+#include "src/shared/util.h"
 #include "attrib/gattrib.h"
 #include "attrib/att.h"
 #include "attrib/gatt.h"
 #include "attrib/att-database.h"
+#include "textfile.h"
 #include "storage.h"
 
 #include "attrib-server.h"
@@ -69,8 +72,6 @@ struct gatt_server {
 };
 
 struct gatt_channel {
-	bdaddr_t src;
-	bdaddr_t dst;
 	GAttrib *attrib;
 	guint mtu;
 	gboolean le;
@@ -100,6 +101,15 @@ static bt_uuid_t ccc_uuid = {
 			.type = BT_UUID16,
 			.value.u16 = GATT_CLIENT_CHARAC_CFG_UUID
 };
+
+static inline void put_uuid_le(const bt_uuid_t *src, void *dst)
+{
+	if (src->type == BT_UUID16)
+		put_le16(src->value.u16, dst);
+	else
+		/* Convert from 128-bit BE to LE */
+		bswap_128(&src->value.u128, dst);
+}
 
 static void attrib_free(void *data)
 {
@@ -139,10 +149,11 @@ static void gatt_server_free(struct gatt_server *server)
 	g_slist_free_full(server->clients, (GDestroyNotify) channel_free);
 
 	if (server->gatt_sdp_handle > 0)
-		remove_record_from_server(server->gatt_sdp_handle);
+		adapter_service_remove(server->adapter,
+					server->gatt_sdp_handle);
 
 	if (server->gap_sdp_handle > 0)
-		remove_record_from_server(server->gap_sdp_handle);
+		adapter_service_remove(server->adapter, server->gap_sdp_handle);
 
 	if (server->adapter != NULL)
 		btd_adapter_unref(server->adapter);
@@ -155,7 +166,7 @@ static int adapter_cmp_addr(gconstpointer a, gconstpointer b)
 	const struct gatt_server *server = a;
 	const bdaddr_t *bdaddr = b;
 
-	return bacmp(adapter_get_address(server->adapter), bdaddr);
+	return bacmp(btd_adapter_get_address(server->adapter), bdaddr);
 }
 
 static int adapter_cmp(gconstpointer a, gconstpointer b)
@@ -306,10 +317,14 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 		return 0;
 
 	if (a->len == 2)
-		sdp_uuid16_create(&svc, att_get_u16(a->data));
-	else if (a->len == 16)
-		sdp_uuid128_create(&svc, a->data);
-	else
+		sdp_uuid16_create(&svc, get_le16(a->data));
+	else if (a->len == 16) {
+		uint8_t be128[16];
+
+		/* Converting from LE to BE */
+		bswap_128(a->data, be128);
+		sdp_uuid128_create(&svc, be128);
+	} else
 		return 0;
 
 	record = server_record_new(&svc, handle, end);
@@ -326,8 +341,7 @@ static uint32_t attrib_create_sdp_new(struct gatt_server *server,
 				"http://www.bluez.org/");
 	}
 
-	if (add_record_to_server(adapter_get_address(server->adapter), record)
-			== 0)
+	if (adapter_service_add(server->adapter, record) == 0)
 		return record->handle;
 
 	sdp_record_free(record);
@@ -503,8 +517,8 @@ static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
 
 		value = (void *) adl->data[i];
 
-		att_put_u16(cur->handle, value);
-		att_put_u16(cur->end, &value[2]);
+		put_le16(cur->handle, value);
+		put_le16(cur->end, &value[2]);
 		/* Attribute Value */
 		memcpy(&value[4], cur->data, cur->len);
 	}
@@ -592,7 +606,7 @@ static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
 
 		value = (void *) adl->data[i];
 
-		att_put_u16(a->handle, value);
+		put_le16(a->handle, value);
 
 		/* Attribute Value */
 		memcpy(&value[2], a->data, a->len);
@@ -672,10 +686,10 @@ static uint16_t find_info(struct gatt_channel *channel, uint16_t start,
 
 		value = (void *) adl->data[i];
 
-		att_put_u16(a->handle, value);
+		put_le16(a->handle, value);
 
 		/* Attribute Value */
-		att_put_uuid(a->uuid, &value[2]);
+		put_uuid_le(&a->uuid, &value[2]);
 	}
 
 	length = enc_find_info_resp(format, adl, pdu, len);
@@ -801,7 +815,7 @@ static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
 		read_device_ccc(channel->device, handle, &cccval) == 0) {
 		uint8_t config[2];
 
-		att_put_u16(cccval, config);
+		put_le16(cccval, config);
 		return enc_read_resp(config, sizeof(config), pdu, len);
 	}
 
@@ -842,7 +856,7 @@ static uint16_t read_blob(struct gatt_channel *channel, uint16_t handle,
 		read_device_ccc(channel->device, handle, &cccval) == 0) {
 		uint8_t config[2];
 
-		att_put_u16(cccval, config);
+		put_le16(cccval, config);
 		return enc_read_blob_resp(config, sizeof(config), offset,
 								pdu, len);
 	}
@@ -894,7 +908,7 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 							status, pdu, len);
 		}
 	} else {
-		uint16_t cccval = att_get_u16(value);
+		uint16_t cccval = get_le16(value);
 		char *filename;
 		GKeyFile *key_file;
 		char group[6], value[5];
@@ -913,7 +927,7 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 		g_key_file_load_from_file(key_file, filename, 0, NULL);
 
 		sprintf(group, "%hu", handle);
-		sprintf(value, "%hhX", cccval);
+		sprintf(value, "%hX", cccval);
 		g_key_file_set_string(key_file, group, "Value", value);
 
 		data = g_key_file_to_data(key_file, &length, NULL);
@@ -927,7 +941,7 @@ static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
 		g_key_file_free(key_file);
 	}
 
-	return enc_write_resp(pdu, len);
+	return enc_write_resp(pdu);
 }
 
 static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
@@ -944,10 +958,12 @@ static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
 	io = g_attrib_get_channel(channel->attrib);
 
 	bt_io_get(io, &gerr, BT_IO_OPT_IMTU, &imtu, BT_IO_OPT_INVALID);
-
-	if (gerr)
-		return enc_error_resp(ATT_OP_MTU_REQ, 0,
-					ATT_ECODE_UNLIKELY, pdu, len);
+	if (gerr) {
+		error("bt_io_get: %s", gerr->message);
+		g_error_free(gerr);
+		return enc_error_resp(ATT_OP_MTU_REQ, 0, ATT_ECODE_UNLIKELY,
+								pdu, len);
+	}
 
 	channel->mtu = MIN(mtu, imtu);
 	g_attrib_set_mtu(channel->attrib, channel->mtu);
@@ -982,6 +998,12 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 	uint8_t *value = g_attrib_get_buffer(channel->attrib, &vlen);
 
 	DBG("op 0x%02x", ipdu[0]);
+
+	if (len > vlen) {
+		error("Too much data on ATT socket");
+		status = ATT_ECODE_INVALID_PDU;
+		goto done;
+	}
 
 	switch (ipdu[0]) {
 	case ATT_OP_READ_BY_GROUP_REQ:
@@ -1098,53 +1120,70 @@ done:
 	g_attrib_send(channel->attrib, 0, opdu, length, NULL, NULL, NULL);
 }
 
+GAttrib *attrib_from_device(struct btd_device *device)
+{
+	struct btd_adapter *adapter = device_get_adapter(device);
+	struct gatt_server *server;
+	GSList *l;
+
+	l = g_slist_find_custom(servers, adapter, adapter_cmp);
+	if (!l)
+		return NULL;
+
+	server = l->data;
+
+	for (l = server->clients; l; l = l->next) {
+		struct gatt_channel *channel = l->data;
+
+		if (channel->device == device)
+			return g_attrib_ref(channel->attrib);
+	}
+
+	return NULL;
+}
+
 guint attrib_channel_attach(GAttrib *attrib)
 {
 	struct gatt_server *server;
 	struct btd_device *device;
 	struct gatt_channel *channel;
+	bdaddr_t src, dst;
 	GIOChannel *io;
 	GError *gerr = NULL;
+	uint8_t bdaddr_type;
 	uint16_t cid;
 	guint mtu = 0;
 
 	io = g_attrib_get_channel(attrib);
 
-	channel = g_new0(struct gatt_channel, 1);
-
 	bt_io_get(io, &gerr,
-			BT_IO_OPT_SOURCE_BDADDR, &channel->src,
-			BT_IO_OPT_DEST_BDADDR, &channel->dst,
+			BT_IO_OPT_SOURCE_BDADDR, &src,
+			BT_IO_OPT_DEST_BDADDR, &dst,
+			BT_IO_OPT_DEST_TYPE, &bdaddr_type,
 			BT_IO_OPT_CID, &cid,
 			BT_IO_OPT_IMTU, &mtu,
 			BT_IO_OPT_INVALID);
 	if (gerr) {
 		error("bt_io_get: %s", gerr->message);
 		g_error_free(gerr);
-		g_free(channel);
 		return 0;
 	}
 
-	server = find_gatt_server(&channel->src);
-	if (server == NULL) {
-		char src[18];
-
-		ba2str(&channel->src, src);
-		error("No GATT server found in %s", src);
-		g_free(channel);
+	server = find_gatt_server(&src);
+	if (server == NULL)
 		return 0;
-	}
 
+	channel = g_new0(struct gatt_channel, 1);
 	channel->server = server;
 
-	device = adapter_find_device(server->adapter, &channel->dst);
+	device = btd_adapter_find_device(server->adapter, &dst, bdaddr_type);
 	if (device == NULL) {
 		error("Device object not found for attrib server");
 		g_free(channel);
 		return 0;
 	}
 
-	if (device_is_bonded(device) == FALSE) {
+	if (!device_is_bonded(device, bdaddr_type)) {
 		char *filename;
 
 		filename = btd_device_get_storage_path(device, "ccc");
@@ -1222,7 +1261,10 @@ gboolean attrib_channel_detach(GAttrib *attrib, guint id)
 
 static void connect_event(GIOChannel *io, GError *gerr, void *user_data)
 {
-	GAttrib *attrib;
+	struct btd_adapter *adapter;
+	struct btd_device *device;
+	uint8_t dst_type;
+	bdaddr_t src, dst;
 
 	DBG("");
 
@@ -1231,9 +1273,26 @@ static void connect_event(GIOChannel *io, GError *gerr, void *user_data)
 		return;
 	}
 
-	attrib = g_attrib_new(io);
-	attrib_channel_attach(attrib);
-	g_attrib_unref(attrib);
+	bt_io_get(io, &gerr,
+			BT_IO_OPT_SOURCE_BDADDR, &src,
+			BT_IO_OPT_DEST_BDADDR, &dst,
+			BT_IO_OPT_DEST_TYPE, &dst_type,
+			BT_IO_OPT_INVALID);
+	if (gerr) {
+		error("bt_io_get: %s", gerr->message);
+		g_error_free(gerr);
+		return;
+	}
+
+	adapter = adapter_find(&src);
+	if (!adapter)
+		return;
+
+	device = btd_adapter_get_device(adapter, &dst, dst_type);
+	if (!device)
+		return;
+
+	device_attach_attrib(device, io);
 }
 
 static gboolean register_core_services(struct gatt_server *server)
@@ -1244,16 +1303,16 @@ static gboolean register_core_services(struct gatt_server *server)
 
 	/* GAP service: primary service definition */
 	bt_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
-	att_put_u16(GENERIC_ACCESS_PROFILE_ID, &atval[0]);
+	put_le16(GENERIC_ACCESS_PROFILE_ID, &atval[0]);
 	attrib_db_add_new(server, 0x0001, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, 2);
 
 	/* GAP service: device name characteristic */
 	server->name_handle = 0x0006;
 	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
-	atval[0] = ATT_CHAR_PROPER_READ;
-	att_put_u16(server->name_handle, &atval[1]);
-	att_put_u16(GATT_CHARAC_DEVICE_NAME, &atval[3]);
+	atval[0] = GATT_CHR_PROP_READ;
+	put_le16(server->name_handle, &atval[1]);
+	put_le16(GATT_CHARAC_DEVICE_NAME, &atval[3]);
 	attrib_db_add_new(server, 0x0004, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, 5);
 
@@ -1265,15 +1324,15 @@ static gboolean register_core_services(struct gatt_server *server)
 	/* GAP service: device appearance characteristic */
 	server->appearance_handle = 0x0008;
 	bt_uuid16_create(&uuid, GATT_CHARAC_UUID);
-	atval[0] = ATT_CHAR_PROPER_READ;
-	att_put_u16(server->appearance_handle, &atval[1]);
-	att_put_u16(GATT_CHARAC_APPEARANCE, &atval[3]);
+	atval[0] = GATT_CHR_PROP_READ;
+	put_le16(server->appearance_handle, &atval[1]);
+	put_le16(GATT_CHARAC_APPEARANCE, &atval[3]);
 	attrib_db_add_new(server, 0x0007, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, 5);
 
 	/* GAP service: device appearance attribute */
 	bt_uuid16_create(&uuid, GATT_CHARAC_APPEARANCE);
-	att_put_u16(appearance, &atval[0]);
+	put_le16(appearance, &atval[0]);
 	attrib_db_add_new(server, server->appearance_handle, &uuid, ATT_NONE,
 						ATT_NOT_PERMITTED, atval, 2);
 	server->gap_sdp_handle = attrib_create_sdp_new(server, 0x0001,
@@ -1285,7 +1344,7 @@ static gboolean register_core_services(struct gatt_server *server)
 
 	/* GATT service: primary service definition */
 	bt_uuid16_create(&uuid, GATT_PRIM_SVC_UUID);
-	att_put_u16(GENERIC_ATTRIB_PROFILE_ID, &atval[0]);
+	put_le16(GENERIC_ATTRIB_PROFILE_ID, &atval[0]);
 	attrib_db_add_new(server, 0x0010, &uuid, ATT_NONE, ATT_NOT_PERMITTED,
 								atval, 2);
 
@@ -1310,7 +1369,7 @@ int btd_adapter_gatt_server_start(struct btd_adapter *adapter)
 	server = g_new0(struct gatt_server, 1);
 	server->adapter = btd_adapter_ref(adapter);
 
-	addr = adapter_get_address(server->adapter);
+	addr = btd_adapter_get_address(server->adapter);
 
 	/* BR/EDR socket */
 	server->l2cap_io = bt_io_listen(connect_event, NULL, NULL, NULL, &gerr,
@@ -1335,6 +1394,7 @@ int btd_adapter_gatt_server_start(struct btd_adapter *adapter)
 	server->le_io = bt_io_listen(connect_event, NULL,
 					&server->le_io, NULL, &gerr,
 					BT_IO_OPT_SOURCE_BDADDR, addr,
+					BT_IO_OPT_SOURCE_TYPE, BDADDR_LE_PUBLIC,
 					BT_IO_OPT_CID, ATT_CID,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
 					BT_IO_OPT_INVALID);
@@ -1377,9 +1437,9 @@ uint32_t attrib_create_sdp(struct btd_adapter *adapter, uint16_t handle,
 	return attrib_create_sdp_new(l->data, handle, name);
 }
 
-void attrib_free_sdp(uint32_t sdp_handle)
+void attrib_free_sdp(struct btd_adapter *adapter, uint32_t sdp_handle)
 {
-	remove_record_from_server(sdp_handle);
+	adapter_service_remove(adapter, sdp_handle);
 }
 
 static uint16_t find_uuid16_avail(struct btd_adapter *adapter, uint16_t nitems)

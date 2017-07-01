@@ -39,17 +39,18 @@
 #include <bluetooth/bluetooth.h>
 
 #include "lib/uuid.h"
-#include "dbus-common.h"
-#include "adapter.h"
-#include "device.h"
-#include "error.h"
-#include "log.h"
+#include "src/dbus-common.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/error.h"
+#include "src/log.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
 #include "attrib/gatt.h"
-#include "attio.h"
+#include "src/attio.h"
+#include "src/textfile.h"
+
 #include "monitor.h"
-#include "textfile.h"
 
 #define PROXIMITY_INTERFACE "org.bluez.ProximityMonitor1"
 
@@ -190,8 +191,8 @@ static void linkloss_written(guint8 status, const guint8 *pdu, guint16 plen,
 				PROXIMITY_INTERFACE, "LinkLossAlertLevel");
 }
 
-static void char_discovered_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void char_discovered_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	struct monitor *monitor = user_data;
 	struct gatt_char *chr;
@@ -259,8 +260,8 @@ static void tx_power_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	DBG("Tx Power Level: %02x", (int8_t) value[0]);
 }
 
-static void tx_power_handle_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void tx_power_handle_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	struct monitor *monitor = user_data;
 	struct gatt_char *chr;
@@ -346,8 +347,8 @@ static void write_immediate_alert(struct monitor *monitor)
 						immediate_written, monitor);
 }
 
-static void immediate_handle_cb(GSList *characteristics, guint8 status,
-							gpointer user_data)
+static void immediate_handle_cb(uint8_t status, GSList *characteristics,
+								void *user_data)
 {
 	struct monitor *monitor = user_data;
 	struct gatt_char *chr;

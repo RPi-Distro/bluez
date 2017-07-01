@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#include <errno.h>
 #include <stdbool.h>
 
 #include <bluetooth/bluetooth.h>
@@ -34,15 +35,16 @@
 #include <glib.h>
 #include <gdbus/gdbus.h>
 
-#include "log.h"
-#include "plugin.h"
+#include "src/log.h"
+#include "src/plugin.h"
 
 #include "lib/uuid.h"
-#include "adapter.h"
-#include "device.h"
-#include "profile.h"
-#include "service.h"
-#include "common.h"
+#include "src/adapter.h"
+#include "src/device.h"
+#include "src/profile.h"
+#include "src/service.h"
+
+#include "bnep.h"
 #include "connection.h"
 #include "server.h"
 
@@ -169,11 +171,15 @@ static struct btd_profile nap_profile = {
 
 static int network_init(void)
 {
+	int err;
+
 	read_config(CONFIGDIR "/network.conf");
 
-	if (bnep_init()) {
-		error("Can't init bnep module");
-		return -1;
+	err = bnep_init();
+	if (err) {
+		if (err == -EPROTONOSUPPORT)
+			err = -ENOSYS;
+		return err;
 	}
 
 	/*
@@ -195,8 +201,6 @@ static int network_init(void)
 
 static void network_exit(void)
 {
-	server_exit();
-
 	btd_profile_unregister(&panu_profile);
 	btd_profile_unregister(&gn_profile);
 	btd_profile_unregister(&nap_profile);
