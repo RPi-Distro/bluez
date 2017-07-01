@@ -57,6 +57,7 @@ struct gatt_channel {
 	GAttrib *attrib;
 	guint mtu;
 	guint id;
+	gboolean encrypted;
 };
 
 struct group_elem {
@@ -138,14 +139,47 @@ static sdp_record_t *server_record_new(void)
 	return record;
 }
 
-static uint16_t read_by_group(uint16_t start, uint16_t end, uuid_t *uuid,
-							uint8_t *pdu, int len)
+static uint8_t att_check_reqs(struct gatt_channel *channel, uint8_t opcode,
+								int reqs)
+{
+	/* FIXME: currently, it is assumed an encrypted link is enough for
+	 * authentication. This will allow to enable the SMP negotiation once
+	 * it is on upstream kernel. */
+	if (!channel->encrypted)
+		channel->encrypted = g_attrib_is_encrypted(channel->attrib);
+	if (reqs == ATT_AUTHENTICATION && !channel->encrypted)
+		return ATT_ECODE_INSUFF_ENC;
+
+	switch (opcode) {
+	case ATT_OP_READ_BY_GROUP_REQ:
+	case ATT_OP_READ_BY_TYPE_REQ:
+	case ATT_OP_READ_REQ:
+	case ATT_OP_READ_BLOB_REQ:
+	case ATT_OP_READ_MULTI_REQ:
+		if (reqs == ATT_NOT_PERMITTED)
+			return ATT_ECODE_READ_NOT_PERM;
+		break;
+	case ATT_OP_PREP_WRITE_REQ:
+	case ATT_OP_WRITE_REQ:
+	case ATT_OP_WRITE_CMD:
+		if (reqs == ATT_NOT_PERMITTED)
+			return ATT_ECODE_WRITE_NOT_PERM;
+		break;
+	}
+
+	return 0;
+}
+
+static uint16_t read_by_group(struct gatt_channel *channel, uint16_t start,
+						uint16_t end, uuid_t *uuid,
+						uint8_t *pdu, int len)
 {
 	struct att_data_list *adl;
 	struct attribute *a;
 	struct group_elem *cur, *old = NULL;
 	GSList *l, *groups;
 	uint16_t length, last_handle, last_size = 0;
+	uint8_t status;
 	int i;
 
 	if (start > end || start == 0x0000)
@@ -188,6 +222,15 @@ static uint16_t read_by_group(uint16_t start, uint16_t end, uuid_t *uuid,
 
 		if (last_size && (last_size != a->len))
 			break;
+
+		status = att_check_reqs(channel, ATT_OP_READ_BY_GROUP_REQ,
+								a->read_reqs);
+		if (status) {
+			g_slist_foreach(groups, (GFunc) g_free, NULL);
+			g_slist_free(groups);
+			return enc_error_resp(ATT_OP_READ_BY_GROUP_REQ,
+						a->handle, status, pdu, len);
+		}
 
 		cur = g_new0(struct group_elem, 1);
 		cur->handle = a->handle;
@@ -240,13 +283,15 @@ static uint16_t read_by_group(uint16_t start, uint16_t end, uuid_t *uuid,
 	return length;
 }
 
-static uint16_t read_by_type(uint16_t start, uint16_t end, uuid_t *uuid,
-							uint8_t *pdu, int len)
+static uint16_t read_by_type(struct gatt_channel *channel, uint16_t start,
+						uint16_t end, uuid_t *uuid,
+						uint8_t *pdu, int len)
 {
 	struct att_data_list *adl;
 	GSList *l, *types;
 	struct attribute *a;
 	uint16_t num, length;
+	uint8_t status;
 	int i;
 
 	if (start > end || start == 0x0000)
@@ -264,6 +309,14 @@ static uint16_t read_by_type(uint16_t start, uint16_t end, uuid_t *uuid,
 
 		if (sdp_uuid_cmp(&a->uuid, uuid)  != 0)
 			continue;
+
+		status = att_check_reqs(channel, ATT_OP_READ_BY_TYPE_REQ,
+								a->read_reqs);
+		if (status) {
+			g_slist_free(types);
+			return enc_error_resp(ATT_OP_READ_BY_TYPE_REQ,
+						a->handle, status, pdu, len);
+		}
 
 		/* All elements must have the same length */
 		if (length == 0)
@@ -469,9 +522,11 @@ static int attribute_cmp(gconstpointer a1, gconstpointer a2)
 	return attrib1->handle - attrib2->handle;
 }
 
-static uint16_t read_value(uint16_t handle, uint8_t *pdu, int len)
+static uint16_t read_value(struct gatt_channel *channel, uint16_t handle,
+							uint8_t *pdu, int len)
 {
 	struct attribute *a;
+	uint8_t status;
 	GSList *l;
 	guint h = handle;
 
@@ -482,23 +537,42 @@ static uint16_t read_value(uint16_t handle, uint8_t *pdu, int len)
 
 	a = l->data;
 
+	status = att_check_reqs(channel, ATT_OP_READ_REQ, a->read_reqs);
+	if (status)
+		return enc_error_resp(ATT_OP_READ_REQ, handle, status, pdu,
+									len);
+
 	return enc_read_resp(a->data, a->len, pdu, len);
 }
 
-static void write_value(uint16_t handle, const uint8_t *value, int vlen)
+static uint16_t write_value(struct gatt_channel *channel, uint16_t handle,
+						const uint8_t *value, int vlen,
+						uint8_t *pdu, int len)
 {
 	struct attribute *a;
+	uint8_t status;
 	GSList *l;
 	guint h = handle;
 	uuid_t uuid;
 
 	l = g_slist_find_custom(database, GUINT_TO_POINTER(h), handle_cmp);
 	if (!l)
-		return;
+		return enc_error_resp(ATT_OP_WRITE_REQ, handle,
+				ATT_ECODE_INVALID_HANDLE, pdu, len);
 
 	a = l->data;
+
+	status = att_check_reqs(channel, ATT_OP_WRITE_REQ, a->write_reqs);
+	if (status)
+		return enc_error_resp(ATT_OP_WRITE_REQ, handle, status, pdu,
+									len);
+
 	memcpy(&uuid, &a->uuid, sizeof(uuid_t));
 	attrib_db_update(handle, &uuid, value, vlen);
+
+	pdu[0] = ATT_OP_WRITE_RESP;
+
+	return sizeof(pdu[0]);
 }
 
 static uint16_t mtu_exchange(struct gatt_channel *channel, uint16_t mtu,
@@ -537,7 +611,8 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		length = read_by_group(start, end, &uuid, opdu, channel->mtu);
+		length = read_by_group(channel, start, end, &uuid, opdu,
+								channel->mtu);
 		break;
 	case ATT_OP_READ_BY_TYPE_REQ:
 		length = dec_read_by_type_req(ipdu, len, &start, &end, &uuid);
@@ -546,7 +621,8 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		length = read_by_type(start, end, &uuid, opdu, channel->mtu);
+		length = read_by_type(channel, start, end, &uuid, opdu,
+								channel->mtu);
 		break;
 	case ATT_OP_READ_REQ:
 		length = dec_read_req(ipdu, len, &start);
@@ -555,7 +631,7 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		length = read_value(start, opdu, channel->mtu);
+		length = read_value(channel, start, opdu, channel->mtu);
 		break;
 	case ATT_OP_MTU_REQ:
 		length = dec_mtu_req(ipdu, len, &mtu);
@@ -582,14 +658,14 @@ static void channel_handler(const uint8_t *ipdu, uint16_t len,
 			goto done;
 		}
 
-		write_value(start, value, vlen);
-		opdu[0] = ATT_OP_WRITE_RESP;
-		length = sizeof(opdu[0]);
+		length = write_value(channel, start, value, vlen, opdu,
+								channel->mtu);
 		break;
 	case ATT_OP_WRITE_CMD:
 		length = dec_write_cmd(ipdu, len, &start, value, &vlen);
 		if (length > 0)
-			write_value(start, value, vlen);
+			write_value(channel, start, value, vlen, opdu,
+								channel->mtu);
 		return;
 	case ATT_OP_FIND_BY_TYPE_REQ:
 		length = dec_find_by_type_req(ipdu, len, &start, &end,
@@ -760,7 +836,8 @@ void attrib_server_exit(void)
 		remove_record_from_server(sdp_handle);
 }
 
-int attrib_db_add(uint16_t handle, uuid_t *uuid, const uint8_t *value, int len)
+int attrib_db_add(uint16_t handle, uuid_t *uuid, int read_reqs, int write_reqs,
+						const uint8_t *value, int len)
 {
 	struct attribute *a;
 
@@ -769,6 +846,8 @@ int attrib_db_add(uint16_t handle, uuid_t *uuid, const uint8_t *value, int len)
 	a = g_malloc0(sizeof(struct attribute) + len);
 	a->handle = handle;
 	memcpy(&a->uuid, uuid, sizeof(uuid_t));
+	a->read_reqs = read_reqs;
+	a->write_reqs = write_reqs;
 	a->len = len;
 	memcpy(a->data, value, len);
 

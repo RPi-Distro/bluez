@@ -111,38 +111,6 @@ static struct network_conn *find_connection(GSList *list, uint16_t id)
 	return NULL;
 }
 
-static inline DBusMessage *not_supported(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-							"Not supported");
-}
-
-static inline DBusMessage *already_connected(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Device already connected");
-}
-
-static inline DBusMessage *not_connected(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Device not connected");
-}
-
-static inline DBusMessage *not_permited(DBusMessage *msg)
-{
-	return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Operation not permited");
-}
-
-static inline DBusMessage *connection_attempt_failed(DBusMessage *msg,
-							const char *err)
-{
-	return g_dbus_create_error(msg,
-				ERROR_INTERFACE ".ConnectionAttemptFailed",
-				"%s", err ? err : "Connection attempt failed");
-}
-
 static gboolean bnep_watchdog_cb(GIOChannel *chan, GIOCondition cond,
 				gpointer data)
 {
@@ -188,7 +156,7 @@ static void cancel_connection(struct network_conn *nc, const char *err_msg)
 	}
 
 	if (nc->msg && err_msg) {
-		reply = connection_attempt_failed(nc->msg, err_msg);
+		reply = btd_error_failed(nc->msg, err_msg);
 		g_dbus_send_message(connection, reply);
 	}
 
@@ -399,10 +367,10 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 	id = bnep_service_id(svc);
 	nc = find_connection(peer->connections, id);
 	if (!nc)
-		return not_supported(msg);
+		return btd_error_not_supported(msg);
 
 	if (nc->state != DISCONNECTED)
-		return already_connected(msg);
+		return btd_error_already_connected(msg);
 
 	nc->io = bt_io_connect(BT_IO_L2CAP, connect_cb, nc,
 				NULL, &err,
@@ -415,7 +383,7 @@ static DBusMessage *connection_connect(DBusConnection *conn,
 	if (!nc->io) {
 		DBusMessage *reply;
 		error("%s", err->message);
-		reply = connection_attempt_failed(msg, err->message);
+		reply = btd_error_failed(msg, err->message);
 		g_error_free(err);
 		return reply;
 	}
@@ -438,7 +406,7 @@ static DBusMessage *connection_cancel(DBusConnection *conn,
 	const char *caller = dbus_message_get_sender(msg);
 
 	if (!g_str_equal(owner, caller))
-		return not_permited(msg);
+		return btd_error_not_authorized(msg);
 
 	connection_destroy(conn, nc);
 
@@ -460,7 +428,7 @@ static DBusMessage *connection_disconnect(DBusConnection *conn,
 		return connection_cancel(conn, msg, nc);
 	}
 
-	return not_connected(msg);
+	return btd_error_not_connected(msg);
 }
 
 static DBusMessage *connection_get_properties(DBusConnection *conn,

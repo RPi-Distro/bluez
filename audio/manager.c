@@ -613,7 +613,6 @@ static void hf_io_cb(GIOChannel *chan, gpointer data)
 
 drop:
 	g_io_channel_shutdown(chan, TRUE, NULL);
-	g_io_channel_unref(chan);
 }
 
 static int headset_server_init(struct audio_adapter *adapter)
@@ -1264,10 +1263,8 @@ void audio_manager_exit(void)
 	if (enabled.media)
 		btd_unregister_adapter_driver(&media_server_driver);
 
-	if (enabled.headset) {
+	if (enabled.headset)
 		btd_unregister_adapter_driver(&headset_server_driver);
-		telephony_exit();
-	}
 
 	if (enabled.gateway)
 		btd_unregister_adapter_driver(&gateway_server_driver);

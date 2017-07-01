@@ -206,10 +206,11 @@ static void stream_state_changed(struct avdtp_stream *stream,
 	source->stream_state = new_state;
 }
 
-static DBusHandlerResult error_failed(DBusConnection *conn,
-					DBusMessage *msg, const char * desc)
+static void error_failed(DBusConnection *conn, DBusMessage *msg,
+							const char *desc)
 {
-	return error_common_reply(conn, msg, ERROR_INTERFACE ".Failed", desc);
+	DBusMessage *reply = btd_error_failed(msg, desc);
+	g_dbus_send_message(conn, reply);
 }
 
 static gboolean stream_setup_retry(gpointer user_data)
@@ -386,21 +387,16 @@ static DBusMessage *source_connect(DBusConnection *conn,
 		source->session = avdtp_get(&dev->src, &dev->dst);
 
 	if (!source->session)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Unable to get a session");
+		return btd_error_failed(msg, "Unable to get a session");
 
 	if (source->connect || source->disconnect)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"%s", strerror(EBUSY));
+		return btd_error_busy(msg);
 
 	if (source->stream_state >= AVDTP_STATE_OPEN)
-		return g_dbus_create_error(msg, ERROR_INTERFACE
-						".AlreadyConnected",
-						"Device Already Connected");
+		return btd_error_already_connected(msg);
 
 	if (!source_setup_stream(source, NULL))
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Failed to create a stream");
+		return btd_error_failed(msg, "Failed to create a stream");
 
 	dev->auto_connect = FALSE;
 
@@ -423,13 +419,10 @@ static DBusMessage *source_disconnect(DBusConnection *conn,
 	int err;
 
 	if (!source->session)
-		return g_dbus_create_error(msg, ERROR_INTERFACE
-						".NotConnected",
-						"Device not Connected");
+		return btd_error_not_connected(msg);
 
 	if (source->connect || source->disconnect)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"%s", strerror(EBUSY));
+		return btd_error_busy(msg);
 
 	if (source->stream_state < AVDTP_STATE_OPEN) {
 		DBusMessage *reply = dbus_message_new_method_return(msg);
@@ -442,8 +435,7 @@ static DBusMessage *source_disconnect(DBusConnection *conn,
 
 	err = avdtp_close(source->session, source->stream, FALSE);
 	if (err < 0)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"%s", strerror(-err));
+		return btd_error_failed(msg, strerror(-err));
 
 	pending = g_new0(struct pending_request, 1);
 	pending->conn = dbus_connection_ref(conn);

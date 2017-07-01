@@ -151,16 +151,13 @@ static void headset_state_changed(struct audio_device *dev,
 
 	switch (new_state) {
 	case HEADSET_STATE_DISCONNECTED:
-		if (old_state != HEADSET_STATE_CONNECTING)
-			media_endpoint_clear_configuration(endpoint);
+		media_endpoint_clear_configuration(endpoint);
+		break;
 	case HEADSET_STATE_CONNECTING:
+		media_endpoint_set_configuration(endpoint, dev, NULL, 0,
+						headset_setconf_cb, dev);
 		break;
 	case HEADSET_STATE_CONNECTED:
-		if (old_state != HEADSET_STATE_PLAY_IN_PROGRESS &&
-				old_state != HEADSET_STATE_PLAYING)
-			media_endpoint_set_configuration(endpoint, dev, NULL,
-							0, headset_setconf_cb,
-									dev);
 		break;
 	case HEADSET_STATE_PLAY_IN_PROGRESS:
 		break;
@@ -318,23 +315,19 @@ static DBusMessage *register_endpoint(DBusConnection *conn, DBusMessage *msg,
 	dbus_message_iter_next(&args);
 
 	if (media_adapter_find_endpoint(adapter, sender, path, NULL) != NULL)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-				"Endpoint already registered");
+		return btd_error_already_exists(msg);
 
 	dbus_message_iter_recurse(&args, &props);
 	if (dbus_message_iter_get_arg_type(&props) != DBUS_TYPE_DICT_ENTRY)
-		return g_dbus_create_error(msg, ERROR_INTERFACE
-					".Failed", "Invalid argument");
+		return btd_error_invalid_args(msg);
 
 	if (parse_properties(&props, &uuid, &delay_reporting, &codec,
 				&capabilities, &size) || uuid == NULL)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Invalid argument");
+		return btd_error_invalid_args(msg);
 
 	if (media_endpoint_create(adapter, sender, path, uuid, delay_reporting,
 				codec, capabilities, size) == FALSE)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-						"Invalid argument");
+		return btd_error_invalid_args(msg);
 
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
@@ -355,8 +348,7 @@ static DBusMessage *unregister_endpoint(DBusConnection *conn, DBusMessage *msg,
 
 	endpoint = media_adapter_find_endpoint(adapter, sender, path, NULL);
 	if (endpoint == NULL)
-		return g_dbus_create_error(msg, ERROR_INTERFACE ".Failed",
-				"Endpoint not registered");
+		return btd_error_does_not_exist(msg);
 
 	media_endpoint_remove(endpoint);
 
