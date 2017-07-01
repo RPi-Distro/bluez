@@ -40,20 +40,27 @@
 
 #define OUT_BUFFER_SIZE			2560
 #define OUT_STREAM_FRAMES		2560
+#define IN_STREAM_FRAMES		5292
 
 #define SOCKET_POLL_TIMEOUT_MS		500
 
 static int listen_sk = -1;
 static int ipc_sk = -1;
 
+static int sco_fd = -1;
+static uint16_t sco_mtu = 0;
+static pthread_mutex_t sco_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static pthread_t ipc_th = 0;
 static pthread_mutex_t sk_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static struct sco_stream_in *sco_stream_in = NULL;
+static struct sco_stream_out *sco_stream_out = NULL;
 
 struct sco_audio_config {
 	uint32_t rate;
 	uint32_t channels;
 	uint32_t frame_num;
-	uint16_t mtu;
 	audio_format_t format;
 };
 
@@ -61,9 +68,35 @@ struct sco_stream_out {
 	struct audio_stream_out stream;
 
 	struct sco_audio_config cfg;
-	int fd;
 
 	uint8_t *downmix_buf;
+	uint8_t *cache;
+	size_t cache_len;
+
+	size_t samples;
+	struct timespec start;
+
+	struct resampler_itfe *resampler;
+	int16_t *resample_buf;
+	uint32_t resample_frame_num;
+};
+
+static void sco_close_socket(void)
+{
+	DBG("sco fd %d", sco_fd);
+
+	if (sco_fd < 0)
+		return;
+
+	shutdown(sco_fd, SHUT_RDWR);
+	close(sco_fd);
+	sco_fd = -1;
+}
+
+struct sco_stream_in {
+	struct audio_stream_in stream;
+
+	struct sco_audio_config cfg;
 
 	struct resampler_itfe *resampler;
 	int16_t *resample_buf;
@@ -73,6 +106,7 @@ struct sco_stream_out {
 struct sco_dev {
 	struct audio_hw_device dev;
 	struct sco_stream_out *out;
+	struct sco_stream_in *in;
 };
 
 /*
@@ -231,8 +265,7 @@ static int sco_ipc_cmd(uint8_t service_id, uint8_t opcode, uint16_t len,
 			goto failed;
 	}
 
-	if (rsp_len)
-		*rsp_len = cmd.len;
+	*rsp_len = cmd.len;
 
 	return SCO_STATUS_SUCCESS;
 
@@ -244,18 +277,26 @@ failed:
 	return SCO_STATUS_FAILED;
 }
 
-static int ipc_connect_sco(int *fd, uint16_t *mtu)
+static int ipc_get_sco_fd(void)
 {
-	struct sco_rsp_connect rsp;
-	size_t rsp_len = sizeof(rsp);
-	int ret;
+	int ret = SCO_STATUS_SUCCESS;
 
-	DBG("");
+	pthread_mutex_lock(&sco_mutex);
 
-	ret = sco_ipc_cmd(SCO_SERVICE_ID, SCO_OP_CONNECT, 0, NULL, &rsp_len,
-								&rsp, fd);
+	if (sco_fd < 0) {
+		struct sco_rsp_get_fd rsp;
+		size_t rsp_len = sizeof(rsp);
 
-	*mtu = rsp.mtu;
+		DBG("Getting SCO fd");
+
+		ret = sco_ipc_cmd(SCO_SERVICE_ID, SCO_OP_GET_FD, 0, NULL,
+						&rsp_len, &rsp, &sco_fd);
+
+		/* Sometimes mtu returned is wrong */
+		sco_mtu = /* rsp.mtu */ 48;
+	}
+
+	pthread_mutex_unlock(&sco_mutex);
 
 	return ret;
 }
@@ -277,53 +318,100 @@ static void downmix_to_mono(struct sco_stream_out *out, const uint8_t *buffer,
 	}
 }
 
+static uint64_t timespec_diff_us(struct timespec *a, struct timespec *b)
+{
+	struct timespec res;
+
+	res.tv_sec = a->tv_sec - b->tv_sec;
+	res.tv_nsec = a->tv_nsec - b->tv_nsec;
+
+	if (res.tv_nsec < 0) {
+		res.tv_sec--;
+		res.tv_nsec += 1000000000ll; /* 1sec */
+	}
+
+	return res.tv_sec * 1000000ll + res.tv_nsec / 1000ll;
+}
+
 static bool write_data(struct sco_stream_out *out, const uint8_t *buffer,
 								size_t bytes)
 {
 	struct pollfd pfd;
 	size_t len, written = 0;
 	int ret;
-	uint16_t mtu = /* out->cfg.mtu */ 48;
-	uint8_t read_buf[mtu];
-	bool do_write = false;
+	uint8_t *p;
+	uint64_t audio_sent_us, audio_passed_us;
 
-	pfd.fd = out->fd;
-	pfd.events = POLLOUT | POLLIN | POLLHUP | POLLNVAL;
+	pfd.fd = sco_fd;
+	pfd.events = POLLOUT | POLLHUP | POLLNVAL;
 
 	while (bytes > written) {
+		struct timespec now;
 
 		/* poll for sending */
 		if (poll(&pfd, 1, SOCKET_POLL_TIMEOUT_MS) == 0) {
-			DBG("timeout fd %d", out->fd);
+			DBG("timeout fd %d", sco_fd);
 			return false;
 		}
 
 		if (pfd.revents & (POLLHUP | POLLNVAL)) {
-			error("error fd %d, events 0x%x", out->fd, pfd.revents);
+			error("error fd %d, events 0x%x", sco_fd, pfd.revents);
 			return false;
 		}
 
-		/* FIXME synchronize by time instead of read() */
-		if (pfd.revents & POLLIN) {
-			ret = read(out->fd, read_buf, mtu);
-			if (ret < 0) {
-				error("Error reading fd %d (%s)", out->fd,
-							strerror(errno));
-				return false;
-			}
+		len = bytes - written > sco_mtu ? sco_mtu : bytes - written;
 
-			do_write = true;
+		clock_gettime(CLOCK_REALTIME, &now);
+		/* Mark start of the stream */
+		if (!out->samples)
+			memcpy(&out->start, &now, sizeof(out->start));
+
+		audio_sent_us = out->samples * 1000000ll / AUDIO_STREAM_SCO_RATE;
+		audio_passed_us = timespec_diff_us(&now, &out->start);
+		if ((int) (audio_sent_us - audio_passed_us) > 1500) {
+			struct timespec timeout = {0,
+						(audio_sent_us -
+						 audio_passed_us) * 1000};
+			DBG("Sleeping for %d ms",
+					(int) (audio_sent_us - audio_passed_us));
+			nanosleep(&timeout, NULL);
+		} else if ((int)(audio_passed_us - audio_sent_us) > 50000) {
+			DBG("\n\nResync\n\n");
+			out->samples = 0;
+			memcpy(&out->start, &now, sizeof(out->start));
 		}
 
-		if (!do_write)
-			continue;
+		if (out->cache_len) {
+			DBG("First packet cache_len %zd", out->cache_len);
+			memcpy(out->cache + out->cache_len, buffer,
+						sco_mtu - out->cache_len);
+			p = out->cache;
+		} else {
+			if (bytes - written >= sco_mtu)
+				p = (void *) buffer + written;
+			else {
+				memcpy(out->cache, buffer + written,
+							bytes - written);
+				out->cache_len = bytes - written;
+				DBG("Last packet, cache %zd bytes",
+							bytes - written);
+				written += bytes - written;
+				continue;
+			}
+		}
 
-		len = bytes - written > mtu ? mtu : bytes - written;
-
-		ret = write(out->fd, buffer + written, len);
+		ret = write(sco_fd, p, len);
 		if (ret > 0) {
-			written += ret;
-			do_write = false;
+			if (out->cache_len) {
+				written = sco_mtu - out->cache_len;
+				out->cache_len = 0;
+			} else
+				written += ret;
+
+			out->samples += ret / 2;
+
+			DBG("written %d samples %zd total %zd bytes",
+					ret, out->samples, written);
 			continue;
 		}
 
@@ -335,7 +423,7 @@ static bool write_data(struct sco_stream_out *out, const uint8_t *buffer,
 
 		if (errno != EINTR) {
 			ret = errno;
-			error("write failed (%d) fd %d bytes %zd", ret, out->fd,
+			error("write failed (%d) fd %d bytes %zd", ret, sco_fd,
 									bytes);
 			return false;
 		}
@@ -355,7 +443,10 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
 	void *send_buf = out->downmix_buf;
 	size_t total;
 
-	DBG("write to fd %d bytes %zu", out->fd, bytes);
+	DBG("write to fd %d bytes %zu", sco_fd, bytes);
+
+	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
+		return -1;
 
 	if (!out->downmix_buf) {
 		error("sco: downmix buffer not initialized");
@@ -418,6 +509,10 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
 	struct sco_stream_out *out = (struct sco_stream_out *) stream;
 	size_t size = audio_stream_frame_size(&out->stream.common) *
 							out->cfg.frame_num;
+
+	/* buffer size without resampling */
+	if (out->cfg.rate == AUDIO_STREAM_SCO_RATE)
+		size = 576 * 2;
 
 	DBG("buf size %zd", size);
 
@@ -526,23 +621,24 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 {
 	struct sco_dev *adev = (struct sco_dev *) dev;
 	struct sco_stream_out *out;
-	int fd = -1;
 	int chan_num, ret;
 	size_t resample_size;
-	uint16_t mtu;
 
-	DBG("");
+	DBG("config %p device flags 0x%02x", config, devices);
 
-	if (ipc_connect_sco(&fd, &mtu) != SCO_STATUS_SUCCESS) {
-		error("sco: cannot get fd");
+	if (sco_stream_out) {
+		DBG("stream_out already open");
 		return -EIO;
 	}
 
-	DBG("got sco fd %d mtu %u", fd, mtu);
+	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
+		DBG("SCO is not connected yet; get fd on write()");
 
 	out = calloc(1, sizeof(struct sco_stream_out));
 	if (!out)
 		return -ENOMEM;
+
+	DBG("stream %p sco fd %d mtu %u", out, sco_fd, sco_mtu);
 
 	out->stream.common.get_sample_rate = out_get_sample_rate;
 	out->stream.common.set_sample_rate = out_set_sample_rate;
@@ -561,12 +657,21 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 	out->stream.write = out_write;
 	out->stream.get_render_position = out_get_render_position;
 
-	/* Configuration for Android */
-	out->cfg.format = AUDIO_STREAM_DEFAULT_FORMAT;
-	out->cfg.channels = AUDIO_CHANNEL_OUT_STEREO;
-	out->cfg.rate = AUDIO_STREAM_DEFAULT_RATE;
+	if (config) {
+		DBG("config: rate %u chan mask %x format %d offload %p",
+				config->sample_rate, config->channel_mask,
+				config->format, &config->offload_info);
+
+		out->cfg.format = config->format;
+		out->cfg.channels = config->channel_mask;
+		out->cfg.rate = config->sample_rate;
+	} else {
+		out->cfg.format = AUDIO_STREAM_DEFAULT_FORMAT;
+		out->cfg.channels = AUDIO_CHANNEL_OUT_STEREO;
+		out->cfg.rate = AUDIO_STREAM_DEFAULT_RATE;
+	}
+
 	out->cfg.frame_num = OUT_STREAM_FRAMES;
-	out->cfg.mtu = mtu;
 
 	out->downmix_buf = malloc(out_get_buffer_size(&out->stream.common));
 	if (!out->downmix_buf) {
@@ -574,7 +679,15 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 		return -ENOMEM;
 	}
 
-	DBG("size %zd", out_get_buffer_size(&out->stream.common));
+	out->cache = malloc(sco_mtu);
+	if (!out->cache) {
+		free(out->downmix_buf);
+		free(out);
+		return -ENOMEM;
+	}
+
+	if (out->cfg.rate == AUDIO_STREAM_SCO_RATE)
+		goto skip_resampler;
 
 	/* Channel numbers for resampler */
 	chan_num = 1;
@@ -583,12 +696,9 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 						RESAMPLER_QUALITY_DEFAULT, NULL,
 						&out->resampler);
 	if (ret) {
-		error("Failed to create resampler (%s)", strerror(ret));
+		error("Failed to create resampler (%s)", strerror(-ret));
 		goto failed;
 	}
-
-	DBG("Created resampler: input rate [%d] output rate [%d] channels [%d]",
-				out->cfg.rate, AUDIO_STREAM_SCO_RATE, chan_num);
 
 	out->resample_frame_num = get_resample_frame_num(AUDIO_STREAM_SCO_RATE,
 							out->cfg.rate,
@@ -608,22 +718,25 @@ static int sco_open_output_stream(struct audio_hw_device *dev,
 		goto failed;
 	}
 
-	DBG("resampler: frame num %u buf size %zd bytes",
-					out->resample_frame_num, resample_size);
-
+	DBG("Resampler: input %d output %d chan %d frames %u size %zd",
+				out->cfg.rate, AUDIO_STREAM_SCO_RATE, chan_num,
+				out->resample_frame_num, resample_size);
+skip_resampler:
 	*stream_out = &out->stream;
 	adev->out = out;
-	out->fd = fd;
+	sco_stream_out = out;
 
 	return 0;
 failed:
 	if (out->resampler)
 		release_resampler(out->resampler);
 
+	free(out->cache);
 	free(out->downmix_buf);
 	free(out);
-	stream_out = NULL;
+	*stream_out = NULL;
 	adev->out = NULL;
+	sco_stream_out = NULL;
 
 	return ret;
 }
@@ -634,19 +747,26 @@ static void sco_close_output_stream(struct audio_hw_device *dev,
 	struct sco_dev *sco_dev = (struct sco_dev *) dev;
 	struct sco_stream_out *out = (struct sco_stream_out *) stream_out;
 
-	DBG("dev %p stream %p fd %d", dev, stream_out, sco_dev->out->fd);
+	DBG("dev %p stream %p fd %d", dev, out, sco_fd);
 
-	if (sco_dev->out && sco_dev->out->fd) {
-		close(sco_dev->out->fd);
-		sco_dev->out->fd = -1;
+	if (out->resampler) {
+		release_resampler(out->resampler);
+		free(out->resample_buf);
 	}
 
-	if (out->resampler)
-		release_resampler(out->resampler);
-
+	free(out->cache);
 	free(out->downmix_buf);
 	free(out);
 	sco_dev->out = NULL;
+
+	pthread_mutex_lock(&sco_mutex);
+
+	sco_stream_out = NULL;
+
+	if (!sco_stream_in)
+		sco_close_socket();
+
+	pthread_mutex_unlock(&sco_mutex);
 }
 
 static int sco_set_parameters(struct audio_hw_device *dev,
@@ -715,23 +835,360 @@ static size_t sco_get_input_buffer_size(const struct audio_hw_device *dev,
 	return -ENOSYS;
 }
 
-static int sco_open_input_stream(struct audio_hw_device *dev,
-					audio_io_handle_t handle,
-					audio_devices_t devices,
-					struct audio_config *config,
-					struct audio_stream_in **stream_in)
+static uint32_t in_get_sample_rate(const struct audio_stream *stream)
+{
+	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+
+	DBG("rate %u", in->cfg.rate);
+
+	return in->cfg.rate;
+}
+
+static int in_set_sample_rate(struct audio_stream *stream, uint32_t rate)
+{
+	DBG("rate %u", rate);
+
+	return 0;
+}
+
+static size_t in_get_buffer_size(const struct audio_stream *stream)
+{
+	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+	size_t size = audio_stream_frame_size(&in->stream.common) *
+							in->cfg.frame_num;
+
+	/* buffer size without resampling */
+	if (in->cfg.rate == AUDIO_STREAM_SCO_RATE)
+		size = 576;
+
+	DBG("buf size %zd", size);
+
+	return size;
+}
+
+static uint32_t in_get_channels(const struct audio_stream *stream)
+{
+	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+
+	DBG("channels num: %u", popcount(in->cfg.channels));
+
+	return in->cfg.channels;
+}
+
+static audio_format_t in_get_format(const struct audio_stream *stream)
+{
+	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+
+	DBG("format: %u", in->cfg.format);
+
+	return in->cfg.format;
+}
+
+static int in_set_format(struct audio_stream *stream, audio_format_t format)
+{
+	DBG("");
+
+	return -ENOSYS;
+}
+
+static int in_standby(struct audio_stream *stream)
 {
 	DBG("");
 
 	return 0;
 }
 
-static void sco_close_input_stream(struct audio_hw_device *dev,
-					struct audio_stream_in *stream_in)
+static int in_dump(const struct audio_stream *stream, int fd)
 {
 	DBG("");
 
-	free(stream_in);
+	return -ENOSYS;
+}
+
+static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+{
+	DBG("%s", kvpairs);
+
+	return 0;
+}
+
+static char *in_get_parameters(const struct audio_stream *stream,
+							const char *keys)
+{
+	DBG("");
+
+	return strdup("");
+}
+
+static int in_add_audio_effect(const struct audio_stream *stream,
+							effect_handle_t effect)
+{
+	DBG("");
+
+	return -ENOSYS;
+}
+
+static int in_remove_audio_effect(const struct audio_stream *stream,
+							effect_handle_t effect)
+{
+	DBG("");
+
+	return -ENOSYS;
+}
+
+static int in_set_gain(struct audio_stream_in *stream, float gain)
+{
+	DBG("");
+
+	return -ENOSYS;
+}
+
+static bool read_data(struct sco_stream_in *in, char *buffer, size_t bytes)
+{
+	struct pollfd pfd;
+	size_t len, read_bytes = 0;
+
+	pfd.fd = sco_fd;
+	pfd.events = POLLIN | POLLHUP | POLLNVAL;
+
+	while (bytes > read_bytes) {
+		int ret;
+
+		/* poll for reading */
+		if (poll(&pfd, 1, SOCKET_POLL_TIMEOUT_MS) == 0) {
+			DBG("timeout fd %d", sco_fd);
+			return false;
+		}
+
+		if (pfd.revents & (POLLHUP | POLLNVAL)) {
+			error("error fd %d, events 0x%x", sco_fd, pfd.revents);
+			return false;
+		}
+
+		len = bytes - read_bytes > sco_mtu ? sco_mtu :
+							bytes - read_bytes;
+
+		ret = read(sco_fd, buffer + read_bytes, len);
+		if (ret > 0) {
+			read_bytes += ret;
+			DBG("read %d total %zd", ret, read_bytes);
+			continue;
+		}
+
+		if (errno == EAGAIN) {
+			ret = errno;
+			warn("read failed (%d)", ret);
+			continue;
+		}
+
+		if (errno != EINTR) {
+			ret = errno;
+			error("read failed (%d) fd %d bytes %zd", ret, sco_fd,
+									bytes);
+			return false;
+		}
+	}
+
+	DBG("read %zd bytes", read_bytes);
+
+	return true;
+}
+
+static ssize_t in_read(struct audio_stream_in *stream, void *buffer,
+								size_t bytes)
+{
+	struct sco_stream_in *in = (struct sco_stream_in *) stream;
+	size_t frame_size = audio_stream_frame_size(&stream->common);
+	size_t frame_num = bytes / frame_size;
+	size_t input_frame_num = frame_num;
+	void *read_buf = buffer;
+	size_t total = bytes;
+	int ret;
+
+	DBG("Read from fd %d bytes %zu", sco_fd, bytes);
+
+	if (ipc_get_sco_fd() != SCO_STATUS_SUCCESS)
+		return -1;
+
+	if (!in->resampler && in->cfg.rate != AUDIO_STREAM_SCO_RATE) {
+		error("Cannot find resampler");
+		return -1;
+	}
+
+	if (in->resampler) {
+		input_frame_num = get_resample_frame_num(AUDIO_STREAM_SCO_RATE,
+							in->cfg.rate,
+							frame_num, 0);
+		if (input_frame_num > in->resample_frame_num) {
+			DBG("resize input frames from %zd to %d",
+				input_frame_num, in->resample_frame_num);
+			input_frame_num = in->resample_frame_num;
+		}
+
+		read_buf = in->resample_buf;
+
+		total = input_frame_num * sizeof(int16_t) * 1;
+	}
+
+	if(!read_data(in, read_buf, total))
+		return -1;
+
+	if (in->resampler) {
+		ret = in->resampler->resample_from_input(in->resampler,
+							in->resample_buf,
+							&input_frame_num,
+							(int16_t *) buffer,
+							&frame_num);
+		if (ret) {
+			error("Failed to resample frames: %zd input %zd (%s)",
+					frame_num, input_frame_num,
+					strerror(ret));
+			return -1;
+		}
+
+		DBG("resampler: remain %zd output %zd frames", input_frame_num,
+								frame_num);
+	}
+
+	return bytes;
+}
+
+static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream)
+{
+	DBG("");
+
+	return -ENOSYS;
+}
+
+static int sco_open_input_stream(struct audio_hw_device *dev,
+					audio_io_handle_t handle,
+					audio_devices_t devices,
+					struct audio_config *config,
+					struct audio_stream_in **stream_in)
+{
+	struct sco_dev *sco_dev = (struct sco_dev *) dev;
+	struct sco_stream_in *in;
+	int chan_num, ret;
+	size_t resample_size;
+
+	DBG("config %p device flags 0x%02x", config, devices);
+
+	if (sco_stream_in) {
+		DBG("stream_in already open");
+		ret = -EIO;
+		goto failed2;
+	}
+
+	in = calloc(1, sizeof(struct sco_stream_in));
+	if (!in)
+		return -ENOMEM;
+
+	DBG("stream %p sco fd %d mtu %u", in, sco_fd, sco_mtu);
+
+	in->stream.common.get_sample_rate = in_get_sample_rate;
+	in->stream.common.set_sample_rate = in_set_sample_rate;
+	in->stream.common.get_buffer_size = in_get_buffer_size;
+	in->stream.common.get_channels = in_get_channels;
+	in->stream.common.get_format = in_get_format;
+	in->stream.common.set_format = in_set_format;
+	in->stream.common.standby = in_standby;
+	in->stream.common.dump = in_dump;
+	in->stream.common.set_parameters = in_set_parameters;
+	in->stream.common.get_parameters = in_get_parameters;
+	in->stream.common.add_audio_effect = in_add_audio_effect;
+	in->stream.common.remove_audio_effect = in_remove_audio_effect;
+	in->stream.set_gain = in_set_gain;
+	in->stream.read = in_read;
+	in->stream.get_input_frames_lost = in_get_input_frames_lost;
+
+	if (config) {
+		DBG("config: rate %u chan mask %x format %d offload %p",
+				config->sample_rate, config->channel_mask,
+				config->format, &config->offload_info);
+
+		in->cfg.format = config->format;
+		in->cfg.channels = config->channel_mask;
+		in->cfg.rate = config->sample_rate;
+	} else {
+		in->cfg.format = AUDIO_STREAM_DEFAULT_FORMAT;
+		in->cfg.channels = AUDIO_CHANNEL_OUT_MONO;
+		in->cfg.rate = AUDIO_STREAM_DEFAULT_RATE;
+	}
+
+	in->cfg.frame_num = IN_STREAM_FRAMES;
+
+	if (in->cfg.rate == AUDIO_STREAM_SCO_RATE)
+		goto skip_resampler;
+
+	/* Channel numbers for resampler */
+	chan_num = 1;
+
+	ret = create_resampler(AUDIO_STREAM_SCO_RATE, in->cfg.rate, chan_num,
+						RESAMPLER_QUALITY_DEFAULT, NULL,
+						&in->resampler);
+	if (ret) {
+		error("Failed to create resampler (%s)", strerror(-ret));
+		goto failed;
+	}
+
+	in->resample_frame_num = get_resample_frame_num(AUDIO_STREAM_SCO_RATE,
+							in->cfg.rate,
+							in->cfg.frame_num, 0);
+
+	resample_size = sizeof(int16_t) * chan_num * in->resample_frame_num;
+
+	in->resample_buf = malloc(resample_size);
+	if (!in->resample_buf) {
+		error("failed to allocate resample buffer for %d frames",
+							in->resample_frame_num);
+		goto failed;
+	}
+
+	DBG("Resampler: input %d output %d chan %d frames %u size %zd",
+				AUDIO_STREAM_SCO_RATE, in->cfg.rate, chan_num,
+				in->resample_frame_num, resample_size);
+skip_resampler:
+	*stream_in = &in->stream;
+	sco_dev->in = in;
+	sco_stream_in = in;
+
+	return 0;
+failed:
+	if (in->resampler)
+		release_resampler(in->resampler);
+	free(in);
+failed2:
+	*stream_in = NULL;
+	sco_dev->in = NULL;
+	sco_stream_in = NULL;
+
+	return ret;
+}
+
+static void sco_close_input_stream(struct audio_hw_device *dev,
+					struct audio_stream_in *stream_in)
+{
+	struct sco_dev *sco_dev = (struct sco_dev *) dev;
+	struct sco_stream_in *in = (struct sco_stream_in *) stream_in;
+
+	DBG("dev %p stream %p fd %d", dev, in, sco_fd);
+
+	if (in->resampler) {
+		release_resampler(in->resampler);
+		free(in->resample_buf);
+	}
+
+	free(in);
+	sco_dev->in = NULL;
+
+	pthread_mutex_lock(&sco_mutex);
+
+	sco_stream_in = NULL;
+
+	if (!sco_stream_out)
+		sco_close_socket();
+
+	pthread_mutex_unlock(&sco_mutex);
 }
 
 static int sco_dump(const audio_hw_device_t *device, int fd)
@@ -788,14 +1245,12 @@ static void *ipc_handler(void *data)
 		/* Check if socket is still alive. Empty while loop.*/
 		while (poll(&pfd, 1, -1) < 0 && errno == EINTR);
 
-		if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-			info("SCO HAL: Socket closed");
+		info("SCO HAL: Socket closed");
 
-			pthread_mutex_lock(&sk_mutex);
-			close(ipc_sk);
-			ipc_sk = -1;
-			pthread_mutex_unlock(&sk_mutex);
-		}
+		pthread_mutex_lock(&sk_mutex);
+		close(ipc_sk);
+		ipc_sk = -1;
+		pthread_mutex_unlock(&sk_mutex);
 	}
 
 	info("Closing SCO IPC thread");

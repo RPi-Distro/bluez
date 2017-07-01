@@ -53,7 +53,7 @@
 		printf(color fmt COLOR_OFF "\n", ## args)
 
 #define print_summary(label, color, value, fmt, args...) \
-			printf("%-45s " color "%-10s" COLOR_OFF fmt "\n", \
+			printf("%-52s " color "%-10s" COLOR_OFF fmt "\n", \
 							label, value, ## args)
 
 #define print_progress(name, color, fmt, args...) \
@@ -125,6 +125,20 @@ void tester_print(const char *format, ...)
 	va_list ap;
 
 	if (tester_use_quiet())
+		return;
+
+	printf("  %s", COLOR_WHITE);
+	va_start(ap, format);
+	vprintf(format, ap);
+	va_end(ap);
+	printf("%s\n", COLOR_OFF);
+}
+
+void tester_debug(const char *format, ...)
+{
+	va_list ap;
+
+	if (!tester_use_debug())
 		return;
 
 	printf("  %s", COLOR_WHITE);
@@ -433,9 +447,9 @@ void tester_pre_setup_failed(void)
 	if (test->stage != TEST_STAGE_PRE_SETUP)
 		return;
 
-	test->stage = TEST_STAGE_SETUP;
+	print_progress(test->name, COLOR_RED, "pre setup failed");
 
-	tester_setup_failed();
+	g_idle_add(done_callback, test);
 }
 
 void tester_setup_complete(void)
@@ -467,14 +481,17 @@ void tester_setup_failed(void)
 	if (test->stage != TEST_STAGE_SETUP)
 		return;
 
+	test->stage = TEST_STAGE_POST_TEARDOWN;
+
 	if (test->timeout_id > 0) {
 		g_source_remove(test->timeout_id);
 		test->timeout_id = 0;
 	}
 
 	print_progress(test->name, COLOR_RED, "setup failed");
+	print_progress(test->name, COLOR_MAGENTA, "teardown");
 
-	g_idle_add(done_callback, test);
+	test->post_teardown_func(test->test_data);
 }
 
 void tester_test_passed(void)

@@ -306,12 +306,16 @@ static void external_report_reference_cb(guint8 status, const guint8 *pdu,
 					external_service_char_cb, hogdev);
 }
 
-static int report_type_cmp(gconstpointer a, gconstpointer b)
+static int report_cmp(gconstpointer a, gconstpointer b)
 {
-	const struct report *report = a;
-	uint8_t type = GPOINTER_TO_UINT(b);
+	const struct report *ra = a, *rb = b;
 
-	return report->type - type;
+	/* sort by type first.. */
+	if (ra->type != rb->type)
+		return ra->type - rb->type;
+
+	/* ..then by id */
+	return ra->id - rb->id;
 }
 
 static void output_written_cb(guint8 status, const guint8 *pdu,
@@ -326,40 +330,41 @@ static void output_written_cb(guint8 status, const guint8 *pdu,
 static void forward_report(struct uhid_event *ev, void *user_data)
 {
 	struct hog_device *hogdev = user_data;
-	struct report *report;
+	struct report *report, cmp;
 	GSList *l;
-	void *data;
+	uint8_t *data;
 	int size;
-	guint type;
 
-	if (hogdev->has_report_id) {
-		data = ev->u.output.data + 1;
-		size = ev->u.output.size - 1;
-	} else {
-		data = ev->u.output.data;
-		size = ev->u.output.size;
-	}
-
-	switch (ev->type) {
-	case UHID_OUTPUT:
-		type = HOG_REPORT_TYPE_OUTPUT;
+	switch (ev->u.output.rtype) {
+	case UHID_FEATURE_REPORT:
+		cmp.type = HOG_REPORT_TYPE_FEATURE;
 		break;
-	case UHID_FEATURE:
-		type = HOG_REPORT_TYPE_FEATURE;
+	case UHID_OUTPUT_REPORT:
+		cmp.type = HOG_REPORT_TYPE_OUTPUT;
+		break;
+	case UHID_INPUT_REPORT:
+		cmp.type = HOG_REPORT_TYPE_INPUT;
 		break;
 	default:
 		return;
 	}
 
-	l = g_slist_find_custom(hogdev->reports, GUINT_TO_POINTER(type),
-							report_type_cmp);
+	cmp.id = 0;
+	data = ev->u.output.data;
+	size = ev->u.output.size;
+	if (hogdev->has_report_id && size > 0) {
+		cmp.id = *data++;
+		--size;
+	}
+
+	l = g_slist_find_custom(hogdev->reports, &cmp, report_cmp);
 	if (!l)
 		return;
 
 	report = l->data;
 
-	DBG("Sending report type %d to device 0x%04X handle 0x%X", type,
-				hogdev->id, report->decl->value_handle);
+	DBG("Sending report type %d ID %d to device 0x%04X handle 0x%X",
+		cmp.type, cmp.id, hogdev->id, report->decl->value_handle);
 
 	if (hogdev->attrib == NULL)
 		return;
@@ -512,7 +517,6 @@ static void report_map_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 	}
 
 	bt_uhid_register(hogdev->uhid, UHID_OUTPUT, forward_report, hogdev);
-	bt_uhid_register(hogdev->uhid, UHID_FEATURE, forward_report, hogdev);
 }
 
 static void info_read_cb(guint8 status, const guint8 *pdu, guint16 plen,

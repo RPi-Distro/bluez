@@ -84,7 +84,7 @@
 
 static DBusConnection *dbus_conn = NULL;
 
-static bool kernel_bg_scan = false;
+static bool kernel_conn_control = false;
 
 static GList *adapter_list = NULL;
 static unsigned int adapter_remaining = 0;
@@ -391,7 +391,7 @@ static uint8_t get_mode(const char *mode)
 static void store_adapter_info(struct btd_adapter *adapter)
 {
 	GKeyFile *key_file;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	char address[18];
 	char *str;
 	gsize length = 0;
@@ -423,7 +423,6 @@ static void store_adapter_info(struct btd_adapter *adapter)
 
 	ba2str(&adapter->bdaddr, address);
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/settings", address);
-	filename[PATH_MAX] = '\0';
 
 	create_file(filename, S_IRUSR | S_IWUSR);
 
@@ -438,6 +437,8 @@ static void trigger_pairable_timeout(struct btd_adapter *adapter);
 static void adapter_start(struct btd_adapter *adapter);
 static void adapter_stop(struct btd_adapter *adapter);
 static void trigger_passive_scanning(struct btd_adapter *adapter);
+static bool set_mode(struct btd_adapter *adapter, uint16_t opcode,
+							uint8_t mode);
 
 static void settings_changed(struct btd_adapter *adapter, uint32_t settings)
 {
@@ -480,11 +481,10 @@ static void settings_changed(struct btd_adapter *adapter, uint32_t settings)
 	if (changed_mask & MGMT_SETTING_DISCOVERABLE) {
 		g_dbus_emit_property_changed(dbus_conn, adapter->path,
 					ADAPTER_INTERFACE, "Discoverable");
-
 		store_adapter_info(adapter);
 	}
 
-	if (changed_mask & MGMT_SETTING_PAIRABLE) {
+	if (changed_mask & MGMT_SETTING_BONDABLE) {
 		g_dbus_emit_property_changed(dbus_conn, adapter->path,
 					ADAPTER_INTERFACE, "Pairable");
 
@@ -563,6 +563,15 @@ static bool set_discoverable(struct btd_adapter *adapter, uint8_t mode,
 
 	DBG("sending set mode command for index %u", adapter->dev_id);
 
+	if (kernel_conn_control) {
+		if (mode)
+			set_mode(adapter, MGMT_OP_SET_CONNECTABLE, mode);
+		else
+			/* This also disables discoverable so we're done */
+			return set_mode(adapter, MGMT_OP_SET_CONNECTABLE,
+									mode);
+	}
+
 	if (mgmt_send(adapter->mgmt, MGMT_OP_SET_DISCOVERABLE,
 				adapter->dev_id, sizeof(cp), &cp,
 				set_mode_complete, adapter, NULL) > 0)
@@ -579,7 +588,7 @@ static gboolean pairable_timeout_handler(gpointer user_data)
 
 	adapter->pairable_timeout_id = 0;
 
-	set_mode(adapter, MGMT_OP_SET_PAIRABLE, 0x00);
+	set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x00);
 
 	return FALSE;
 }
@@ -591,10 +600,7 @@ static void trigger_pairable_timeout(struct btd_adapter *adapter)
 		adapter->pairable_timeout_id = 0;
 	}
 
-	g_dbus_emit_property_changed(dbus_conn, adapter->path,
-					ADAPTER_INTERFACE, "PairableTimeout");
-
-	if (!(adapter->current_settings & MGMT_SETTING_PAIRABLE))
+	if (!(adapter->current_settings & MGMT_SETTING_BONDABLE))
 		return;
 
 	if (adapter->pairable_timeout > 0)
@@ -1064,8 +1070,6 @@ static struct btd_device *adapter_create_device(struct btd_adapter *adapter,
 	if (!device)
 		return NULL;
 
-	btd_device_set_temporary(device, TRUE);
-
 	adapter->devices = g_slist_append(adapter->devices, device);
 
 	return device;
@@ -1201,7 +1205,7 @@ static void trigger_passive_scanning(struct btd_adapter *adapter)
 	 * no need to start any discovery. The kernel will keep scanning
 	 * as long as devices are in its auto-connection list.
 	 */
-	if (kernel_bg_scan)
+	if (kernel_conn_control)
 		return;
 
 	/*
@@ -1252,7 +1256,7 @@ static void stop_passive_scanning_complete(uint8_t status, uint16_t length,
 	 * no need to stop any discovery. The kernel will handle the
 	 * auto-connection by itself.
 	 */
-	if (kernel_bg_scan)
+	if (kernel_conn_control)
 		return;
 
 	/*
@@ -1984,6 +1988,18 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 		len = sizeof(mode);
 		break;
 	case MGMT_SETTING_DISCOVERABLE:
+		if (kernel_conn_control) {
+			if (mode) {
+				set_mode(adapter, MGMT_OP_SET_CONNECTABLE,
+									mode);
+			} else {
+				opcode = MGMT_OP_SET_CONNECTABLE;
+				param = &mode;
+				len = sizeof(mode);
+				break;
+			}
+		}
+
 		memset(&cp, 0, sizeof(cp));
 		cp.val = mode;
 		if (cp.val)
@@ -1993,8 +2009,8 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 		param = &cp;
 		len = sizeof(cp);
 		break;
-	case MGMT_SETTING_PAIRABLE:
-		opcode = MGMT_OP_SET_PAIRABLE;
+	case MGMT_SETTING_BONDABLE:
+		opcode = MGMT_OP_SET_BONDABLE;
 		param = &mode;
 		len = sizeof(mode);
 		break;
@@ -2061,6 +2077,13 @@ static void property_set_discoverable(const GDBusPropertyTable *property,
 {
 	struct btd_adapter *adapter = user_data;
 
+	if (adapter->discoverable_timeout > 0 &&
+			!(adapter->current_settings & MGMT_SETTING_POWERED)) {
+		g_dbus_pending_property_error(id, ERROR_INTERFACE ".Failed",
+								"Not Powered");
+		return;
+	}
+
 	property_set_mode(adapter, MGMT_SETTING_DISCOVERABLE, iter, id);
 }
 
@@ -2095,6 +2118,7 @@ static void property_set_discoverable_timeout(
 	g_dbus_emit_property_changed(dbus_conn, adapter->path,
 				ADAPTER_INTERFACE, "DiscoverableTimeout");
 
+
 	if (adapter->current_settings & MGMT_SETTING_DISCOVERABLE)
 		set_discoverable(adapter, 0x01, adapter->discoverable_timeout);
 }
@@ -2104,7 +2128,7 @@ static gboolean property_get_pairable(const GDBusPropertyTable *property,
 {
 	struct btd_adapter *adapter = user_data;
 
-	return property_get_mode(adapter, MGMT_SETTING_PAIRABLE, iter);
+	return property_get_mode(adapter, MGMT_SETTING_BONDABLE, iter);
 }
 
 static void property_set_pairable(const GDBusPropertyTable *property,
@@ -2113,7 +2137,7 @@ static void property_set_pairable(const GDBusPropertyTable *property,
 {
 	struct btd_adapter *adapter = user_data;
 
-	property_set_mode(adapter, MGMT_SETTING_PAIRABLE, iter, id);
+	property_set_mode(adapter, MGMT_SETTING_BONDABLE, iter, id);
 }
 
 static gboolean property_get_pairable_timeout(
@@ -2142,6 +2166,9 @@ static void property_set_pairable_timeout(const GDBusPropertyTable *property,
 	g_dbus_pending_property_success(id);
 
 	store_adapter_info(adapter);
+
+	g_dbus_emit_property_changed(dbus_conn, adapter->path,
+					ADAPTER_INTERFACE, "PairableTimeout");
 
 	trigger_pairable_timeout(adapter);
 }
@@ -2807,7 +2834,7 @@ static uint8_t get_le_addr_type(GKeyFile *keyfile)
 
 static void load_devices(struct btd_adapter *adapter)
 {
-	char filename[PATH_MAX + 1];
+	char dirname[PATH_MAX];
 	char srcaddr[18];
 	GSList *keys = NULL;
 	GSList *ltks = NULL;
@@ -2818,24 +2845,26 @@ static void load_devices(struct btd_adapter *adapter)
 
 	ba2str(&adapter->bdaddr, srcaddr);
 
-	snprintf(filename, PATH_MAX, STORAGEDIR "/%s", srcaddr);
-	filename[PATH_MAX] = '\0';
+	snprintf(dirname, PATH_MAX, STORAGEDIR "/%s", srcaddr);
 
-	dir = opendir(filename);
+	dir = opendir(dirname);
 	if (!dir) {
-		error("Unable to open adapter storage directory: %s", filename);
+		error("Unable to open adapter storage directory: %s", dirname);
 		return;
 	}
 
 	while ((entry = readdir(dir)) != NULL) {
 		struct btd_device *device;
-		char filename[PATH_MAX + 1];
+		char filename[PATH_MAX];
 		GKeyFile *key_file;
 		struct link_key_info *key_info;
 		GSList *list, *ltk_info;
 		struct irk_info *irk_info;
 		struct conn_param *param;
 		uint8_t bdaddr_type;
+
+		if (entry->d_type == DT_UNKNOWN)
+			entry->d_type = util_get_dt(dirname, entry->d_name);
 
 		if (entry->d_type != DT_DIR || bachk(entry->d_name) < 0)
 			continue;
@@ -3100,7 +3129,7 @@ static void load_connections(struct btd_adapter *adapter)
 
 bool btd_adapter_get_pairable(struct btd_adapter *adapter)
 {
-	if (adapter->current_settings & MGMT_SETTING_PAIRABLE)
+	if (adapter->current_settings & MGMT_SETTING_BONDABLE)
 		return true;
 
 	return false;
@@ -3154,7 +3183,7 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 	 * adapter_auto_connect_add() function is used to maintain what to
 	 * connect.
 	 */
-	if (kernel_bg_scan)
+	if (kernel_conn_control)
 		return 0;
 
 	if (g_slist_find(adapter->connect_list, device)) {
@@ -3193,7 +3222,7 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 	if (device == adapter->connect_le)
 		adapter->connect_le = NULL;
 
-	if (kernel_bg_scan)
+	if (kernel_conn_control)
 		return;
 
 	if (!g_slist_find(adapter->connect_list, device)) {
@@ -3215,6 +3244,92 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 		return;
 
 	trigger_passive_scanning(adapter);
+}
+
+static void add_whitelist_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_rp_add_device *rp = param;
+	struct btd_adapter *adapter = user_data;
+	struct btd_device *dev;
+	char addr[18];
+
+	if (length < sizeof(*rp)) {
+		error("Too small Add Device complete event");
+		return;
+	}
+
+	ba2str(&rp->addr.bdaddr, addr);
+
+	dev = btd_adapter_find_device(adapter, &rp->addr.bdaddr,
+							rp->addr.type);
+	if (!dev) {
+		error("Add Device complete for unknown device %s", addr);
+		return;
+	}
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to add device %s: %s (0x%02x)",
+					addr, mgmt_errstr(status), status);
+		return;
+	}
+
+	DBG("%s added to kernel whitelist", addr);
+}
+
+void adapter_whitelist_add(struct btd_adapter *adapter, struct btd_device *dev)
+{
+	struct mgmt_cp_add_device cp;
+
+	if (!kernel_conn_control)
+		return;
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, device_get_address(dev));
+	cp.addr.type = BDADDR_BREDR;
+	cp.action = 0x01;
+
+	mgmt_send(adapter->mgmt, MGMT_OP_ADD_DEVICE,
+				adapter->dev_id, sizeof(cp), &cp,
+				add_whitelist_complete, adapter, NULL);
+}
+
+static void remove_whitelist_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_rp_remove_device *rp = param;
+	char addr[18];
+
+	if (length < sizeof(*rp)) {
+		error("Too small Remove Device complete event");
+		return;
+	}
+
+	ba2str(&rp->addr.bdaddr, addr);
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to remove device %s: %s (0x%02x)",
+					addr, mgmt_errstr(status), status);
+		return;
+	}
+
+	DBG("%s removed from kernel whitelist", addr);
+}
+
+void adapter_whitelist_remove(struct btd_adapter *adapter, struct btd_device *dev)
+{
+	struct mgmt_cp_remove_device cp;
+
+	if (!kernel_conn_control)
+		return;
+
+	memset(&cp, 0, sizeof(cp));
+	bacpy(&cp.addr.bdaddr, device_get_address(dev));
+	cp.addr.type = BDADDR_BREDR;
+
+	mgmt_send(adapter->mgmt, MGMT_OP_REMOVE_DEVICE,
+				adapter->dev_id, sizeof(cp), &cp,
+				remove_whitelist_complete, adapter, NULL);
 }
 
 static void add_device_complete(uint8_t status, uint16_t length,
@@ -3258,7 +3373,7 @@ void adapter_auto_connect_add(struct btd_adapter *adapter,
 	uint8_t bdaddr_type;
 	unsigned int id;
 
-	if (!kernel_bg_scan)
+	if (!kernel_conn_control)
 		return;
 
 	if (g_slist_find(adapter->connect_list, device)) {
@@ -3270,10 +3385,15 @@ void adapter_auto_connect_add(struct btd_adapter *adapter,
 	bdaddr = device_get_address(device);
 	bdaddr_type = btd_device_get_bdaddr_type(device);
 
+	if (bdaddr_type == BDADDR_BREDR) {
+		DBG("auto-connection feature is not avaiable for BR/EDR");
+		return;
+	}
+
 	memset(&cp, 0, sizeof(cp));
 	bacpy(&cp.addr.bdaddr, bdaddr);
 	cp.addr.type = bdaddr_type;
-	cp.action = 0x01;
+	cp.action = 0x02;
 
 	id = mgmt_send(adapter->mgmt, MGMT_OP_ADD_DEVICE,
 			adapter->dev_id, sizeof(cp), &cp, add_device_complete,
@@ -3314,7 +3434,7 @@ void adapter_auto_connect_remove(struct btd_adapter *adapter,
 	uint8_t bdaddr_type;
 	unsigned int id;
 
-	if (!kernel_bg_scan)
+	if (!kernel_conn_control)
 		return;
 
 	if (!g_slist_find(adapter->connect_list, device)) {
@@ -3324,6 +3444,11 @@ void adapter_auto_connect_remove(struct btd_adapter *adapter,
 
 	bdaddr = device_get_address(device);
 	bdaddr_type = btd_device_get_bdaddr_type(device);
+
+	if (bdaddr_type == BDADDR_BREDR) {
+		DBG("auto-connection feature is not avaiable for BR/EDR");
+		return;
+	}
 
 	memset(&cp, 0, sizeof(cp));
 	bacpy(&cp.addr.bdaddr, bdaddr);
@@ -3482,7 +3607,7 @@ static void convert_names_entry(char *key, char *value, void *user_data)
 {
 	char *address = user_data;
 	char *str = key;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char *data;
 	gsize length = 0;
@@ -3494,7 +3619,6 @@ static void convert_names_entry(char *key, char *value, void *user_data)
 		return;
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s", address, str);
-	filename[PATH_MAX] = '\0';
 	create_file(filename, S_IRUSR | S_IWUSR);
 
 	key_file = g_key_file_new();
@@ -3694,7 +3818,7 @@ static void convert_entry(char *key, char *value, void *user_data)
 {
 	struct device_converter *converter = user_data;
 	char type = BDADDR_BREDR;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char *data;
 	gsize length = 0;
@@ -3713,7 +3837,6 @@ static void convert_entry(char *key, char *value, void *user_data)
 
 		snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s",
 				converter->address, key);
-		filename[PATH_MAX] = '\0';
 
 		err = stat(filename, &st);
 		if (err || !S_ISDIR(st.st_mode))
@@ -3722,7 +3845,6 @@ static void convert_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info",
 			converter->address, key);
-	filename[PATH_MAX] = '\0';
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -3746,11 +3868,10 @@ static void convert_file(char *file, char *address,
 				void (*cb)(GKeyFile *key_file, void *value),
 				gboolean force)
 {
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	struct device_converter converter;
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s", address, file);
-	filename[PATH_MAX] = '\0';
 
 	converter.address = address;
 	converter.cb = cb;
@@ -3814,14 +3935,13 @@ static void store_attribute_uuid(GKeyFile *key_file, uint16_t start,
 
 static void store_sdp_record(char *local, char *peer, int handle, char *value)
 {
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char handle_str[11];
 	char *data;
 	gsize length = 0;
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s", local, peer);
-	filename[PATH_MAX] = '\0';
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -3846,7 +3966,7 @@ static void convert_sdp_entry(char *key, char *value, void *user_data)
 	char dst_addr[18];
 	char type = BDADDR_BREDR;
 	int handle, ret;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	struct stat st;
 	sdp_record_t *rec;
@@ -3870,7 +3990,6 @@ static void convert_sdp_entry(char *key, char *value, void *user_data)
 	/* Check if the device directory has been created as records should
 	 * only be converted for known devices */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s", src_addr, dst_addr);
-	filename[PATH_MAX] = '\0';
 
 	err = stat(filename, &st);
 	if (err || !S_ISDIR(st.st_mode))
@@ -3897,7 +4016,6 @@ static void convert_sdp_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/attributes", src_addr,
 								dst_addr);
-	filename[PATH_MAX] = '\0';
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -3925,7 +4043,7 @@ static void convert_primaries_entry(char *key, char *value, void *user_data)
 	int device_type = -1;
 	uuid_t uuid;
 	char **services, **service, *prim_uuid;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	int ret;
 	uint16_t start, end;
@@ -3950,8 +4068,6 @@ static void convert_primaries_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/attributes", address,
 									key);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -3983,7 +4099,6 @@ static void convert_primaries_entry(char *key, char *value, void *user_data)
 	g_key_file_free(key_file);
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", address, key);
-	filename[PATH_MAX] = '\0';
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -4008,7 +4123,7 @@ static void convert_ccc_entry(char *key, char *value, void *user_data)
 	char type = BDADDR_BREDR;
 	uint16_t handle;
 	int ret, err;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	struct stat st;
 	char group[6];
@@ -4025,7 +4140,6 @@ static void convert_ccc_entry(char *key, char *value, void *user_data)
 	/* Check if the device directory has been created as records should
 	 * only be converted for known devices */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s", src_addr, dst_addr);
-	filename[PATH_MAX] = '\0';
 
 	err = stat(filename, &st);
 	if (err || !S_ISDIR(st.st_mode))
@@ -4033,8 +4147,6 @@ static void convert_ccc_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/ccc", src_addr,
 								dst_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -4058,7 +4170,7 @@ static void convert_gatt_entry(char *key, char *value, void *user_data)
 	char type = BDADDR_BREDR;
 	uint16_t handle;
 	int ret, err;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	struct stat st;
 	char group[6];
@@ -4075,7 +4187,6 @@ static void convert_gatt_entry(char *key, char *value, void *user_data)
 	/* Check if the device directory has been created as records should
 	 * only be converted for known devices */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s", src_addr, dst_addr);
-	filename[PATH_MAX] = '\0';
 
 	err = stat(filename, &st);
 	if (err || !S_ISDIR(st.st_mode))
@@ -4083,8 +4194,6 @@ static void convert_gatt_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/gatt", src_addr,
 								dst_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -4105,7 +4214,7 @@ static void convert_proximity_entry(char *key, char *value, void *user_data)
 {
 	char *src_addr = user_data;
 	char *alert;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	struct stat st;
 	int err;
@@ -4124,7 +4233,6 @@ static void convert_proximity_entry(char *key, char *value, void *user_data)
 	/* Check if the device directory has been created as records should
 	 * only be converted for known devices */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s", src_addr, key);
-	filename[PATH_MAX] = '\0';
 
 	err = stat(filename, &st);
 	if (err || !S_ISDIR(st.st_mode))
@@ -4132,8 +4240,6 @@ static void convert_proximity_entry(char *key, char *value, void *user_data)
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/proximity", src_addr,
 									key);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -4151,14 +4257,13 @@ static void convert_proximity_entry(char *key, char *value, void *user_data)
 
 static void convert_device_storage(struct btd_adapter *adapter)
 {
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	char address[18];
 
 	ba2str(&adapter->bdaddr, address);
 
 	/* Convert device's name cache */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/names", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_names_entry, address);
 
 	/* Convert aliases */
@@ -4175,7 +4280,6 @@ static void convert_device_storage(struct btd_adapter *adapter)
 
 	/* Convert primaries */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/primaries", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_primaries_entry, address);
 
 	/* Convert linkkeys */
@@ -4192,12 +4296,10 @@ static void convert_device_storage(struct btd_adapter *adapter)
 
 	/* Convert sdp */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/sdp", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_sdp_entry, address);
 
 	/* Convert ccc */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/ccc", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_ccc_entry, address);
 
 	/* Convert appearances */
@@ -4205,12 +4307,10 @@ static void convert_device_storage(struct btd_adapter *adapter)
 
 	/* Convert gatt */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/gatt", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_gatt_entry, address);
 
 	/* Convert proximity */
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/proximity", address);
-	filename[PATH_MAX] = '\0';
 	textfile_foreach(filename, convert_proximity_entry, address);
 }
 
@@ -4219,7 +4319,7 @@ static void convert_config(struct btd_adapter *adapter, const char *filename,
 {
 	char address[18];
 	char str[MAX_NAME_LENGTH + 1];
-	char config_path[PATH_MAX + 1];
+	char config_path[PATH_MAX];
 	int timeout;
 	uint8_t mode;
 	char *data;
@@ -4227,7 +4327,6 @@ static void convert_config(struct btd_adapter *adapter, const char *filename,
 
 	ba2str(&adapter->bdaddr, address);
 	snprintf(config_path, PATH_MAX, STORAGEDIR "/%s/config", address);
-	config_path[PATH_MAX] = '\0';
 
 	if (read_pairable_timeout(address, &timeout) == 0)
 		g_key_file_set_integer(key_file, "General",
@@ -4255,14 +4354,13 @@ static void convert_config(struct btd_adapter *adapter, const char *filename,
 
 static void fix_storage(struct btd_adapter *adapter)
 {
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	char address[18];
 	char *converted;
 
 	ba2str(&adapter->bdaddr, address);
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/config", address);
-	filename[PATH_MAX] = '\0';
 	converted = textfile_get(filename, "converted");
 	if (!converted)
 		return;
@@ -4272,70 +4370,55 @@ static void fix_storage(struct btd_adapter *adapter)
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/names", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/aliases", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/trusts", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/blocked", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/profiles", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/primaries", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/linkkeys", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/longtermkeys", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/classes", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/did", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/sdp", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/ccc", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/appearances", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/gatt", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/proximity", address);
-	filename[PATH_MAX] = '\0';
 	textfile_del(filename, "converted");
 }
 
 static void load_config(struct btd_adapter *adapter)
 {
 	GKeyFile *key_file;
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	char address[18];
 	struct stat st;
 	GError *gerr = NULL;
@@ -4345,7 +4428,6 @@ static void load_config(struct btd_adapter *adapter)
 	key_file = g_key_file_new();
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/settings", address);
-	filename[PATH_MAX] = '\0';
 
 	if (stat(filename, &st) < 0) {
 		convert_config(adapter, filename, key_file);
@@ -4581,7 +4663,7 @@ static void update_found_devices(struct btd_adapter *adapter,
 
 	if (bdaddr_type == BDADDR_BREDR)
 		discoverable = true;
-	 else
+	else
 		discoverable = eir_data.flags & (EIR_LIM_DISC | EIR_GEN_DISC);
 
 	ba2str(bdaddr, addr);
@@ -4691,7 +4773,7 @@ connect_le:
 	 * If kernel background scan is used then the kernel is
 	 * responsible for connecting.
 	 */
-	if (kernel_bg_scan)
+	if (kernel_conn_control)
 		return;
 
 	/*
@@ -4882,6 +4964,16 @@ static void agent_auth_cb(struct agent *agent, DBusError *derr,
 
 	g_free(auth);
 
+	/* Stop processing if queue is empty */
+	if (g_queue_is_empty(adapter->auths)) {
+		if (adapter->auth_idle_id > 0)
+			g_source_remove(adapter->auth_idle_id);
+		return;
+	}
+
+	if (adapter->auth_idle_id > 0)
+		return;
+
 	adapter->auth_idle_id = g_idle_add(process_auth_queue, adapter);
 }
 
@@ -4902,12 +4994,16 @@ static gboolean process_auth_queue(gpointer user_data)
 
 		/* Wait services to be resolved before asking authorization */
 		if (auth->svc_id > 0)
-			return TRUE;
+			return FALSE;
 
 		if (device_is_trusted(device) == TRUE) {
 			auth->cb(NULL, auth->user_data);
 			goto next;
 		}
+
+		/* If agent is set authorization is already ongoing */
+		if (auth->agent)
+			return FALSE;
 
 		auth->agent = agent_get(NULL);
 		if (auth->agent == NULL) {
@@ -5451,7 +5547,7 @@ static void pin_code_request_callback(uint16_t index, uint16_t length,
 }
 
 int adapter_cancel_bonding(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
-							 uint8_t addr_type)
+							uint8_t addr_type)
 {
 	struct mgmt_addr_info cp;
 	char addr[18];
@@ -5774,7 +5870,7 @@ static void store_link_key(struct btd_adapter *adapter,
 {
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	gsize length = 0;
 	char key_str[33];
@@ -5786,8 +5882,6 @@ static void store_link_key(struct btd_adapter *adapter,
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
 								device_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -5863,7 +5957,7 @@ static void store_longtermkey(const bdaddr_t *local, const bdaddr_t *peer,
 	const char *group = master ? "LongTermKey" : "SlaveLongTermKey";
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char key_str[33];
 	gsize length = 0;
@@ -5880,8 +5974,6 @@ static void store_longtermkey(const bdaddr_t *local, const bdaddr_t *peer,
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
 								device_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -5981,7 +6073,7 @@ static void store_csrk(const bdaddr_t *local, const bdaddr_t *peer,
 	const char *group;
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char key_str[33];
 	gsize length = 0;
@@ -6062,7 +6154,7 @@ static void store_irk(struct btd_adapter *adapter, const bdaddr_t *peer,
 {
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char *store_data;
 	char str[33];
@@ -6074,8 +6166,6 @@ static void store_irk(struct btd_adapter *adapter, const bdaddr_t *peer,
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
 								device_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -6154,7 +6244,7 @@ static void store_conn_param(struct btd_adapter *adapter, const bdaddr_t *peer,
 {
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	char *store_data;
 	size_t length = 0;
@@ -6166,8 +6256,6 @@ static void store_conn_param(struct btd_adapter *adapter, const bdaddr_t *peer,
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
 								device_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -6698,7 +6786,7 @@ static void remove_keys(struct btd_adapter *adapter,
 {
 	char adapter_addr[18];
 	char device_addr[18];
-	char filename[PATH_MAX + 1];
+	char filename[PATH_MAX];
 	GKeyFile *key_file;
 	gsize length = 0;
 	char *str;
@@ -6708,8 +6796,6 @@ static void remove_keys(struct btd_adapter *adapter,
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info", adapter_addr,
 								device_addr);
-	filename[PATH_MAX] = '\0';
-
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
@@ -6771,7 +6857,7 @@ static int clear_devices(struct btd_adapter *adapter)
 {
 	struct mgmt_cp_remove_device cp;
 
-	if (!kernel_bg_scan)
+	if (!kernel_conn_control)
 		return 0;
 
 	memset(&cp, 0, sizeof(cp));
@@ -6959,8 +7045,13 @@ static void read_info_complete(uint8_t status, uint16_t length,
 			!(adapter->current_settings & MGMT_SETTING_LE))
 		set_mode(adapter, MGMT_OP_SET_LE, 0x01);
 
-	set_mode(adapter, MGMT_OP_SET_PAIRABLE, 0x01);
-	set_mode(adapter, MGMT_OP_SET_CONNECTABLE, 0x01);
+	if (!(adapter->current_settings & MGMT_SETTING_BONDABLE))
+		set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x01);
+
+	if (!kernel_conn_control)
+		set_mode(adapter, MGMT_OP_SET_CONNECTABLE, 0x01);
+	else if (adapter->current_settings & MGMT_SETTING_CONNECTABLE)
+		set_mode(adapter, MGMT_OP_SET_CONNECTABLE, 0x00);
 
 	if (adapter->stored_discoverable && !adapter->discoverable_timeout)
 		set_discoverable(adapter, 0x01, 0);
@@ -7131,8 +7222,8 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 		uint16_t op = get_le16(opcode++);
 
 		if (op == MGMT_OP_ADD_DEVICE) {
-			DBG("enabling kernel background scanning");
-			kernel_bg_scan = true;
+			DBG("enabling kernel-side connection control");
+			kernel_conn_control = true;
 		}
 	}
 }

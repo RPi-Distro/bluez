@@ -26,6 +26,7 @@ monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
 				monitor/ll.h monitor/ll.c \
 				monitor/l2cap.h monitor/l2cap.c \
 				monitor/sdp.h monitor/sdp.c \
+				monitor/avctp.h monitor/avctp.c \
 				monitor/uuid.h monitor/uuid.c \
 				monitor/hwdb.h monitor/hwdb.c \
 				monitor/keys.h monitor/keys.c \
@@ -50,6 +51,7 @@ emulator_btvirt_SOURCES = emulator/main.c monitor/bt.h \
 				src/shared/timeout-mainloop.c \
 				src/shared/util.h src/shared/util.c \
 				src/shared/crypto.h src/shared/crypto.c \
+				emulator/serial.h emulator/serial.c \
 				emulator/server.h emulator/server.c \
 				emulator/vhci.h emulator/vhci.c \
 				emulator/btdev.h emulator/btdev.c \
@@ -176,7 +178,8 @@ endif
 if TOOLS
 bin_PROGRAMS += tools/hciattach tools/hciconfig tools/hcitool tools/hcidump \
 			tools/rfcomm tools/rctest tools/l2test tools/l2ping \
-			tools/sdptool tools/ciptool tools/bccmd tools/bluemoon
+			tools/sdptool tools/ciptool tools/bccmd \
+			tools/bluemoon tools/mpris-proxy
 
 tools_hciattach_SOURCES = tools/hciattach.c tools/hciattach.h \
 						tools/hciattach_st.c \
@@ -248,6 +251,9 @@ tools_bluemoon_SOURCES = tools/bluemoon.c monitor/bt.h \
 				src/shared/queue.h src/shared/queue.c \
 				src/shared/ringbuf.h src/shared/ringbuf.c
 
+tools_mpris_proxy_SOURCES = tools/mpris-proxy.c
+tools_mpris_proxy_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ @DBUS_LIBS@
+
 dist_man_MANS += tools/hciattach.1 tools/hciconfig.1 \
 			tools/hcitool.1 tools/hcidump.1 \
 			tools/rfcomm.1 tools/rctest.1 tools/l2ping.1 \
@@ -277,8 +283,8 @@ noinst_PROGRAMS += tools/bdaddr tools/avinfo tools/avtest \
 			tools/hcieventmask tools/hcisecfilter \
 			tools/btmgmt tools/btinfo tools/btattach \
 			tools/btsnoop tools/btproxy tools/btiotest \
-			tools/mpris-player tools/cltest tools/seq2bseq \
-			tools/hex2hcd tools/ibeacon
+			tools/cltest tools/seq2bseq tools/hex2hcd \
+			tools/ibeacon tools/btgatt-client
 
 tools_bdaddr_SOURCES = tools/bdaddr.c src/oui.h src/oui.c
 tools_bdaddr_LDADD = lib/libbluetooth-internal.la @UDEV_LIBS@
@@ -313,6 +319,16 @@ tools_btinfo_SOURCES = tools/btinfo.c monitor/bt.h \
 				src/shared/queue.h src/shared/queue.c \
 				src/shared/ringbuf.h src/shared/ringbuf.c
 
+tools_btattach_SOURCES = tools/btattach.c monitor/bt.h \
+				monitor/mainloop.h monitor/mainloop.c \
+				src/shared/io.h src/shared/io-mainloop.c \
+				src/shared/timeout.h \
+				src/shared/timeout-mainloop.c \
+				src/shared/hci.h src/shared/hci.c \
+				src/shared/util.h src/shared/util.c \
+				src/shared/queue.h src/shared/queue.c \
+				src/shared/ringbuf.h src/shared/ringbuf.c
+
 tools_btsnoop_SOURCES = tools/btsnoop.c \
 				src/shared/pcap.h src/shared/pcap.c \
 				src/shared/btsnoop.h src/shared/btsnoop.c
@@ -323,9 +339,6 @@ tools_btproxy_SOURCES = tools/btproxy.c monitor/bt.h \
 
 tools_btiotest_SOURCES = tools/btiotest.c btio/btio.h btio/btio.c
 tools_btiotest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
-
-tools_mpris_player_SOURCES = tools/mpris-player.c
-tools_mpris_player_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ @DBUS_LIBS@
 
 tools_cltest_SOURCES = tools/cltest.c monitor/mainloop.h monitor/mainloop.c
 tools_cltest_LDADD = lib/libbluetooth-internal.la
@@ -343,6 +356,17 @@ tools_ibeacon_SOURCES = tools/ibeacon.c monitor/bt.h \
 				src/shared/util.h src/shared/util.c \
 				src/shared/queue.h src/shared/queue.c \
 				src/shared/ringbuf.h src/shared/ringbuf.c
+
+tools_btgatt_client_SOURCES = tools/btgatt-client.c src/uuid-helper.c \
+				monitor/mainloop.h monitor/mainloop.c \
+				src/shared/io.h src/shared/io-mainloop.c \
+				src/shared/queue.h src/shared/queue.c \
+				src/shared/util.h src/shared/util.c \
+				src/shared/timeout.h src/shared/timeout-mainloop.c \
+				src/shared/att-types.h src/shared/att.h src/shared/att.c \
+				src/shared/gatt-helpers.h src/shared/gatt-helpers.c \
+				src/shared/gatt-client.h src/shared/gatt-client.c
+tools_btgatt_client_LDADD = lib/libbluetooth-internal.la
 
 EXTRA_DIST += tools/bdaddr.1
 endif

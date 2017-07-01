@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.21)
+AC_INIT(bluez, 5.23)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -210,6 +210,11 @@ AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--disable-datafiles],
 			[do not install configuration and data files]),
 					[enable_datafiles=${enableval}])
 AM_CONDITIONAL(DATAFILES, test "${enable_datafiles}" != "no")
+
+AC_ARG_ENABLE(manpages, AC_HELP_STRING([--enable-manpages],
+			[enable building of manual pages]),
+					[enable_manpages=${enableval}])
+AM_CONDITIONAL(MANPAGES, test "${enable_manpages}" = "yes")
 
 AC_ARG_ENABLE(experimental, AC_HELP_STRING([--enable-experimental],
 			[enable experimental plugins (SAP, NFC, ...)]),

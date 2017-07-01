@@ -1,6 +1,6 @@
 PAN PICS for the PTS tool.
 
-PTS version: 5.1
+PTS version: 5.2
 
 * - different than PTS defaults
 # - not yet implemented/supported
@@ -47,7 +47,7 @@ TSPC_PAN_2_6b	False		NAP: Support link-local address configuration
 TSPC_PAN_2_7	False		NAP: Support ping client for IPv4 (O)
 TSPC_PAN_2_8	False		NAP: Support DHCP Client for IPv4 (O)
 TSPC_PAN_2_9	False		NAP: Support DNS/LLMNR Resolver for IPv4 (O)
-TSPC_PAN_2_9a	False		NAP: Support LLMNR Sender for IPv4 (C.5)
+TSPC_PAN_2_9a	False (*)	NAP: Support LLMNR Sender for IPv4 (C.5)
 TSPC_PAN_2_9b	False		NAP: Support LLMNR Responder for IPv4 (O)
 TSPC_PAN_2_10	False		NAP: Support HTTP Client for IPv4 (O)
 TSPC_PAN_2_11	False		NAP: Support WAP Client for IPv4 (O)
@@ -124,7 +124,8 @@ TSPC_PAN_4_2	True (*)	PANU: Support IPv4 (C.1)
 TSPC_PAN_4_3	False		PANU: Support ping client for IPv4 (O)
 TSPC_PAN_4_4	False		PANU: Support DHCP client for  IPv4 (O)
 TSPC_PAN_4_5	False		PANU: Support DNS/LLMNR Resolver for IPv4 (O)
-TSPC_PAN_4_5a	True		PANU: Support LLMNR Sender for IPv4 (C.2)
+TSPC_PAN_4_5a	False (*)	PANU: Support LLMNR Sender for IPv4 (C.2)
+				Reference: SE #3558, TSE #4382, TCW #448
 TSPC_PAN_4_5b	False		PANU: Support LLMNR Responder for IPv4 (O)
 TSPC_PAN_4_6	False		PANU: Support HTTP Client for IPv4 (O)
 TSPC_PAN_4_7	False		PANU: Support WAP Client for IPv4 (O)

@@ -44,8 +44,6 @@
 #include "avdtp.h"
 #include "../profiles/audio/a2dp-codecs.h"
 
-#define AVDTP_PSM 25
-
 #define MAX_SEID 0x3E
 
 #ifndef MAX
@@ -1976,8 +1974,11 @@ static gboolean session_cb(GIOChannel *chan, GIOCondition cond,
 
 	DBG("");
 
-	if (cond & G_IO_NVAL)
+	if (cond & G_IO_NVAL) {
+		session->io_id = 0;
+
 		return FALSE;
+	}
 
 	header = (void *) session->buf;
 
@@ -2080,6 +2081,8 @@ next:
 failed:
 	connection_lost(session, EIO);
 
+	session->io_id = 0;
+
 	return FALSE;
 }
 
@@ -2180,7 +2183,8 @@ void avdtp_shutdown(struct avdtp *session)
 	for (l = session->streams; l; l = g_slist_next(l)) {
 		struct avdtp_stream *stream = l->data;
 
-		if (stream->abort_int || avdtp_abort(session, stream) == 0)
+		if (stream->abort_int ||
+					avdtp_close(session, stream, TRUE) == 0)
 			aborting = true;
 	}
 
@@ -2959,7 +2963,8 @@ struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep)
 }
 
 struct avdtp_service_capability *avdtp_service_cap_new(uint8_t category,
-							void *data, int length)
+							const void *data,
+							int length)
 {
 	struct avdtp_service_capability *cap;
 
@@ -3244,13 +3249,14 @@ int avdtp_close(struct avdtp *session, struct avdtp_stream *stream,
 	if (!g_slist_find(session->streams, stream))
 		return -EINVAL;
 
-	if (stream->lsep->state < AVDTP_STATE_OPEN)
-		return -EINVAL;
-
 	if (stream->close_int == TRUE) {
 		error("avdtp_close: rejecting since close is already initiated");
 		return -EINVAL;
 	}
+
+	/* If stream is not yet in the OPEN state, let's use ABORT_CMD */
+	if (stream->lsep->state < AVDTP_STATE_OPEN)
+		return avdtp_abort(session, stream);
 
 	if (immediate && session->req && stream == session->req->stream)
 		return avdtp_abort(session, stream);

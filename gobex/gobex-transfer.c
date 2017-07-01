@@ -152,11 +152,8 @@ static gssize put_get_data(void *buf, gsize len, gpointer user_data)
 		goto done;
 	}
 
-	req = g_obex_packet_new(G_OBEX_OP_ABORT, TRUE, G_OBEX_HDR_INVALID);
-
-	transfer->req_id = g_obex_send_req(transfer->obex, req, -1,
-						transfer_abort_response,
-						transfer, &err);
+	transfer->req_id = g_obex_abort(transfer->obex, transfer_abort_response,
+								transfer, &err);
 done:
 	if (err != NULL) {
 		transfer_complete(transfer, err);
@@ -378,6 +375,7 @@ static void transfer_put_req_first(struct transfer *transfer, GObexPacket *req,
 	if (!g_obex_send(transfer->obex, rsp, &err)) {
 		transfer_complete(transfer, err);
 		g_error_free(err);
+		return;
 	}
 
 	if (rspcode != G_OBEX_RSP_CONTINUE)
@@ -405,6 +403,7 @@ static void transfer_put_req(GObex *obex, GObexPacket *req, gpointer user_data)
 	if (!g_obex_send(obex, rsp, &err)) {
 		transfer_complete(transfer, err);
 		g_error_free(err);
+		return;
 	}
 
 done:
@@ -551,7 +550,8 @@ static gssize get_get_data(void *buf, gsize len, gpointer user_data)
 	return ret;
 }
 
-static void transfer_get_req_first(struct transfer *transfer, GObexPacket *rsp)
+static gboolean transfer_get_req_first(struct transfer *transfer,
+							GObexPacket *rsp)
 {
 	GError *err = NULL;
 
@@ -562,7 +562,10 @@ static void transfer_get_req_first(struct transfer *transfer, GObexPacket *rsp)
 	if (!g_obex_send(transfer->obex, rsp, &err)) {
 		transfer_complete(transfer, err);
 		g_error_free(err);
+		return FALSE;
 	}
+
+	return TRUE;
 }
 
 static void transfer_get_req(GObex *obex, GObexPacket *req, gpointer user_data)
@@ -594,7 +597,8 @@ guint g_obex_get_rsp_pkt(GObex *obex, GObexPacket *rsp,
 	transfer = transfer_new(obex, G_OBEX_OP_GET, complete_func, user_data);
 	transfer->data_producer = data_func;
 
-	transfer_get_req_first(transfer, rsp);
+	if (!transfer_get_req_first(transfer, rsp))
+		return 0;
 
 	if (!g_slist_find(transfers, transfer))
 		return 0;
@@ -649,8 +653,13 @@ gboolean g_obex_cancel_transfer(guint id, GObexFunc complete_func,
 	transfer->complete_func = complete_func;
 	transfer->user_data = user_data;
 
-	if (transfer->req_id == 0)
-		goto done;
+	if (!transfer->req_id) {
+		transfer->req_id = g_obex_abort(transfer->obex,
+						transfer_abort_response,
+						transfer, NULL);
+		if (transfer->req_id)
+			return TRUE;
+	}
 
 	ret = g_obex_cancel_req(transfer->obex, transfer->req_id, FALSE);
 	if (ret)

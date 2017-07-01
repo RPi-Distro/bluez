@@ -85,7 +85,6 @@ struct health_device {
 	uint16_t app_id;
 
 	struct mcap_mcl *mcl;
-	bool mcl_conn;
 
 	struct queue *channels;     /* data channels */
 
@@ -163,11 +162,16 @@ static void unref_mdl(struct health_channel *channel)
 static void free_health_channel(void *data)
 {
 	struct health_channel *channel = data;
+	int fd;
 
 	DBG("channel %p", channel);
 
 	if (!channel)
 		return;
+
+	fd = mcap_mdl_get_fd(channel->mdl);
+	if (fd >= 0)
+		shutdown(fd, SHUT_RDWR);
 
 	unref_mdl(channel);
 	free(channel);
@@ -193,7 +197,6 @@ static void unref_mcl(struct health_device *dev)
 	mcap_close_mcl(dev->mcl, FALSE);
 	mcap_mcl_unref(dev->mcl);
 	dev->mcl = NULL;
-	dev->mcl_conn = false;
 }
 
 static void free_health_device(void *data)
@@ -1235,6 +1238,7 @@ static void mcap_mdl_connected_cb(struct mcap_mdl *mdl, void *data)
 		return;
 	}
 
+	info("health: MDL connected");
 	send_channel_state_notify(channel, HAL_HEALTH_CHANNEL_CONNECTED, fd);
 
 	return;
@@ -1247,7 +1251,7 @@ static void mcap_mdl_closed_cb(struct mcap_mdl *mdl, void *data)
 {
 	struct health_channel *channel = data;
 
-	info("MDL closed");
+	info("health: MDL closed");
 
 	if (!channel)
 		return;
@@ -1255,33 +1259,17 @@ static void mcap_mdl_closed_cb(struct mcap_mdl *mdl, void *data)
 	channel->mdl_conn = false;
 }
 
-static void notify_channel(void *data, void *user_data)
-{
-	struct health_channel *channel = data;
-
-	send_channel_state_notify(channel, HAL_HEALTH_CHANNEL_DESTROYED, -1);
-}
-
 static void mcap_mdl_deleted_cb(struct mcap_mdl *mdl, void *data)
 {
-	struct health_channel *channel = data;
-	struct health_device *dev;
+	struct health_channel *channel;
 
+	info("health: MDL deleted");
+
+	channel = search_channel_by_mdl(mdl);
 	if (!channel)
 		return;
 
-	dev = channel->dev;
-
-	DBG("device %p channel %p mdl %p", dev, channel, mdl);
-
-	/* mdl == NULL means, delete all mdls */
-	if (!mdl) {
-		queue_foreach(dev->channels, notify_channel, NULL);
-		queue_remove_all(dev->channels, NULL, NULL,
-						free_health_channel);
-		return;
-	}
-
+	DBG("channel %p mdl %p", channel, mdl);
 	destroy_channel(channel);
 }
 
@@ -1735,36 +1723,48 @@ static bool get_mdep_from_rec(const sdp_record_t *rec, uint8_t role,
 	return false;
 }
 
-static void get_mdep_cb(sdp_list_t *recs, int err, gpointer user_data)
+static bool get_remote_mdep(sdp_list_t *recs, struct health_channel *channel)
 {
-	struct health_channel *channel = user_data;
 	struct health_app *app;
 	struct mdep_cfg *mdep;
-	uint8_t mdep_id, type;
-	GError *gerr = NULL;
-
-	if (err < 0 || !recs) {
-		error("health: error getting remote SDP records");
-		goto fail;
-	}
+	uint8_t mdep_id;
 
 	app = queue_find(apps, match_app_by_id,
 					INT_TO_PTR(channel->dev->app_id));
 	if (!app)
-		goto fail;
+		return false;
 
 	mdep = queue_find(app->mdeps, match_mdep_by_id,
 						INT_TO_PTR(channel->mdep_id));
 	if (!mdep)
-		goto fail;
+		return false;
 
 	if (!get_mdep_from_rec(recs->data, mdep->role, mdep->data_type,
 								&mdep_id)) {
 		error("health: no matching MDEP: %u", channel->mdep_id);
-		goto fail;
+		return false;
 	}
 
 	channel->remote_mdep = mdep_id;
+	return true;
+}
+
+static bool create_mdl(struct health_channel *channel)
+{
+	struct health_app *app;
+	struct mdep_cfg *mdep;
+	uint8_t type;
+	GError *gerr = NULL;
+
+	app = queue_find(apps, match_app_by_id,
+					INT_TO_PTR(channel->dev->app_id));
+	if (!app)
+		return false;
+
+	mdep = queue_find(app->mdeps, match_mdep_by_id,
+						INT_TO_PTR(channel->mdep_id));
+	if (!mdep)
+		return false;
 
 	if (mdep->role == HAL_HEALTH_MDEP_ROLE_SOURCE)
 		type = channel->type;
@@ -1775,25 +1775,10 @@ static void get_mdep_cb(sdp_list_t *recs, int err, gpointer user_data)
 				type, create_mdl_cb, channel, NULL, &gerr)) {
 		error("health: error creating mdl %s", gerr->message);
 		g_error_free(gerr);
-		goto fail;
+		return false;
 	}
 
-	return;
-
-fail:
-	destroy_channel(channel);
-}
-
-static int get_mdep(struct health_channel *channel)
-{
-	uuid_t uuid;
-
-	DBG("");
-
-	bt_string2uuid(&uuid, HDP_UUID);
-
-	return bt_search_service(&adapter_addr, &channel->dev->dst, &uuid,
-						get_mdep_cb, channel, NULL, 0);
+	return true;
 }
 
 static bool set_mcl_cb(struct mcap_mcl *mcl, gpointer user_data, GError **err)
@@ -1824,8 +1809,7 @@ static void create_mcl_cb(struct mcap_mcl *mcl, GError *err, gpointer data)
 	if (!channel->dev->mcl)
 		channel->dev->mcl = mcap_mcl_ref(mcl);
 
-	channel->dev->mcl_conn = true;
-	info("MCL connected");
+	info("health: MCL connected");
 
 	ret = set_mcl_cb(channel->dev->mcl, channel, &gerr);
 	if (!ret) {
@@ -1834,10 +1818,8 @@ static void create_mcl_cb(struct mcap_mcl *mcl, GError *err, gpointer data)
 		goto fail;
 	}
 
-	if (get_mdep(channel) < 0) {
-		error("health: error getting remote MDEP from SDP record");
+	if (!create_mdl(channel))
 		goto fail;
-	}
 
 	return;
 
@@ -1867,6 +1849,11 @@ static void search_cb(sdp_list_t *recs, int err, gpointer data)
 		goto fail;
 	}
 
+	if (!get_remote_mdep(recs, channel)) {
+		error("health: Can't get remote MDEP data");
+		goto fail;
+	}
+
 	if (!mcap_create_mcl(mcap, &channel->dev->dst, channel->dev->ccpsm,
 					create_mcl_cb, channel, NULL, &gerr)) {
 		error("health: error creating mcl %s", gerr->message);
@@ -1874,26 +1861,28 @@ static void search_cb(sdp_list_t *recs, int err, gpointer data)
 		goto fail;
 	}
 
-	send_channel_state_notify(channel, HAL_HEALTH_CHANNEL_CONNECTING, -1);
 	return;
 
 fail:
-	send_channel_state_notify(channel, HAL_HEALTH_CHANNEL_DESTROYED, -1);
-
-	queue_remove(channel->dev->channels, channel);
-	free_health_channel(channel);
+	destroy_channel(channel);
 }
 
 static int connect_mcl(struct health_channel *channel)
 {
 	uuid_t uuid;
+	int err;
 
 	DBG("");
 
 	bt_string2uuid(&uuid, HDP_UUID);
 
-	return bt_search_service(&adapter_addr, &channel->dev->dst, &uuid,
+	err = bt_search_service(&adapter_addr, &channel->dev->dst, &uuid,
 						search_cb, channel, NULL, 0);
+	if (!err)
+		send_channel_state_notify(channel,
+					HAL_HEALTH_CHANNEL_CONNECTING, -1);
+
+	return err;
 }
 
 static struct health_app *get_app(uint16_t app_id)
@@ -1932,15 +1921,15 @@ static void bt_health_connect_channel(const void *buf, uint16_t len)
 
 	app = get_app(cmd->app_id);
 	if (!app)
-		goto fail;
+		goto send_rsp;
 
 	dev = get_device(app, cmd->bdaddr);
 	if (!dev)
-		goto fail;
+		goto send_rsp;
 
 	channel = get_channel(app, cmd->mdep_index, dev);
 	if (!channel)
-		goto fail;
+		goto send_rsp;
 
 	if (!queue_length(dev->channels)) {
 		if (channel->type != CHANNEL_TYPE_RELIABLE) {
@@ -1960,7 +1949,7 @@ static void bt_health_connect_channel(const void *buf, uint16_t len)
 			goto fail;
 
 		/* create mdl if it does not exists */
-		if (!channel->mdl && get_mdep(channel) < 0)
+		if (!channel->mdl && !create_mdl(channel))
 			goto fail;
 
 		/* reconnect mdl if it exists */
@@ -1978,7 +1967,10 @@ static void bt_health_connect_channel(const void *buf, uint16_t len)
 	return;
 
 fail:
+	queue_remove(channel->dev->channels, channel);
 	free_health_channel(channel);
+
+send_rsp:
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_HEALTH,
 			HAL_OP_HEALTH_CONNECT_CHANNEL, HAL_STATUS_FAILED);
 }
@@ -2050,6 +2042,7 @@ static void mcl_connected(struct mcap_mcl *mcl, gpointer data)
 
 	DBG("");
 
+	info("health: MCL connected");
 	ret = set_mcl_cb(mcl, NULL, &gerr);
 	if (!ret) {
 		error("health: error setting mcl callbacks: %s", gerr->message);
@@ -2063,13 +2056,12 @@ static void mcl_reconnected(struct mcap_mcl *mcl, gpointer data)
 
 	DBG("");
 
+	info("health: MCL reconnected");
 	dev = search_dev_by_mcl(mcl);
 	if (!dev) {
 		error("device data does not exists");
 		return;
 	}
-
-	dev->mcl_conn = true;
 }
 
 static void mcl_disconnected(struct mcap_mcl *mcl, gpointer data)
@@ -2078,19 +2070,14 @@ static void mcl_disconnected(struct mcap_mcl *mcl, gpointer data)
 
 	DBG("");
 
+	info("health: MCL disconnected");
 	dev = search_dev_by_mcl(mcl);
-	if (dev)
-		dev->mcl_conn = false;
+	unref_mcl(dev);
 }
 
 static void mcl_uncached(struct mcap_mcl *mcl, gpointer data)
 {
-	struct health_device *dev;
-
-	DBG("");
-
-	dev = search_dev_by_mcl(mcl);
-	free_health_device(dev);
+	/* mcap library maintains cache of mcls, not required here */
 }
 
 bool bt_health_register(struct ipc *ipc, const bdaddr_t *addr, uint8_t mode)

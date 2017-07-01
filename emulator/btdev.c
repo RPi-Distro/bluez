@@ -335,6 +335,7 @@ static void set_bredr_commands(struct btdev *btdev)
 	btdev->commands[2]  |= 0x10;	/* Cancel Remote Name Request */
 	btdev->commands[2]  |= 0x20;	/* Read Remote Supported Features */
 	btdev->commands[2]  |= 0x40;	/* Read Remote Extended Features */
+	btdev->commands[3]  |= 0x01;	/* Read Clock Offset */
 	btdev->commands[5]  |= 0x08;	/* Read Default Link Policy */
 	btdev->commands[5]  |= 0x10;	/* Write Default Link Policy */
 	btdev->commands[6]  |= 0x01;	/* Set Event Filter */
@@ -379,6 +380,8 @@ static void set_bredr_commands(struct btdev *btdev)
 	btdev->commands[18] |= 0x02;	/* Write Inquiry Response TX Power */
 	btdev->commands[18] |= 0x80;	/* IO Capability Request Reply */
 	btdev->commands[23] |= 0x04;	/* Read Data Block Size */
+	btdev->commands[29] |= 0x20;	/* Read Local Supported Codecs */
+	btdev->commands[30] |= 0x08;	/* Get MWS Transport Layer Config */
 }
 
 static void set_le_commands(struct btdev *btdev)
@@ -1020,6 +1023,7 @@ static void le_conn_complete(struct btdev *btdev,
 
 		btdev->conn = remote;
 		remote->conn = btdev;
+		remote->le_adv_enable = 0;
 
 		cc->status = status;
 		cc->peer_addr_type = btdev->le_scan_own_addr_type;
@@ -1085,7 +1089,8 @@ static void le_conn_request(struct btdev *btdev, const uint8_t *bdaddr,
 {
 	struct btdev *remote = find_btdev_by_bdaddr_type(bdaddr, bdaddr_type);
 
-	if (remote && adv_connectable(remote) && adv_match(btdev, remote))
+	if (remote && adv_connectable(remote) && adv_match(btdev, remote) &&
+					remote->le_adv_own_addr == bdaddr_type)
 		le_conn_complete(btdev, bdaddr, bdaddr_type, 0);
 	else
 		le_conn_complete(btdev, bdaddr, bdaddr_type,
@@ -1423,7 +1428,7 @@ static void remote_ext_features_complete(struct btdev *btdev, uint16_t handle,
 			break;
 		case 0x01:
 			refc.status = BT_HCI_ERR_SUCCESS;
-			btdev_get_host_features(btdev, refc.features);
+			btdev_get_host_features(btdev->conn, refc.features);
 			break;
 		default:
 			refc.status = BT_HCI_ERR_INVALID_PARAMETERS;
@@ -1462,6 +1467,24 @@ static void remote_version_complete(struct btdev *btdev, uint16_t handle)
 
 	send_event(btdev, BT_HCI_EVT_REMOTE_VERSION_COMPLETE,
 							&rvc, sizeof(rvc));
+}
+
+static void remote_clock_offset_complete(struct btdev *btdev, uint16_t handle)
+{
+	struct bt_hci_evt_clock_offset_complete coc;
+
+	if (btdev->conn) {
+		coc.status = BT_HCI_ERR_SUCCESS;
+		coc.handle = cpu_to_le16(handle);
+		coc.clock_offset = 0;
+	} else {
+		coc.status = BT_HCI_ERR_UNKNOWN_CONN_ID;
+		coc.handle = cpu_to_le16(handle);
+		coc.clock_offset = 0;
+	}
+
+	send_event(btdev, BT_HCI_EVT_CLOCK_OFFSET_COMPLETE,
+							&coc, sizeof(coc));
 }
 
 static void io_cap_req_reply_complete(struct btdev *btdev,
@@ -1830,8 +1853,10 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 	struct bt_hci_rsp_read_country_code rcc;
 	struct bt_hci_rsp_read_bd_addr rba;
 	struct bt_hci_rsp_read_data_block_size rdbs;
+	struct bt_hci_rsp_read_local_codecs *rlsc;
 	struct bt_hci_rsp_read_local_amp_info rlai;
 	struct bt_hci_rsp_read_local_amp_assoc rlaa_rsp;
+	struct bt_hci_rsp_get_mws_transport_config *gmtc;
 	struct bt_hci_rsp_le_read_buffer_size lrbs;
 	struct bt_hci_rsp_le_read_local_features lrlf;
 	struct bt_hci_rsp_le_read_adv_tx_power lratp;
@@ -1963,6 +1988,12 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 		break;
 
 	case BT_HCI_CMD_READ_REMOTE_VERSION:
+		cmd_status(btdev, BT_HCI_ERR_SUCCESS, opcode);
+		break;
+
+	case BT_HCI_CMD_READ_CLOCK_OFFSET:
+		if (btdev->type == BTDEV_TYPE_LE)
+			goto unsupported;
 		cmd_status(btdev, BT_HCI_ERR_SUCCESS, opcode);
 		break;
 
@@ -2500,6 +2531,22 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 		cmd_complete(btdev, opcode, &rdbs, sizeof(rdbs));
 		break;
 
+	case BT_HCI_CMD_READ_LOCAL_CODECS:
+		if (btdev->type == BTDEV_TYPE_LE)
+			goto unsupported;
+		rlsc = alloca(sizeof(*rlsc) + 7);
+		rlsc->status = BT_HCI_ERR_SUCCESS;
+		rlsc->num_codecs = 0x06;
+		rlsc->codec[0] = 0x00;
+		rlsc->codec[1] = 0x01;
+		rlsc->codec[2] = 0x02;
+		rlsc->codec[3] = 0x03;
+		rlsc->codec[4] = 0x04;
+		rlsc->codec[5] = 0x05;
+		rlsc->codec[6] = 0x00;
+		cmd_complete(btdev, opcode, rlsc, sizeof(*rlsc) + 7);
+		break;
+
 	case BT_HCI_CMD_READ_RSSI:
 		rrssi = data;
 
@@ -2561,6 +2608,15 @@ static void default_cmd(struct btdev *btdev, uint16_t opcode,
 		memset(rlaa_rsp.assoc_fragment + 1, 0,
 					sizeof(rlaa_rsp.assoc_fragment) - 1);
 		cmd_complete(btdev, opcode, &rlaa_rsp, sizeof(rlaa_rsp));
+		break;
+
+	case BT_HCI_CMD_GET_MWS_TRANSPORT_CONFIG:
+		if (btdev->type == BTDEV_TYPE_LE)
+			goto unsupported;
+		gmtc = alloca(sizeof(*gmtc));
+		gmtc->status = BT_HCI_ERR_SUCCESS;
+		gmtc->num_transports = 0x00;
+		cmd_complete(btdev, opcode, gmtc, sizeof(*gmtc));
 		break;
 
 	case BT_HCI_CMD_SET_EVENT_MASK_PAGE2:
@@ -2845,6 +2901,7 @@ static void default_cmd_completion(struct btdev *btdev, uint16_t opcode,
 	const struct bt_hci_cmd_read_remote_features *rrf;
 	const struct bt_hci_cmd_read_remote_ext_features *rref;
 	const struct bt_hci_cmd_read_remote_version *rrv;
+	const struct bt_hci_cmd_read_clock_offset *rco;
 	const struct bt_hci_cmd_le_create_conn *lecc;
 
 	switch (opcode) {
@@ -2968,6 +3025,13 @@ static void default_cmd_completion(struct btdev *btdev, uint16_t opcode,
 	case BT_HCI_CMD_READ_REMOTE_VERSION:
 		rrv = data;
 		remote_version_complete(btdev, le16_to_cpu(rrv->handle));
+		break;
+
+	case BT_HCI_CMD_READ_CLOCK_OFFSET:
+		if (btdev->type == BTDEV_TYPE_LE)
+			return;
+		rco = data;
+		remote_clock_offset_complete(btdev, le16_to_cpu(rco->handle));
 		break;
 
 	case BT_HCI_CMD_LE_CREATE_CONN:

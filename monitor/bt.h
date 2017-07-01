@@ -1485,6 +1485,11 @@ struct bt_hci_rsp_read_data_block_size {
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_READ_LOCAL_CODECS		0x100b
+struct bt_hci_rsp_read_local_codecs {
+	uint8_t  status;
+	uint8_t  num_codecs;
+	uint8_t  codec[0];
+} __attribute__ ((packed));
 
 #define BT_HCI_CMD_READ_FAILED_CONTACT_COUNTER	0x1401
 struct bt_hci_cmd_read_failed_contact_counter {
@@ -1596,6 +1601,13 @@ struct bt_hci_cmd_write_remote_amp_assoc {
 struct bt_hci_rsp_write_remote_amp_assoc {
 	uint8_t  status;
 	uint8_t  phy_handle;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_GET_MWS_TRANSPORT_CONFIG	0x140c
+struct bt_hci_rsp_get_mws_transport_config {
+	uint8_t  status;
+	uint8_t  num_transports;
+	uint8_t  transport[0];
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_SET_TRIGGERED_CLOCK_CAPTURE	0x140d
@@ -1821,6 +1833,31 @@ struct bt_hci_cmd_le_transmitter_test {
 struct bt_hci_rsp_le_test_end {
 	uint8_t  status;
 	uint16_t num_packets;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_CONN_PARAM_REQ_REPLY	0x2020
+struct bt_hci_cmd_le_conn_param_req_reply {
+	uint16_t handle;
+	uint16_t min_interval;
+	uint16_t max_interval;
+	uint16_t latency;
+	uint16_t supv_timeout;
+	uint16_t min_length;
+	uint16_t max_length;
+} __attribute__ ((packed));
+struct bt_hci_rsp_le_conn_param_req_reply {
+	uint8_t  status;
+	uint16_t handle;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_LE_CONN_PARAM_REQ_NEG_REPLY	0x2021
+struct bt_hci_cmd_le_conn_param_req_neg_reply {
+	uint16_t handle;
+	uint8_t  reason;
+} __attribute__ ((packed));
+struct bt_hci_rsp_le_conn_param_req_neg_reply {
+	uint8_t  status;
+	uint16_t handle;
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_INQUIRY_COMPLETE		0x01
@@ -2357,8 +2394,8 @@ struct bt_hci_evt_le_long_term_key_request {
 	uint16_t ediv;
 } __attribute__ ((packed));
 
-#define BT_HCI_EVT_LE_REMOTE_CONN_PARAM_REQUEST	0x06
-struct bt_hci_evt_le_remote_conn_param_request {
+#define BT_HCI_EVT_LE_CONN_PARAM_REQUEST	0x06
+struct bt_hci_evt_le_conn_param_request {
 	uint16_t handle;
 	uint16_t min_interval;
 	uint16_t max_interval;

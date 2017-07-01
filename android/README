@@ -15,7 +15,7 @@ Supported Android version: 4.4
 Building and running on Android
 ===============================
 
-Steps needed to build and run Android Open Source Project 4.4.2 with
+Steps needed to build and run Android Open Source Project 4.4 with
 integrated BlueZ.
 
 
@@ -33,8 +33,8 @@ by BlueZ. SBC code is available at git://git.kernel.org/pub/scm/bluetooth/sbc
 - Bionic support - Currently only 'master' branch available at
 https://android.googlesource.com/platform/bionic provides all required
 functionality and running BlueZ on release branch requires backporting missing
-features (currently epoll_create1 and ppoll calls for Android 4.4.2). Sample
-Bionic for Android 4.4.2 with all required features backported is available at
+features (currently epoll_create1 and ppoll calls for Android 4.4). Sample
+Bionic for Android 4.4 with all required features backported is available at
 https://code.google.com/p/aosp-bluez.platform-bionic/
 
 
@@ -57,7 +57,7 @@ Downloading and building
 ------------------------
 
 Building for Android requires full Android AOSP source tree. Sample Android
-4.4.2 tree with all required components present is available at
+4.4 tree with all required components present is available at
 http://code.google.com/p/aosp-bluez/
 
 This tree provides support for Nexus4 (target aosp_mako-userdebug) and
@@ -84,6 +84,31 @@ After full build is done it is possible to rebuild only BlueZ:
 'mm' (or 'mm -B' to force rebuilding of all files)
 'adb sync' to update target device.
 
+Downloading and building for Intel devices
+------------------------------------------
+
+Sample Android tree with all required components for Intel devices based on
+Intel reference image (https://01.org/android-ia) can be reconstructed following
+instructions below.
+
+This tree provides support for Dell XPS12, Minnowboard MAX, Intel NUC,
+Acer Iconia W700 and other devices mentioned in:
+https://01.org/android-ia/guides/devices
+
+Downloading:
+repo init -u https://github.com/01org/android-bluez-manifest.git -b android-ia \
+	-m topic/bluez
+repo sync
+
+Building:
+source build/envsetup.sh
+lunch haswell_generic-eng
+make -j8
+
+Installing:
+Live and Install image is $OUT/live.img
+Flash live.img to USB flash and boot from it. More instructions here:
+https://01.org/android-ia/guides/developers/build-and-install
 
 Linux Kernel requirements
 -------------------------
@@ -111,7 +136,7 @@ Also BT chip driver needs to be enabled e.g:
 CONFIG_BT_HCIBTUSB
 
 If it is not possible to use new enough Linux kernel one can use updated
-bluetooth subsytem from Backports project. More information about Backports can
+bluetooth subsystem from Backports project. More information about Backports can
 be found at https://backports.wiki.kernel.org. Sample kernels using backports
 for running BlueZ on Android are available at
 https://code.google.com/p/aosp-bluez.
@@ -143,15 +168,16 @@ see https://code.google.com/p/aosp-bluez.glib/ for an example.
 Enabling BlueZ debugs
 ---------------------
 
-BlueZ debug logs can be enabled in runtime by setting "persist.sys.bluetooth.debug"
-property to either literal "true" or any numeric value >0. For example:
+BlueZ debug logs can be enabled in runtime by setting
+"persist.sys.bluetooth.debug" property to either literal "true" or any
+numeric value >0. For example:
 adb root
 adb shell setprop persist.sys.bluetooth.debug 1
 
 After changing property value Bluetooth needs to be restarted to apply changes.
 
 There is also a possibility to enable mgmt debug logs which also enables debugs
-as above. To enable it procced in the same way as described above but use
+as above. To enable it proceed in the same way as described above but use
 system properties called: persist.sys.bluetooth.mgmtdbg
 
 Note: Debugs are only available on NON USER build variants
@@ -249,18 +275,15 @@ HAL Bluetooth
 methods:
 dut_mode_send                      never called from Android Framework
 le_test_mode                       never called from Android Framework
-get_remote_service_record          never called from Android Framework
 
 callbacks:
 dut_mode_recv_cb                   empty JNI implementation
 le_test_mode_cb                    empty JNI implementation
 
 properties:
-BT_PROPERTY_SERVICE_RECORD         not supported for adapter and device, for
-                                   device this property is to be returned as
-                                   response to get_remote_service_record,
-                                   not sure what to return on get_property
-                                   calls (records of all services?)
+BT_PROPERTY_SERVICE_RECORD         not supported for adapter, for device this
+                                   property is returned as a response to
+                                   get_remote_service_record call
 
 BT_PROPERTY_REMOTE_VERSION_INFO    information required by this property (LMP
                                    information) are not accessible from mgmt
@@ -300,6 +323,34 @@ methods:
 client->set_adv_data               missing kernel support for vendor data
 client->connect                    is_direct parameter is ignored
 
+Audio SCO HAL
+=============
+
+When Bluetooth chip's audio is not wired directly to device audio, Audio SCO
+HAL is used to enable SCO support. It needs to be loaded by AudioFlinger
+following audio_policy.conf configuration. Example of configuration is shown
+below:
+
+...
+  sco {
+    outputs {
+      sco {
+        sampling_rates 8000|44100
+        channel_masks AUDIO_CHANNEL_OUT_STEREO
+        formats AUDIO_FORMAT_PCM_16_BIT
+        devices AUDIO_DEVICE_OUT_ALL_SCO
+      }
+    }
+    inputs {
+      sco {
+        sampling_rates 8000|44100
+        channel_masks AUDIO_CHANNEL_IN_MONO
+        formats AUDIO_FORMAT_PCM_16_BIT
+        devices AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET
+      }
+    }
+  }
+...
 
 Known Android issues
 ====================
@@ -315,7 +366,7 @@ https://android-review.googlesource.com/88384
 https://android-review.googlesource.com/99761
 https://android-review.googlesource.com/99850
 https://android-review.googlesource.com/100297
-
+https://android-review.googlesource.com/102882
 
 Unimplemented Bluetooth features
 ================================

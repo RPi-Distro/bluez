@@ -210,7 +210,7 @@ static void do_listen(void (*handler)(int sk))
 							strerror(errno), errno);
 			if (!defer_setup) {
 				close(nsk);
-				goto error;
+				exit(1);
 			}
 		}
 
@@ -227,7 +227,7 @@ static void do_listen(void (*handler)(int sk))
 
 			if (defer_setup < 0) {
 				close(nsk);
-				goto error;
+				exit(1);
 			}
 		}
 
@@ -236,8 +236,6 @@ static void do_listen(void (*handler)(int sk))
 		syslog(LOG_INFO, "Disconnect");
 		exit(0);
 	}
-
-	return;
 
 error:
 	close(sk);

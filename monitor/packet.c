@@ -1192,6 +1192,40 @@ static void print_air_mode(uint8_t mode)
 	print_field("Air mode: %s (0x%2.2x)", str, mode);
 }
 
+static void print_codec(const char *label, uint8_t codec)
+{
+	const char *str;
+
+	switch (codec) {
+	case 0x00:
+		str = "u-law log";
+		break;
+	case 0x01:
+		str = "A-law log";
+		break;
+	case 0x02:
+		str = "CVSD";
+		break;
+	case 0x03:
+		str = "Transparent";
+		break;
+	case 0x04:
+		str = "Linear PCM";
+		break;
+	case 0x05:
+		str = "mSBC";
+		break;
+	case 0xff:
+		str = "Vendor specific";
+		break;
+	default:
+		str = "Reserved";
+		break;
+	}
+
+	print_field("%s: %s (0x%2.2x)", label, str, codec);
+}
+
 static void print_inquiry_mode(uint8_t mode)
 {
 	const char *str;
@@ -2394,60 +2428,104 @@ void packet_print_features_ll(const uint8_t *features)
 	print_features(0, features, 0x01);
 }
 
+#define LE_STATE_SCAN_ADV		0x0001
+#define LE_STATE_CONN_ADV		0x0002
+#define LE_STATE_NONCONN_ADV		0x0004
+#define LE_STATE_HIGH_DIRECT_ADV	0x0008
+#define LE_STATE_LOW_DIRECT_ADV		0x0010
+#define LE_STATE_ACTIVE_SCAN		0x0020
+#define LE_STATE_PASSIVE_SCAN		0x0040
+#define LE_STATE_INITIATING		0x0080
+#define LE_STATE_CONN_MASTER		0x0100
+#define LE_STATE_CONN_SLAVE		0x0200
+#define LE_STATE_MASTER_MASTER		0x0400
+#define LE_STATE_SLAVE_SLAVE		0x0800
+#define LE_STATE_MASTER_SLAVE		0x1000
+
 static const struct {
 	uint8_t bit;
 	const char *str;
-} le_states_table[] = {
-	{  0, "Non-connectable Advertising State"			},
-	{  1, "Scannable Advertising State"				},
-	{  2, "Connectable Advertising State"				},
-	{  3, "Directed Advertising State"				},
-	{  4, "Passive Scanning State"					},
-	{  5, "Active Scanning State"					},
-	{  6, "Initiating State and Connection State in Master Role"	},
-	{  7, "Connection State in Slave Role"				},
-	{  8, "Non-connectable Advertising State and "
-				"Passive Scanning State combination"	},
-	{  9, "Scannable Advertising State and "
-				"Passive Scanning State combination"	},
-	{ 10, "Connectable Advertising State and "
-				"Passive Scanning State combination"	},
-	{ 11, "Directed Advertising State and "
-				"Passive Scanning State combination"	},
-	{ 12, "Non-connectable Advertising State and "
-				"Active Scanning State combination"	},
-	{ 13, "Scannable Advertising State and "
-				"Active Scanning State combination"	},
-	{ 14, "Connectable Advertising State and "
-				"Active Scanning State combination"	},
-	{ 15, "Directed Advertising State and "
-				"Active Scanning State combination"	},
-	{ 16, "Non-connectable Advertising State and "
-				"Initiating State combination"		},
-	{ 17, "Scannable Advertising State and "
-				"Initiating State combination"		},
-	{ 18, "Non-connectable Advertising State and "
-				"Mater Role combination"		},
-	{ 19, "Scannable Advertising State and "
-				"Master Role combination"		},
-	{ 20, "Non-connectable Advertising State and "
-				"Slave Role combination"		},
-	{ 21, "Scannable Advertising State and "
-				"Slave Role combination"		},
-	{ 22, "Passive Scanning State and Initiating State combination"	},
-	{ 23, "Active Scanning State and Initiating State combination"	},
-	{ 24, "Passive Scanning State and Master Role combination"	},
-	{ 25, "Active Scanning State and Master Role combination"	},
-	{ 26, "Passive Scanning State and Slave Role combination"	},
-	{ 27, "Active Scanning State and Slave Role combination"	},
-	{ 28, "Initiating State and Master Role combination"		},
+} le_states_desc_table[] = {
+	{  0, "Scannable Advertising State"			},
+	{  1, "Connectable Advertising State"			},
+	{  2, "Non-connectable Advertising State"		},
+	{  3, "High Duty Cycle Directed Advertising State"	},
+	{  4, "Low Duty Cycle Directed Advertising State"	},
+	{  5, "Active Scanning State"				},
+	{  6, "Passive Scanning State"				},
+	{  7, "Initiating State"				},
+	{  8, "Connection State (Master Role)"			},
+	{  9, "Connection State (Slave Role)"			},
+	{ 10, "Master Role & Master Role"			},
+	{ 11, "Slave Role & Slave Role"				},
+	{ 12, "Master Role & Slave Role"			},
+	{ }
+};
+
+static const struct {
+	uint8_t bit;
+	uint16_t states;
+} le_states_comb_table[] = {
+	{  0, LE_STATE_NONCONN_ADV				},
+	{  1, LE_STATE_SCAN_ADV					},
+	{  2, LE_STATE_CONN_ADV					},
+	{  3, LE_STATE_HIGH_DIRECT_ADV				},
+	{  4, LE_STATE_PASSIVE_SCAN				},
+	{  5, LE_STATE_ACTIVE_SCAN				},
+	{  6, LE_STATE_INITIATING | LE_STATE_CONN_MASTER	},
+	{  7, LE_STATE_CONN_SLAVE				},
+	{  8, LE_STATE_PASSIVE_SCAN | LE_STATE_NONCONN_ADV	},
+	{  9, LE_STATE_PASSIVE_SCAN | LE_STATE_SCAN_ADV		},
+	{ 10, LE_STATE_PASSIVE_SCAN | LE_STATE_CONN_ADV		},
+	{ 11, LE_STATE_PASSIVE_SCAN | LE_STATE_HIGH_DIRECT_ADV	},
+	{ 12, LE_STATE_ACTIVE_SCAN | LE_STATE_NONCONN_ADV	},
+	{ 13, LE_STATE_ACTIVE_SCAN | LE_STATE_SCAN_ADV		},
+	{ 14, LE_STATE_ACTIVE_SCAN | LE_STATE_CONN_ADV		},
+	{ 15, LE_STATE_ACTIVE_SCAN | LE_STATE_HIGH_DIRECT_ADV	},
+	{ 16, LE_STATE_INITIATING | LE_STATE_NONCONN_ADV	},
+	{ 17, LE_STATE_INITIATING | LE_STATE_SCAN_ADV		},
+	{ 18, LE_STATE_CONN_MASTER | LE_STATE_NONCONN_ADV	},
+	{ 19, LE_STATE_CONN_MASTER | LE_STATE_SCAN_ADV		},
+	{ 20, LE_STATE_CONN_SLAVE | LE_STATE_NONCONN_ADV	},
+	{ 21, LE_STATE_CONN_SLAVE | LE_STATE_SCAN_ADV		},
+	{ 22, LE_STATE_INITIATING | LE_STATE_PASSIVE_SCAN	},
+	{ 23, LE_STATE_INITIATING | LE_STATE_ACTIVE_SCAN	},
+	{ 24, LE_STATE_CONN_MASTER | LE_STATE_PASSIVE_SCAN	},
+	{ 25, LE_STATE_CONN_MASTER | LE_STATE_ACTIVE_SCAN	},
+	{ 26, LE_STATE_CONN_SLAVE | LE_STATE_PASSIVE_SCAN	},
+	{ 27, LE_STATE_CONN_SLAVE | LE_STATE_ACTIVE_SCAN	},
+	{ 28, LE_STATE_INITIATING | LE_STATE_CONN_MASTER |
+					LE_STATE_MASTER_MASTER	},
+	{ 29, LE_STATE_LOW_DIRECT_ADV				},
+	{ 30, LE_STATE_LOW_DIRECT_ADV | LE_STATE_PASSIVE_SCAN	},
+	{ 31, LE_STATE_LOW_DIRECT_ADV | LE_STATE_ACTIVE_SCAN	},
+	{ 32, LE_STATE_INITIATING | LE_STATE_CONN_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 33, LE_STATE_INITIATING | LE_STATE_HIGH_DIRECT_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 34, LE_STATE_INITIATING | LE_STATE_LOW_DIRECT_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 35, LE_STATE_CONN_MASTER | LE_STATE_CONN_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 36, LE_STATE_CONN_MASTER | LE_STATE_HIGH_DIRECT_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 37, LE_STATE_CONN_MASTER | LE_STATE_LOW_DIRECT_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 38, LE_STATE_CONN_SLAVE | LE_STATE_CONN_ADV |
+					LE_STATE_MASTER_SLAVE	},
+	{ 39, LE_STATE_CONN_SLAVE | LE_STATE_HIGH_DIRECT_ADV |
+					LE_STATE_SLAVE_SLAVE	},
+	{ 40, LE_STATE_CONN_SLAVE| LE_STATE_LOW_DIRECT_ADV |
+					LE_STATE_SLAVE_SLAVE	},
+	{ 41, LE_STATE_INITIATING | LE_STATE_CONN_SLAVE |
+					LE_STATE_MASTER_SLAVE	},
 	{ }
 };
 
 static void print_le_states(const uint8_t *states_array)
 {
 	uint64_t mask, states = 0;
-	int i;
+	int i, n;
 
 	for (i = 0; i < 8; i++)
 		states |= ((uint64_t) states_array[i]) << (i * 8);
@@ -2456,11 +2534,26 @@ static void print_le_states(const uint8_t *states_array)
 
 	mask = states;
 
-	for (i = 0; le_states_table[i].str; i++) {
-		if (states & (((uint64_t) 1) << le_states_table[i].bit)) {
-			print_field("  %s", le_states_table[i].str);
-			mask &= ~(((uint64_t) 1) << le_states_table[i].bit);
+	for (i = 0; le_states_comb_table[i].states; i++) {
+		uint64_t val = (((uint64_t) 1) << le_states_comb_table[i].bit);
+		const char *str[3] = { NULL, };
+		int num = 0;
+
+		if (!(states & val))
+			continue;
+
+		for (n = 0; n < 16; n++) {
+			if (le_states_comb_table[i].states & (1 << n))
+				str[num++] = le_states_desc_table[n].str;
 		}
+
+		if (num > 0) {
+			print_field("  %s", str[0]);
+			for (n = 1; n < num; n++)
+				print_field("    and %s", str[n]);
+		}
+
+		mask &= ~val;
 	}
 
 	if (mask)
@@ -4873,7 +4966,7 @@ static void read_sync_train_params_rsp(const void *data, uint8_t size)
 	print_field("Timeout: %.3f msec (0x%8.8x)",
 					le32_to_cpu(rsp->timeout) * 0.625,
 					le32_to_cpu(rsp->timeout));
-	print_field("Service Data: 0x%2.2x", rsp->service_data);
+	print_field("Service data: 0x%2.2x", rsp->service_data);
 }
 
 static void write_sync_train_params_cmd(const void *data, uint8_t size)
@@ -4885,7 +4978,7 @@ static void write_sync_train_params_cmd(const void *data, uint8_t size)
 	print_field("Timeout: %.3f msec (0x%8.8x)",
 					le32_to_cpu(cmd->timeout) * 0.625,
 					le32_to_cpu(cmd->timeout));
-	print_field("Service Data: 0x%2.2x", cmd->service_data);
+	print_field("Service data: 0x%2.2x", cmd->service_data);
 }
 
 static void write_sync_train_params_rsp(const void *data, uint8_t size)
@@ -5056,6 +5149,25 @@ static void read_data_block_size_rsp(const void *data, uint8_t size)
 	print_field("Max ACL length: %d", le16_to_cpu(rsp->max_acl_len));
 	print_field("Block length: %d", le16_to_cpu(rsp->block_len));
 	print_field("Num blocks: %d", le16_to_cpu(rsp->num_blocks));
+}
+
+static void read_local_codecs_rsp(const void *data, uint8_t size)
+{
+	const struct bt_hci_rsp_read_local_codecs *rsp = data;
+	uint8_t i, num_vnd_codecs;
+
+	print_status(rsp->status);
+	print_field("Number of supported codecs: %d", rsp->num_codecs);
+
+	for (i = 0; i < rsp->num_codecs; i++)
+		print_codec("  Codec", rsp->codec[i]);
+
+	num_vnd_codecs = rsp->codec[rsp->num_codecs];
+
+	print_field("Number of vendor codecs: %d", num_vnd_codecs);
+
+	packet_hexdump(data + rsp->num_codecs + 3,
+					size - rsp->num_codecs - 3);
 }
 
 static void read_failed_contact_counter_cmd(const void *data, uint8_t size)
@@ -5246,6 +5358,61 @@ static void write_remote_amp_assoc_rsp(const void *data, uint8_t size)
 
 	print_status(rsp->status);
 	print_phy_handle(rsp->phy_handle);
+}
+
+static void get_mws_transport_config_rsp(const void *data, uint8_t size)
+{
+	const struct bt_hci_rsp_get_mws_transport_config *rsp = data;
+	uint8_t sum_baud_rates = 0;
+	int i;
+
+	print_status(rsp->status);
+	print_field("Number of transports: %d", rsp->num_transports);
+
+	for (i = 0; i < rsp->num_transports; i++) {
+		uint8_t transport = rsp->transport[0];
+		uint8_t num_baud_rates = rsp->transport[1];
+		const char *str;
+
+		switch (transport) {
+		case 0x00:
+			str = "Disbabled";
+			break;
+		case 0x01:
+			str = "WCI-1";
+			break;
+		case 0x02:
+			str = "WCI-2";
+			break;
+		default:
+			str = "Reserved";
+			break;
+		}
+
+		print_field("  Transport layer: %s (0x%2.2x)", str, transport);
+		print_field("  Number of baud rates: %d", num_baud_rates);
+
+		sum_baud_rates += num_baud_rates;
+	}
+
+	print_field("Baud rate list: %u entr%s", sum_baud_rates,
+					sum_baud_rates == 1 ? "y" : "ies");
+
+	for (i = 0; i < sum_baud_rates; i++) {
+		uint32_t to_baud_rate, from_baud_rate;
+
+		to_baud_rate = get_le32(data + 2 +
+					rsp->num_transports * 2 + i * 4);
+		from_baud_rate = get_le32(data + 2 +
+						rsp->num_transports * 2 +
+						sum_baud_rates * 4 + i * 4);
+
+		print_field("  Bluetooth to MWS: %d", to_baud_rate);
+		print_field("  MWS to Bluetooth: %d", from_baud_rate);
+	}
+
+	packet_hexdump(data + 2 + rsp->num_transports * 2 + sum_baud_rates * 8,
+		size - 2 - rsp->num_transports * 2 - sum_baud_rates * 8);
 }
 
 static void set_triggered_clock_capture_cmd(const void *data, uint8_t size)
@@ -5719,6 +5886,45 @@ static void le_test_end_rsp(const void *data, uint8_t size)
 
 	print_status(rsp->status);
 	print_field("Number of packets: %d", le16_to_cpu(rsp->num_packets));
+}
+
+static void le_conn_param_req_reply_cmd(const void *data, uint8_t size)
+{
+	const struct bt_hci_cmd_le_conn_param_req_reply *cmd = data;
+
+	print_handle(cmd->handle);
+	print_slot_125("Min connection interval", cmd->min_interval);
+	print_slot_125("Max connection interval", cmd->max_interval);
+	print_field("Connection latency: 0x%4.4x", le16_to_cpu(cmd->latency));
+	print_field("Supervision timeout: %d msec (0x%4.4x)",
+					le16_to_cpu(cmd->supv_timeout) * 10,
+					le16_to_cpu(cmd->supv_timeout));
+	print_slot_625("Min connection length", cmd->min_length);
+	print_slot_625("Max connection length", cmd->max_length);
+}
+
+static void le_conn_param_req_reply_rsp(const void *data, uint8_t size)
+{
+	const struct bt_hci_rsp_le_conn_param_req_reply *rsp = data;
+
+	print_status(rsp->status);
+	print_handle(rsp->handle);
+}
+
+static void le_conn_param_req_neg_reply_cmd(const void *data, uint8_t size)
+{
+	const struct bt_hci_cmd_le_conn_param_req_neg_reply *cmd = data;
+
+	print_handle(cmd->handle);
+	print_reason(cmd->reason);
+}
+
+static void le_conn_param_req_neg_reply_rsp(const void *data, uint8_t size)
+{
+	const struct bt_hci_rsp_le_conn_param_req_neg_reply *rsp = data;
+
+	print_status(rsp->status);
+	print_handle(rsp->handle);
 }
 
 struct opcode_data {
@@ -6205,7 +6411,9 @@ static const struct opcode_data opcode_table[] = {
 	{ 0x100a, 186, "Read Data Block Size",
 				null_cmd, 0, true,
 				read_data_block_size_rsp, 7, true },
-	{ 0x100b, 237, "Read Local Supported Codecs" },
+	{ 0x100b, 237, "Read Local Supported Codecs",
+				null_cmd, 0, true,
+				read_local_codecs_rsp, 3, false },
 
 	/* OGF 5 - Status Parameter */
 	{ 0x1401, 122, "Read Failed Contact Counter",
@@ -6238,7 +6446,9 @@ static const struct opcode_data opcode_table[] = {
 	{ 0x140b, 183, "Write Remote AMP ASSOC",
 				write_remote_amp_assoc_cmd, 6, false,
 				write_remote_amp_assoc_rsp, 2, true },
-	{ 0x140c, 243, "Get MWS Transport Layer Configuration" },
+	{ 0x140c, 243, "Get MWS Transport Layer Configuration",
+				null_cmd, 0, true,
+				get_mws_transport_config_rsp, 2, false },
 	{ 0x140d, 245, "Set Triggered Clock Capture",
 				set_triggered_clock_capture_cmd, 6, true,
 				status_rsp, 1, true },
@@ -6344,8 +6554,12 @@ static const struct opcode_data opcode_table[] = {
 	{ 0x201f, 230, "LE Test End",
 				null_cmd, 0, true,
 				le_test_end_rsp, 3, true },
-	{ 0x2020, 268, "LE Remote Connection Parameter Request Reply" },
-	{ 0x2021, 269, "LE Remote Connection Parameter Request Negative Reply" },
+	{ 0x2020, 268, "LE Remote Connection Parameter Request Reply",
+				le_conn_param_req_reply_cmd, 14, true,
+				le_conn_param_req_reply_rsp, 3, true },
+	{ 0x2021, 269, "LE Remote Connection Parameter Request Negative Reply",
+				le_conn_param_req_neg_reply_cmd, 3, true,
+				le_conn_param_req_neg_reply_rsp, 3, true },
 	{ }
 };
 
@@ -7260,6 +7474,19 @@ static void le_long_term_key_request_evt(const void *data, uint8_t size)
 	print_encrypted_diversifier(evt->ediv);
 }
 
+static void le_conn_param_request_evt(const void *data, uint8_t size)
+{
+	const struct bt_hci_evt_le_conn_param_request *evt = data;
+
+	print_handle(evt->handle);
+	print_slot_125("Min connection interval", evt->min_interval);
+	print_slot_125("Max connection interval", evt->max_interval);
+	print_field("Connection latency: 0x%4.4x", le16_to_cpu(evt->latency));
+	print_field("Supervision timeout: %d msec (0x%4.4x)",
+					le16_to_cpu(evt->supv_timeout) * 10,
+					le16_to_cpu(evt->supv_timeout));
+}
+
 struct subevent_data {
 	uint8_t subevent;
 	const char *str;
@@ -7279,7 +7506,8 @@ static const struct subevent_data subevent_table[] = {
 				le_remote_features_complete_evt, 11, true },
 	{ 0x05, "LE Long Term Key Request",
 				le_long_term_key_request_evt, 12, true },
-	{ 0x06, "LE Remote Connection Parameter Request" },
+	{ 0x06, "LE Remote Connection Parameter Request",
+				le_conn_param_request_evt, 10, true },
 	{ }
 };
 
