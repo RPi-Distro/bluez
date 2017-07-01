@@ -468,8 +468,6 @@ static void connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 	uint8_t dst_type;
 	bdaddr_t src, dst;
 
-	DBG("New incoming LE ATT connection");
-
 	if (gerr) {
 		error("%s", gerr->message);
 		return;
@@ -484,6 +482,9 @@ static void connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
 		g_error_free(gerr);
 		return;
 	}
+
+	DBG("New incoming %s ATT connection", dst_type == BDADDR_BREDR ?
+							"BR/EDR" : "LE");
 
 	adapter = adapter_find(&src);
 	if (!adapter)
@@ -1168,7 +1169,7 @@ static bool parse_chrc_flags(DBusMessageIter *array, uint8_t *props,
 		} else if (!strcmp("secure-read", flag)) {
 			*props |= BT_GATT_CHRC_PROP_READ;
 			*ext_props |= BT_GATT_CHRC_EXT_PROP_AUTH_READ;
-			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_READ_SECURE;
+			*perm |= BT_ATT_PERM_READ | BT_ATT_PERM_READ_SECURE;
 		} else if (!strcmp("secure-write", flag)) {
 			*props |= BT_GATT_CHRC_PROP_WRITE;
 			*ext_props |= BT_GATT_CHRC_EXT_PROP_AUTH_WRITE;
@@ -1210,9 +1211,9 @@ static bool parse_desc_flags(DBusMessageIter *array, uint32_t *perm)
 		else if (!strcmp("encrypt-authenticated-write", flag))
 			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_WRITE_AUTHEN;
 		else if (!strcmp("secure-read", flag))
-			*perm |= BT_ATT_PERM_READ | BT_ATT_PERM_READ_AUTHEN;
+			*perm |= BT_ATT_PERM_READ | BT_ATT_PERM_READ_SECURE;
 		else if (!strcmp("secure-write", flag))
-			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_WRITE_AUTHEN;
+			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_WRITE_SECURE;
 		else {
 			error("Invalid descriptor flag: %s", flag);
 			return false;
