@@ -76,12 +76,6 @@ static void print_dev_list(int ctl, int flags)
 		di.dev_id = (dr+i)->dev_id;
 		if (ioctl(ctl, HCIGETDEVINFO, (void *) &di) < 0)
 			continue;
-		if (hci_test_bit(HCI_RAW, &di.flags) &&
-				!bacmp(&di.bdaddr, BDADDR_ANY)) {
-			int dd = hci_open_dev(di.dev_id);
-			hci_read_bd_addr(dd, &di.bdaddr, 1000);
-			hci_close_dev(dd);
-		}
 		print_dev_info(ctl, &di);
 	}
 }
@@ -856,6 +850,7 @@ static char *get_minor_device_name(int major, int minor)
 		}
 		if (strlen(cls_str) > 0)
 			return cls_str;
+		break;
 	}
 	case 6:	/* imaging */
 		if (minor & 4)
@@ -2014,13 +2009,6 @@ int main(int argc, char *argv[])
 	if (ioctl(ctl, HCIGETDEVINFO, (void *) &di)) {
 		perror("Can't get device info");
 		exit(1);
-	}
-
-	if (hci_test_bit(HCI_RAW, &di.flags) &&
-			!bacmp(&di.bdaddr, BDADDR_ANY)) {
-		int dd = hci_open_dev(di.dev_id);
-		hci_read_bd_addr(dd, &di.bdaddr, 1000);
-		hci_close_dev(dd);
 	}
 
 	while (argc > 0) {

@@ -155,6 +155,18 @@ static void hid_device_remove(struct hid_device *dev)
 	hid_device_free(dev);
 }
 
+static struct hid_device *hid_device_new(const bdaddr_t *addr)
+{
+	struct hid_device *dev;
+
+	dev = g_new0(struct hid_device, 1);
+	bacpy(&dev->dst, addr);
+	dev->state = HAL_HIDHOST_STATE_DISCONNECTED;
+	devices = g_slist_append(devices, dev);
+
+	return dev;
+}
+
 static bool hex2buf(const uint8_t *hex, uint8_t *buf, int buf_size)
 {
 	int i, j;
@@ -771,9 +783,7 @@ static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 	}
 
 	if (!dev) {
-		dev = g_new0(struct hid_device, 1);
-		bacpy(&dev->dst, addr);
-		devices = g_slist_append(devices, dev);
+		dev = hid_device_new(addr);
 		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
 	}
 
@@ -839,9 +849,7 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 		goto failed;
 	}
 
-	dev = g_new0(struct hid_device, 1);
-	bacpy(&dev->dst, &dst);
-	dev->state = HAL_HIDHOST_STATE_DISCONNECTED;
+	dev = hid_device_new(&dst);
 
 	ba2str(&dev->dst, addr);
 	DBG("connecting to %s", addr);
@@ -849,6 +857,7 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 	if (bt_is_device_le(&dst)) {
 		if (!hog_connect(dev)) {
 			status = HAL_STATUS_FAILED;
+			hid_device_remove(dev);
 			goto failed;
 		}
 		goto done;
@@ -864,8 +873,6 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 	}
 
 done:
-	devices = g_slist_append(devices, dev);
-
 	if (dev->state == HAL_HIDHOST_STATE_DISCONNECTED)
 		bt_hid_notify_state(dev, HAL_HIDHOST_STATE_CONNECTING);
 
@@ -1221,7 +1228,7 @@ static void bt_hid_set_report(const void *buf, uint16_t len)
 
 	dev = l->data;
 
-	if (!(dev->ctrl_io)) {
+	if (!dev->ctrl_io && !dev->hog) {
 		status = HAL_STATUS_FAILED;
 		goto failed;
 	}
@@ -1243,6 +1250,16 @@ static void bt_hid_set_report(const void *buf, uint16_t len)
 		goto failed;
 	}
 
+	if (dev->hog) {
+		if (bt_hog_send_report(dev->hog, req + 1, req_size - 1,
+							cmd->type) < 0) {
+			status = HAL_STATUS_FAILED;
+			goto failed;
+		}
+
+		goto done;
+	}
+
 	fd = g_io_channel_unix_get_fd(dev->ctrl_io);
 
 	if (write(fd, req, req_size) < 0) {
@@ -1254,6 +1271,7 @@ static void bt_hid_set_report(const void *buf, uint16_t len)
 
 	dev->last_hid_msg = HID_MSG_SET_REPORT;
 
+done:
 	status = HAL_STATUS_SUCCESS;
 
 failed:
@@ -1393,8 +1411,7 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 		if (l)
 			return;
 
-		dev = g_new0(struct hid_device, 1);
-		bacpy(&dev->dst, &dst);
+		dev = hid_device_new(&dst);
 		dev->ctrl_io = g_io_channel_ref(chan);
 
 		sdp_uuid16_create(&uuid, PNP_INFO_SVCLASS_ID);
@@ -1404,8 +1421,6 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 			hid_device_remove(dev);
 			return;
 		}
-
-		devices = g_slist_append(devices, dev);
 
 		dev->ctrl_watch = g_io_add_watch(dev->ctrl_io,
 					G_IO_HUP | G_IO_ERR | G_IO_NVAL,

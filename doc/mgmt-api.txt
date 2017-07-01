@@ -39,6 +39,14 @@ Version 1.6 introduces Get Connection Information command. It also updates
 the Device Found event to combine advertising data and scan response data
 into a single event.
 
+Version 1.7 introduces Get Clock Information, Add Device, Remove Device,
+Load Connection Parameters, Read Unconfigured Index List, Read Controller
+Configuration Information, Set External Configuration and Set Public Address
+commands. It also introduces Device Added, Device Removed, New Connection
+Parameter, Unconfigured Index Added, Unconfigured Index Removed and New
+Configuration Options events. The existing Set Debug Keys command gained
+an extra setting for enabling SSP debug mode.
+
 
 Example
 =======
@@ -213,10 +221,21 @@ Read Controller Information Command
 	getting the response to the Read Controller Index List command
 	or an Index Added event.
 
-	If not short name is set the Short_Name parameter will be empty
+	The Address parameter describes the controllers public address
+	and it can be expected that it is set. However in case of single
+	mode Low Energy only controllers it can be 00:00:00:00:00:00. To
+	power on the controller in this case, it is required to configure
+	a static address using Set Static Address command first.
+
+	If the public address is set, then it will be used as identity
+	address for the controller. If no public address is available,
+	then the configured static address will be used as identity
+	address.
+
+	If no short name is set the Short_Name parameter will be empty
 	(begin with a nul byte).
 
-	Current_Settings & Supported_Settings is a bitmask with
+	Current_Settings and Supported_Settings is a bitmask with
 	currently the following available bits:
 
 		0	Powered
@@ -233,6 +252,7 @@ Read Controller Information Command
 		11	Secure Connections
 		12	Debug Keys
 		13	Privacy
+		14	Controller Configuration
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
@@ -329,8 +349,9 @@ Set Connectable Command
 	and for LE controllers it changes the advertising type. For
 	dual mode controllers it affects both settings.
 
-	For LE capable controllers the connectable setting only takes
-	affect when advertising is enabled.
+	For LE capable controllers the connectable setting takes affect
+	when advertising is enabled (peripheral) or when directed
+	advertising events are received (central).
 
 	This command can be used when the controller is not powered and
 	all settings will be programmed once powered.
@@ -1392,6 +1413,15 @@ Block Device Command
 		1	LE Public
 		2	LE Random
 
+	For Low Energy devices, the blocking of a device take presedence
+	over auto-connection actions provided by Add Device. Blocked
+	devices will not be auto-connected or even reported when found
+	during background scanning. If the controller is connectable
+	direct advertising from blocked devices will also be ignored.
+
+	Connections created from advertising of the controller will
+	be dropped if the device is blocked.
+
 	This command can be used when the controller is not powered.
 
 	This command generates a Command Complete event on success
@@ -1419,6 +1449,9 @@ Unblock Device Command
 		0	BR/EDR
 		1	LE Public
 		2	LE Random
+
+	When the Address parameter is 00:00:00:00:00:00, then all
+	previously blocked devices will be unblocked.
 
 	This command can be used when the controller is not powered.
 
@@ -1622,8 +1655,23 @@ Set Debug Keys Command
 
 	This command is used to tell the kernel whether to accept the
 	usage of debug keys or not. The allowed values for this parameter
-	are 0x00 and 0x01. All other values will return an Invalid Parameters
-	response.
+	are 0x00, 0x01 and 0x02. All other values will return an Invalid
+	Parameters response.
+
+	With a value of 0x00 any generated debug key will be discarded
+	as soon as the connection terminates.
+
+	With a value of 0x01 generated debug keys will be kept and can
+	be used for future connections. However debug keys are always
+	marked as non persistent and should not be stored. This means
+	a reboot or changing the value back to 0x00 will delete them.
+
+	With a value of 0x02 generated debug keys will be kept and can
+	be used for future connections. This has the same affect as
+	with value 0x01. However in addition this value will also
+	enter the controller mode to generate debug keys for each
+	new pairing. Changing the value back to 0x01 or 0x00 will
+	disable the controller mode for generating debug keys.
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
@@ -1646,8 +1694,29 @@ Set Privacy Command
 	This command is used to enable Low Energy Privacy feature using
 	resolvable private addresses.
 
-	The value 0x00 disables privacy mode, the value 0x01 enables
-	privacy mode.
+	The value 0x00 disables privacy mode, the values 0x01 and 0x02
+	enable privacy mode.
+
+	With value 0x01 the kernel will always use the privacy mode. This
+	means resolvable private address is used when the controller is
+	discoverable and also when pairing is initiated.
+
+	With value 0x02 the kernel will use privacy mode with resolvable
+	private address. In case the conroller is pairable and discoverable
+	the identity address is used. Also when pairing is initiated, the
+	connection will be established with the identity address.
+
+	Exposing the identity address when pairable and discoverable or
+	during initated pairing can be a privacy issue. For dual-mode
+	controllers this can be neglected since its public address will
+	be exposed over BR/EDR anyway. The benefit of exposing the
+	identity address for pairing purposes is that it makes matching
+	up devices with dual-mode topology during device discovery now
+	possible.
+
+	If the privacy value 0x02 is used, then also the GATT database
+	should expose the Privacy Characteristic so that remote devices
+	can determine if the privacy feature is in use or not.
 
 	When the controller has a public address (mandatory for dual-mode
 	controllers) it is used as identity address. In case the controller
@@ -1719,6 +1788,11 @@ Get Connection Information Command
 
 	This command is used to get connection information.
 
+	Possible values for the Address_Type parameter:
+		0	BR/EDR
+		1	LE Public
+		2	LE Random
+
 	TX_Power and Max_TX_Power can be set to 127 if values are invalid or
 	unknown.
 
@@ -1729,6 +1803,320 @@ Get Connection Information Command
 
 	Possible errors:	Not Connected
 				Not Powered
+				Invalid Parameters
+				Invalid Index
+
+
+Get Clock Information Command
+=============================
+
+	Command Code:		0x0032
+	Controller Index:	<controller id>
+	Command Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+	Return Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+				Local_Clock (4 Octets)
+				Piconet_Clock (4 Octets)
+				Accuracy (2 Octets)
+
+	This command is used to get local and piconet clock information.
+
+	Possible values for the Address_Type parameter:
+		0	BR/EDR
+		1	Reserved (not in use)
+		2	Reserved (not in use)
+
+	The Accuracy can be set to 0xffff which means the value is unknown.
+
+	If the Address is set to 00:00:00:00:00:00, then only the
+	Local_Clock field has a valid value. The Piconet_Clock and
+	Accuracy fields are invalid and shall be ignored.
+
+	This command generates a Command Complete event on success and
+	on failure. In case of failure only Address and Address_Type fields
+	are valid and values of remaining parameters are considered invalid
+	and shall be ignored.
+
+	Possible errors:	Not Connected
+				Not Powered
+				Invalid Parameters
+				Invalid Index
+
+
+Add Device Command
+==================
+
+	Command Code:		0x0033
+	Controller Index:	<controller id>
+	Command Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+				Action (1 Octet)
+	Return Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+
+	This command is used to add a device to the action list. The
+	action list allows scanning for devices and auto-connection
+	to known devices.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	Possible values for the Action parameter:
+		0	Background scan for device
+		1	Auto-connect device
+
+	With the Action 0, when the device is found, a new Device Found
+	event will be send indicating this device is available.
+
+	With the Action 1, when the device is found, it will be connected
+	and if successful a Device Connected event will be send.
+
+	Devices using directed advertising will be automatically connected
+	if the connectable setting is enabled. If connectable is not set,
+	then devices using undirected advertising will only connect when
+	using the auto-connect action.
+
+	When a device is blocked using Block Device command, then it is
+	valid to add the device here, but all actions will be ignored
+	until the device is unblocked.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
+	This command generates a Command Complete event on success
+	or failure.
+
+	Possible errors:	Failed
+				Invalid Parameters
+				Invalid Index
+
+
+Remove Device Command
+=====================
+
+	Command Code:		0x0034
+	Controller Index:	<controller id>
+	Command Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+	Return Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+
+	This command is used to remove a device from the action list
+	previously added by using the Add Device command.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	When the Address parameter is 00:00:00:00:00:00, then all
+	previously added devices will be removed.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
+	This command generates a Command Complete event on success
+	or failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Load Connection Parameters Command
+==================================
+
+	Command Code:		0x0035
+	Controller Index:	<controller id>
+	Command Parameters:	Param_Count (2 Octets)
+				Param1 {
+					Address (6 Octets)
+					Address_Type (1 Octet)
+					Min_Connection_Interval (2 Octets)
+					Max_Connection_Interval (2 Octes)
+					Connection_Latency (2 Octets)
+					Supervision_Timeout (2 Octets)
+				}
+				Param2 {  }
+				...
+	Return Parameters:
+
+	This command is used to load connection parameters from several
+	devices into kernel. Currently this is only supported on controllers
+	with Low Energy support.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	The provided Address and Address_Type are the identity of
+	a device. So either its public address or static random address.
+
+	The Min_Connection_Interval, Max_Connection_Interval,
+	Connection_Latency and Supervision_Timeout parameters should
+	be configured as described in Core 4.1 spec, Vol 2, 7.8.12.
+
+	This command can be used when the controller is not powered.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+				Not Supported
+
+
+Read Unconfigured Controller Index List Command
+===============================================
+
+	Command Code:		0x0036
+	Controller Index:	<non-controller>
+	Command Parameters:
+	Return Parameters:	Num_Controllers (2 Octets)
+				Controller_Index[i] (2 Octets)
+
+	This command returns the list of currently unconfigured controllers.
+	Unconfigured controllers added after calling this command can be
+	monitored using the Unconfigured Index Added event.
+
+	An unconfigured controller can either move to a configured state
+	by indicating Unconfigured Index Removed event followed by an
+	Index Added event; or it can be removed from the system which
+	would be indicated by the Unconfigured Index Removed event.
+
+	Only controllers that require configuration will be listed with
+	this command. A controller that is fully configured will not
+	be listed even if it supports configuration changes.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+
+Read Controller Configuration Information Command
+=================================================
+
+	Command Code:		0x0037
+	Controller Index:	<controller id>
+	Command Parameters:
+	Return Parameters:	Manufacturer (2 Octets)
+				Supported_Options (4 Octets)
+				Missing_Options (4 Octets)
+
+	This command is used to retreive the supported configuration
+	options of a controller and the missing configuration options.
+
+	The missing options are required to be configured before the
+	controller is considered fully configured and ready for standard
+	operation. The command is typically used right after getting the
+	response to Read Unconfigured Controller Index List command or
+	Unconfigured Index Added event.
+
+	Supported_Options and Missing_Options is a bitmask with currently
+	the following available bits:
+
+		0	External configuration
+		1	Bluetooth public address configuration
+
+	It is valid to call this command on controllers that do not
+	require any configuration. It is possible that a fully configured
+	controller offers additional support for configuration.
+
+	For example a controller may contain a valid Bluetooth public
+	device address, but also allows to configure it from the host
+	stack. In this case the general support for configurations will
+	be indicated by the Controller Configuration settings. For
+	controllers where no configuration options are available that
+	setting option will not be present.
+
+	When all configurations have been completed and as a result the
+	Missing_Options mask would become empty, then the now ready
+	controller will be announced via Index Added event.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Set External Configuration Command
+==================================
+
+	Command Code:		0x0038
+	Controller Index:	<controller id>
+	Command Parameters:	Configuration (1 Octet)
+	Return Parameters:	Missing_Options (4 Octets)
+
+	This command allows to change external configuration option to
+	indicate that a controller is now configured or unconfigured.
+
+	The value 0x00 sets unconfigured state and the value 0x01 sets
+	configured state of the controller.
+
+	It is not mandatory that this configuration option is provided
+	by a controller. If it is provided, the configuration has to
+	happen externally using user channel operation or via vendor
+	specific methods.
+
+	Setting this option and when Missing_Options returns zero, this
+	means that the controller will switch to configured state and it
+	can be expected that it will be announced via Index Added event.
+
+	Wrongly configured controllers might still cause an error when
+	trying to power them via Set Powered commmand.
+
+	This command generates a Command Complete event on success or a
+	Command Status event on failure.
+
+	Possible errors:	Rejected
+				Not Supported
+				Invalid Parameters
+				Invalid Index
+
+
+Set Public Address Command
+==========================
+
+	Command Code:		0x0039
+	Controller Index:	<controller id>
+	Command Parameters:	Address (6 Octets)
+	Return Parameters:	Missing_Options (4 Octets)
+
+	This command allows configuration of public address. Since a vendor
+	specific procedure is required, this command might not be supported
+	by all controllers. Actually most likely only a handful embedded
+	controllers will offer support for this command.
+
+	When the support for Bluetooth public address configuration is
+	indicated in the supported options mask, then this command
+	can be used to configure the public address.
+
+	It is only possible to configure the public address when the
+	controller is powered off.
+
+	For an unconfigured controller and when Missing_Options returns
+	an empty mask, this means that a Index Added event for the now
+	fully configured controller can be expected.
+
+	For a fully configured controller, the current controller index
+	will become invalid and an Unconfigured Index Removed event will
+	be send. Once the address has been successfully changed an Index
+	Added event will be send. There is no guarantee that the controller
+	index stays the same.
+
+	All previous configured parameters and settings are lost when
+	this command succeeds. The controller has to be treated as new
+	one. Use this command for a fully configured controller only when
+	you really know what you are doing.
+
+	This command generates a Command Complete event on success or a
+	Command Status event on failure.
+
+	Possible errors:	Rejected
+				Not Supported
 				Invalid Parameters
 				Invalid Index
 
@@ -1952,6 +2340,7 @@ Device Connected Event
 	The following bits are defined for the Flags parameter:
 		0	Reserved (not in use)
 		1	Legacy Pairing
+		2	Reserved (not in use)
 
 
 Device Disconnected Event
@@ -2122,6 +2511,7 @@ Device Found Event
 	The following bits are defined for the Flags parameter:
 		0	Confirm name
 		1	Legacy Pairing
+		2	Not Connectable
 
 	The Confirm name flag indicates that the kernel wants to know
 	whether user space knows the name for this device or not. If
@@ -2135,6 +2525,10 @@ Device Found Event
 	local input timeout when pairing. Note that there is a risk of
 	false-positives for this flag so user space should be able to
 	handle getting something else as a PIN Request when pairing.
+
+	The Not Connectable flag indicates that the device will not
+	accept any connections. This can be indicated by Low Energy
+	devices that are in broadcaster role.
 
 
 Discovering Event
@@ -2274,6 +2668,17 @@ New Identity Resolving Key Event
 	This event also indicates that now the identity address should
 	be used for commands instead of the resolvable random address.
 
+	It is possible that some devices allow discovering via its
+	identity address, but after pairing using resolvable private
+	address only. In such a case Store_Hint will be 0x00 and the
+	Random_Address will indicate 00:00:00:00:00:00. For these devices,
+	the Privacy Characteristic of the remote GATT database should
+	be consulted to decide if the identity resolving key must be
+	stored persistently or not.
+
+	Devices using Set Privacy command with the option 0x02 would
+	be such type of device.
+
 	Possible values for the Address_Type parameter:
 		0	Reserved (not in use)
 		1	LE Public
@@ -2322,3 +2727,113 @@ New Signature Resolving Key Event
 
 	The provided Address and Address_Type are the identity of
 	a device. So either its public address or static random address.
+
+
+Device Added Event
+==================
+
+	Event Code:		0x001a
+	Controller Index:	<controller id>
+	Event Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+				Action (1 Octet)
+
+	This event indicates that a device has been added using the
+	Add Device command.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	The event will only be sent to management sockets other than the
+	one through which the command was sent.
+
+
+Device Removed Event
+====================
+
+	Event Code:		0x001b
+	Controller Index:	<controller id>
+	Event Parameters:	Address (6 Octets)
+				Address_Type (1 Octet)
+
+	This event indicates that a device has been removed using the
+	Remove Device command.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	The event will only be sent to management sockets other than the
+	one through which the command was sent.
+
+
+New Connection Parameter Event
+==============================
+
+	Event Code:		0x001c
+	Controller Index:	<controller id>
+	Event Parameters:	Store_Hint (1 Octet)
+				Param {
+					Address (6 Octets)
+					Address_Type (1 Octet)
+					Min_Connection_Interval (2 Octets)
+					Max_Connection_Interval (2 Octes)
+					Connection_Latency (2 Octets)
+					Supervision_Timeout (2 Octets)
+				}
+
+	This event indicates a new set of connection parameters from
+	a peripheral device.
+
+	The Store_Hint parameter indicates whether the host is expected
+	to store this information persistently or not.
+
+	Possible values for the Address_Type parameter:
+		0	Reserved (not in use)
+		1	LE Public
+		2	LE Random
+
+	The Min_Connection_Interval, Max_Connection_Interval,
+	Connection_Latency and Supervision_Timeout parameters are
+	encoded as described in Core 4.1 spec, Vol 2, 7.7.65.3.
+
+
+Unconfigured Index Added Event
+==============================
+
+	Event Code:		0x001d
+	Controller Index:	<controller id>
+	Event Parameters:
+
+	This event indicates that a new unconfigured controller has been
+	added to the system. It is usually followed by a Read Controller
+	Configuration Information command.
+
+	Only when a controller requires further configuration, it will
+	be announced with this event. If it supports configuration, but
+	does not require it, then an Index Added event will be used.
+
+
+Unconfigured Index Removed Event
+================================
+
+	Event Code:		0x001e
+	Controller Index:	<controller id>
+	Event Parameters:
+
+	This event indicates that an unconfigured controller has been
+	removed from the system.
+
+
+New Configuration Options Event
+===============================
+
+	Event Code:		0x001f
+	Controller Index:	<controller id>
+	Event Parameters:	Missing_Options (4 Octets)
+
+	This event indicates that one or more of the options for the
+	controller configuration has changed.

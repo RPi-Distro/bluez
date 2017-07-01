@@ -97,6 +97,7 @@ struct mgmt_rp_read_index_list {
 #define MGMT_SETTING_SECURE_CONN	0x00000800
 #define MGMT_SETTING_DEBUG_KEYS		0x00001000
 #define MGMT_SETTING_PRIVACY		0x00002000
+#define MGMT_SETTING_CONFIGURATION	0x00004000
 
 #define MGMT_OP_READ_INFO		0x0004
 struct mgmt_rp_read_info {
@@ -376,6 +377,74 @@ struct mgmt_rp_get_conn_info {
 	int8_t max_tx_power;
 } __packed;
 
+#define MGMT_OP_GET_CLOCK_INFO		0x0032
+struct mgmt_cp_get_clock_info {
+	struct mgmt_addr_info addr;
+} __packed;
+struct mgmt_rp_get_clock_info {
+	struct mgmt_addr_info addr;
+	uint32_t  local_clock;
+	uint32_t  piconet_clock;
+	uint16_t  accuracy;
+} __packed;
+
+#define MGMT_OP_ADD_DEVICE		0x0033
+struct mgmt_cp_add_device {
+	struct mgmt_addr_info addr;
+	uint8_t action;
+} __packed;
+struct mgmt_rp_add_device {
+	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_OP_REMOVE_DEVICE		0x0034
+struct mgmt_cp_remove_device {
+	struct mgmt_addr_info addr;
+} __packed;
+struct mgmt_rp_remove_device {
+	struct mgmt_addr_info addr;
+} __packed;
+
+struct mgmt_conn_param {
+	struct mgmt_addr_info addr;
+	uint16_t min_interval;
+	uint16_t max_interval;
+	uint16_t latency;
+	uint16_t timeout;
+} __packed;
+
+#define MGMT_OP_LOAD_CONN_PARAM		0x0035
+struct mgmt_cp_load_conn_param {
+	uint16_t param_count;
+	struct mgmt_conn_param params[0];
+} __packed;
+
+#define MGMT_OP_READ_UNCONF_INDEX_LIST	0x0036
+struct mgmt_rp_read_unconf_index_list {
+	uint16_t num_controllers;
+	uint16_t index[0];
+} __packed;
+
+#define MGMT_OPTION_EXTERNAL_CONFIG	0x00000001
+#define MGMT_OPTION_PUBLIC_ADDRESS	0x00000002
+
+#define MGMT_OP_READ_CONFIG_INFO	0x0037
+struct mgmt_rp_read_config_info {
+	uint16_t manufacturer;
+	uint32_t supported_options;
+	uint32_t missing_options;
+} __packed;
+
+#define MGMT_OP_SET_EXTERNAL_CONFIG	0x0038
+struct mgmt_cp_set_external_config {
+	uint8_t config;
+} __packed;
+
+#define MGMT_OP_SET_PUBLIC_ADDRESS	0x0039
+struct mgmt_cp_set_public_address {
+	bdaddr_t bdaddr;
+} __packed;
+
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
 	uint16_t opcode;
@@ -474,6 +543,7 @@ struct mgmt_ev_auth_failed {
 
 #define MGMT_DEV_FOUND_CONFIRM_NAME	0x01
 #define MGMT_DEV_FOUND_LEGACY_PAIRING	0x02
+#define MGMT_DEV_FOUND_NOT_CONNECTABLE	0x04
 
 #define MGMT_EV_DEVICE_FOUND		0x0012
 struct mgmt_ev_device_found {
@@ -531,6 +601,33 @@ struct mgmt_ev_new_csrk {
 	struct mgmt_csrk_info key;
 } __packed;
 
+#define MGMT_EV_DEVICE_ADDED		0x001a
+struct mgmt_ev_device_added {
+	struct mgmt_addr_info addr;
+	uint8_t action;
+} __packed;
+
+#define MGMT_EV_DEVICE_REMOVED		0x001b
+struct mgmt_ev_device_removed {
+	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_EV_NEW_CONN_PARAM		0x001c
+struct mgmt_ev_new_conn_param {
+	struct mgmt_addr_info addr;
+	uint8_t store_hint;
+	uint16_t min_interval;
+	uint16_t max_interval;
+	uint16_t latency;
+	uint16_t timeout;
+} __packed;
+
+#define MGMT_EV_UNCONF_INDEX_ADDED	0x001d
+
+#define MGMT_EV_UNCONF_INDEX_REMOVED	0x001e
+
+#define MGMT_EV_NEW_CONFIG_OPTIONS	0x001f
+
 static const char *mgmt_op[] = {
 	"<0x0000>",
 	"Read Version",
@@ -582,6 +679,14 @@ static const char *mgmt_op[] = {
 	"Set Privacy",
 	"Load Identity Resolving Keys",
 	"Get Connection Information",
+	"Get Clock Information",
+	"Add Device",
+	"Remove Device",
+	"Load Connection Parameters",
+	"Read Unconfigured Index List",
+	"Read Controller Configuration Information",
+	"Set External Configuration",
+	"Set Public Address",
 };
 
 static const char *mgmt_ev[] = {
@@ -611,6 +716,12 @@ static const char *mgmt_ev[] = {
 	"Passkey Notify",
 	"New Identity Resolving Key",
 	"New Signature Resolving Key",
+	"Device Added",
+	"Device Removed",
+	"New Connection Parameter",
+	"Unconfigured Index Added",
+	"Unconfigured Index Removed",
+	"New Configuration Options",
 };
 
 static const char *mgmt_status[] = {

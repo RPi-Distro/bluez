@@ -159,8 +159,8 @@ DIST_COMMON = README $(am__configure_deps) $(am__include_HEADERS_DIST) \
 @ANDROID_TRUE@am__append_29 = -DANDROID_VERSION=0xFFFFFF
 @ANDROID_TRUE@am__append_30 = android/system-emulator \
 @ANDROID_TRUE@	android/bluetoothd-snoop android/bluetoothd \
-@ANDROID_TRUE@	android/haltest android/android-tester \
-@ANDROID_TRUE@	android/ipc-tester
+@ANDROID_TRUE@	android/mcaptest android/haltest \
+@ANDROID_TRUE@	android/android-tester android/ipc-tester
 @ANDROID_TRUE@am__append_31 = android/bluetooth.default.la \
 @ANDROID_TRUE@	android/audio.sco.default.la \
 @ANDROID_TRUE@	android/audio.a2dp.default.la
@@ -398,6 +398,7 @@ plugins_sixaxis_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 @ANDROID_TRUE@am__EXEEXT_7 = android/system-emulator$(EXEEXT) \
 @ANDROID_TRUE@	android/bluetoothd-snoop$(EXEEXT) \
 @ANDROID_TRUE@	android/bluetoothd$(EXEEXT) \
+@ANDROID_TRUE@	android/mcaptest$(EXEEXT) \
 @ANDROID_TRUE@	android/haltest$(EXEEXT) \
 @ANDROID_TRUE@	android/android-tester$(EXEEXT) \
 @ANDROID_TRUE@	android/ipc-tester$(EXEEXT)
@@ -459,9 +460,11 @@ am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
 	src/shared/gatt-db.c src/shared/crypto.h src/shared/crypto.c \
 	src/shared/uhid.h src/shared/uhid.c android/bluetooth.h \
 	android/bluetooth.c android/hidhost.h android/hidhost.c \
-	android/hog.h android/hog.c android/ipc-common.h android/ipc.h \
-	android/ipc.c android/avdtp.h android/avdtp.c android/a2dp.h \
-	android/a2dp.c android/avctp.h android/avctp.c android/avrcp.h \
+	android/scpp.h android/scpp.c android/dis.h android/dis.c \
+	android/bas.h android/bas.c android/hog.h android/hog.c \
+	android/ipc-common.h android/ipc.h android/ipc.c \
+	android/avdtp.h android/avdtp.c android/a2dp.h android/a2dp.c \
+	android/avctp.h android/avctp.c android/avrcp.h \
 	android/avrcp.c android/avrcp-lib.h android/avrcp-lib.c \
 	android/socket.h android/socket.c android/pan.h android/pan.c \
 	android/handsfree.h android/handsfree.c android/gatt.h \
@@ -487,10 +490,11 @@ am__android_bluetoothd_SOURCES_DIST = android/main.c src/log.c \
 @ANDROID_TRUE@	src/shared/crypto.$(OBJEXT) \
 @ANDROID_TRUE@	src/shared/uhid.$(OBJEXT) \
 @ANDROID_TRUE@	android/bluetooth.$(OBJEXT) \
-@ANDROID_TRUE@	android/hidhost.$(OBJEXT) android/hog.$(OBJEXT) \
-@ANDROID_TRUE@	android/ipc.$(OBJEXT) android/avdtp.$(OBJEXT) \
-@ANDROID_TRUE@	android/a2dp.$(OBJEXT) android/avctp.$(OBJEXT) \
-@ANDROID_TRUE@	android/avrcp.$(OBJEXT) \
+@ANDROID_TRUE@	android/hidhost.$(OBJEXT) android/scpp.$(OBJEXT) \
+@ANDROID_TRUE@	android/dis.$(OBJEXT) android/bas.$(OBJEXT) \
+@ANDROID_TRUE@	android/hog.$(OBJEXT) android/ipc.$(OBJEXT) \
+@ANDROID_TRUE@	android/avdtp.$(OBJEXT) android/a2dp.$(OBJEXT) \
+@ANDROID_TRUE@	android/avctp.$(OBJEXT) android/avrcp.$(OBJEXT) \
 @ANDROID_TRUE@	android/avrcp-lib.$(OBJEXT) \
 @ANDROID_TRUE@	android/socket.$(OBJEXT) android/pan.$(OBJEXT) \
 @ANDROID_TRUE@	android/handsfree.$(OBJEXT) \
@@ -579,6 +583,21 @@ android_ipc_tester_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(android_ipc_tester_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
+am__android_mcaptest_SOURCES_DIST = android/mcaptest.c src/log.h \
+	src/log.c btio/btio.h btio/btio.c android/mcap-lib.h \
+	android/mcap-lib.c
+@ANDROID_TRUE@am_android_mcaptest_OBJECTS =  \
+@ANDROID_TRUE@	android/android_mcaptest-mcaptest.$(OBJEXT) \
+@ANDROID_TRUE@	src/android_mcaptest-log.$(OBJEXT) \
+@ANDROID_TRUE@	btio/android_mcaptest-btio.$(OBJEXT) \
+@ANDROID_TRUE@	android/android_mcaptest-mcap-lib.$(OBJEXT)
+android_mcaptest_OBJECTS = $(am_android_mcaptest_OBJECTS)
+@ANDROID_TRUE@android_mcaptest_DEPENDENCIES =  \
+@ANDROID_TRUE@	lib/libbluetooth-internal.la
+android_mcaptest_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(android_mcaptest_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
+	-o $@
 am__android_system_emulator_SOURCES_DIST = android/system-emulator.c \
 	monitor/mainloop.h monitor/mainloop.c
 @ANDROID_TRUE@am_android_system_emulator_OBJECTS =  \
@@ -861,7 +880,8 @@ am__src_bluetoothd_SOURCES_DIST = plugins/hostname.c plugins/wiimote.c \
 	src/shared/io.h src/shared/io-glib.c src/shared/timeout.h \
 	src/shared/timeout-glib.c src/shared/queue.h \
 	src/shared/queue.c src/shared/util.h src/shared/util.c \
-	src/shared/mgmt.h src/shared/mgmt.c
+	src/shared/mgmt.h src/shared/mgmt.c src/shared/att-types.h \
+	src/shared/att.h src/shared/att.c
 @MAINTAINER_MODE_TRUE@am__objects_10 = plugins/bluetoothd-gatt-example.$(OBJEXT)
 @EXPERIMENTAL_TRUE@am__objects_11 =  \
 @EXPERIMENTAL_TRUE@	plugins/bluetoothd-neard.$(OBJEXT) \
@@ -949,7 +969,8 @@ am_src_bluetoothd_OBJECTS = $(am__objects_14) $(am__objects_15) \
 	src/shared/bluetoothd-timeout-glib.$(OBJEXT) \
 	src/shared/bluetoothd-queue.$(OBJEXT) \
 	src/shared/bluetoothd-util.$(OBJEXT) \
-	src/shared/bluetoothd-mgmt.$(OBJEXT)
+	src/shared/bluetoothd-mgmt.$(OBJEXT) \
+	src/shared/bluetoothd-att.$(OBJEXT)
 nodist_src_bluetoothd_OBJECTS = $(am__objects_9)
 src_bluetoothd_OBJECTS = $(am_src_bluetoothd_OBJECTS) \
 	$(nodist_src_bluetoothd_OBJECTS)
@@ -1555,7 +1576,7 @@ SOURCES = $(profiles_sap_libsap_a_SOURCES) \
 	$(android_android_tester_SOURCES) \
 	$(android_bluetoothd_SOURCES) \
 	$(android_bluetoothd_snoop_SOURCES) $(android_haltest_SOURCES) \
-	$(android_ipc_tester_SOURCES) \
+	$(android_ipc_tester_SOURCES) $(android_mcaptest_SOURCES) \
 	$(android_system_emulator_SOURCES) $(android_test_ipc_SOURCES) \
 	$(attrib_gatttool_SOURCES) $(client_bluetoothctl_SOURCES) \
 	$(emulator_b1ee_SOURCES) $(emulator_btvirt_SOURCES) \
@@ -1610,6 +1631,7 @@ DIST_SOURCES = $(am__profiles_sap_libsap_a_SOURCES_DIST) \
 	$(am__android_bluetoothd_snoop_SOURCES_DIST) \
 	$(am__android_haltest_SOURCES_DIST) \
 	$(am__android_ipc_tester_SOURCES_DIST) \
+	$(am__android_mcaptest_SOURCES_DIST) \
 	$(am__android_system_emulator_SOURCES_DIST) \
 	$(am__android_test_ipc_SOURCES_DIST) \
 	$(am__attrib_gatttool_SOURCES_DIST) \
@@ -1884,6 +1906,7 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	android/pics-gatt.txt android/pics-mcap.txt \
 	android/pics-hdp.txt android/pics-iopt.txt android/pics-sm.txt \
 	android/pics-mps.txt android/pics-hogp.txt \
+	android/pics-scpp.txt android/pics-dis.txt \
 	android/pixit-l2cap.txt android/pixit-gap.txt \
 	android/pixit-did.txt android/pixit-hid.txt \
 	android/pixit-pan.txt android/pixit-opp.txt \
@@ -1894,6 +1917,7 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	android/pixit-mcap.txt android/pixit-hdp.txt \
 	android/pixit-iopt.txt android/pixit-sm.txt \
 	android/pixit-mps.txt android/pixit-hogp.txt \
+	android/pixit-scpp.txt android/pixit-dis.txt \
 	android/bite-rfcomm.txt android/bite-spp.txt \
 	android/pts-l2cap.txt android/pts-gap.txt android/pts-did.txt \
 	android/pts-hid.txt android/pts-pan.txt android/pts-opp.txt \
@@ -1901,16 +1925,16 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	android/pts-avctp.txt android/pts-pbap.txt android/pts-hfp.txt \
 	android/pts-gatt.txt android/pts-hsp.txt android/pts-iopt.txt \
 	android/pts-hdp.txt android/pts-mcap.txt android/pts-mps.txt \
-	android/pts-sm.txt android/pts-hogp.txt tools/hid2hci.rules \
-	$(test_scripts) doc/assigned-numbers.txt \
-	doc/supported-features.txt doc/test-coverage.txt \
-	doc/settings-storage.txt doc/mgmt-api.txt doc/adapter-api.txt \
-	doc/device-api.txt doc/agent-api.txt doc/profile-api.txt \
-	doc/network-api.txt doc/media-api.txt doc/health-api.txt \
-	doc/sap-api.txt doc/alert-api.txt doc/proximity-api.txt \
-	doc/heartrate-api.txt doc/thermometer-api.txt \
-	doc/cyclingspeed-api.txt doc/obex-api.txt \
-	doc/obex-agent-api.txt tools/magic.btsnoop
+	android/pts-sm.txt android/pts-hogp.txt android/pts-scpp.txt \
+	android/pts-dis.txt tools/hid2hci.rules $(test_scripts) \
+	doc/assigned-numbers.txt doc/supported-features.txt \
+	doc/test-coverage.txt doc/settings-storage.txt \
+	doc/mgmt-api.txt doc/adapter-api.txt doc/device-api.txt \
+	doc/agent-api.txt doc/profile-api.txt doc/network-api.txt \
+	doc/media-api.txt doc/health-api.txt doc/sap-api.txt \
+	doc/alert-api.txt doc/proximity-api.txt doc/heartrate-api.txt \
+	doc/thermometer-api.txt doc/cyclingspeed-api.txt \
+	doc/obex-api.txt doc/obex-agent-api.txt tools/magic.btsnoop
 include_HEADERS = $(am__append_1)
 AM_CFLAGS = $(WARNING_CFLAGS) $(MISC_CFLAGS) $(am__append_29) \
 	@DBUS_CFLAGS@ @GLIB_CFLAGS@ $(am__empty)
@@ -2032,7 +2056,8 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			src/shared/timeout.h src/shared/timeout-glib.c \
 			src/shared/queue.h src/shared/queue.c \
 			src/shared/util.h src/shared/util.c \
-			src/shared/mgmt.h src/shared/mgmt.c
+			src/shared/mgmt.h src/shared/mgmt.c \
+			src/shared/att-types.h src/shared/att.h src/shared/att.c
 
 src_bluetoothd_LDADD = lib/libbluetooth-internal.la gdbus/libgdbus-internal.la \
 			@GLIB_LIBS@ @DBUS_LIBS@ -ldl -lrt
@@ -2476,6 +2501,9 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@				src/shared/uhid.h src/shared/uhid.c \
 @ANDROID_TRUE@				android/bluetooth.h android/bluetooth.c \
 @ANDROID_TRUE@				android/hidhost.h android/hidhost.c \
+@ANDROID_TRUE@				android/scpp.h android/scpp.c \
+@ANDROID_TRUE@				android/dis.h android/dis.c \
+@ANDROID_TRUE@				android/bas.h android/bas.c \
 @ANDROID_TRUE@				android/hog.h android/hog.c \
 @ANDROID_TRUE@				android/ipc-common.h \
 @ANDROID_TRUE@				android/ipc.h android/ipc.c \
@@ -2530,6 +2558,13 @@ nodist_obexd_src_obexd_SOURCES = $(obexd_builtin_files)
 @ANDROID_TRUE@android_bluetooth_default_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version \
 @ANDROID_TRUE@					-no-undefined
 
+@ANDROID_TRUE@android_mcaptest_SOURCES = android/mcaptest.c \
+@ANDROID_TRUE@				src/log.h src/log.c \
+@ANDROID_TRUE@				btio/btio.h btio/btio.c \
+@ANDROID_TRUE@				android/mcap-lib.h android/mcap-lib.c
+
+@ANDROID_TRUE@android_mcaptest_CFLAGS = $(AM_CFLAGS)
+@ANDROID_TRUE@android_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
 @ANDROID_TRUE@android_haltest_SOURCES = android/client/haltest.c \
 @ANDROID_TRUE@				android/client/pollhandler.h \
 @ANDROID_TRUE@				android/client/pollhandler.c \
@@ -3280,6 +3315,12 @@ android/bluetooth.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 android/hidhost.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
+android/scpp.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
+android/dis.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
+android/bas.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
 android/hog.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 android/ipc.$(OBJEXT): android/$(am__dirstamp) \
@@ -3453,6 +3494,17 @@ android/android_ipc_tester-ipc-tester.$(OBJEXT):  \
 android/ipc-tester$(EXEEXT): $(android_ipc_tester_OBJECTS) $(android_ipc_tester_DEPENDENCIES) $(EXTRA_android_ipc_tester_DEPENDENCIES) android/$(am__dirstamp)
 	@rm -f android/ipc-tester$(EXEEXT)
 	$(AM_V_CCLD)$(android_ipc_tester_LINK) $(android_ipc_tester_OBJECTS) $(android_ipc_tester_LDADD) $(LIBS)
+android/android_mcaptest-mcaptest.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
+src/android_mcaptest-log.$(OBJEXT): src/$(am__dirstamp) \
+	src/$(DEPDIR)/$(am__dirstamp)
+btio/android_mcaptest-btio.$(OBJEXT): btio/$(am__dirstamp) \
+	btio/$(DEPDIR)/$(am__dirstamp)
+android/android_mcaptest-mcap-lib.$(OBJEXT): android/$(am__dirstamp) \
+	android/$(DEPDIR)/$(am__dirstamp)
+android/mcaptest$(EXEEXT): $(android_mcaptest_OBJECTS) $(android_mcaptest_DEPENDENCIES) $(EXTRA_android_mcaptest_DEPENDENCIES) android/$(am__dirstamp)
+	@rm -f android/mcaptest$(EXEEXT)
+	$(AM_V_CCLD)$(android_mcaptest_LINK) $(android_mcaptest_OBJECTS) $(android_mcaptest_LDADD) $(LIBS)
 android/system-emulator.$(OBJEXT): android/$(am__dirstamp) \
 	android/$(DEPDIR)/$(am__dirstamp)
 android/system-emulator$(EXEEXT): $(android_system_emulator_OBJECTS) $(android_system_emulator_DEPENDENCIES) $(EXTRA_android_system_emulator_DEPENDENCIES) android/$(am__dirstamp)
@@ -3981,6 +4033,8 @@ src/shared/bluetoothd-queue.$(OBJEXT): src/shared/$(am__dirstamp) \
 src/shared/bluetoothd-util.$(OBJEXT): src/shared/$(am__dirstamp) \
 	src/shared/$(DEPDIR)/$(am__dirstamp)
 src/shared/bluetoothd-mgmt.$(OBJEXT): src/shared/$(am__dirstamp) \
+	src/shared/$(DEPDIR)/$(am__dirstamp)
+src/shared/bluetoothd-att.$(OBJEXT): src/shared/$(am__dirstamp) \
 	src/shared/$(DEPDIR)/$(am__dirstamp)
 src/bluetoothd$(EXEEXT): $(src_bluetoothd_OBJECTS) $(src_bluetoothd_DEPENDENCIES) $(EXTRA_src_bluetoothd_DEPENDENCIES) src/$(am__dirstamp)
 	@rm -f src/bluetoothd$(EXEEXT)
@@ -4511,12 +4565,15 @@ mostlyclean-compile:
 	-rm -f android/android_haltest-hal-utils.$(OBJEXT)
 	-rm -f android/android_ipc_tester-hal-utils.$(OBJEXT)
 	-rm -f android/android_ipc_tester-ipc-tester.$(OBJEXT)
+	-rm -f android/android_mcaptest-mcap-lib.$(OBJEXT)
+	-rm -f android/android_mcaptest-mcaptest.$(OBJEXT)
 	-rm -f android/audio_utils/android_audio_sco_default_la-resampler.$(OBJEXT)
 	-rm -f android/audio_utils/android_audio_sco_default_la-resampler.lo
 	-rm -f android/avctp.$(OBJEXT)
 	-rm -f android/avdtp.$(OBJEXT)
 	-rm -f android/avrcp-lib.$(OBJEXT)
 	-rm -f android/avrcp.$(OBJEXT)
+	-rm -f android/bas.$(OBJEXT)
 	-rm -f android/bluetooth.$(OBJEXT)
 	-rm -f android/bluetoothd-snoop.$(OBJEXT)
 	-rm -f android/client/android_haltest-haltest.$(OBJEXT)
@@ -4535,6 +4592,7 @@ mostlyclean-compile:
 	-rm -f android/client/android_haltest-pollhandler.$(OBJEXT)
 	-rm -f android/client/android_haltest-tabcompletion.$(OBJEXT)
 	-rm -f android/client/android_haltest-terminal.$(OBJEXT)
+	-rm -f android/dis.$(OBJEXT)
 	-rm -f android/gatt.$(OBJEXT)
 	-rm -f android/handsfree.$(OBJEXT)
 	-rm -f android/hardware/android_android_tester-hardware.$(OBJEXT)
@@ -4546,6 +4604,7 @@ mostlyclean-compile:
 	-rm -f android/main.$(OBJEXT)
 	-rm -f android/mcap-lib.$(OBJEXT)
 	-rm -f android/pan.$(OBJEXT)
+	-rm -f android/scpp.$(OBJEXT)
 	-rm -f android/socket.$(OBJEXT)
 	-rm -f android/system-emulator.$(OBJEXT)
 	-rm -f android/test-ipc.$(OBJEXT)
@@ -4559,6 +4618,7 @@ mostlyclean-compile:
 	-rm -f attrib/gatttool.$(OBJEXT)
 	-rm -f attrib/interactive.$(OBJEXT)
 	-rm -f attrib/utils.$(OBJEXT)
+	-rm -f btio/android_mcaptest-btio.$(OBJEXT)
 	-rm -f btio/bluetoothd-btio.$(OBJEXT)
 	-rm -f btio/btio.$(OBJEXT)
 	-rm -f btio/obexd-btio.$(OBJEXT)
@@ -4722,6 +4782,7 @@ mostlyclean-compile:
 	-rm -f profiles/scanparam/bluetoothd-scan.$(OBJEXT)
 	-rm -f profiles/thermometer/bluetoothd-thermometer.$(OBJEXT)
 	-rm -f profiles/time/bluetoothd-server.$(OBJEXT)
+	-rm -f src/android_mcaptest-log.$(OBJEXT)
 	-rm -f src/bluetoothd-adapter.$(OBJEXT)
 	-rm -f src/bluetoothd-agent.$(OBJEXT)
 	-rm -f src/bluetoothd-attrib-server.$(OBJEXT)
@@ -4772,6 +4833,7 @@ mostlyclean-compile:
 	-rm -f src/shared/android_ipc_tester-tester.$(OBJEXT)
 	-rm -f src/shared/android_ipc_tester-timeout-glib.$(OBJEXT)
 	-rm -f src/shared/android_ipc_tester-util.$(OBJEXT)
+	-rm -f src/shared/bluetoothd-att.$(OBJEXT)
 	-rm -f src/shared/bluetoothd-crypto.$(OBJEXT)
 	-rm -f src/shared/bluetoothd-io-glib.$(OBJEXT)
 	-rm -f src/shared/bluetoothd-mgmt.$(OBJEXT)
@@ -4927,12 +4989,16 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_haltest-hal-utils.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_ipc_tester-hal-utils.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_ipc_tester-ipc-tester.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_mcaptest-mcap-lib.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/android_mcaptest-mcaptest.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/avctp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/avdtp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/avrcp-lib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/avrcp.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/bas.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/bluetooth.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/bluetoothd-snoop.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/dis.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/gatt.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/handsfree.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/health.Po@am__quote@
@@ -4942,6 +5008,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/main.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/mcap-lib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/pan.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/scpp.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/socket.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/system-emulator.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@android/$(DEPDIR)/test-ipc.Po@am__quote@
@@ -4974,6 +5041,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@attrib/$(DEPDIR)/gatttool.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@attrib/$(DEPDIR)/interactive.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@attrib/$(DEPDIR)/utils.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@btio/$(DEPDIR)/android_mcaptest-btio.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@btio/$(DEPDIR)/bluetoothd-btio.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@btio/$(DEPDIR)/btio.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@btio/$(DEPDIR)/obexd-btio.Po@am__quote@
@@ -5126,6 +5194,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@profiles/scanparam/$(DEPDIR)/bluetoothd-scan.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@profiles/thermometer/$(DEPDIR)/bluetoothd-thermometer.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@profiles/time/$(DEPDIR)/bluetoothd-server.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/android_mcaptest-log.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-adapter.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-agent.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/$(DEPDIR)/bluetoothd-attrib-server.Po@am__quote@
@@ -5178,6 +5247,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/android_ipc_tester-tester.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/android_ipc_tester-timeout-glib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/android_ipc_tester-util.Po@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/bluetoothd-att.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/bluetoothd-crypto.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/bluetoothd-io-glib.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@src/shared/$(DEPDIR)/bluetoothd-mgmt.Po@am__quote@
@@ -6073,6 +6143,62 @@ android/android_ipc_tester-ipc-tester.obj: android/ipc-tester.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/ipc-tester.c' object='android/android_ipc_tester-ipc-tester.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_ipc_tester_CFLAGS) $(CFLAGS) -c -o android/android_ipc_tester-ipc-tester.obj `if test -f 'android/ipc-tester.c'; then $(CYGPATH_W) 'android/ipc-tester.c'; else $(CYGPATH_W) '$(srcdir)/android/ipc-tester.c'; fi`
+
+android/android_mcaptest-mcaptest.o: android/mcaptest.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT android/android_mcaptest-mcaptest.o -MD -MP -MF android/$(DEPDIR)/android_mcaptest-mcaptest.Tpo -c -o android/android_mcaptest-mcaptest.o `test -f 'android/mcaptest.c' || echo '$(srcdir)/'`android/mcaptest.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/$(DEPDIR)/android_mcaptest-mcaptest.Tpo android/$(DEPDIR)/android_mcaptest-mcaptest.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/mcaptest.c' object='android/android_mcaptest-mcaptest.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o android/android_mcaptest-mcaptest.o `test -f 'android/mcaptest.c' || echo '$(srcdir)/'`android/mcaptest.c
+
+android/android_mcaptest-mcaptest.obj: android/mcaptest.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT android/android_mcaptest-mcaptest.obj -MD -MP -MF android/$(DEPDIR)/android_mcaptest-mcaptest.Tpo -c -o android/android_mcaptest-mcaptest.obj `if test -f 'android/mcaptest.c'; then $(CYGPATH_W) 'android/mcaptest.c'; else $(CYGPATH_W) '$(srcdir)/android/mcaptest.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/$(DEPDIR)/android_mcaptest-mcaptest.Tpo android/$(DEPDIR)/android_mcaptest-mcaptest.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/mcaptest.c' object='android/android_mcaptest-mcaptest.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o android/android_mcaptest-mcaptest.obj `if test -f 'android/mcaptest.c'; then $(CYGPATH_W) 'android/mcaptest.c'; else $(CYGPATH_W) '$(srcdir)/android/mcaptest.c'; fi`
+
+src/android_mcaptest-log.o: src/log.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT src/android_mcaptest-log.o -MD -MP -MF src/$(DEPDIR)/android_mcaptest-log.Tpo -c -o src/android_mcaptest-log.o `test -f 'src/log.c' || echo '$(srcdir)/'`src/log.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/android_mcaptest-log.Tpo src/$(DEPDIR)/android_mcaptest-log.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/log.c' object='src/android_mcaptest-log.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o src/android_mcaptest-log.o `test -f 'src/log.c' || echo '$(srcdir)/'`src/log.c
+
+src/android_mcaptest-log.obj: src/log.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT src/android_mcaptest-log.obj -MD -MP -MF src/$(DEPDIR)/android_mcaptest-log.Tpo -c -o src/android_mcaptest-log.obj `if test -f 'src/log.c'; then $(CYGPATH_W) 'src/log.c'; else $(CYGPATH_W) '$(srcdir)/src/log.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/$(DEPDIR)/android_mcaptest-log.Tpo src/$(DEPDIR)/android_mcaptest-log.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/log.c' object='src/android_mcaptest-log.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o src/android_mcaptest-log.obj `if test -f 'src/log.c'; then $(CYGPATH_W) 'src/log.c'; else $(CYGPATH_W) '$(srcdir)/src/log.c'; fi`
+
+btio/android_mcaptest-btio.o: btio/btio.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT btio/android_mcaptest-btio.o -MD -MP -MF btio/$(DEPDIR)/android_mcaptest-btio.Tpo -c -o btio/android_mcaptest-btio.o `test -f 'btio/btio.c' || echo '$(srcdir)/'`btio/btio.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) btio/$(DEPDIR)/android_mcaptest-btio.Tpo btio/$(DEPDIR)/android_mcaptest-btio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='btio/btio.c' object='btio/android_mcaptest-btio.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o btio/android_mcaptest-btio.o `test -f 'btio/btio.c' || echo '$(srcdir)/'`btio/btio.c
+
+btio/android_mcaptest-btio.obj: btio/btio.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT btio/android_mcaptest-btio.obj -MD -MP -MF btio/$(DEPDIR)/android_mcaptest-btio.Tpo -c -o btio/android_mcaptest-btio.obj `if test -f 'btio/btio.c'; then $(CYGPATH_W) 'btio/btio.c'; else $(CYGPATH_W) '$(srcdir)/btio/btio.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) btio/$(DEPDIR)/android_mcaptest-btio.Tpo btio/$(DEPDIR)/android_mcaptest-btio.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='btio/btio.c' object='btio/android_mcaptest-btio.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o btio/android_mcaptest-btio.obj `if test -f 'btio/btio.c'; then $(CYGPATH_W) 'btio/btio.c'; else $(CYGPATH_W) '$(srcdir)/btio/btio.c'; fi`
+
+android/android_mcaptest-mcap-lib.o: android/mcap-lib.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT android/android_mcaptest-mcap-lib.o -MD -MP -MF android/$(DEPDIR)/android_mcaptest-mcap-lib.Tpo -c -o android/android_mcaptest-mcap-lib.o `test -f 'android/mcap-lib.c' || echo '$(srcdir)/'`android/mcap-lib.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/$(DEPDIR)/android_mcaptest-mcap-lib.Tpo android/$(DEPDIR)/android_mcaptest-mcap-lib.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/mcap-lib.c' object='android/android_mcaptest-mcap-lib.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o android/android_mcaptest-mcap-lib.o `test -f 'android/mcap-lib.c' || echo '$(srcdir)/'`android/mcap-lib.c
+
+android/android_mcaptest-mcap-lib.obj: android/mcap-lib.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -MT android/android_mcaptest-mcap-lib.obj -MD -MP -MF android/$(DEPDIR)/android_mcaptest-mcap-lib.Tpo -c -o android/android_mcaptest-mcap-lib.obj `if test -f 'android/mcap-lib.c'; then $(CYGPATH_W) 'android/mcap-lib.c'; else $(CYGPATH_W) '$(srcdir)/android/mcap-lib.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) android/$(DEPDIR)/android_mcaptest-mcap-lib.Tpo android/$(DEPDIR)/android_mcaptest-mcap-lib.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='android/mcap-lib.c' object='android/android_mcaptest-mcap-lib.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(android_mcaptest_CFLAGS) $(CFLAGS) -c -o android/android_mcaptest-mcap-lib.obj `if test -f 'android/mcap-lib.c'; then $(CYGPATH_W) 'android/mcap-lib.c'; else $(CYGPATH_W) '$(srcdir)/android/mcap-lib.c'; fi`
 
 btio/obexd-btio.o: btio/btio.c
 @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(obexd_src_obexd_CPPFLAGS) $(CPPFLAGS) $(obexd_src_obexd_CFLAGS) $(CFLAGS) -MT btio/obexd-btio.o -MD -MP -MF btio/$(DEPDIR)/obexd-btio.Tpo -c -o btio/obexd-btio.o `test -f 'btio/btio.c' || echo '$(srcdir)/'`btio/btio.c
@@ -7851,6 +7977,20 @@ src/shared/bluetoothd-mgmt.obj: src/shared/mgmt.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/shared/mgmt.c' object='src/shared/bluetoothd-mgmt.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o src/shared/bluetoothd-mgmt.obj `if test -f 'src/shared/mgmt.c'; then $(CYGPATH_W) 'src/shared/mgmt.c'; else $(CYGPATH_W) '$(srcdir)/src/shared/mgmt.c'; fi`
+
+src/shared/bluetoothd-att.o: src/shared/att.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -MT src/shared/bluetoothd-att.o -MD -MP -MF src/shared/$(DEPDIR)/bluetoothd-att.Tpo -c -o src/shared/bluetoothd-att.o `test -f 'src/shared/att.c' || echo '$(srcdir)/'`src/shared/att.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/shared/$(DEPDIR)/bluetoothd-att.Tpo src/shared/$(DEPDIR)/bluetoothd-att.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/shared/att.c' object='src/shared/bluetoothd-att.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o src/shared/bluetoothd-att.o `test -f 'src/shared/att.c' || echo '$(srcdir)/'`src/shared/att.c
+
+src/shared/bluetoothd-att.obj: src/shared/att.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -MT src/shared/bluetoothd-att.obj -MD -MP -MF src/shared/$(DEPDIR)/bluetoothd-att.Tpo -c -o src/shared/bluetoothd-att.obj `if test -f 'src/shared/att.c'; then $(CYGPATH_W) 'src/shared/att.c'; else $(CYGPATH_W) '$(srcdir)/src/shared/att.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) src/shared/$(DEPDIR)/bluetoothd-att.Tpo src/shared/$(DEPDIR)/bluetoothd-att.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='src/shared/att.c' object='src/shared/bluetoothd-att.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(src_bluetoothd_CFLAGS) $(CFLAGS) -c -o src/shared/bluetoothd-att.obj `if test -f 'src/shared/att.c'; then $(CYGPATH_W) 'src/shared/att.c'; else $(CYGPATH_W) '$(srcdir)/src/shared/att.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo

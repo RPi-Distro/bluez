@@ -82,7 +82,7 @@ typedef enum {
 	DEVICE_CONNECTED,		/* connection has been established */
 } gatt_device_state_t;
 
-static const char const *device_state_str[] = {
+static const char *device_state_str[] = {
 	"DISCONNECTED",
 	"CONNECT INIT",
 	"CONNECT READY",
@@ -415,7 +415,7 @@ static struct gatt_device *find_device_by_addr(const bdaddr_t *addr)
 	return queue_find(gatt_devices, match_device_by_bdaddr, addr);
 }
 
-static struct gatt_device *find_pending_device()
+static struct gatt_device *find_pending_device(void)
 {
 	return queue_find(gatt_devices, match_pending_device, NULL);
 }
@@ -1423,6 +1423,8 @@ static int connect_le(struct gatt_device *dev)
 	GIOChannel *io;
 	GError *gerr = NULL;
 	char addr[18];
+	const bdaddr_t *bdaddr;
+	uint8_t bdaddr_type;
 
 	ba2str(&dev->bdaddr, addr);
 
@@ -1438,6 +1440,20 @@ static int connect_le(struct gatt_device *dev)
 								BT_IO_SEC_LOW;
 
 	/*
+	 * If address type is random it might be that IRK was received and
+	 * random is just for faking Android Framework. ID address should be
+	 * used for connection if present.
+	 */
+	if (dev->bdaddr_type == BDADDR_LE_RANDOM) {
+		bdaddr = bt_get_id_addr(&dev->bdaddr, &bdaddr_type);
+		if (!bdaddr)
+			return -EINVAL;
+	} else {
+		bdaddr = &dev->bdaddr;
+		bdaddr_type = dev->bdaddr_type;
+	}
+
+	/*
 	 * This connection will help us catch any PDUs that comes before
 	 * pairing finishes
 	 */
@@ -1445,8 +1461,8 @@ static int connect_le(struct gatt_device *dev)
 			BT_IO_OPT_SOURCE_BDADDR,
 			&adapter_addr,
 			BT_IO_OPT_SOURCE_TYPE, BDADDR_LE_PUBLIC,
-			BT_IO_OPT_DEST_BDADDR, &dev->bdaddr,
-			BT_IO_OPT_DEST_TYPE, dev->bdaddr_type,
+			BT_IO_OPT_DEST_BDADDR, bdaddr,
+			BT_IO_OPT_DEST_TYPE, bdaddr_type,
 			BT_IO_OPT_CID, ATT_CID,
 			BT_IO_OPT_SEC_LEVEL, sec_level,
 			BT_IO_OPT_INVALID);
@@ -1537,7 +1553,7 @@ static struct gatt_app *register_app(const uint8_t *uuid, gatt_type_t type)
 	app = new0(struct gatt_app, 1);
 	if (!app) {
 		error("gatt: Cannot allocate memory for registering app");
-		return 0;
+		return NULL;
 	}
 
 	app->type = type;
@@ -2077,9 +2093,13 @@ static void handle_client_search_service(const void *buf, uint16_t len)
 		}
 	} else {
 		/* Refresh service cache if only partial search was performed */
-		if (conn->device->partial_srvc_search)
+		if (conn->device->partial_srvc_search) {
 			srvc_search_success = search_dev_for_srvc(conn, NULL);
-		else
+			if (!srvc_search_success) {
+				status = HAL_STATUS_FAILED;
+				goto reply;
+			}
+		} else
 			queue_foreach(conn->device->services,
 						send_client_primary_notify,
 						INT_TO_PTR(cmd->conn_id));
@@ -2147,7 +2167,7 @@ static void get_included_cb(uint8_t status, GSList *included, void *user_data)
 
 	if (status) {
 		error("gatt: no included services found");
-		return;
+		goto failed;
 	}
 
 	/* Remember that we already search included services.*/
@@ -2267,19 +2287,17 @@ static void handle_client_get_included_service(const void *buf, uint16_t len)
 	hal_srvc_id_to_element_id(&cmd->srvc_id, &match_id);
 	if (!find_service(cmd->conn_id, &match_id, &conn, &prim_service)) {
 		status = HAL_STATUS_FAILED;
-		goto reply;
+		goto notify;
 	}
 
 	if (!prim_service->incl_search_done) {
-		if (search_included_services(conn, prim_service))
+		if (search_included_services(conn, prim_service)) {
 			status = HAL_STATUS_SUCCESS;
-		else
-			status = HAL_STATUS_FAILED;
+			goto reply;
+		}
 
-		ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_GATT,
-				HAL_OP_GATT_CLIENT_GET_INCLUDED_SERVICE,
-				status);
-		return;
+		status = HAL_STATUS_FAILED;
+		goto notify;
 	}
 
 	/* Try to use cache here */
@@ -2294,15 +2312,16 @@ static void handle_client_get_included_service(const void *buf, uint16_t len)
 
 	status = HAL_STATUS_SUCCESS;
 
-reply:
-	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_GATT,
-			HAL_OP_GATT_CLIENT_GET_INCLUDED_SERVICE, status);
-
+notify:
 	/*
 	 * In case of error in handling request we need to send event with
 	 * service id of cmd and gatt failure status.
 	 */
 	send_client_incl_service_notify(&srvc_id, incl_service, cmd->conn_id);
+
+reply:
+	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_GATT,
+			HAL_OP_GATT_CLIENT_GET_INCLUDED_SERVICE, status);
 }
 
 static void send_client_char_notify(const struct characteristic *ch,
@@ -2942,7 +2961,8 @@ static void handle_client_write_characteristic(const void *buf, uint16_t len)
 		goto failed;
 	}
 
-	if (cmd->write_type != GATT_WRITE_TYPE_NO_RESPONSE) {
+	if (cmd->write_type == GATT_WRITE_TYPE_PREPARE ||
+				cmd->write_type == GATT_WRITE_TYPE_DEFAULT) {
 		cb_data = create_char_op_data(cmd->conn_id, &srvc->id, &ch->id,
 						cmd->srvc_id.is_primary);
 		if (!cb_data) {
@@ -4371,7 +4391,7 @@ static void fill_gatt_response_by_handle(uint16_t handle, uint16_t offset,
 	entry = queue_find(dev->pending_requests, match_dev_request_by_handle,
 							UINT_TO_PTR(handle));
 	if (!entry) {
-		DBG("No pending response found! Bogus android response?");
+		error("gatt: No pending response! Bogus android response?");
 		return;
 	}
 
@@ -4419,7 +4439,7 @@ static void read_requested_attributes(void *data, void *user_data)
 
 done:
 	/* We have value here already if no callback will be called */
-	if (value_len >= 0)
+	if (value_len > 0)
 		fill_gatt_response(resp_data, resp_data->handle,
 					resp_data->offset, error, value_len,
 					value);
@@ -5309,11 +5329,6 @@ static uint8_t find_info_handle(const uint8_t *cmd, uint16_t cmd_len,
 
 	}
 
-	if (!adl) {
-		queue_destroy(q, NULL);
-		return ATT_ECODE_INSUFF_RESOURCES;
-	}
-
 	len = enc_find_info_resp(ATT_FIND_INFO_RESP_FMT_16BIT, adl, rsp,
 								rsp_size);
 	if (!len)
@@ -5692,7 +5707,7 @@ static void att_handler(const uint8_t *ipdu, uint16_t len, gpointer user_data)
 		 * registered for this indication, event will be send in
 		 * handle_notification
 		 */
-		resp_length = enc_confirmation(opdu, sizeof(opdu));
+		resp_length = enc_confirmation(opdu, length);
 		status = 0;
 		break;
 	case ATT_OP_HANDLE_NOTIFY:
@@ -5900,15 +5915,13 @@ static void register_gap_service(void)
 /* TODO: Get those data from device possible via androig/bluetooth.c */
 static struct device_info {
 	const char *manufacturer_name;
-	const char *system_id;
 	const char *model_number;
 	const char *serial_number;
 	const char *firmware_rev;
 	const char *hardware_rev;
 	const char *software_rev;
 } device_info = {
-	.manufacturer_name =	"BlueZ",
-	.system_id =		"BlueZ for Android",
+	.manufacturer_name =	"BlueZ for Android",
 	.model_number =		"model no",
 	.serial_number =	"serial no",
 	.firmware_rev =		"firmware rev",
@@ -5961,12 +5974,6 @@ static void register_device_info_service(void)
 	srvc_handle = gatt_db_add_service(gatt_db, &uuid, true, 15);
 
 	/* User data are not const hence (void *) cast is used */
-	bt_uuid16_create(&uuid, GATT_CHARAC_SYSTEM_ID);
-	gatt_db_add_characteristic(gatt_db, srvc_handle, &uuid, GATT_PERM_READ,
-					GATT_CHR_PROP_READ,
-					device_info_read_cb, NULL,
-					(void *) device_info.system_id);
-
 	bt_uuid16_create(&uuid, GATT_CHARAC_MODEL_NUMBER_STRING);
 	gatt_db_add_characteristic(gatt_db, srvc_handle, &uuid, GATT_PERM_READ,
 					GATT_CHR_PROP_READ,
@@ -6059,7 +6066,7 @@ static void gatt_srvc_change_read_cb(uint16_t handle, uint16_t offset,
 	ccc = bt_get_gatt_ccc(&dev->bdaddr);
 	entry->state = REQUEST_DONE;
 
-	entry->value = (uint8_t *) new0(uint16_t, 1);
+	entry->value = new0(uint8_t, 2);
 	if (!entry->value) {
 		entry->error = ATT_ECODE_INSUFF_RESOURCES;
 

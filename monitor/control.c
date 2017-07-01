@@ -84,6 +84,20 @@ static void mgmt_index_removed(uint16_t len, const void *buf)
 	packet_hexdump(buf, len);
 }
 
+static void mgmt_unconf_index_added(uint16_t len, const void *buf)
+{
+	printf("@ Unconfigured Index Added\n");
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_unconf_index_removed(uint16_t len, const void *buf)
+{
+	printf("@ Unconfigured Index Removed\n");
+
+	packet_hexdump(buf, len);
+}
+
 static void mgmt_controller_error(uint16_t len, const void *buf)
 {
 	const struct mgmt_ev_controller_error *ev = buf;
@@ -105,6 +119,39 @@ static void mgmt_controller_error(uint16_t len, const void *buf)
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
+static const char *config_options_str[] = {
+	"external", "public-address",
+};
+
+static void mgmt_new_config_options(uint16_t len, const void *buf)
+{
+	uint32_t options;
+	unsigned int i;
+
+	if (len < 4) {
+		printf("* Malformed New Configuration Options control\n");
+		return;
+	}
+
+	options = get_le32(buf);
+
+	printf("@ New Configuration Options: 0x%4.4x\n", options);
+
+	if (options) {
+		printf("%-12c", ' ');
+		for (i = 0; i < NELEM(config_options_str); i++) {
+			if (options & (1 << i))
+				printf("%s ", config_options_str[i]);
+		}
+		printf("\n");
+	}
+
+	buf += 4;
+	len -= 4;
+
+	packet_hexdump(buf, len);
+}
+
 static const char *settings_str[] = {
 	"powered", "connectable", "fast-connectable", "discoverable",
 	"pairable", "link-security", "ssp", "br/edr", "hs", "le",
@@ -125,12 +172,14 @@ static void mgmt_new_settings(uint16_t len, const void *buf)
 
 	printf("@ New Settings: 0x%4.4x\n", settings);
 
-	printf("%-12c", ' ');
-	for (i = 0; i < NELEM(settings_str); i++) {
-		if (settings & (1 << i))
-			printf("%s ", settings_str[i]);
+	if (settings) {
+		printf("%-12c", ' ');
+		for (i = 0; i < NELEM(settings_str); i++) {
+			if (settings & (1 << i))
+				printf("%s ", settings_str[i]);
+		}
+		printf("\n");
 	}
-	printf("\n");
 
 	buf += 4;
 	len -= 4;
@@ -540,6 +589,73 @@ static void mgmt_new_csrk(uint16_t len, const void *buf)
 	packet_hexdump(buf, len);
 }
 
+static void mgmt_device_added(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_device_added *ev = buf;
+	char str[18];
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Device Added control\n");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, str);
+
+	printf("@ Device Added: %s (%d) %d\n", str, ev->addr.type, ev->action);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_device_removed(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_device_removed *ev = buf;
+	char str[18];
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed Device Removed control\n");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, str);
+
+	printf("@ Device Removed: %s (%d)\n", str, ev->addr.type);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
+static void mgmt_new_conn_param(uint16_t len, const void *buf)
+{
+	const struct mgmt_ev_new_conn_param *ev = buf;
+	char addr[18];
+	uint16_t min, max, latency, timeout;
+
+	if (len < sizeof(*ev)) {
+		printf("* Malformed New Connection Parameter control\n");
+		return;
+	}
+
+	ba2str(&ev->addr.bdaddr, addr);
+	min = le16_to_cpu(ev->min_interval);
+	max = le16_to_cpu(ev->max_interval);
+	latency = le16_to_cpu(ev->latency);
+	timeout = le16_to_cpu(ev->timeout);
+
+	printf("@ New Conn Param: %s (%d) hint %d min 0x%4.4x max 0x%4.4x "
+		"latency 0x%4.4x timeout 0x%4.4x\n", addr, ev->addr.type,
+		ev->store_hint, min, max, latency, timeout);
+
+	buf += sizeof(*ev);
+	len -= sizeof(*ev);
+
+	packet_hexdump(buf, len);
+}
+
 void control_message(uint16_t opcode, const void *data, uint16_t size)
 {
 	switch (opcode) {
@@ -611,6 +727,24 @@ void control_message(uint16_t opcode, const void *data, uint16_t size)
 		break;
 	case MGMT_EV_NEW_CSRK:
 		mgmt_new_csrk(size, data);
+		break;
+	case MGMT_EV_DEVICE_ADDED:
+		mgmt_device_added(size, data);
+		break;
+	case MGMT_EV_DEVICE_REMOVED:
+		mgmt_device_removed(size, data);
+		break;
+	case MGMT_EV_NEW_CONN_PARAM:
+		mgmt_new_conn_param(size, data);
+		break;
+	case MGMT_EV_UNCONF_INDEX_ADDED:
+		mgmt_unconf_index_added(size, data);
+		break;
+	case MGMT_EV_UNCONF_INDEX_REMOVED:
+		mgmt_unconf_index_removed(size, data);
+		break;
+	case MGMT_EV_NEW_CONFIG_OPTIONS:
+		mgmt_new_config_options(size, data);
 		break;
 	default:
 		printf("* Unknown control (code %d len %d)\n", opcode, size);
