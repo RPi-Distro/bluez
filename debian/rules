@@ -10,16 +10,25 @@ CONFIGURE_FLAGS := \
 	--enable-static \
 	--enable-tools \
 	--enable-cups \
+	--enable-midi	\
 	--enable-datafiles \
+	--enable-threads \
+	--enable-backtrace \
 	--enable-debug \
 	--enable-library \
+	--enable-test \
+	--enable-nfc \
+	--enable-sap \
 	--enable-monitor \
 	--enable-udev \
 	--enable-obex \
 	--enable-client \
+	--enable-testing \
 	--enable-systemd \
 	--enable-threads \
 	--enable-sixaxis \
+	--enable-deprecated \
+	--enable-health \
 	--enable-experimental
 
 %:
