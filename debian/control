@@ -19,8 +19,8 @@ Build-Depends: debhelper (>= 9),
                systemd,
                dh-systemd
 Standards-Version: 3.9.8
-Vcs-Browser: http://anonscm.debian.org/viewvc/pkg-bluetooth/packages/bluez/trunk
-Vcs-Svn: svn://anonscm.debian.org/pkg-bluetooth/packages/bluez/trunk
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-bluetooth/bluez.git
+Vcs-Git: https://anonscm.debian.org/git/pkg-bluetooth/bluez.git
 Homepage: http://www.bluez.org
 
 Package: libbluetooth3
