@@ -1,6 +1,14 @@
 bluez (5.45-1) unstable; urgency=medium
 
   * Update to 5.45.
+  * Change VCS from svn to git.
+  * Update debian/control.
+    - Add libasound2-dev to B-D.
+    - Add libdw-dev to B-D.
+    - Update Vcs-Browser and Vcs-Git field.
+  * Remove debian/patches/fix-typo-in-src-main.conf.patch
+  * Update debian/patches/main.conf.patch
+
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 02 Jul 2017 09:07:00 +0900
 
