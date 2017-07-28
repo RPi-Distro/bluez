@@ -44,7 +44,12 @@ override_dh_installinit:
 	dh_installinit -pbluez --name=bluetooth --restart-after-upgrade
 
 override_dh_strip:
-	dh_strip -a --dbg-package=bluez-dbg libbluetooth3-dbg
+	dh_strip -p libbluetooth3 --dbg-package=libbluetooth3-dbg
+	dh_strip -p bluez --dbg-package=bluez-dbg
+	dh_strip -p bluez-cups
+	dh_strip -p bluez-obexd
+	dh_strip -p bluez-hcidump
+	dh_strip -p bluez-test-tools
 
 override_dh_systemd_enable:
 	dh_systemd_enable -pbluez bluetooth.service
