@@ -1,6 +1,8 @@
 bluez (5.46-1) unstable; urgency=medium
 
   * Update to 5.46.
+  * Update debian/control.
+    - Bumped Standards-Version to 4.0.0.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 29 Jul 2017 04:56:04 +0900
 
