@@ -24,6 +24,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <dbus/dbus.h>
 
@@ -37,6 +39,7 @@
 #include "error.h"
 #include "adapter.h"
 #include "device.h"
+#include "src/shared/io.h"
 #include "src/shared/queue.h"
 #include "src/shared/att.h"
 #include "src/shared/gatt-db.h"
@@ -86,6 +89,13 @@ struct async_dbus_op {
 	async_dbus_op_complete_t complete;
 };
 
+struct pipe_io {
+	DBusMessage *msg;
+	struct io *io;
+	void (*destroy)(void *data);
+	void *data;
+};
+
 struct characteristic {
 	struct service *service;
 	struct gatt_db_attribute *attr;
@@ -96,6 +106,10 @@ struct characteristic {
 	uint16_t ext_props_handle;
 	bt_uuid_t uuid;
 	char *path;
+
+	unsigned int ready_id;
+	struct pipe_io *write_io;
+	struct pipe_io *notify_io;
 
 	struct async_dbus_op *read_op;
 	struct async_dbus_op *write_op;
@@ -811,6 +825,48 @@ static gboolean characteristic_get_flags(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean
+characteristic_get_write_acquired(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct characteristic *chrc = data;
+	dbus_bool_t locked = chrc->write_io ? TRUE : FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &locked);
+
+	return TRUE;
+}
+
+static gboolean
+characteristic_write_acquired_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct characteristic *chrc = data;
+
+	return (chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP);
+}
+
+static gboolean
+characteristic_get_notify_acquired(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct characteristic *chrc = data;
+	dbus_bool_t locked = chrc->notify_io ? TRUE : FALSE;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &locked);
+
+	return TRUE;
+}
+
+static gboolean
+characteristic_notify_acquired_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct characteristic *chrc = data;
+
+	return (chrc->props & BT_GATT_CHRC_PROP_NOTIFY);
+}
+
 static void write_characteristic_cb(struct gatt_db_attribute *attr, int err,
 								void *user_data)
 {
@@ -918,6 +974,9 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
 
+	if (chrc->write_io)
+		return btd_error_not_permitted(msg, "Write acquired");
+
 	if (chrc->write_op)
 		return btd_error_in_progress(msg);
 
@@ -988,6 +1047,193 @@ fail:
 		return btd_error_failed(msg, "Failed to initiate write");
 
 	return btd_error_not_supported(msg);
+}
+
+static bool chrc_pipe_read(struct io *io, void *user_data)
+{
+	struct characteristic *chrc = user_data;
+	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	uint8_t buf[512];
+	int fd = io_get_fd(io);
+	ssize_t bytes_read;
+
+	bytes_read = read(fd, buf, sizeof(buf));
+	if (bytes_read < 0)
+		return false;
+
+	if (!gatt)
+		return false;
+
+	bt_gatt_client_write_without_response(gatt, chrc->value_handle,
+					chrc->props & BT_GATT_CHRC_PROP_AUTH,
+					buf, bytes_read);
+
+	return true;
+}
+
+static void pipe_io_destroy(struct pipe_io *io)
+{
+	if (io->destroy)
+		io->destroy(io->data);
+
+	if (io->msg)
+		dbus_message_unref(io->msg);
+
+	io_destroy(io->io);
+	free(io);
+}
+
+static void characteristic_destroy_pipe(struct characteristic *chrc,
+							struct io *io)
+{
+	if (chrc->write_io && io == chrc->write_io->io) {
+		pipe_io_destroy(chrc->write_io);
+		chrc->write_io = NULL;
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+						chrc->path,
+						GATT_CHARACTERISTIC_IFACE,
+						"WriteAcquired");
+	} else if (chrc->notify_io) {
+		pipe_io_destroy(chrc->notify_io);
+		chrc->notify_io = NULL;
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+						chrc->path,
+						GATT_CHARACTERISTIC_IFACE,
+						"NotifyAcquired");
+	}
+}
+
+static bool characteristic_pipe_hup(struct io *io, void *user_data)
+{
+	struct characteristic *chrc = user_data;
+
+	DBG("%s: io %p", chrc->path, io);
+
+	characteristic_destroy_pipe(chrc, io);
+
+	return false;
+}
+
+static DBusMessage *characteristic_create_pipe(struct characteristic *chrc,
+						DBusMessage *msg)
+{
+	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	int pipefd[2];
+	struct io *io;
+	bool dir;
+	uint16_t mtu;
+	DBusMessage *reply;
+
+	if (!gatt || !bt_gatt_client_is_ready(gatt))
+		return btd_error_failed(msg, "Not connected");
+
+	if (pipe2(pipefd, O_DIRECT | O_NONBLOCK | O_CLOEXEC) < 0)
+		return btd_error_failed(msg, strerror(errno));
+
+	dir = dbus_message_has_member(msg, "AcquireWrite");
+
+	io = io_new(pipefd[!dir]);
+	if (!io) {
+		close(pipefd[0]);
+		close(pipefd[1]);
+		return btd_error_failed(msg, strerror(EIO));
+	}
+
+	io_set_close_on_destroy(io, true);
+
+	if (!io_set_read_handler(io, chrc_pipe_read, chrc, NULL))
+		goto fail;
+
+	if (!io_set_disconnect_handler(io, characteristic_pipe_hup, chrc, NULL))
+		goto fail;
+
+	mtu = bt_gatt_client_get_mtu(gatt);
+
+	reply = g_dbus_create_reply(msg, DBUS_TYPE_UNIX_FD, &pipefd[dir],
+					DBUS_TYPE_UINT16, &mtu,
+					DBUS_TYPE_INVALID);
+
+	close(pipefd[dir]);
+
+	if (dir) {
+		chrc->write_io->io = io;
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+						chrc->path,
+						GATT_CHARACTERISTIC_IFACE,
+						"WriteAcquired");
+	} else {
+		chrc->notify_io->io = io;
+		g_dbus_emit_property_changed(btd_get_dbus_connection(),
+						chrc->path,
+						GATT_CHARACTERISTIC_IFACE,
+						"NotifyAcquired");
+	}
+
+	DBG("%s: sender %s io %p", dbus_message_get_member(msg),
+					dbus_message_get_sender(msg), io);
+
+	return reply;
+
+fail:
+	io_destroy(io);
+	close(pipefd[dir]);
+	return btd_error_failed(msg, strerror(EIO));
+}
+
+static void characteristic_ready(bool success, uint8_t ecode, void *user_data)
+{
+	struct characteristic *chrc = user_data;
+	DBusMessage *reply;
+
+	chrc->ready_id = 0;
+
+	if (chrc->write_io->msg) {
+		reply = characteristic_create_pipe(chrc, chrc->write_io->msg);
+
+		g_dbus_send_message(btd_get_dbus_connection(), reply);
+
+		dbus_message_unref(chrc->write_io->msg);
+		chrc->write_io->msg = NULL;
+	}
+
+	if (chrc->notify_io->msg) {
+		reply = characteristic_create_pipe(chrc, chrc->notify_io->msg);
+
+		g_dbus_send_message(btd_get_dbus_connection(), reply);
+
+		dbus_message_unref(chrc->notify_io->msg);
+		chrc->notify_io->msg = NULL;
+	}
+}
+
+static DBusMessage *characteristic_acquire_write(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
+{
+	struct characteristic *chrc = user_data;
+	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+
+	if (!gatt)
+		return btd_error_failed(msg, "Not connected");
+
+	if (chrc->write_io)
+		return btd_error_not_permitted(msg, "Write acquired");
+
+	if (!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
+		return btd_error_not_supported(msg);
+
+	chrc->write_io = new0(struct pipe_io, 1);
+
+	if (!bt_gatt_client_is_ready(gatt)) {
+		DBG("GATT not ready, wait until it becomes read");
+		if (!chrc->ready_id)
+			chrc->ready_id = bt_gatt_client_ready_register(gatt,
+							characteristic_ready,
+							chrc, NULL);
+		chrc->write_io->msg = dbus_message_ref(msg);
+		return NULL;
+	}
+
+	return characteristic_create_pipe(chrc, msg);
 }
 
 struct notify_client {
@@ -1156,6 +1402,100 @@ static void register_notify_cb(uint16_t att_ecode, void *user_data)
 	create_notify_reply(op, true, 0);
 }
 
+static void notify_io_cb(uint16_t value_handle, const uint8_t *value,
+					uint16_t length, void *user_data)
+{
+	struct iovec iov;
+	struct notify_client *client = user_data;
+	struct characteristic *chrc = client->chrc;
+	int err;
+
+	/* Drop notification if the pipe is not ready */
+	if (!chrc->notify_io->io)
+		return;
+
+	iov.iov_base = (void *) value;
+	iov.iov_len = length;
+
+	err = io_send(chrc->notify_io->io, &iov, 1);
+	if (err < 0)
+		error("io_send: %s", strerror(-err));
+}
+
+static void register_notify_io_cb(uint16_t att_ecode, void *user_data)
+{
+	struct notify_client *client = user_data;
+	struct characteristic *chrc = client->chrc;
+
+	if (!att_ecode)
+		return;
+
+	queue_remove(chrc->notify_clients, client);
+	notify_client_free(client);
+
+	pipe_io_destroy(chrc->notify_io);
+	chrc->notify_io = NULL;
+}
+
+static void notify_io_destroy(void *data)
+{
+	struct notify_client *client = data;
+
+	queue_remove(client->chrc->notify_clients, client);
+	notify_client_unref(client);
+}
+
+static DBusMessage *characteristic_acquire_notify(DBusConnection *conn,
+					DBusMessage *msg, void *user_data)
+{
+	struct characteristic *chrc = user_data;
+	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	const char *sender = dbus_message_get_sender(msg);
+	struct notify_client *client;
+
+	if (!gatt)
+		return btd_error_failed(msg, "Not connected");
+
+	if (chrc->notify_io)
+		return btd_error_not_permitted(msg, "Notify acquired");
+
+	/* Each client can only have one active notify session. */
+	if (!queue_isempty(chrc->notify_clients))
+		return btd_error_in_progress(msg);
+
+	if (!(chrc->props & BT_GATT_CHRC_PROP_NOTIFY))
+		return btd_error_not_supported(msg);
+
+	client = notify_client_create(chrc, sender);
+	if (!client)
+		return btd_error_failed(msg, "Failed allocate notify session");
+
+	client->notify_id = bt_gatt_client_register_notify(gatt,
+						chrc->value_handle,
+						register_notify_io_cb,
+						notify_io_cb,
+						client, NULL);
+	if (!client->notify_id)
+		return btd_error_failed(msg, "Failed to subscribe");
+
+	queue_push_tail(chrc->notify_clients, client);
+
+	chrc->notify_io = new0(struct pipe_io, 1);
+	chrc->notify_io->data = client;
+	chrc->notify_io->destroy = notify_io_destroy;
+
+	if (!bt_gatt_client_is_ready(gatt)) {
+		if (!chrc->ready_id)
+			chrc->ready_id = bt_gatt_client_ready_register(gatt,
+							characteristic_ready,
+							chrc, NULL);
+		chrc->notify_io->msg = dbus_message_ref(msg);
+		return NULL;
+	}
+
+	return characteristic_create_pipe(chrc, msg);
+}
+
 static DBusMessage *characteristic_start_notify(DBusConnection *conn,
 					DBusMessage *msg, void *user_data)
 {
@@ -1165,6 +1505,9 @@ static DBusMessage *characteristic_start_notify(DBusConnection *conn,
 	struct async_dbus_op *op;
 	struct notify_client *client;
 
+	if (chrc->notify_io)
+		return btd_error_not_permitted(msg, "Notify acquired");
+
 	if (!(chrc->props & BT_GATT_CHRC_PROP_NOTIFY ||
 				chrc->props & BT_GATT_CHRC_PROP_INDICATE))
 		return btd_error_not_supported(msg);
@@ -1173,7 +1516,7 @@ static DBusMessage *characteristic_start_notify(DBusConnection *conn,
 	client = queue_find(chrc->notify_clients, match_notify_sender, sender);
 	if (client)
 		return client->notify_id ?
-				btd_error_failed(msg, "Already notifying") :
+				g_dbus_create_reply(msg, DBUS_TYPE_INVALID) :
 				btd_error_in_progress(msg);
 
 	client = notify_client_create(chrc, sender);
@@ -1237,6 +1580,12 @@ static DBusMessage *characteristic_stop_notify(DBusConnection *conn,
 	if (!client)
 		return btd_error_failed(msg, "No notify session started");
 
+	if (chrc->notify_io) {
+		pipe_io_destroy(chrc->notify_io);
+		chrc->notify_io = NULL;
+		return dbus_message_new_method_return(msg);
+	}
+
 	queue_remove(chrc->service->client->all_notify_clients, client);
 	bt_gatt_client_unregister_notify(gatt, client->notify_id);
 	update_notifying(chrc);
@@ -1254,6 +1603,12 @@ static const GDBusPropertyTable characteristic_properties[] = {
 	{ "Notifying", "b", characteristic_get_notifying, NULL,
 					characteristic_notifying_exists },
 	{ "Flags", "as", characteristic_get_flags, NULL, NULL },
+	{ "WriteAcquired", "b", characteristic_get_write_acquired, NULL,
+				characteristic_write_acquired_exists,
+				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
+	{ "NotifyAcquired", "b", characteristic_get_notify_acquired, NULL,
+				characteristic_notify_acquired_exists,
+				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
 
@@ -1265,6 +1620,14 @@ static const GDBusMethodTable characteristic_methods[] = {
 						{ "options", "a{sv}" }),
 					NULL,
 					characteristic_write_value) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("AcquireWrite", NULL,
+					GDBUS_ARGS({ "fd", "h" },
+						{ "mtu", "q" }),
+					characteristic_acquire_write) },
+	{ GDBUS_EXPERIMENTAL_ASYNC_METHOD("AcquireNotify", NULL,
+					GDBUS_ARGS({ "fd", "h" },
+						{ "mtu", "q" }),
+					characteristic_acquire_notify) },
 	{ GDBUS_ASYNC_METHOD("StartNotify", NULL, NULL,
 					characteristic_start_notify) },
 	{ GDBUS_METHOD("StopNotify", NULL, NULL,
@@ -1279,6 +1642,12 @@ static void characteristic_free(void *data)
 	/* List should be empty here */
 	queue_destroy(chrc->descs, NULL);
 	queue_destroy(chrc->notify_clients, NULL);
+
+	if (chrc->write_io)
+		pipe_io_destroy(chrc->write_io);
+
+	if (chrc->notify_io)
+		pipe_io_destroy(chrc->notify_io);
 
 	g_free(chrc->path);
 	free(chrc);

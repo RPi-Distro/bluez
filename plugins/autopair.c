@@ -110,7 +110,7 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 			if (attempt >= 4)
 				return 0;
 
-			snprintf(pinstr, sizeof(pinstr), "%06d",
+			snprintf(pinstr, sizeof(pinstr), "%06u",
 						rand() % 1000000);
 			*display = true;
 			memcpy(pinbuf, pinstr, 6);

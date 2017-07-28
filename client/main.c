@@ -1799,6 +1799,46 @@ static void cmd_write(const char *arg)
 	gatt_write_attribute(default_attr, arg);
 }
 
+static void cmd_acquire_write(const char *arg)
+{
+	if (!default_attr) {
+		rl_printf("No attribute selected\n");
+		return;
+	}
+
+	gatt_acquire_write(default_attr, arg);
+}
+
+static void cmd_release_write(const char *arg)
+{
+	if (!default_attr) {
+		rl_printf("No attribute selected\n");
+		return;
+	}
+
+	gatt_release_write(default_attr, arg);
+}
+
+static void cmd_acquire_notify(const char *arg)
+{
+	if (!default_attr) {
+		rl_printf("No attribute selected\n");
+		return;
+	}
+
+	gatt_acquire_notify(default_attr, arg);
+}
+
+static void cmd_release_notify(const char *arg)
+{
+	if (!default_attr) {
+		rl_printf("No attribute selected\n");
+		return;
+	}
+
+	gatt_release_notify(default_attr, arg);
+}
+
 static void cmd_notify(const char *arg)
 {
 	dbus_bool_t enable;
@@ -1814,7 +1854,32 @@ static void cmd_notify(const char *arg)
 	gatt_notify_attribute(default_attr, enable ? true : false);
 }
 
-static void cmd_register_profile(const char *arg)
+static void cmd_register_app(const char *arg)
+{
+	wordexp_t w;
+
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	gatt_register_app(dbus_conn, default_ctrl->proxy, &w);
+
+	wordfree(&w);
+}
+
+static void cmd_unregister_app(const char *arg)
+{
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	gatt_unregister_app(dbus_conn, default_ctrl->proxy);
+}
+
+static void cmd_register_service(const char *arg)
 {
 	wordexp_t w;
 
@@ -1828,20 +1893,128 @@ static void cmd_register_profile(const char *arg)
 
 	if (w.we_wordc == 0) {
 		rl_printf("Missing argument\n");
-		return;
+		goto done;
 	}
 
-	gatt_register_profile(dbus_conn, default_ctrl->proxy, &w);
+	gatt_register_service(dbus_conn, default_ctrl->proxy, &w);
 
+done:
 	wordfree(&w);
 }
 
-static void cmd_unregister_profile(const char *arg)
+static void cmd_unregister_service(const char *arg)
 {
+	wordexp_t w;
+
 	if (check_default_ctrl() == FALSE)
 		return;
 
-	gatt_unregister_profile(dbus_conn, default_ctrl->proxy);
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	if (w.we_wordc == 0) {
+		rl_printf("Missing argument\n");
+		goto done;
+	}
+
+	gatt_unregister_service(dbus_conn, default_ctrl->proxy, &w);
+
+done:
+	wordfree(&w);
+}
+
+static void cmd_register_characteristic(const char *arg)
+{
+	wordexp_t w;
+
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	if (w.we_wordc < 2) {
+		rl_printf("Missing arguments\n");
+		goto done;
+	}
+
+	gatt_register_chrc(dbus_conn, default_ctrl->proxy, &w);
+
+done:
+	wordfree(&w);
+}
+
+static void cmd_unregister_characteristic(const char *arg)
+{
+	wordexp_t w;
+
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	if (w.we_wordc < 1) {
+		rl_printf("Missing arguments\n");
+		goto done;
+	}
+
+	gatt_unregister_chrc(dbus_conn, default_ctrl->proxy, &w);
+
+done:
+	wordfree(&w);
+}
+
+static void cmd_register_descriptor(const char *arg)
+{
+	wordexp_t w;
+
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	if (w.we_wordc < 2) {
+		rl_printf("Missing arguments\n");
+		goto done;
+	}
+
+	gatt_register_desc(dbus_conn, default_ctrl->proxy, &w);
+
+done:
+	wordfree(&w);
+}
+
+static void cmd_unregister_descriptor(const char *arg)
+{
+	wordexp_t w;
+
+	if (check_default_ctrl() == FALSE)
+		return;
+
+	if (wordexp(arg, &w, WRDE_NOCMD)) {
+		rl_printf("Invalid argument\n");
+		return;
+	}
+
+	if (w.we_wordc < 1) {
+		rl_printf("Missing arguments\n");
+		goto done;
+	}
+
+	gatt_unregister_desc(dbus_conn, default_ctrl->proxy, &w);
+
+done:
+	wordfree(&w);
 }
 
 static void cmd_version(const char *arg)
@@ -1853,6 +2026,8 @@ static void cmd_quit(const char *arg)
 {
 	g_main_loop_quit(main_loop);
 }
+
+static void cmd_help(const char *arg);
 
 static char *generic_generator(const char *text, int state,
 					GList *source, const char *property)
@@ -2071,8 +2246,10 @@ static const struct {
 	{ "devices",      NULL,       cmd_devices, "List available devices" },
 	{ "paired-devices", NULL,     cmd_paired_devices,
 					"List paired devices"},
-	{ "system-alias", "<name>",   cmd_system_alias },
-	{ "reset-alias",  NULL,       cmd_reset_alias },
+	{ "system-alias", "<name>",   cmd_system_alias,
+					"Set controller alias" },
+	{ "reset-alias",  NULL,       cmd_reset_alias,
+					"Reset controller alias" },
 	{ "power",        "<on/off>", cmd_power, "Set controller power" },
 	{ "pairable",     "<on/off>", cmd_pairable,
 					"Set controller pairable mode" },
@@ -2137,15 +2314,40 @@ static const struct {
 	{ "read",         NULL,       cmd_read, "Read attribute value" },
 	{ "write",        "<data=[xx xx ...]>", cmd_write,
 						"Write attribute value" },
+	{ "acquire-write", NULL, cmd_acquire_write,
+					"Acquire Write file descriptor" },
+	{ "release-write", NULL, cmd_release_write,
+					"Release Write file descriptor" },
+	{ "acquire-notify", NULL, cmd_acquire_notify,
+					"Acquire Notify file descriptor" },
+	{ "release-notify", NULL, cmd_release_notify,
+					"Release Notify file descriptor" },
 	{ "notify",       "<on/off>", cmd_notify, "Notify attribute value" },
-	{ "register-profile", "<UUID ...>", cmd_register_profile,
+	{ "register-application", "[UUID ...]", cmd_register_app,
 						"Register profile to connect" },
-	{ "unregister-profile", NULL, cmd_unregister_profile,
+	{ "unregister-application", NULL, cmd_unregister_app,
 						"Unregister profile" },
+	{ "register-service", "<UUID>", cmd_register_service,
+					"Register application service."  },
+	{ "unregister-service", "<UUID/object>", cmd_unregister_service,
+					"Unregister application service" },
+	{ "register-characteristic", "<UUID> <Flags=read,write,notify...>",
+					cmd_register_characteristic,
+					"Register application characteristic" },
+	{ "unregister-characteristic", "<UUID/object>",
+				cmd_unregister_characteristic,
+				"Unregister application characteristic" },
+	{ "register-descriptor", "<UUID> <Flags=read,write...>",
+					cmd_register_descriptor,
+					"Register application descriptor" },
+	{ "unregister-descriptor", "<UUID/object>",
+					cmd_unregister_descriptor,
+					"Unregister application descriptor" },
 	{ "version",      NULL,       cmd_version, "Display version" },
 	{ "quit",         NULL,       cmd_quit, "Quit program" },
-	{ "exit",         NULL,       cmd_quit },
-	{ "help" },
+	{ "exit",         NULL,       cmd_quit, "Quit program" },
+	{ "help",         NULL,       cmd_help,
+					"Display help about this program" },
 	{ }
 };
 
@@ -2223,6 +2425,9 @@ static void rl_handler(char *input)
 	if (agent_input(dbus_conn, input) == TRUE)
 		goto done;
 
+	if (!rl_release_prompt(input))
+		goto done;
+
 	add_history(input);
 
 	cmd = strtok_r(input, " ", &arg);
@@ -2245,23 +2450,31 @@ static void rl_handler(char *input)
 		}
 	}
 
-	if (strcmp(cmd, "help")) {
-		printf("Invalid command\n");
-		goto done;
-	}
+	printf("Invalid command\n");
+done:
+	free(input);
+}
+
+static void cmd_help(const char *arg)
+{
+	int i;
 
 	printf("Available commands:\n");
 
 	for (i = 0; cmd_table[i].cmd; i++) {
-		if (cmd_table[i].desc)
+		if ((int)strlen(cmd_table[i].arg? : "") <=
+					(int)(25 - strlen(cmd_table[i].cmd)))
 			printf("  %s %-*s %s\n", cmd_table[i].cmd,
 					(int)(25 - strlen(cmd_table[i].cmd)),
 					cmd_table[i].arg ? : "",
 					cmd_table[i].desc ? : "");
+		else
+			printf("  %s %-s\n" "  %s %-25s %s\n",
+					cmd_table[i].cmd,
+					cmd_table[i].arg ? : "",
+					"", "",
+					cmd_table[i].desc ? : "");
 	}
-
-done:
-	free(input);
 }
 
 static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,
@@ -2299,6 +2512,8 @@ static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,
 		 * to terminate client by CTRL-D or typing exit treat this as
 		 * exit and fall through.
 		 */
+
+		/* fall through */
 	case SIGTERM:
 		if (!terminated) {
 			rl_replace_line("", 0);
@@ -2358,6 +2573,7 @@ static gboolean parse_agent(const char *key, const char *value,
 	if (!value)
 		return FALSE;
 
+	g_free(auto_register_agent);
 	auto_register_agent = g_strdup(value);
 
 	return TRUE;
@@ -2407,6 +2623,7 @@ int main(int argc, char *argv[])
 
 	main_loop = g_main_loop_new(NULL, FALSE);
 	dbus_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
+	g_dbus_attach_object_manager(dbus_conn);
 
 	setlinebuf(stdout);
 	rl_attempted_completion_function = cmd_completion;

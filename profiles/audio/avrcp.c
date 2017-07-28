@@ -3121,8 +3121,10 @@ static gboolean avrcp_play_item_rsp(struct avctp *conn, uint8_t code,
 		case AVRCP_STATUS_UID_CHANGED:
 		case AVRCP_STATUS_DOES_NOT_EXIST:
 			ret = -ENOENT;
+			break;
 		default:
 			ret = -EINVAL;
+			break;
 		}
 		goto done;
 	}
@@ -3799,6 +3801,7 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn, uint8_t code,
 			if (!session->controller ||
 						!session->controller->player)
 				break;
+			/* fall through */
 		case AVRCP_EVENT_VOLUME_CHANGED:
 			avrcp_register_notification(session, event);
 			break;
