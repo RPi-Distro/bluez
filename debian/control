@@ -52,6 +52,7 @@ Description: Library to use the BlueZ Linux Bluetooth stack with debugging symbo
 
 Package: libbluetooth-dev
 Architecture: linux-any
+Multi-Arch: same
 Section: libdevel
 Priority: extra
 Depends: libbluetooth3 (= ${binary:Version}),
