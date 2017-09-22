@@ -6,6 +6,5 @@
 bluetooth.conf.patch
 main.conf.patch
 change_path_of_hogsuspend.patch
-fix_udevadm_in_hid2hci.patch
 org.bluez.obex.service.in.patch
 CVE-2017-1000250.patch
