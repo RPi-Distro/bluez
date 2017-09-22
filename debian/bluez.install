@@ -1,7 +1,6 @@
 src/main.conf etc/bluetooth
 profiles/input/input.conf etc/bluetooth
 profiles/network/network.conf etc/bluetooth
-profiles/proximity/proximity.conf etc/bluetooth
 usr/lib/bluetooth/bluetoothd
 usr/bin/bluetoothctl
 usr/bin/bccmd
