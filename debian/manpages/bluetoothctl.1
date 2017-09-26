@@ -1,13 +1,13 @@
 .TH BLUETOOTHCTL "1" "May 2013"
 .SH NAME
-bluetoothctl \- bluetooth control tool
+bluetoothctl \- interactive bluetooth control tool
 .SH SYNOPSIS
-.B bluetoothctl
+.B bluetoothctl [OPTION...]
 .SH DESCRIPTION
-\fBbluetoothctl\fP is bluetooth control tool
+\fBbluetoothctl\fP is bluetooth control tool with a shell-like interface. It can be automated by piping commands to standard input as the tool will exit when reading end-of-file (EOF).
 
-.SH USAGE
-bluetoothctl [options]
+.SH OPTIONS
+The following command line options are understood:
 
 Help Options:
   \fB-h\fP, \fB--help\fP Show help options
@@ -15,6 +15,309 @@ Help Options:
 Application Options:
   \fB-v\fP, \fB--version\fP Show version information and exit
   \fB-a\fP, \fB--agent=CAPABILITY\fP Register agent handler
+
+.SH COMMANDS
+The following interactive commands can be used in the tools interface:
+
+\fBlist\fP
+.RS 4
+List available controllers
+.RE
+
+\fBshow [ctrl]\fP
+.RS 4
+Controller information
+.RE
+
+\fBselect <ctrl>\fP
+.RS 4
+Select default controller
+.RE
+
+\fBdevices\fP
+.RS 4
+List available devices
+.RE
+
+\fBpaired-devices\fP
+.RS 4
+List paired devices
+.RE
+
+\fBsystem-alias <name>\fP
+.RS 4
+Set controller alias
+.RE
+
+\fBreset-alias\fP
+.RS 4
+Reset controller alias
+.RE
+
+\fBpower <on/off>\fP
+.RS 4
+Set controller power
+.RE
+
+\fBpairable <on/off>\fP
+.RS 4
+Set controller pairable mode
+.RE
+
+\fBdiscoverable <on/off>\fP
+.RS 4
+Set controller discoverable mode
+.RE
+
+\fBagent <on/off/capability>\fP
+.RS 4
+Enable/disable agent with given capability
+.RE
+
+\fBdefault-agent\fP
+.RS 4
+Set agent as the default one
+.RE
+
+\fBadvertise <on/off/type>\fP
+.RS 4
+Enable/disable advertising with given type
+.RE
+
+\fBset-advertise-uuids [uuid1 uuid2 ...]\fP
+.RS 4
+Set advertise uuids
+.RE
+
+\fBset-advertise-service [uuid][data=[xx xx ...]\fP
+.RS 4
+Set advertise service data
+.RE
+
+\fBset-advertise-manufacturer [id][data=[xx xx ...]\fP
+.RS 4
+Set advertise manufacturer data
+.RE
+
+\fBset-advertise-tx-power <on/off>\fP
+.RS 4
+Enable/disable TX power to be advertised
+.RE
+
+\fBset-scan-filter-uuids [uuid1 uuid2 ...]\fP
+.RS 4
+Set scan filter uuids
+.RE
+
+\fBset-scan-filter-rssi [rssi]\fP
+.RS 4
+Set scan filter rssi, and clears pathloss
+.RE
+
+\fBset-scan-filter-pathloss [pathloss]\fP
+.RS 4
+Set scan filter pathloss, and clears rssi
+.RE
+
+\fBset-scan-filter-transport [transport]\fP
+.RS 4
+Set scan filter transport
+.RE
+
+\fBset-scan-filter-clear\fP
+.RS 4
+Clears discovery filter.
+.RE
+
+\fBscan <on/off>\fP
+.RS 4
+Scan for devices
+.RE
+
+\fBinfo [dev]\fP
+.RS 4
+Device information
+.RE
+
+\fBpair [dev]\fP
+.RS 4
+Pair with device
+.RE
+
+\fBtrust [dev]\fP
+.RS 4
+Trust device
+.RE
+
+\fBuntrust [dev]\fP
+.RS 4
+Untrust device
+.RE
+
+\fBblock [dev]\fP
+.RS 4
+Block device
+.RE
+
+\fBunblock [dev]\fP
+.RS 4
+Unblock device
+.RE
+
+\fBremove <dev>\fP
+.RS 4
+Remove device
+.RE
+
+\fBconnect <dev>\fP
+.RS 4
+Connect device
+.RE
+
+\fBdisconnect [dev]\fP
+.RS 4
+Disconnect device
+.RE
+
+\fBlist-attributes [dev]\fP
+.RS 4
+List attributes
+.RE
+
+\fBset-alias <alias>\fP
+.RS 4
+Set device alias
+.RE
+
+\fBselect-attribute <attribute/UUID>\fP
+.RS 4
+Select attribute
+.RE
+
+\fBattribute-info [attribute/UUID]\fP
+.RS 4
+Select attribute
+.RE
+
+\fBread\fP
+.RS 4
+Read attribute value
+.RE
+
+\fBwrite <data=[xx xx ...]>\fP
+.RS 4
+Write attribute value
+.RE
+
+\fBacquire-write\fP
+.RS 4
+Acquire Write file descriptor
+.RE
+
+\fBrelease-write\fP
+.RS 4
+Release Write file descriptor
+.RE
+
+\fBacquire-notify\fP
+.RS 4
+Acquire Notify file descriptor
+.RE
+
+\fBrelease-notify\fP
+.RS 4
+Release Notify file descriptor
+.RE
+
+\fBnotify <on/off>\fP
+.RS 4
+Notify attribute value
+.RE
+
+\fBregister-application [UUID ...]\fP
+.RS 4
+Register profile to connect
+.RE
+
+\fBunregister-application\fP
+.RS 4
+Unregister profile
+.RE
+
+\fBregister-service <UUID>\fP
+.RS 4
+Register application service.
+.RE
+
+\fBunregister-service <UUID/object>\fP
+.RS 4
+Unregister application service
+.RE
+\fBregister-characteristic <UUID> <Flags=read,write,notify...>\fP
+.RS 4
+Register application characteristic
+.RE
+
+\fBunregister-characteristic <UUID/object>\fP
+.RS 4
+Unregister application characteristic
+.RE
+
+\fBregister-descriptor <UUID> <Flags=read,write...>\fP
+.RS 4
+Register application descriptor
+.RE
+
+\fBunregister-descriptor <UUID/object>\fP
+.RS 4
+Unregister application descriptor
+.RE
+
+\fBversion\fP
+.RS 4
+Display version
+.RE
+
+\fBquit\fP
+.RS 4
+Quit program
+.RE
+
+\fBexit\fP
+.RS 4
+Quit program
+.RE
+
+\fBhelp\fP
+.RS 4
+Display help about this program
+.RE
+
+.SH EXAMPLES
+
+.in
+.nf
+$ bluetoothctl
+
+[bluetooth]# devices
+Device 00:16:94:1A:EA:2C HD 4.50BTNC
+
+[bluetooth]# pair 00:16:94:1A:EA:2C
+Attempting to pair with 00:16:94:1A:EA:2C
+Pairing successful
+
+[bluetooth]# connect 00:16:94:1A:EA:2C
+Attempting to connect to 00:16:94:1A:EA:2C
+Connection successful
+[HD 4.50BTNC]# set-alias sennheiser
+Changing sennheiser succeeded
+
+[HD 4.50BTNC]# devices
+Device 00:16:94:1A:EA:2C sennheiser
+
+[HD 4.50BTNC]# quit
+
+
 
 .SH AUTHOR
 This manual page was written by Nobuhiro Iwamatsu <iwamatsu@debian.org>,

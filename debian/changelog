@@ -1,6 +1,6 @@
 bluez (5.47-1) unstable; urgency=medium
 
-  * Update to 5.47.
+  * Update to 5.47. (Closes: #876849)
   * Update debian/control.
     - Bump Standards-Version to 4.1.0.
     - Update to debhelper 10.
