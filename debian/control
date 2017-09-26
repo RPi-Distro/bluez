@@ -20,7 +20,7 @@ Build-Depends: debhelper (>= 9),
                check,
                systemd,
                dh-systemd
-Standards-Version: 4.0.0
+Standards-Version: 4.1.0
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-bluetooth/bluez.git
 Vcs-Git: https://anonscm.debian.org/git/pkg-bluetooth/bluez.git
 Homepage: http://www.bluez.org
