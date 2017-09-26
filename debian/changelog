@@ -4,10 +4,12 @@ bluez (5.47-1) unstable; urgency=medium
   * Update debian/control.
     - Bump Standards-Version to 4.1.0.
     - Update to debhelper 10.
+    - Remove dh-systemd, autotools-dev and dh-autoreconf from B-D.
   * Remove patches/fix_udevadm_in_hid2hci.patch.
   * Remove patches/CVE-2017-1000250.patch.
   * Remove profiles/proximity/proximity.conf from debian/bluez.install.
   * Remove copyrtight of alert, cyclingspeed, heartrate and proximity.
+  * Fix missing-call-to-dpkg-maintscript-helper in bluez.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 22 Sep 2017 12:10:14 +0900
 
