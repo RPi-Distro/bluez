@@ -4,8 +4,6 @@ Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
 Section: admin
 Priority: optional
 Build-Depends: debhelper (>= 10),
-               autotools-dev,
-               dh-autoreconf,
                flex,
                bison,
                libdbus-glib-1-dev,
