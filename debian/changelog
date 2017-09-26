@@ -3,6 +3,7 @@ bluez (5.47-1) unstable; urgency=medium
   * Update to 5.47.
   * Update debian/control.
     - Bump Standards-Version to 4.1.0.
+    - Update to debhelper 10.
   * Remove patches/fix_udevadm_in_hid2hci.patch.
   * Remove patches/CVE-2017-1000250.patch.
   * Remove profiles/proximity/proximity.conf from debian/bluez.install.
