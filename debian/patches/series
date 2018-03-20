@@ -6,3 +6,4 @@ bluetooth.conf.patch
 main.conf.patch
 change_path_of_hogsuspend.patch
 org.bluez.obex.service.in.patch
+Fix-typo.patch
