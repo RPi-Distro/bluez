@@ -39,7 +39,6 @@ Package: libbluetooth-dev
 Architecture: linux-any
 Multi-Arch: same
 Section: libdevel
-Priority: extra
 Depends: libbluetooth3 (= ${binary:Version}),
          libc6-dev | libc-dev,
          ${misc:Depends}
