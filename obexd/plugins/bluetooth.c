@@ -351,7 +351,7 @@ static void name_released(DBusConnection *conn, void *user_data)
 {
 	GSList *l;
 
-	DBG("org.bluez disappered");
+	DBG("org.bluez disappeared");
 
 	for (l = profiles; l; l = l->next) {
 		struct bluetooth_profile *profile = l->data;

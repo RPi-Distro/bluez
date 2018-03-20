@@ -52,7 +52,7 @@
 #define SESSION_INTERFACE OBEXD_SERVICE ".Session1"
 #define AGENT_INTERFACE OBEXD_SERVICE ".Agent1"
 
-#define TIMEOUT 60*1000 /* Timeout for user response (miliseconds) */
+#define TIMEOUT 60*1000 /* Timeout for user response (milliseconds) */
 
 struct agent {
 	char *bus_name;

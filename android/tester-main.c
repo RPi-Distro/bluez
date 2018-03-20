@@ -508,20 +508,20 @@ static bool match_mas_inst(btmce_mas_instance_t *exp_inst,
 				btmce_mas_instance_t *rec_inst, int inst_num)
 {
 	if (exp_inst->id && (exp_inst->id != rec_inst->id)) {
-		tester_debug("MAS inst. [%d] id missmatch %d vs %d", inst_num,
+		tester_debug("MAS inst. [%d] id mismatch %d vs %d", inst_num,
 						rec_inst->id, exp_inst->id);
 		return 0;
 	}
 
 	if (exp_inst->scn && (exp_inst->scn != rec_inst->scn)) {
-		tester_debug("MAS inst. [%d] scn missmatch %d vs %d", inst_num,
+		tester_debug("MAS inst. [%d] scn mismatch %d vs %d", inst_num,
 						rec_inst->scn, exp_inst->scn);
 		return 0;
 	}
 
 	if (exp_inst->msg_types &&
 			(exp_inst->msg_types != rec_inst->msg_types)) {
-		tester_debug("Mas inst. [%d] mesg type missmatch %d vs %d",
+		tester_debug("Mas inst. [%d] mesg type mismatch %d vs %d",
 					inst_num, rec_inst->scn, exp_inst->scn);
 		return 0;
 	}

@@ -2306,7 +2306,7 @@ static void btp_gap_pair(uint8_t index, const void *param, uint16_t length,
 	if (!device)
 		goto failed;
 
-	/* This command is asynchronous, send reply immediatelly to not block
+	/* This command is asynchronous, send reply immediately to not block
 	 * pairing process eg. passkey request.
 	 */
 	btp_send(btp, BTP_GAP_SERVICE, BTP_OP_GAP_PAIR, adapter->index, 0,
@@ -2502,7 +2502,7 @@ static void btp_gap_confirm_entry_rsp(uint8_t index, const void *param,
 	} else {
 		reply = l_dbus_message_new_error(ag.pending_req,
 						"org.bluez.Error.Rejected",
-						"Passkey missmatch");
+						"Passkey mismatch");
 	}
 
 	l_dbus_send_with_reply(dbus, ag.pending_req, passkey_confirm_rsp_reply,

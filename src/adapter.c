@@ -3703,7 +3703,7 @@ static void set_privacy_complete(uint8_t status, uint16_t length,
 		return;
 	}
 
-	DBG("Successfuly set privacy for index %u", adapter->dev_id);
+	DBG("Successfully set privacy for index %u", adapter->dev_id);
 }
 
 static int set_privacy(struct btd_adapter *adapter, uint8_t privacy)
@@ -4703,7 +4703,7 @@ void adapter_auto_connect_add(struct btd_adapter *adapter,
 	bdaddr_type = btd_device_get_bdaddr_type(device);
 
 	if (bdaddr_type == BDADDR_BREDR) {
-		DBG("auto-connection feature is not avaiable for BR/EDR");
+		DBG("auto-connection feature is not available for BR/EDR");
 		return;
 	}
 
@@ -4763,7 +4763,7 @@ void adapter_auto_connect_remove(struct btd_adapter *adapter,
 	bdaddr_type = btd_device_get_bdaddr_type(device);
 
 	if (bdaddr_type == BDADDR_BREDR) {
-		DBG("auto-connection feature is not avaiable for BR/EDR");
+		DBG("auto-connection feature is not available for BR/EDR");
 		return;
 	}
 

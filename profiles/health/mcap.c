@@ -2866,7 +2866,7 @@ static void proc_sync_set_req(struct mcap_mcl *mcl, uint8_t *cmd, uint32_t len)
 			return;
 		}
 
-		/* Convert to miliseconds */
+		/* Convert to milliseconds */
 		phase2_delay = bt2ms(phase2_delay);
 
 		if (phase2_delay > 61*1000) {

@@ -391,7 +391,7 @@ static const char *error2str(uint8_t status)
 	case AVRCP_STATUS_NOW_PLAYING_LIST_FULL:
 		return "Now Playing List Full";
 	case AVRCP_STATUS_SEARCH_NOT_SUPPORTED:
-		return "Seach Not Supported";
+		return "Search Not Supported";
 	case AVRCP_STATUS_SEARCH_IN_PROGRESS:
 		return "Search in Progress";
 	case AVRCP_STATUS_INVALID_PLAYER_ID:
@@ -1101,7 +1101,7 @@ static void avrcp_get_play_status_dump(int level, struct frame *frm,
 	}
 
 	interval = p_get_u32(frm);
-	printf("SongLength: 0x%08x (%u miliseconds)\n", interval, interval);
+	printf("SongLength: 0x%08x (%u milliseconds)\n", interval, interval);
 
 	p_indent(level, frm);
 
@@ -1167,7 +1167,7 @@ response:
 		break;
 	case AVRCP_EVENT_PLAYBACK_POS_CHANGED:
 		interval = p_get_u32(frm);
-		printf("Position: 0x%08x (%u miliseconds)\n", interval,
+		printf("Position: 0x%08x (%u milliseconds)\n", interval,
 								interval);
 		break;
 	case AVRCP_EVENT_BATT_STATUS_CHANGED:
@@ -1575,7 +1575,7 @@ static void avrcp_passthrough_dump(int level, struct frame *frm)
 
 	len = p_get_u8(frm);
 
-	printf("Lenght: 0x%02x\n", len);
+	printf("Length: 0x%02x\n", len);
 
 	raw_dump(level, frm);
 }

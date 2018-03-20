@@ -211,7 +211,7 @@ static const struct {
 	{ 0x111d, "Imaging Referenced Objects"			},
 	{ 0x111e, "Handsfree"					},
 	{ 0x111f, "Handsfree Audio Gateway"			},
-	{ 0x1120, "Direct Printing Refrence Objects Service"	},
+	{ 0x1120, "Direct Printing Reference Objects Service"	},
 	{ 0x1121, "Reflected UI"				},
 	{ 0x1122, "Basic Printing"				},
 	{ 0x1123, "Printing Status"				},

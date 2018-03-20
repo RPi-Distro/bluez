@@ -284,7 +284,7 @@ static void sink_cb(struct btd_service *service, btd_service_state_t old_state,
 		}
 
 		/* Check if service initiate the connection then proceed
-		 * immediatelly otherwise set timer
+		 * immediately otherwise set timer
 		 */
 		if (old_state == BTD_SERVICE_STATE_CONNECTING)
 			policy_connect(data, controller);
@@ -435,7 +435,7 @@ static void source_cb(struct btd_service *service,
 		}
 
 		/* Check if service initiate the connection then proceed
-		 * immediatelly otherwise set timer
+		 * immediately otherwise set timer
 		 */
 		if (old_state == BTD_SERVICE_STATE_CONNECTING)
 			policy_connect(data, target);

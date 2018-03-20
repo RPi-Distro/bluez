@@ -157,7 +157,7 @@ struct inquiry_data {
 	int iter;
 };
 
-#define DEFAULT_INQUIRY_INTERVAL 100 /* 100 miliseconds */
+#define DEFAULT_INQUIRY_INTERVAL 100 /* 100 milliseconds */
 
 #define MAX_BTDEV_ENTRIES 16
 

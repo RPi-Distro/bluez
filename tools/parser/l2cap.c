@@ -304,7 +304,7 @@ static char *status2str(uint16_t status)
 {
 	switch (status) {
 	case 0x0000:
-		return "No futher information available";
+		return "No further information available";
 	case 0x0001:
 		return "Authentication pending";
 	case 0x0002:
@@ -479,7 +479,7 @@ static char *a2mpcplstatus2str(uint8_t status)
 	case A2MP_STATUS_UNABLE_START_LINK_CREATION:
 		return "Failed - Unable to start link creation";
 	case A2MP_STATUS_COLLISION_OCCURED:
-		return "Failed - Collision occured";
+		return "Failed - Collision occurred";
 	case A2MP_STATUS_DISCONN_REQ_RECVD:
 		return "Failed - Disconnect physical link received";
 	case A2MP_STATUS_PHYS_LINK_EXISTS:

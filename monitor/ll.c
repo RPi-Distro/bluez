@@ -269,7 +269,7 @@ static void data_packet(const void *data, uint8_t size, bool padded)
 	switch (llid) {
 	case 0x01:
 		if (length > 0)
-			str = "Continuation fragement of L2CAP message";
+			str = "Continuation fragment of L2CAP message";
 		else
 			str = "Empty message";
 		break;
