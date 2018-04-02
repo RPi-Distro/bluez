@@ -3,6 +3,7 @@ bluez (5.49-1) unstable; urgency=medium
   * Update to 5.49.
   * Remove patches/0002-autopair-Don-t-handle-the-iCade.patch.
     This patch was applied to upstream.
+  * Remove libbluetooth3-dbg and bluez-dbg.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 19 Mar 2018 09:24:02 +0900
 
