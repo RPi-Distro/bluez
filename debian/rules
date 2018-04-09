@@ -35,6 +35,9 @@ CONFIGURE_FLAGS := \
 	dh $@ --with systemd,autoreconf
 
 override_dh_install:
+	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libbluetooth.la
+	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/plugins/sixaxis.la
+
 	dh_install --list-missing
 
 override_dh_auto_configure:
