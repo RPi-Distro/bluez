@@ -1,7 +1,7 @@
-0001-work-around-Logitech-diNovo-Edge-keyboard-firmware-i.patch
-0001-Allow-using-obexd-without-systemd-in-the-user-sessio.patch
-0001-obex-Use-GLib-helper-function-to-manipulate-paths.patch
-0004-agent-Assert-possible-infinite-loop.patch
+work-around-Logitech-diNovo-Edge-keyboard-firmware-i.patch
+allow-using-obexd-without-systemd-in-the-user-sessio.patch
+obex-Use-GLib-helper-function-to-manipulate-paths.patch
+agent-Assert-possible-infinite-loop.patch
 bluetooth.conf.patch
 main.conf.patch
 change_path_of_hogsuspend.patch
