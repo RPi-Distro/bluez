@@ -17,3 +17,5 @@ debian/manpages/gatttool.1
 debian/manpages/bluemoon.1
 debian/manpages/hex2hcd.1
 debian/manpages/mpris-proxy.1
+debian/manpages/btmgmt.1
+debian/manpages/obexctl.1
