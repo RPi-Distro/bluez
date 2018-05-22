@@ -7,3 +7,4 @@ main.conf.patch
 change_path_of_hogsuspend.patch
 org.bluez.obex.service.in.patch
 Fix-typo.patch
+adapter-Fix-accessing-NULL-adv_manager.patch
