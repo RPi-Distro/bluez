@@ -2128,6 +2128,10 @@ static void read_cb(uint8_t opcode, const void *pdu, uint16_t length,
 	const uint8_t *value = NULL;
 	uint16_t value_len = 0;
 
+	value_len = length;
+	if (value_len)
+		value = pdu;
+
 	if (opcode == BT_ATT_OP_ERROR_RSP) {
 		success = false;
 		att_ecode = process_error(pdu, length);
@@ -2140,10 +2144,6 @@ static void read_cb(uint8_t opcode, const void *pdu, uint16_t length,
 	}
 
 	success = true;
-	value_len = length;
-	if (value_len)
-		value = pdu;
-
 done:
 	if (op->callback)
 		op->callback(success, att_ecode, value, length, op->user_data);
