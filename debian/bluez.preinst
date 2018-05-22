@@ -19,6 +19,11 @@ if dpkg-maintscript-helper supports rm_conffile; then
                 /etc/bluetooth/audio.conf; do \
                 dpkg-maintscript-helper rm_conffile \
                         ${conffile} 5.21-2 bluez -- "$@"
+
+        for conffile in \
+                /etc/bluetooth/proximity.conf; do \
+                dpkg-maintscript-helper rm_conffile \
+                        ${conffile} 5.47-1 bluez -- "$@"
 done
 fi
 
