@@ -3,8 +3,10 @@ bluez (5.49-2) unstable; urgency=medium
   * Fix bluetoothd segfault in btd_adv_manager_refresh() (Closes: #898201)
     Add patches/adapter-Fix-accessing-NULL-adv_manager.patch. 
     Cherry-picked from 37a30b5435a45c3f8e233309fc70fc7de92b2e76.
+  * Fix segfault after PIN entry. (Closes: #884663)
+    Add patches/shared-gatt-client-Fix-segfault-after-PIN-entry.patch.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 23 May 2018 07:38:42 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 23 May 2018 08:29:05 +0900
 
 bluez (5.49-1) unstable; urgency=medium
 
