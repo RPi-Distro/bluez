@@ -61,7 +61,7 @@ Depends: ${misc:Depends},
          bluez
 Suggests: bluez-cups,
           bluez-obexd
-Description: Bluetooth support
+Description: Bluetooth support (metapackage)
  This package provides all of the different plugins supported
  by the Bluez bluetooth stack.
 
