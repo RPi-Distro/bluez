@@ -1,3 +1,9 @@
+bluez (5.49-3) unstable; urgency=medium
+
+  * Fix syntax error in bluez preinst script. (Closes: #899340)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 23 May 2018 11:35:59 +0900
+
 bluez (5.49-2) unstable; urgency=medium
 
   * Fix bluetoothd segfault in btd_adv_manager_refresh() (Closes: #898201)

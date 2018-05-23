@@ -20,11 +20,13 @@ if dpkg-maintscript-helper supports rm_conffile; then
                 dpkg-maintscript-helper rm_conffile \
                         ${conffile} 5.21-2 bluez -- "$@"
 
+	done
+
         for conffile in \
                 /etc/bluetooth/proximity.conf; do \
                 dpkg-maintscript-helper rm_conffile \
                         ${conffile} 5.47-1 bluez -- "$@"
-done
+	done
 fi
 
 if dpkg-maintscript-helper supports mv_conffile; then
