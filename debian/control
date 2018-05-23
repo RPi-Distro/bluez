@@ -1,5 +1,5 @@
 Source: bluez
-Maintainer: Debian Bluetooth Maintainers <pkg-bluetooth-maintainers@lists.alioth.debian.org>
+Maintainer: Debian Bluetooth Maintainers <team+pkg-bluetooth@tracker.debian.org>
 Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
 Section: admin
 Priority: optional
