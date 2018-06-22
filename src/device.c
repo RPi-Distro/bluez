@@ -243,6 +243,7 @@ struct btd_device {
 
 	struct csrk_info *local_csrk;
 	struct csrk_info *remote_csrk;
+	uint8_t ltk_enc_size;
 
 	sdp_list_t	*tmp_records;
 
@@ -479,7 +480,7 @@ static void store_device_info(struct btd_device *device)
 		return;
 
 	if (device_address_is_private(device)) {
-		warn("Can't store info for private addressed device %s",
+		DBG("Can't store info for private addressed device %s",
 								device->path);
 		return;
 	}
@@ -496,7 +497,7 @@ void device_store_cached_name(struct btd_device *dev, const char *name)
 	gsize length = 0;
 
 	if (device_address_is_private(dev)) {
-		warn("Can't store name for private addressed device %s",
+		DBG("Can't store name for private addressed device %s",
 								dev->path);
 		return;
 	}
@@ -1275,6 +1276,46 @@ dev_property_service_data_exist(const GDBusPropertyTable *property,
 	return bt_ad_has_service_data(device->ad, NULL);
 }
 
+static void append_advertising_data(void *data, void *user_data)
+{
+	struct bt_ad_data *ad = data;
+	DBusMessageIter *dict = user_data;
+
+	g_dbus_dict_append_basic_array(dict,
+				DBUS_TYPE_BYTE, &ad->type,
+				DBUS_TYPE_BYTE, &ad->data, ad->len);
+}
+
+static gboolean
+dev_property_get_advertising_data(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct btd_device *device = data;
+	DBusMessageIter dict;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+					DBUS_TYPE_BYTE_AS_STRING
+					DBUS_TYPE_VARIANT_AS_STRING
+					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
+					&dict);
+
+	bt_ad_foreach_data(device->ad, append_advertising_data, &dict);
+
+	dbus_message_iter_close_container(iter, &dict);
+
+	return TRUE;
+}
+
+static gboolean
+dev_property_advertising_data_exist(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct btd_device *device = data;
+
+	return bt_ad_has_data(device->ad, NULL);
+}
+
 static gboolean disconnect_all(gpointer user_data)
 {
 	struct btd_device *device = user_data;
@@ -1458,6 +1499,12 @@ void device_request_disconnect(struct btd_device *device, DBusMessage *msg)
 bool device_is_disconnecting(struct btd_device *device)
 {
 	return device->disconn_timer > 0;
+}
+
+void device_set_ltk_enc_size(struct btd_device *device, uint8_t enc_size)
+{
+	device->ltk_enc_size = enc_size;
+	bt_att_set_enc_key_size(device->att, device->ltk_enc_size);
 }
 
 static void device_set_auto_connect(struct btd_device *device, gboolean enable)
@@ -1672,6 +1719,29 @@ void device_set_service_data(struct btd_device *dev, GSList *list,
 		bt_ad_clear_service_data(dev->ad);
 
 	g_slist_foreach(list, add_service_data, dev);
+}
+
+static void add_data(void *data, void *user_data)
+{
+	struct eir_ad *ad = data;
+	struct btd_device *dev = user_data;
+
+	if (!bt_ad_add_data(dev->ad, ad->type, ad->data, ad->len))
+		return;
+
+	if (ad->type == EIR_TRANSPORT_DISCOVERY)
+		g_dbus_emit_property_changed(dbus_conn, dev->path,
+						DEVICE_INTERFACE,
+						"AdvertisingData");
+}
+
+void device_set_data(struct btd_device *dev, GSList *list,
+							bool duplicate)
+{
+	if (duplicate)
+		bt_ad_clear_data(dev->ad);
+
+	g_slist_foreach(list, add_data, dev);
 }
 
 static struct btd_service *find_connectable_service(struct btd_device *dev,
@@ -2005,7 +2075,7 @@ static void store_services(struct btd_device *device)
 	gsize length = 0;
 
 	if (device_address_is_private(device)) {
-		warn("Can't store services for private addressed device %s",
+		DBG("Can't store services for private addressed device %s",
 								device->path);
 		return;
 	}
@@ -2193,7 +2263,7 @@ static void store_gatt_db(struct btd_device *device)
 	struct gatt_saver saver;
 
 	if (device_address_is_private(device)) {
-		warn("Can't store GATT db for private addressed device %s",
+		DBG("Can't store GATT db for private addressed device %s",
 								device->path);
 		return;
 	}
@@ -2333,11 +2403,12 @@ static void device_svc_resolved(struct btd_device *dev, uint8_t browse_type,
 		dev->pending_paired = false;
 	}
 
-	if (!dev->temporary)
+	if (!dev->temporary) {
 		store_device_info(dev);
 
-	if (bdaddr_type != BDADDR_BREDR && err == 0)
-		store_services(dev);
+		if (bdaddr_type != BDADDR_BREDR && err == 0)
+			store_services(dev);
+	}
 
 	if (req)
 		browse_request_complete(req, browse_type, bdaddr_type, err);
@@ -2665,7 +2736,9 @@ static const GDBusPropertyTable device_properties[] = {
 	{ "AdvertisingFlags", "ay", dev_property_get_flags, NULL,
 					dev_property_flags_exist,
 					G_DBUS_PROPERTY_FLAG_EXPERIMENTAL},
-
+	{ "AdvertisingData", "a{yv}", dev_property_get_advertising_data,
+				NULL, dev_property_advertising_data_exist,
+				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
 
@@ -4825,8 +4898,11 @@ static void gatt_client_init(struct btd_device *device)
 	btd_gatt_client_connected(device->client_dbus);
 }
 
-static void gatt_server_init(struct btd_device *device, struct gatt_db *db)
+static void gatt_server_init(struct btd_device *device,
+				struct btd_gatt_database *database)
 {
+	struct gatt_db *db = btd_gatt_database_get_db(database);
+
 	if (!db) {
 		error("No local GATT database exists for this adapter");
 		return;
@@ -4834,11 +4910,17 @@ static void gatt_server_init(struct btd_device *device, struct gatt_db *db)
 
 	gatt_server_cleanup(device);
 
-	device->server = bt_gatt_server_new(db, device->att, device->att_mtu);
-	if (!device->server)
+	device->server = bt_gatt_server_new(db, device->att, device->att_mtu,
+						main_opts.min_enc_key_size);
+	if (!device->server) {
 		error("Failed to initialize bt_gatt_server");
+		return;
+	}
 
+	bt_att_set_enc_key_size(device->att, device->ltk_enc_size);
 	bt_gatt_server_set_debug(device->server, gatt_debug, NULL, NULL);
+
+	btd_gatt_database_att_connected(database, device->att);
 }
 
 static bool local_counter(uint32_t *sign_cnt, void *user_data)
@@ -4905,7 +4987,9 @@ bool device_attach_att(struct btd_device *dev, GIOChannel *io)
 	}
 
 	dev->att_mtu = MIN(mtu, BT_ATT_MAX_LE_MTU);
-	attrib = g_attrib_new(io, BT_ATT_DEFAULT_LE_MTU, false);
+	attrib = g_attrib_new(io,
+			cid == ATT_CID ? BT_ATT_DEFAULT_LE_MTU : dev->att_mtu,
+			false);
 	if (!attrib) {
 		error("Unable to create new GAttrib instance");
 		return false;
@@ -4938,7 +5022,7 @@ bool device_attach_att(struct btd_device *dev, GIOChannel *io)
 								dstaddr);
 
 	gatt_client_init(dev);
-	gatt_server_init(dev, btd_gatt_database_get_db(database));
+	gatt_server_init(dev, database);
 
 	/*
 	 * Remove the device from the connect_list and give the passive
@@ -5233,6 +5317,10 @@ const bdaddr_t *device_get_address(struct btd_device *device)
 {
 	return &device->bdaddr;
 }
+uint8_t device_get_le_address_type(struct btd_device *device)
+{
+	return device->bdaddr_type;
+}
 
 const char *device_get_path(const struct btd_device *device)
 {
@@ -5273,6 +5361,12 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 		adapter_whitelist_add(device->adapter, device);
 
 	store_device_info(device);
+
+	/* attributes were not stored when resolved if device was temporary */
+	if (device->bdaddr_type != BDADDR_BREDR &&
+			device->le_state.svc_resolved &&
+			g_slist_length(device->primaries) != 0)
+		store_services(device);
 }
 
 void btd_device_set_trusted(struct btd_device *device, gboolean trusted)
@@ -5322,6 +5416,80 @@ void device_set_legacy(struct btd_device *device, bool legacy)
 
 	g_dbus_emit_property_changed(dbus_conn, device->path,
 					DEVICE_INTERFACE, "LegacyPairing");
+}
+
+void device_store_svc_chng_ccc(struct btd_device *device, uint8_t bdaddr_type,
+								uint16_t value)
+{
+	char filename[PATH_MAX];
+	char device_addr[18];
+	GKeyFile *key_file;
+	uint16_t old_value;
+	gsize length = 0;
+	char *str;
+
+	ba2str(&device->bdaddr, device_addr);
+	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info",
+				btd_adapter_get_storage_dir(device->adapter),
+				device_addr);
+
+	key_file = g_key_file_new();
+	g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+	/* for bonded devices this is done on every connection so limit writes
+	 * to storage if no change needed
+	 */
+	if (bdaddr_type == BDADDR_BREDR) {
+		old_value = g_key_file_get_integer(key_file, "ServiceChanged",
+							"CCC_BR/EDR", NULL);
+		if (old_value == value)
+			goto done;
+
+		g_key_file_set_integer(key_file, "ServiceChanged", "CCC_BR/EDR",
+									value);
+	} else {
+		old_value = g_key_file_get_integer(key_file, "ServiceChanged",
+							"CCC_LE", NULL);
+		if (old_value == value)
+			goto done;
+
+		g_key_file_set_integer(key_file, "ServiceChanged", "CCC_LE",
+									value);
+	}
+
+	create_file(filename, S_IRUSR | S_IWUSR);
+
+	str = g_key_file_to_data(key_file, &length, NULL);
+	g_file_set_contents(filename, str, length, NULL);
+	g_free(str);
+
+done:
+	g_key_file_free(key_file);
+}
+void device_load_svc_chng_ccc(struct btd_device *device, uint16_t *ccc_le,
+							uint16_t *ccc_bredr)
+{
+	char filename[PATH_MAX];
+	char device_addr[18];
+	GKeyFile *key_file;
+
+	ba2str(&device->bdaddr, device_addr);
+	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/%s/info",
+				btd_adapter_get_storage_dir(device->adapter),
+				device_addr);
+
+	key_file = g_key_file_new();
+	g_key_file_load_from_file(key_file, filename, 0, NULL);
+
+	if (ccc_le)
+		*ccc_le = g_key_file_get_integer(key_file, "ServiceChanged",
+							"CCC_LE", NULL);
+
+	if (ccc_bredr)
+		*ccc_bredr = g_key_file_get_integer(key_file, "ServiceChanged",
+							"CCC_BR/EDR", NULL);
+
+	g_key_file_free(key_file);
 }
 
 void device_set_rssi_with_delta(struct btd_device *device, int8_t rssi,

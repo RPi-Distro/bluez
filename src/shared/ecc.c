@@ -856,11 +856,36 @@ static void ecc_native2bytes(const uint64_t native[NUM_ECC_DIGITS],
 	}
 }
 
+bool ecc_make_public_key(const uint8_t private_key[32], uint8_t public_key[64])
+{
+	struct ecc_point pk;
+	uint64_t priv[NUM_ECC_DIGITS];
+
+	ecc_bytes2native(private_key, priv);
+
+	if (vli_is_zero(priv))
+		return false;
+
+	/* Make sure the private key is in the range [1, n-1]. */
+	if (vli_cmp(curve_n, priv) != 1)
+		return false;
+
+	ecc_point_mult(&pk, &curve_g, priv, NULL, vli_num_bits(priv));
+
+	if (ecc_point_is_zero(&pk))
+		return false;
+
+	ecc_native2bytes(pk.x, public_key);
+	ecc_native2bytes(pk.y, &public_key[32]);
+
+	return true;
+}
+
 bool ecc_make_key(uint8_t public_key[64], uint8_t private_key[32])
 {
 	struct ecc_point pk;
 	uint64_t priv[NUM_ECC_DIGITS];
-	unsigned tries = 0;
+	unsigned int tries = 0;
 
 	do {
 		if (!get_random_number(priv) || (tries++ >= MAX_TRIES))

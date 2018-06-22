@@ -109,6 +109,7 @@ struct external_service {
 	uint16_t attr_cnt;
 	struct queue *chrcs;
 	struct queue *descs;
+	struct queue *includes;
 };
 
 struct external_profile {
@@ -132,6 +133,8 @@ struct external_chrc {
 	struct queue *pending_reads;
 	struct queue *pending_writes;
 	unsigned int ntfy_cnt;
+	bool prep_authorized;
+	bool req_prep_authorization;
 };
 
 struct external_desc {
@@ -143,6 +146,8 @@ struct external_desc {
 	bool handled;
 	struct queue *pending_reads;
 	struct queue *pending_writes;
+	bool prep_authorized;
+	bool req_prep_authorization;
 };
 
 struct pending_op {
@@ -153,6 +158,17 @@ struct pending_op {
 	struct gatt_db_attribute *attrib;
 	struct queue *owner_queue;
 	struct iovec data;
+	bool is_characteristic;
+	bool prep_authorize;
+};
+
+struct notify {
+	struct btd_gatt_database *database;
+	uint16_t handle, ccc_handle;
+	uint8_t *value;
+	uint16_t len;
+	bt_gatt_server_conf_func_t conf;
+	void *user_data;
 };
 
 struct device_state {
@@ -161,10 +177,10 @@ struct device_state {
 	uint8_t bdaddr_type;
 	unsigned int disc_id;
 	struct queue *ccc_states;
+	struct notify *pending;
 };
 
-typedef uint8_t (*btd_gatt_database_ccc_write_t) (struct bt_att *att,
-							uint16_t value,
+typedef uint8_t (*btd_gatt_database_ccc_write_t) (struct pending_op *op,
 							void *user_data);
 typedef void (*btd_gatt_database_destroy_t) (void *data);
 
@@ -254,7 +270,7 @@ static struct ccc_state *find_ccc_state(struct device_state *dev_state,
 }
 
 static struct device_state *device_state_create(struct btd_gatt_database *db,
-							bdaddr_t *bdaddr,
+							const bdaddr_t *bdaddr,
 							uint8_t bdaddr_type)
 {
 	struct device_state *dev_state;
@@ -273,6 +289,12 @@ static void device_state_free(void *data)
 	struct device_state *state = data;
 
 	queue_destroy(state->ccc_states, free);
+
+	if (state->pending) {
+		free(state->pending->value);
+		free(state->pending);
+	}
+
 	free(state);
 }
 
@@ -291,7 +313,7 @@ static void clear_ccc_state(void *data, void *user_data)
 		return;
 
 	if (ccc_cb->callback)
-		ccc_cb->callback(NULL, 0, ccc_cb->user_data);
+		ccc_cb->callback(NULL, ccc_cb->user_data);
 }
 
 static void att_disconnected(int err, void *user_data)
@@ -308,8 +330,19 @@ static void att_disconnected(int err, void *user_data)
 	if (!device)
 		goto remove;
 
-	if (device_is_paired(device, state->bdaddr_type))
+	if (device_is_bonded(device, state->bdaddr_type)) {
+		struct ccc_state *ccc;
+		uint16_t handle;
+
+		handle = gatt_db_attribute_get_handle(state->db->svc_chngd_ccc);
+
+		ccc = find_ccc_state(state, handle);
+		if (ccc)
+			device_store_svc_chng_ccc(device, state->bdaddr_type,
+								ccc->value[0]);
+
 		return;
+	}
 
 remove:
 	/* Remove device state if device no longer exists or is not paired */
@@ -444,12 +477,20 @@ static void desc_free(void *data)
 	free(desc);
 }
 
+static void inc_free(void *data)
+{
+	struct external_desc *inc = data;
+
+	free(inc);
+}
+
 static void service_free(void *data)
 {
 	struct external_service *service = data;
 
 	queue_destroy(service->chrcs, chrc_free);
 	queue_destroy(service->descs, desc_free);
+	queue_destroy(service->includes, inc_free);
 
 	if (service->attrib)
 		gatt_db_remove_service(service->app->database->db,
@@ -836,6 +877,76 @@ done:
 	gatt_db_attribute_read_result(attrib, id, ecode, value, len);
 }
 
+static struct btd_device *att_get_device(struct bt_att *att)
+{
+	GIOChannel *io = NULL;
+	GError *gerr = NULL;
+	bdaddr_t src, dst;
+	uint8_t dst_type;
+	struct btd_adapter *adapter;
+
+	io = g_io_channel_unix_new(bt_att_get_fd(att));
+	if (!io)
+		return NULL;
+
+	bt_io_get(io, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src,
+					BT_IO_OPT_DEST_BDADDR, &dst,
+					BT_IO_OPT_DEST_TYPE, &dst_type,
+					BT_IO_OPT_INVALID);
+	if (gerr) {
+		error("bt_io_get: %s", gerr->message);
+		g_error_free(gerr);
+		g_io_channel_unref(io);
+		return NULL;
+	}
+
+	g_io_channel_unref(io);
+
+	adapter = adapter_find(&src);
+	if (!adapter) {
+		error("Unable to find adapter object");
+		return NULL;
+	}
+
+	return btd_adapter_find_device(adapter, &dst, dst_type);
+}
+
+static struct pending_op *pending_ccc_new(struct bt_att *att,
+					struct gatt_db_attribute *attrib,
+					uint16_t value,
+					uint8_t link_type)
+{
+	struct pending_op *op;
+	struct btd_device *device;
+
+	device = att_get_device(att);
+	if (!device) {
+		error("Unable to find device object");
+		return NULL;
+	}
+
+	op = new0(struct pending_op, 1);
+
+	op->data.iov_base = UINT_TO_PTR(value);
+	op->data.iov_len = sizeof(value);
+
+	op->device = device;
+	op->attrib = attrib;
+	op->link_type = link_type;
+
+	return op;
+}
+
+static void pending_op_free(void *data)
+{
+	struct pending_op *op = data;
+
+	if (op->owner_queue)
+		queue_remove(op->owner_queue, op);
+
+	free(op);
+}
+
 static void gatt_ccc_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
@@ -879,9 +990,20 @@ static void gatt_ccc_write_cb(struct gatt_db_attribute *attrib,
 	if (ccc->value[0] == value[0] && ccc->value[1] == value[1])
 		goto done;
 
-	if (ccc_cb->callback)
-		ecode = ccc_cb->callback(att, get_le16(value),
-						ccc_cb->user_data);
+	if (ccc_cb->callback) {
+		struct pending_op *op;
+
+		op = pending_ccc_new(att, attrib, get_le16(value),
+					bt_att_get_link_type(att));
+		if (!op) {
+			ecode = BT_ATT_ERROR_UNLIKELY;
+			goto done;
+		}
+
+		ecode = ccc_cb->callback(op, ccc_cb->user_data);
+		if (ecode)
+			pending_op_free(op);
+	}
 
 	if (!ecode) {
 		ccc->value[0] = value[0];
@@ -951,15 +1073,6 @@ static void register_core_services(struct btd_gatt_database *database)
 	populate_gatt_service(database);
 }
 
-struct notify {
-	struct btd_gatt_database *database;
-	uint16_t handle, ccc_handle;
-	const uint8_t *value;
-	uint16_t len;
-	bool indicate;
-	GDBusProxy *proxy;
-};
-
 static void conf_cb(void *user_data)
 {
 	GDBusProxy *proxy = user_data;
@@ -969,6 +1082,42 @@ static void conf_cb(void *user_data)
 	{
 		g_dbus_proxy_method_call(proxy, "Confirm", NULL, NULL, NULL, NULL);
 	}
+}
+
+static void service_changed_conf(void *user_data)
+{
+	DBG("");
+}
+
+static void state_set_pending(struct device_state *state, struct notify *notify)
+{
+	uint16_t start, end, old_start, old_end;
+
+	/* Cache this only for Service Changed */
+	if (notify->conf != service_changed_conf)
+		return;
+
+	if (state->pending) {
+		old_start = get_le16(state->pending->value);
+		old_end = get_le16(state->pending->value + 2);
+
+		start = get_le16(notify->value);
+		end = get_le16(notify->value + 2);
+
+		if (start < old_start)
+			put_le16(start, state->pending->value);
+
+		if (end > old_end)
+			put_le16(end, state->pending->value + 2);
+
+		return;
+	}
+
+	/* Copy notify contents to pending */
+	state->pending = new0(struct notify, 1);
+	memcpy(state->pending, notify, sizeof(*notify));
+	state->pending->value = malloc(notify->len);
+	memcpy(state->pending->value, notify->value, notify->len);
 }
 
 static void send_notification_to_device(void *data, void *user_data)
@@ -983,7 +1132,7 @@ static void send_notification_to_device(void *data, void *user_data)
 	if (!ccc)
 		return;
 
-	if (!ccc->value[0] || (notify->indicate && !(ccc->value[0] & 0x02)))
+	if (!ccc->value[0] || (notify->conf && !(ccc->value[0] & 0x02)))
 		return;
 
 	device = btd_adapter_get_device(notify->database->adapter,
@@ -994,8 +1143,9 @@ static void send_notification_to_device(void *data, void *user_data)
 
 	server = btd_device_get_gatt_server(device);
 	if (!server) {
-		if (!device_is_paired(device, device_state->bdaddr_type))
+		if (!device_is_bonded(device, device_state->bdaddr_type))
 			goto remove;
+		state_set_pending(device_state, notify);
 		return;
 	}
 
@@ -1003,7 +1153,7 @@ static void send_notification_to_device(void *data, void *user_data)
 	 * TODO: If the device is not connected but bonded, send the
 	 * notification/indication when it becomes connected.
 	 */
-	if (!notify->indicate) {
+	if (!notify->conf) {
 		DBG("GATT server sending notification");
 		bt_gatt_server_send_notification(server,
 					notify->handle, notify->value,
@@ -1013,8 +1163,8 @@ static void send_notification_to_device(void *data, void *user_data)
 
 	DBG("GATT server sending indication");
 	bt_gatt_server_send_indication(server, notify->handle, notify->value,
-							notify->len, conf_cb,
-							notify->proxy, NULL);
+						notify->len, notify->conf,
+						notify->user_data, NULL);
 
 	return;
 
@@ -1028,9 +1178,10 @@ remove:
 }
 
 static void send_notification_to_devices(struct btd_gatt_database *database,
-					uint16_t handle, const uint8_t *value,
+					uint16_t handle, uint8_t *value,
 					uint16_t len, uint16_t ccc_handle,
-					bool indicate, GDBusProxy *proxy)
+					bt_gatt_server_conf_func_t conf,
+					void *user_data)
 {
 	struct notify notify;
 
@@ -1041,8 +1192,8 @@ static void send_notification_to_devices(struct btd_gatt_database *database,
 	notify.ccc_handle = ccc_handle;
 	notify.value = value;
 	notify.len = len;
-	notify.indicate = indicate;
-	notify.proxy = proxy;
+	notify.conf = conf;
+	notify.user_data = user_data;
 
 	queue_foreach(database->device_states, send_notification_to_device,
 								&notify);
@@ -1073,7 +1224,7 @@ static void send_service_changed(struct btd_gatt_database *database,
 	put_le16(end, value + 2);
 
 	send_notification_to_devices(database, handle, value, sizeof(value),
-							ccc_handle, true, NULL);
+					ccc_handle, service_changed_conf, NULL);
 }
 
 static void gatt_db_service_added(struct gatt_db_attribute *attrib,
@@ -1226,7 +1377,8 @@ static bool incr_attr_count(struct external_service *service, uint16_t incr)
 }
 
 static bool parse_chrc_flags(DBusMessageIter *array, uint8_t *props,
-					uint8_t *ext_props, uint32_t *perm)
+					uint8_t *ext_props, uint32_t *perm,
+					bool *req_prep_authorization)
 {
 	const char *flag;
 
@@ -1285,6 +1437,8 @@ static bool parse_chrc_flags(DBusMessageIter *array, uint8_t *props,
 			*props |= BT_GATT_CHRC_PROP_WRITE;
 			*ext_props |= BT_GATT_CHRC_EXT_PROP_AUTH_WRITE;
 			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_WRITE_SECURE;
+		} else if (!strcmp("authorize", flag)) {
+			*req_prep_authorization = true;
 		} else {
 			error("Invalid characteristic flag: %s", flag);
 			return false;
@@ -1297,7 +1451,8 @@ static bool parse_chrc_flags(DBusMessageIter *array, uint8_t *props,
 	return true;
 }
 
-static bool parse_desc_flags(DBusMessageIter *array, uint32_t *perm)
+static bool parse_desc_flags(DBusMessageIter *array, uint32_t *perm,
+						bool *req_prep_authorization)
 {
 	const char *flag;
 
@@ -1325,6 +1480,8 @@ static bool parse_desc_flags(DBusMessageIter *array, uint32_t *perm)
 			*perm |= BT_ATT_PERM_READ | BT_ATT_PERM_READ_SECURE;
 		else if (!strcmp("secure-write", flag))
 			*perm |= BT_ATT_PERM_WRITE | BT_ATT_PERM_WRITE_SECURE;
+		else if (!strcmp("authorize", flag))
+			*req_prep_authorization = true;
 		else {
 			error("Invalid descriptor flag: %s", flag);
 			return false;
@@ -1335,7 +1492,7 @@ static bool parse_desc_flags(DBusMessageIter *array, uint32_t *perm)
 }
 
 static bool parse_flags(GDBusProxy *proxy, uint8_t *props, uint8_t *ext_props,
-								uint32_t *perm)
+				uint32_t *perm, bool *req_prep_authorization)
 {
 	DBusMessageIter iter, array;
 	const char *iface;
@@ -1350,9 +1507,10 @@ static bool parse_flags(GDBusProxy *proxy, uint8_t *props, uint8_t *ext_props,
 
 	iface = g_dbus_proxy_get_interface(proxy);
 	if (!strcmp(iface, GATT_DESC_IFACE))
-		return parse_desc_flags(&array, perm);
+		return parse_desc_flags(&array, perm, req_prep_authorization);
 
-	return parse_chrc_flags(&array, props, ext_props, perm);
+	return parse_chrc_flags(&array, props, ext_props, perm,
+							req_prep_authorization);
 }
 
 static struct external_chrc *chrc_create(struct gatt_app *app,
@@ -1400,7 +1558,8 @@ static struct external_chrc *chrc_create(struct gatt_app *app,
 	 * are used to determine if any special descriptors should be
 	 * created.
 	 */
-	if (!parse_flags(proxy, &chrc->props, &chrc->ext_props, &chrc->perm)) {
+	if (!parse_flags(proxy, &chrc->props, &chrc->ext_props, &chrc->perm,
+					&chrc->req_prep_authorization)) {
 		error("Failed to parse characteristic properties");
 		goto fail;
 	}
@@ -1482,7 +1641,8 @@ static struct external_desc *desc_create(struct gatt_app *app,
 	 * Parse descriptors flags here since they are used to
 	 * determine the permission the descriptor should have
 	 */
-	if (!parse_flags(proxy, NULL, NULL, &desc->perm)) {
+	if (!parse_flags(proxy, NULL, NULL, &desc->perm,
+					&desc->req_prep_authorization)) {
 		error("Failed to parse characteristic properties");
 		goto fail;
 	}
@@ -1533,6 +1693,7 @@ static struct external_service *create_service(struct gatt_app *app,
 	service->proxy = g_dbus_proxy_ref(proxy);
 	service->chrcs = queue_new();
 	service->descs = queue_new();
+	service->includes = queue_new();
 
 	/* Add 1 for the service declaration */
 	if (!incr_attr_count(service, 1)) {
@@ -1616,6 +1777,40 @@ static bool parse_uuid(GDBusProxy *proxy, bt_uuid_t *uuid)
 	return true;
 }
 
+static bool parse_includes(GDBusProxy *proxy, struct external_service *service)
+{
+	DBusMessageIter iter;
+	DBusMessageIter array;
+	char *obj;
+
+	/* Includes property is optional */
+	if (!g_dbus_proxy_get_property(proxy, "Includes", &iter))
+		return true;
+
+	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
+		return false;
+
+	dbus_message_iter_recurse(&iter, &array);
+
+	do {
+		if (dbus_message_iter_get_arg_type(&array) !=
+						DBUS_TYPE_OBJECT_PATH)
+			return false;
+
+		dbus_message_iter_get_basic(&array, &obj);
+
+		if (!queue_push_tail(service->includes, obj)) {
+			error("Failed to add Includes path in queue\n");
+			return false;
+
+		}
+
+		incr_attr_count(service, 1);
+	} while (dbus_message_iter_next(&array));
+
+	return true;
+}
+
 static bool parse_primary(GDBusProxy *proxy, bool *primary)
 {
 	DBusMessageIter iter;
@@ -1648,6 +1843,9 @@ static uint8_t dbus_error_to_att_ecode(const char *error_name)
 
 	if (strcmp(error_name, "org.bluez.Error.InvalidValueLength") == 0)
 		return BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+
+	if (strcmp(error_name, "org.bluez.Error.InvalidOffset") == 0)
+		return BT_ATT_ERROR_INVALID_OFFSET;
 
 	if (strcmp(error_name, "org.bluez.Error.InProgress") == 0)
 		return BT_ERROR_ALREADY_IN_PROGRESS;
@@ -1709,16 +1907,6 @@ done:
 	gatt_db_attribute_read_result(op->attrib, op->id, ecode, value, len);
 }
 
-static void pending_op_free(void *data)
-{
-	struct pending_op *op = data;
-
-	if (op->owner_queue)
-		queue_remove(op->owner_queue, op);
-
-	free(op);
-}
-
 static struct pending_op *pending_read_new(struct btd_device *device,
 					struct queue *owner_queue,
 					struct gatt_db_attribute *attrib,
@@ -1764,6 +1952,9 @@ static void append_options(DBusMessageIter *iter, void *user_data)
 							&op->offset);
 	if (link)
 		dict_append_entry(iter, "link", DBUS_TYPE_STRING, &link);
+	if (op->prep_authorize)
+		dict_append_entry(iter, "prepare-authorize", DBUS_TYPE_BOOLEAN,
+							&op->prep_authorize);
 }
 
 static void read_setup_cb(DBusMessageIter *iter, void *user_data)
@@ -1835,6 +2026,8 @@ static void write_setup_cb(DBusMessageIter *iter, void *user_data)
 static void write_reply_cb(DBusMessage *message, void *user_data)
 {
 	struct pending_op *op = user_data;
+	struct external_chrc *chrc;
+	struct external_desc *desc;
 	DBusError err;
 	DBusMessageIter iter;
 	uint8_t ecode = 0;
@@ -1852,6 +2045,16 @@ static void write_reply_cb(DBusMessage *message, void *user_data)
 		ecode = ecode ? ecode : BT_ATT_ERROR_WRITE_NOT_PERMITTED;
 		dbus_error_free(&err);
 		goto done;
+	}
+
+	if (op->prep_authorize) {
+		if (op->is_characteristic) {
+			chrc = gatt_db_attribute_get_user_data(op->attrib);
+			chrc->prep_authorized = true;
+		} else {
+			desc = gatt_db_attribute_get_user_data(op->attrib);
+			desc->prep_authorized = true;
+		}
 	}
 
 	dbus_message_iter_init(message, &iter);
@@ -1872,9 +2075,10 @@ static struct pending_op *pending_write_new(struct btd_device *device,
 					struct queue *owner_queue,
 					struct gatt_db_attribute *attrib,
 					unsigned int id,
-					const uint8_t *value,
-					size_t len,
-					uint16_t offset, uint8_t link_type)
+					const uint8_t *value, size_t len,
+					uint16_t offset, uint8_t link_type,
+					bool is_characteristic,
+					bool prep_authorize)
 {
 	struct pending_op *op;
 
@@ -1889,6 +2093,8 @@ static struct pending_op *pending_write_new(struct btd_device *device,
 	op->id = id;
 	op->offset = offset;
 	op->link_type = link_type;
+	op->is_characteristic = is_characteristic;
+	op->prep_authorize = prep_authorize;
 	queue_push_tail(owner_queue, op);
 
 	return op;
@@ -1900,12 +2106,15 @@ static struct pending_op *send_write(struct btd_device *device,
 					struct queue *owner_queue,
 					unsigned int id,
 					const uint8_t *value, size_t len,
-					uint16_t offset, uint8_t link_type)
+					uint16_t offset, uint8_t link_type,
+					bool is_characteristic,
+					bool prep_authorize)
 {
 	struct pending_op *op;
 
 	op = pending_write_new(device, owner_queue, attrib, id, value, len,
-							offset, link_type);
+					offset, link_type, is_characteristic,
+					prep_authorize);
 
 	if (g_dbus_proxy_method_call(proxy, "WriteValue", write_setup_cb,
 					owner_queue ? write_reply_cb : NULL,
@@ -1948,8 +2157,8 @@ static bool pipe_io_read(struct io *io, void *user_data)
 				gatt_db_attribute_get_handle(chrc->attrib),
 				buf, bytes_read,
 				gatt_db_attribute_get_handle(chrc->ccc),
-				chrc->props & BT_GATT_CHRC_PROP_INDICATE,
-				chrc->proxy);
+				chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
+				conf_cb : NULL, chrc->proxy);
 
 	return true;
 }
@@ -2018,7 +2227,7 @@ static void acquire_write_reply(DBusMessage *message, void *user_data)
 retry:
 	send_write(op->device, op->attrib, chrc->proxy, NULL, op->id,
 				op->data.iov_base, op->data.iov_len, 0,
-				op->link_type);
+				op->link_type, false, false);
 }
 
 static void acquire_write_setup(DBusMessageIter *iter, void *user_data)
@@ -2056,7 +2265,7 @@ static struct pending_op *acquire_write(struct external_chrc *chrc,
 	struct pending_op *op;
 
 	op = pending_write_new(device, NULL, attrib, id, value, len, 0,
-							link_type);
+						link_type, false, false);
 
 	if (g_dbus_proxy_method_call(chrc->proxy, "AcquireWrite",
 					acquire_write_setup,
@@ -2071,7 +2280,8 @@ static struct pending_op *acquire_write(struct external_chrc *chrc,
 
 static void acquire_notify_reply(DBusMessage *message, void *user_data)
 {
-	struct external_chrc *chrc = user_data;
+	struct pending_op *op = user_data;
+	struct external_chrc *chrc = (void *) op->data.iov_base;
 	DBusError err;
 	int fd;
 	uint16_t mtu;
@@ -2109,7 +2319,9 @@ retry:
 static void acquire_notify_setup(DBusMessageIter *iter, void *user_data)
 {
 	DBusMessageIter dict;
-	struct external_chrc *chrc = user_data;
+	struct pending_op *op = user_data;
+	struct bt_gatt_server *server;
+	uint16_t mtu;
 
 	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
 					DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
@@ -2118,30 +2330,39 @@ static void acquire_notify_setup(DBusMessageIter *iter, void *user_data)
 					DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
 					&dict);
 
-	dict_append_entry(&dict, "MTU", DBUS_TYPE_UINT16, &chrc->mtu);
+	append_options(&dict, op);
+
+	server = btd_device_get_gatt_server(op->device);
+
+	mtu = bt_gatt_server_get_mtu(server);
+
+	dict_append_entry(&dict, "MTU", DBUS_TYPE_UINT16, &mtu);
 
 	dbus_message_iter_close_container(iter, &dict);
 }
 
-static uint8_t ccc_write_cb(struct bt_att *att, uint16_t value, void *user_data)
+static uint8_t ccc_write_cb(struct pending_op *op, void *user_data)
 {
 	struct external_chrc *chrc = user_data;
 	DBusMessageIter iter;
+	uint16_t value;
+
+	value = op ? PTR_TO_UINT(op->data.iov_base) : 0;
 
 	DBG("External CCC write received with value: 0x%04x", value);
 
 	/* Notifications/indications disabled */
 	if (!value) {
 		if (!chrc->ntfy_cnt)
-			return 0;
+			goto done;
 
 		if (__sync_sub_and_fetch(&chrc->ntfy_cnt, 1))
-			return 0;
+			goto done;
 
 		if (chrc->notify_io) {
 			io_destroy(chrc->notify_io);
 			chrc->notify_io = NULL;
-			return 0;
+			goto done;
 		}
 
 		/*
@@ -2150,13 +2371,12 @@ static uint8_t ccc_write_cb(struct bt_att *att, uint16_t value, void *user_data)
 		 */
 		g_dbus_proxy_method_call(chrc->proxy, "StopNotify", NULL,
 							NULL, NULL, NULL);
-		return 0;
+		goto done;
 	}
 
-	if (chrc->ntfy_cnt == UINT_MAX) {
+	if (chrc->ntfy_cnt == UINT_MAX)
 		/* Maximum number of per-device CCC descriptors configured */
 		return BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-	}
 
 	/* Don't support undefined CCC values yet */
 	if (value > 2 ||
@@ -2166,17 +2386,17 @@ static uint8_t ccc_write_cb(struct bt_att *att, uint16_t value, void *user_data)
 
 	if (chrc->notify_io) {
 		__sync_fetch_and_add(&chrc->ntfy_cnt, 1);
-		return 0;
+		goto done;
 	}
-
-	chrc->mtu = bt_att_get_mtu(att);
 
 	/* Make use of AcquireNotify if supported */
 	if (g_dbus_proxy_get_property(chrc->proxy, "NotifyAcquired", &iter)) {
+		op->data.iov_base = (void *) chrc;
+		op->data.iov_len = sizeof(chrc);
 		if (g_dbus_proxy_method_call(chrc->proxy, "AcquireNotify",
 						acquire_notify_setup,
 						acquire_notify_reply,
-						chrc, NULL))
+						op, pending_op_free))
 			return 0;
 	}
 
@@ -2189,6 +2409,10 @@ static uint8_t ccc_write_cb(struct bt_att *att, uint16_t value, void *user_data)
 		return BT_ATT_ERROR_UNLIKELY;
 
 	__sync_fetch_and_add(&chrc->ntfy_cnt, 1);
+
+done:
+	if (op)
+		pending_op_free(op);
 
 	return 0;
 }
@@ -2225,7 +2449,8 @@ static void property_changed_cb(GDBusProxy *proxy, const char *name,
 				gatt_db_attribute_get_handle(chrc->attrib),
 				value, len,
 				gatt_db_attribute_get_handle(chrc->ccc),
-				chrc->props & BT_GATT_CHRC_PROP_INDICATE, proxy);
+				chrc->props & BT_GATT_CHRC_PROP_INDICATE ?
+				conf_cb : NULL, proxy);
 }
 
 static bool database_add_ccc(struct external_service *service,
@@ -2295,40 +2520,6 @@ static bool database_add_cep(struct external_service *service,
 	return true;
 }
 
-static struct btd_device *att_get_device(struct bt_att *att)
-{
-	GIOChannel *io = NULL;
-	GError *gerr = NULL;
-	bdaddr_t src, dst;
-	uint8_t dst_type;
-	struct btd_adapter *adapter;
-
-	io = g_io_channel_unix_new(bt_att_get_fd(att));
-	if (!io)
-		return NULL;
-
-	bt_io_get(io, &gerr, BT_IO_OPT_SOURCE_BDADDR, &src,
-					BT_IO_OPT_DEST_BDADDR, &dst,
-					BT_IO_OPT_DEST_TYPE, &dst_type,
-					BT_IO_OPT_INVALID);
-	if (gerr) {
-		error("bt_io_get: %s", gerr->message);
-		g_error_free(gerr);
-		g_io_channel_unref(io);
-		return NULL;
-	}
-
-	g_io_channel_unref(io);
-
-	adapter = adapter_find(&src);
-	if (!adapter) {
-		error("Unable to find adapter object");
-		return NULL;
-	}
-
-	return btd_adapter_find_device(adapter, &dst, dst_type);
-}
-
 static void desc_read_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					uint8_t opcode, struct bt_att *att,
@@ -2377,8 +2568,25 @@ static void desc_write_cb(struct gatt_db_attribute *attrib,
 		goto fail;
 	}
 
+	if (opcode == BT_ATT_OP_PREP_WRITE_REQ) {
+		if (!device_is_trusted(device) && !desc->prep_authorized &&
+						desc->req_prep_authorization)
+			send_write(device, attrib, desc->proxy,
+					desc->pending_writes, id, value, len,
+					offset, bt_att_get_link_type(att),
+					false, true);
+		else
+			gatt_db_attribute_write_result(attrib, id, 0);
+
+		return;
+	}
+
+	if (opcode == BT_ATT_OP_EXEC_WRITE_REQ)
+		desc->prep_authorized = false;
+
 	if (send_write(device, attrib, desc->proxy, desc->pending_writes, id,
-				value, len, offset, bt_att_get_link_type(att)))
+			value, len, offset, bt_att_get_link_type(att), false,
+			false))
 		return;
 
 fail:
@@ -2459,6 +2667,26 @@ static void chrc_write_cb(struct gatt_db_attribute *attrib,
 		goto fail;
 	}
 
+	if (!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
+		queue = chrc->pending_writes;
+	else
+		queue = NULL;
+
+	if (opcode == BT_ATT_OP_PREP_WRITE_REQ) {
+		if (!device_is_trusted(device) && !chrc->prep_authorized &&
+						chrc->req_prep_authorization)
+			send_write(device, attrib, chrc->proxy, queue,
+					id, value, len, offset,
+					bt_att_get_link_type(att), true, true);
+		else
+			gatt_db_attribute_write_result(attrib, id, 0);
+
+		return;
+	}
+
+	if (opcode == BT_ATT_OP_EXEC_WRITE_REQ)
+		chrc->prep_authorized = false;
+
 	if (chrc->write_io) {
 		if (pipe_io_send(chrc->write_io, value, len) < 0) {
 			error("Unable to write: %s", strerror(errno));
@@ -2475,17 +2703,43 @@ static void chrc_write_cb(struct gatt_db_attribute *attrib,
 			return;
 	}
 
-	if (!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
-		queue = chrc->pending_writes;
-	else
-		queue = NULL;
-
 	if (send_write(device, attrib, chrc->proxy, queue, id, value, len,
-					offset, bt_att_get_link_type(att)))
+			offset, bt_att_get_link_type(att), false, false))
 		return;
 
 fail:
 	gatt_db_attribute_write_result(attrib, id, BT_ATT_ERROR_UNLIKELY);
+}
+
+static void include_services(void *data ,void *userdata)
+{
+	char *obj = data;
+	struct external_service *service = userdata;
+	struct gatt_db_attribute *attrib;
+	struct external_service *service_inc;
+
+	DBG("path %s", obj);
+
+	service_inc = queue_find(service->app->services, match_service_by_path,
+									obj);
+	if (!service_inc) {
+		error("include service not found\n");
+		return;
+	}
+
+	attrib = gatt_db_service_add_included(service->attrib,
+							service_inc->attrib);
+	if (!attrib) {
+		error("include service attributes failed\n");
+		return;
+	}
+
+	service->attrib = attrib;
+}
+
+static void database_add_includes(struct external_service *service)
+{
+	queue_foreach(service->includes, include_services, service);
 }
 
 static bool database_add_chrc(struct external_service *service,
@@ -2560,10 +2814,17 @@ static bool database_add_service(struct external_service *service)
 		return false;
 	}
 
+	if (!parse_includes(service->proxy, service)) {
+		error("Failed to read \"Includes\" property of service");
+		return false;
+	}
+
 	service->attrib = gatt_db_add_service(service->app->database->db, &uuid,
 						primary, service->attr_cnt);
 	if (!service->attrib)
 		return false;
+
+	database_add_includes(service);
 
 	entry = queue_get_entries(service->chrcs);
 	while (entry) {
@@ -3072,4 +3333,97 @@ struct gatt_db *btd_gatt_database_get_db(struct btd_gatt_database *database)
 		return NULL;
 
 	return database->db;
+}
+
+void btd_gatt_database_att_connected(struct btd_gatt_database *database,
+						struct bt_att *att)
+{
+	struct device_state *state;
+	bdaddr_t bdaddr;
+	uint8_t bdaddr_type;
+
+	if (!get_dst_info(att, &bdaddr, &bdaddr_type))
+		return;
+
+	state = find_device_state(database, &bdaddr, bdaddr_type);
+	if (!state || !state->pending)
+		return;
+
+	send_notification_to_device(state, state->pending);
+
+	free(state->pending->value);
+	free(state->pending);
+	state->pending = NULL;
+}
+
+static void restore_ccc(struct btd_gatt_database *database,
+			const bdaddr_t *addr, uint8_t addr_type, uint16_t value)
+{
+	struct device_state *dev_state;
+	struct ccc_state *ccc;
+
+	dev_state = device_state_create(database, addr, addr_type);
+	queue_push_tail(database->device_states, dev_state);
+
+	ccc = new0(struct ccc_state, 1);
+	ccc->handle = gatt_db_attribute_get_handle(database->svc_chngd_ccc);
+	memcpy(ccc->value, &value, sizeof(ccc->value));
+	queue_push_tail(dev_state->ccc_states, ccc);
+}
+
+static void restore_state(struct btd_device *device, void *data)
+{
+	struct btd_gatt_database *database = data;
+	uint16_t ccc_le, ccc_bredr;
+
+	device_load_svc_chng_ccc(device, &ccc_le, &ccc_bredr);
+
+	if (ccc_le) {
+		restore_ccc(database, device_get_address(device),
+				device_get_le_address_type(device), ccc_le);
+
+		DBG("%s LE", device_get_path(device));
+	}
+
+	if (ccc_bredr) {
+		restore_ccc(database, device_get_address(device),
+						BDADDR_BREDR, ccc_bredr);
+
+		DBG("%s BR/EDR", device_get_path(device));
+	}
+}
+
+void btd_gatt_database_restore_svc_chng_ccc(struct btd_gatt_database *database)
+{
+	uint8_t value[4];
+	uint16_t handle, ccc_handle;
+
+	if (!database)
+		return;
+
+	handle = gatt_db_attribute_get_handle(database->svc_chngd);
+	ccc_handle = gatt_db_attribute_get_handle(database->svc_chngd_ccc);
+
+	if (!handle || !ccc_handle) {
+		error("Failed to obtain handles for \"Service Changed\""
+							" characteristic");
+		return;
+	}
+
+	/* restore states for bonded device that registered for Service Changed
+	 * indication
+	 */
+	btd_adapter_for_each_device(database->adapter, restore_state, database);
+
+	/* This needs to be updated (probably to 0x0001) if we ever change
+	 * core services
+	 *
+	 * TODO we could also store this info (along with CCC value) and be able
+	 * to send 0x0001-0xffff only once per device.
+	 */
+	put_le16(0x000a, value);
+	put_le16(0xffff, value + 2);
+
+	send_notification_to_devices(database, handle, value, sizeof(value),
+					ccc_handle, service_changed_conf, NULL);
 }

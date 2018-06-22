@@ -750,10 +750,10 @@ static void set_local_name_complete(uint8_t status, uint16_t length,
 static int set_name(struct btd_adapter *adapter, const char *name)
 {
 	struct mgmt_cp_set_local_name cp;
-	char maxname[MAX_NAME_LENGTH + 1];
+	char maxname[MAX_NAME_LENGTH];
 
 	memset(maxname, 0, sizeof(maxname));
-	strncpy(maxname, name, MAX_NAME_LENGTH);
+	strncpy(maxname, name, MAX_NAME_LENGTH - 1);
 
 	if (!g_utf8_validate(maxname, -1, NULL)) {
 		btd_error(adapter->dev_id,
@@ -1416,7 +1416,7 @@ static void free_discovery_filter(struct discovery_filter *discovery_filter)
 	if (!discovery_filter)
 		return;
 
-	g_slist_free_full(discovery_filter->uuids, g_free);
+	g_slist_free_full(discovery_filter->uuids, free);
 	g_free(discovery_filter);
 }
 
@@ -3441,25 +3441,27 @@ failed:
 	return ltk;
 }
 
-static GSList *get_ltk_info(GKeyFile *key_file, const char *peer,
+static struct smp_ltk_info *get_ltk_info(GKeyFile *key_file, const char *peer,
+							uint8_t bdaddr_type)
+{
+	DBG("%s", peer);
+
+	return get_ltk(key_file, peer, bdaddr_type, "LongTermKey");
+}
+
+static struct smp_ltk_info *get_slave_ltk_info(GKeyFile *key_file,
+							const char *peer,
 							uint8_t bdaddr_type)
 {
 	struct smp_ltk_info *ltk;
-	GSList *l = NULL;
 
 	DBG("%s", peer);
 
-	ltk = get_ltk(key_file, peer, bdaddr_type, "LongTermKey");
-	if (ltk)
-		l = g_slist_append(l, ltk);
-
 	ltk = get_ltk(key_file, peer, bdaddr_type, "SlaveLongTermKey");
-	if (ltk) {
+	if (ltk)
 		ltk->master = false;
-		l = g_slist_append(l, ltk);
-	}
 
-	return l;
+	return ltk;
 }
 
 static struct irk_info *get_irk_info(GKeyFile *key_file, const char *peer,
@@ -4019,7 +4021,9 @@ static void load_devices(struct btd_adapter *adapter)
 		char filename[PATH_MAX];
 		GKeyFile *key_file;
 		struct link_key_info *key_info;
-		GSList *list, *ltk_info;
+		struct smp_ltk_info *ltk_info;
+		struct smp_ltk_info *slave_ltk_info;
+		GSList *list;
 		struct irk_info *irk_info;
 		struct conn_param *param;
 		uint8_t bdaddr_type;
@@ -4044,7 +4048,13 @@ static void load_devices(struct btd_adapter *adapter)
 		bdaddr_type = get_le_addr_type(key_file);
 
 		ltk_info = get_ltk_info(key_file, entry->d_name, bdaddr_type);
-		ltks = g_slist_concat(ltks, ltk_info);
+		if (ltk_info)
+			ltks = g_slist_append(ltks, ltk_info);
+
+		slave_ltk_info = get_slave_ltk_info(key_file, entry->d_name,
+								bdaddr_type);
+		if (slave_ltk_info)
+			ltks = g_slist_append(ltks, slave_ltk_info);
 
 		irk_info = get_irk_info(key_file, entry->d_name, bdaddr_type);
 		if (irk_info)
@@ -4079,9 +4089,16 @@ device_exist:
 			device_set_bonded(device, BDADDR_BREDR);
 		}
 
-		if (ltk_info) {
+		if (ltk_info || slave_ltk_info) {
 			device_set_paired(device, bdaddr_type);
 			device_set_bonded(device, bdaddr_type);
+
+			if (ltk_info)
+				device_set_ltk_enc_size(device,
+							ltk_info->enc_size);
+			else if (slave_ltk_info)
+				device_set_ltk_enc_size(device,
+						slave_ltk_info->enc_size);
 		}
 
 free:
@@ -6075,6 +6092,9 @@ static void update_found_devices(struct btd_adapter *adapter,
 	if (eir_data.sd_list)
 		device_set_service_data(dev, eir_data.sd_list, duplicate);
 
+	if (eir_data.data_list)
+		device_set_data(dev, eir_data.data_list, duplicate);
+
 	if (bdaddr_type != BDADDR_BREDR)
 		device_set_flags(dev, eir_data.flags);
 
@@ -7464,6 +7484,8 @@ static void new_long_term_key_callback(uint16_t index, uint16_t length,
 		device_set_bonded(device, addr->type);
 	}
 
+	device_set_ltk_enc_size(device, ev->key.enc_size);
+
 	bonding_complete(adapter, &addr->bdaddr, addr->type, 0);
 }
 
@@ -7997,6 +8019,9 @@ load:
 	btd_profile_foreach(probe_profile, adapter);
 	clear_blocked(adapter);
 	load_devices(adapter);
+
+	/* restore Service Changed CCC value for bonded devices */
+	btd_gatt_database_restore_svc_chng_ccc(adapter->database);
 
 	/* retrieve the active connections: address the scenario where
 	 * the are active connections before the daemon've started */

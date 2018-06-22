@@ -45,7 +45,7 @@ Properties	string UUID [read-only]
 			belongs to. Only present on services from remote
 			devices.
 
-		array{object} Includes [read-only]: Not implemented
+		array{object} Includes [read-only, optional]
 
 			Array of object paths representing the included
 			services of this service.
@@ -74,6 +74,7 @@ Methods		array{byte} ReadValue(dict options)
 					 org.bluez.Error.InProgress
 					 org.bluez.Error.NotPermitted
 					 org.bluez.Error.NotAuthorized
+					 org.bluez.Error.InvalidOffset
 					 org.bluez.Error.NotSupported
 
 		void WriteValue(array{byte} value, dict options)
@@ -83,6 +84,10 @@ Methods		array{byte} ReadValue(dict options)
 
 			Possible options: "offset": Start offset
 					  "device": Device path (Server only)
+					  "link": Link type (Server only)
+					  "prepare-authorize": boolean Is prepare
+							       authorization
+							       request
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -116,6 +121,7 @@ Methods		array{byte} ReadValue(dict options)
 
 			Possible options: "device": Object Device (Server only)
 					  "MTU": Exchanged MTU (Server only)
+					  "link": Link type (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.NotSupported
@@ -151,6 +157,7 @@ Methods		array{byte} ReadValue(dict options)
 
 			Possible options: "device": Object Device (Server only)
 					  "MTU": Exchanged MTU (Server only)
+					  "link": Link type (Server only)
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.NotSupported
@@ -246,6 +253,7 @@ Properties	string UUID [read-only]
 				"encrypt-authenticated-write"
 				"secure-read" (Server only)
 				"secure-write" (Server only)
+				"authorize"
 
 Characteristic Descriptors hierarchy
 ====================================
@@ -280,6 +288,9 @@ Methods		array{byte} ReadValue(dict flags)
 			Possible options: "offset": Start offset
 					  "device": Device path (Server only)
 					  "link": Link type (Server only)
+					  "prepare-authorize": boolean Is prepare
+							       authorization
+							       request
 
 			Possible Errors: org.bluez.Error.Failed
 					 org.bluez.Error.InProgress
@@ -317,6 +328,7 @@ Properties	string UUID [read-only]
 				"encrypt-authenticated-write"
 				"secure-read" (Server Only)
 				"secure-write" (Server Only)
+				"authorize"
 
 GATT Profile hierarchy
 =====================

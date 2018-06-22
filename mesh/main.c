@@ -949,7 +949,6 @@ static void mesh_session_setup(GDBusProxy *proxy)
 		data_out_notify(connection.data_out, true, notify_prov_out_cb);
 
 	} else if (connection.type != CONN_TYPE_INVALID){
-
 		connection.data_in = get_characteristic(proxy,
 						MESH_PROXY_DATA_IN_UUID_STR);
 		if (!connection.data_in)
@@ -1202,8 +1201,10 @@ static void property_changed(GDBusProxy *proxy, const char *name,
 				if (connected && connection.device == NULL)
 					set_connected_device(proxy);
 				else if (!connected &&
-						connection.device == proxy)
+						connection.device == proxy) {
+					net_session_close(connection.data_in);
 					set_connected_device(NULL);
+				}
 			} else if ((strcmp(name, "Alias") == 0) &&
 						connection.device == proxy) {
 				/* Re-generate prompt */
@@ -1903,6 +1904,7 @@ static void client_ready(GDBusClient *client, void *user_data)
 int main(int argc, char *argv[])
 {
 	GDBusClient *client;
+	int status;
 	int len;
 	int extra;
 
@@ -1929,11 +1931,11 @@ int main(int argc, char *argv[])
 	mesh_local_config_filename = g_malloc(len + strlen("local_node.json")
 									+ 2);
 	if (!mesh_local_config_filename)
-		exit(1);
+		goto fail;
 
 	mesh_prov_db_filename = g_malloc(len + strlen("prov_db.json") + 2);
 	if (!mesh_prov_db_filename) {
-		exit(1);
+		goto fail;
 	}
 
 	sprintf(mesh_local_config_filename, "%s", mesh_config_dir);
@@ -1949,7 +1951,7 @@ int main(int argc, char *argv[])
 	if (!prov_db_read_local_node(mesh_local_config_filename, true)) {
 		g_printerr("Failed to parse local node configuration file %s\n",
 			mesh_local_config_filename);
-		exit(1);
+		goto fail;
 	}
 
 	sprintf(mesh_prov_db_filename, "%s", mesh_config_dir);
@@ -1964,7 +1966,7 @@ int main(int argc, char *argv[])
 	if (!prov_db_read(mesh_prov_db_filename)) {
 		g_printerr("Failed to parse provisioning database file %s\n",
 			mesh_prov_db_filename);
-		exit(1);
+		goto fail;
 	}
 
 	dbus_conn = g_dbus_setup_bus(DBUS_BUS_SYSTEM, NULL, NULL);
@@ -1988,7 +1990,7 @@ int main(int argc, char *argv[])
 	if (!onoff_client_init(PRIMARY_ELEMENT_IDX))
 		g_printerr("Failed to initialize mesh generic On/Off client\n");
 
-	bt_shell_run();
+	status = bt_shell_run();
 
 	g_dbus_client_unref(client);
 
@@ -2000,5 +2002,9 @@ int main(int argc, char *argv[])
 	g_list_free(service_list);
 	g_list_free_full(ctrl_list, proxy_leak);
 
-	return 0;
+	return status;
+
+fail:
+	bt_shell_cleanup();
+	return EXIT_FAILURE;
 }

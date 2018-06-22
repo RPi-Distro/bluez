@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.49)
+AC_INIT(bluez, 5.50)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -248,12 +248,13 @@ AC_ARG_ENABLE(btpclient, AC_HELP_STRING([--enable-btpclient],
 		[enable BTP client]), [enable_btpclient=${enableval}])
 AM_CONDITIONAL(BTPCLIENT, test "${enable_btpclient}" = "yes")
 
-if (test "${enable_btpclient}" = "yes"); then
-	PKG_CHECK_MODULES(ELL, ell >= 0.3, dummy=yes,
+if (test "${enable_btpclient}" = "yes" || test "${enable_mesh}" = "yes"); then
+	PKG_CHECK_MODULES(ELL, ell >= 0.3, enable_ell=yes,
 			  AC_MSG_ERROR(ell library >= 0.3 is required))
 	AC_SUBST(ELL_CFLAGS)
 	AC_SUBST(ELL_LIBS)
 fi
+AM_CONDITIONAL(ELL, test "${enable_ell}" = "yes")
 
 AC_ARG_ENABLE(client, AC_HELP_STRING([--disable-client],
 		[disable command line client]), [enable_client=${enableval}])
@@ -326,6 +327,10 @@ AC_ARG_ENABLE(sixaxis, AC_HELP_STRING([--enable-sixaxis],
 		[enable sixaxis plugin]), [enable_sixaxis=${enableval}])
 AM_CONDITIONAL(SIXAXIS, test "${enable_sixaxis}" = "yes" &&
 					 test "${enable_udev}" != "no")
+
+AC_ARG_ENABLE(logger, AC_HELP_STRING([--enable-logger],
+		[enable HCI logger service]), [enable_logger=${enableval}])
+AM_CONDITIONAL(LOGGER, test "${enable_logger}" = "yes")
 
 if (test "${prefix}" = "NONE"); then
 	dnl no prefix and no localstatedir, so default to /var

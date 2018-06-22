@@ -65,7 +65,9 @@ struct btd_adv_client {
 	uint16_t appearance;
 	uint16_t duration;
 	uint16_t timeout;
+	uint16_t discoverable_to;
 	unsigned int to_id;
+	unsigned int disc_to_id;
 	GDBusClient *client;
 	GDBusProxy *proxy;
 	DBusMessage *reg;
@@ -101,6 +103,9 @@ static void client_free(void *data)
 
 	if (client->to_id > 0)
 		g_source_remove(client->to_id);
+
+	if (client->disc_to_id > 0)
+		g_source_remove(client->disc_to_id);
 
 	if (client->client) {
 		g_dbus_client_set_disconnect_watch(client->client, NULL, NULL);
@@ -583,22 +588,113 @@ static bool parse_timeout(DBusMessageIter *iter,
 	return true;
 }
 
-static struct adv_parser {
-	const char *name;
-	bool (*func)(DBusMessageIter *iter, struct btd_adv_client *client);
-} parsers[] = {
-	{ "Type", parse_type },
-	{ "ServiceUUIDs", parse_service_uuids },
-	{ "SolicitUUIDs", parse_solicit_uuids },
-	{ "ManufacturerData", parse_manufacturer_data },
-	{ "ServiceData", parse_service_data },
-	{ "Includes", parse_includes },
-	{ "LocalName", parse_local_name },
-	{ "Appearance", parse_appearance },
-	{ "Duration", parse_duration },
-	{ "Timeout", parse_timeout },
-	{ },
-};
+static bool parse_data(DBusMessageIter *iter, struct btd_adv_client *client)
+{
+	DBusMessageIter entries;
+
+	if (!iter) {
+		bt_ad_clear_data(client->data);
+		return true;
+	}
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY)
+		return false;
+
+	dbus_message_iter_recurse(iter, &entries);
+
+	bt_ad_clear_data(client->data);
+
+	while (dbus_message_iter_get_arg_type(&entries)
+						== DBUS_TYPE_DICT_ENTRY) {
+		DBusMessageIter value, entry, array;
+		uint8_t type;
+		uint8_t *data;
+		int len;
+
+		dbus_message_iter_recurse(&entries, &entry);
+		dbus_message_iter_get_basic(&entry, &type);
+
+		dbus_message_iter_next(&entry);
+
+		if (dbus_message_iter_get_arg_type(&entry) != DBUS_TYPE_VARIANT)
+			goto fail;
+
+		dbus_message_iter_recurse(&entry, &value);
+
+		if (dbus_message_iter_get_arg_type(&value) != DBUS_TYPE_ARRAY)
+			goto fail;
+
+		dbus_message_iter_recurse(&value, &array);
+
+		if (dbus_message_iter_get_arg_type(&array) != DBUS_TYPE_BYTE)
+			goto fail;
+
+		dbus_message_iter_get_fixed_array(&array, &data, &len);
+
+		DBG("Adding Data for type 0x%02x len %u", type, len);
+
+		if (!bt_ad_add_data(client->data, type, data, len))
+			goto fail;
+
+		dbus_message_iter_next(&entries);
+	}
+
+	return true;
+
+fail:
+	bt_ad_clear_data(client->data);
+	return false;
+}
+
+static bool set_flags(struct btd_adv_client *client, uint8_t flags)
+{
+	if (!flags) {
+		bt_ad_clear_flags(client->data);
+		return true;
+	}
+
+	/* Set BR/EDR Not Supported for LE only */
+	if (!btd_adapter_get_bredr(client->manager->adapter))
+		flags |= 0x04;
+
+	if (!bt_ad_add_flags(client->data, &flags, 1))
+		return false;
+
+	return true;
+}
+
+static bool parse_discoverable(DBusMessageIter *iter,
+				struct btd_adv_client *client)
+{
+	uint8_t flags;
+	dbus_bool_t discoverable;
+
+	if (!iter) {
+		bt_ad_clear_flags(client->data);
+		return true;
+	}
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_BOOLEAN)
+		return false;
+
+	dbus_message_iter_get_basic(iter, &discoverable);
+
+	if (discoverable)
+		flags = 0x02;
+	else
+		flags = 0x00;
+
+	if (!set_flags(client , flags))
+		goto fail;
+
+	DBG("Adding Flags 0x%02x", flags);
+
+	return true;
+
+fail:
+	bt_ad_clear_flags(client->data);
+	return false;
+}
 
 static size_t calc_max_adv_len(struct btd_adv_client *client, uint32_t flags)
 {
@@ -678,7 +774,8 @@ static int refresh_adv(struct btd_adv_client *client, mgmt_request_func_t func)
 	if (client->type == AD_TYPE_PERIPHERAL) {
 		flags = MGMT_ADV_FLAG_CONNECTABLE;
 
-		if (btd_adapter_get_discoverable(client->manager->adapter))
+		if (btd_adapter_get_discoverable(client->manager->adapter) &&
+				!(bt_ad_has_flags(client->data)))
 			flags |= MGMT_ADV_FLAG_DISCOV;
 	}
 
@@ -693,6 +790,7 @@ static int refresh_adv(struct btd_adv_client *client, mgmt_request_func_t func)
 	scan_rsp = generate_scan_rsp(client, &flags, &scan_rsp_len);
 	if (!scan_rsp && scan_rsp_len) {
 		error("Scan data couldn't be generated.");
+		free(adv_data);
 		return -EINVAL;
 	}
 
@@ -730,6 +828,66 @@ static int refresh_adv(struct btd_adv_client *client, mgmt_request_func_t func)
 
 	return 0;
 }
+
+static gboolean client_discoverable_timeout(void *user_data)
+{
+	struct btd_adv_client *client = user_data;
+
+	DBG("");
+
+	client->disc_to_id = 0;
+
+	bt_ad_clear_flags(client->data);
+
+	refresh_adv(client, NULL);
+
+	return FALSE;
+}
+
+static bool parse_discoverable_timeout(DBusMessageIter *iter,
+					struct btd_adv_client *client)
+{
+	if (!iter) {
+		client->discoverable_to = 0;
+		g_source_remove(client->disc_to_id);
+		client->disc_to_id = 0;
+		return true;
+	}
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16)
+		return false;
+
+	dbus_message_iter_get_basic(iter, &client->discoverable_to);
+
+	if (client->disc_to_id)
+		g_source_remove(client->disc_to_id);
+
+	client->disc_to_id = g_timeout_add_seconds(client->discoverable_to,
+						client_discoverable_timeout,
+						client);
+
+	return true;
+}
+
+static struct adv_parser {
+	const char *name;
+	bool (*func)(DBusMessageIter *iter, struct btd_adv_client *client);
+} parsers[] = {
+	{ "Type", parse_type },
+	{ "ServiceUUIDs", parse_service_uuids },
+	{ "SolicitUUIDs", parse_solicit_uuids },
+	{ "ManufacturerData", parse_manufacturer_data },
+	{ "ServiceData", parse_service_data },
+	{ "Includes", parse_includes },
+	{ "LocalName", parse_local_name },
+	{ "Appearance", parse_appearance },
+	{ "Duration", parse_duration },
+	{ "Timeout", parse_timeout },
+	{ "Data", parse_data },
+	{ "Discoverable", parse_discoverable },
+	{ "DiscoverableTimeout", parse_discoverable_timeout },
+	{ },
+};
 
 static void properties_changed(GDBusProxy *proxy, const char *name,
 					DBusMessageIter *iter, void *user_data)
@@ -819,6 +977,38 @@ static DBusMessage *parse_advertisement(struct btd_adv_client *client)
 			error("Error parsing %s property", parser->name);
 			goto fail;
 		}
+	}
+
+	if (bt_ad_has_flags(client->data)) {
+		/* BLUETOOTH SPECIFICATION Version 5.0 | Vol 3, Part C
+		 * page 2042:
+		 * A device in the broadcast mode shall not set the
+		 * ‘LE General Discoverable Mode’ flag or the
+		 * ‘LE Limited Discoverable Mode’ flag in the Flags AD Type
+		 * as defined in [Core Specification Supplement], Part A,
+		 * Section 1.3.
+		 */
+		if (client->type == AD_TYPE_BROADCAST) {
+			error("Broadcast cannot set flags");
+			goto fail;
+		}
+
+		/* Set Limited Discoverable if DiscoverableTimeout is set */
+		if (client->disc_to_id && !set_flags(client, 0x01)) {
+			error("Failed to set Limited Discoverable Flag");
+			goto fail;
+		}
+	} else if (client->disc_to_id) {
+		/* Ignore DiscoverableTimeout if not discoverable */
+		g_source_remove(client->disc_to_id);
+		client->disc_to_id = 0;
+		client->discoverable_to = 0;
+	}
+
+	if (client->timeout && client->timeout < client->discoverable_to) {
+		/* DiscoverableTimeout must not be bigger than Timeout */
+		error("DiscoverableTimeout > Timeout");
+		goto fail;
 	}
 
 	err = refresh_adv(client, add_adv_callback);
@@ -1171,8 +1361,15 @@ void btd_adv_manager_destroy(struct btd_adv_manager *manager)
 	manager_destroy(manager);
 }
 
+static void manager_refresh(void *data, void *user_data)
+{
+	refresh_adv(data, user_data);
+}
+
 void btd_adv_manager_refresh(struct btd_adv_manager *manager)
 {
-	queue_foreach(manager->clients, (queue_foreach_func_t)refresh_adv,
-									NULL);
+	if (!manager)
+		return;
+
+	queue_foreach(manager->clients, manager_refresh, NULL);
 }

@@ -115,15 +115,21 @@ static void play_reply(DBusMessage *message, void *user_data)
 	return bt_shell_noninteractive_quit(EXIT_FAILURE);
 }
 
-static void cmd_play_item(int argc, char *argv[])
+static void cmd_play(int argc, char *argv[])
 {
 	GDBusProxy *proxy;
 
-	proxy = g_dbus_proxy_lookup(items, NULL, argv[1],
+	if (argc > 1) {
+		proxy = g_dbus_proxy_lookup(items, NULL, argv[1],
 						BLUEZ_MEDIA_ITEM_INTERFACE);
-	if (proxy == NULL) {
-		bt_shell_printf("Item %s not available\n", argv[1]);
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		if (proxy == NULL) {
+			bt_shell_printf("Item %s not available\n", argv[1]);
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+	} else {
+		if (!check_default_player())
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		proxy = default_player;
 	}
 
 	if (g_dbus_proxy_method_call(proxy, "Play", NULL, play_reply,
@@ -132,24 +138,7 @@ static void cmd_play_item(int argc, char *argv[])
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
 
-	bt_shell_printf("Attempting to play %s\n", argv[1]);
-}
-
-static void cmd_play(int argc, char *argv[])
-{
-	if (argc > 1)
-		return cmd_play_item(argc, argv);
-
-	if (!check_default_player())
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
-
-	if (g_dbus_proxy_method_call(default_player, "Play", NULL, play_reply,
-							NULL, NULL) == FALSE) {
-		bt_shell_printf("Failed to play\n");
-		return bt_shell_noninteractive_quit(EXIT_FAILURE);
-	}
-
-	bt_shell_printf("Attempting to play\n");
+	bt_shell_printf("Attempting to play %s\n", argv[1] ? : "");
 }
 
 static void pause_reply(DBusMessage *message, void *user_data)
@@ -963,7 +952,8 @@ static const struct bt_shell_menu main_menu = {
 	{ "scan",         "<alltracks/group/off>", cmd_scan,
 						"Set scan mode"},
 	{ "change-folder", "<item>",  cmd_change_folder,
-						"Change current folder" },
+						"Change current folder",
+							item_generator},
 	{ "list-items", "[start] [end]",  cmd_list_items,
 					"List items of current folder" },
 	{ "search",     "<string>",   cmd_search,
@@ -1129,6 +1119,7 @@ static void property_changed(GDBusProxy *proxy, const char *name,
 int main(int argc, char *argv[])
 {
 	GDBusClient *client;
+	int status;
 
 	bt_shell_init(argc, argv, NULL);
 	bt_shell_set_menu(&main_menu);
@@ -1144,11 +1135,11 @@ int main(int argc, char *argv[])
 	g_dbus_client_set_proxy_handlers(client, proxy_added, proxy_removed,
 							property_changed, NULL);
 
-	bt_shell_run();
+	status = bt_shell_run();
 
 	g_dbus_client_unref(client);
 
 	dbus_connection_unref(dbus_conn);
 
-	return 0;
+	return status;
 }
