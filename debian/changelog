@@ -1,6 +1,7 @@
 bluez (5.50-1) UNRELEASED; urgency=medium
 
   * Update to 5.50.
+  * Fixed the version to be deleted of the conf file. (Closes: #877482)
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 22 Jun 2018 15:02:41 +0900
 
