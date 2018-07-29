@@ -2,6 +2,9 @@ bluez (5.50-1) unstable; urgency=medium
 
   * Update to 5.50.
   * Fixed the version to be deleted of the conf file. (Closes: #877482)
+  * Add more details to change the default "Name" of device in main.conf
+    (Closes: #904212)
+    Add patches/main.conf-Add-more-details-Closes-904212.patch
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 29 Jul 2018 11:46:24 +0900
 
