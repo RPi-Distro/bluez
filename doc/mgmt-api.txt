@@ -2504,6 +2504,9 @@ Read Advertising Features Command
 		4	Add TX Power field to Adv_Data
 		5	Add Appearance field to Scan_Rsp
 		6	Add Local Name in Scan_Rsp
+		7	Secondary Channel with LE 1M
+		8	Secondary Channel with LE 2M
+		9	Secondary Channel with LE Coded
 
 	The Flags bit 0 indicates support for connectable advertising
 	and for switching to connectable advertising independent of the
@@ -2552,6 +2555,15 @@ Read Advertising Features Command
 	in the scan response data is available, it will be added. If the
 	space is limited a short version or no name information. The
 	Local Name will be added at the end of the scan response data.
+
+	The Flags bit 7 indicates support for advertising in secondary
+	channel in LE 1M PHY.
+
+	The Flags bit 8 indicates support for advertising in secondary
+	channel in LE 2M PHY. Primary channel would be on 1M.
+
+	The Flags bit 9 indicates support for advertising in secondary
+	channel in LE CODED PHY.
 
 	The valid range for Instance identifiers is 1-254. The value 0
 	is reserved for internal use and the value 255 is reserved for
@@ -2613,6 +2625,9 @@ Add Advertising Command
 		4	Add TX Power field to Adv_Data
 		5	Add Appearance field to Scan_Rsp
 		6	Add Local Name in Scan_Rsp
+		7	Secondary Channel with LE 1M
+		8	Secondary Channel with LE 2M
+		9	Secondary Channel with LE Coded
 
 	When the connectable flag is set, then the controller will use
 	undirected connectable advertising. The value of the connectable
@@ -2639,6 +2654,16 @@ Add Advertising Command
 	then scannable advertising is used. This small difference is
 	supported to provide less air traffic for devices implementing
 	broadcaster role.
+
+	Secondary channel flags can be used to advertise in secondary
+	channel with the corresponding PHYs. These flag bits are mutually
+	exclusive and setting multiple will result in Invalid Parameter
+	error. Choosing either LE 1M or LE 2M will result in using
+	extended advertising on the primary channel with LE 1M and the
+	respectively LE 1M or LE 2M on the secondary channel. Choosing
+	LE Coded will result in using extended advertising on the primary
+	and secondary channels with LE Coded. Choosing none of these flags
+	will result in legacy advertising.
 
 	The Duration parameter configures the length of an Instance. The
 	value is in seconds.
@@ -2914,6 +2939,78 @@ Set Appearance Command
 
 	Possible errors:	Not Supported
 				Invalid Parameters
+				Invalid Index
+
+
+Get PHY Configuration Command
+=============================
+
+	Command Code:		0x0043
+	Controller Index:	<controller id>
+	Command Parameters:
+	Return Parameters:	Supported_PHYs (4 Octet)
+				Configurable_PHYs (4 Octets)
+				Selected_PHYs (4 Octet)
+
+	The PHYs parameters are a bitmask with currently the
+	following available bits:
+
+		0	BR 1M 1-Slot
+		1	BR 1M 3-Slot
+		2	BR 1M 5-Slot
+		3	EDR 2M 1-Slot
+		4	EDR 2M 3-Slot
+		5	EDR 2M 5-Slot
+		6	EDR 3M 1-Slot
+		7	EDR 3M 3-Slot
+		8	EDR 3M 5-Slot
+		9	LE 1M TX
+		10	LE 1M RX
+		11	LE 2M TX
+		12	LE 2M RX
+		13	LE Coded TX
+		14	LE Coded RX
+
+	If BR/EDR is supported, then BR 1M 1-Slot is supported by
+	default and can also not be deselected. If LE is supported,
+	then LE 1M TX and LE 1M RX are supported by default.
+
+	Disabling BR/EDR completely or respectively LE has no impact
+	on the PHY configuration. It is remembered over power cycles.
+
+	This command generates a Command Complete event on success
+	or a Command Status event on failure.
+
+        Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Set PHY Configuration Command
+=============================
+
+	Command Code:		0x0044
+	Controller Index:	<controller id>
+	Command Parameters: 	Selected_PHYs (4 Octet)
+	Return Parameters:
+
+	This command is used to set the default PHY to the controller.
+
+	This will be stored and used for all the subsequent scanning
+	and connection initiation.
+
+	The list of supported PHYs can be retrieved via the
+	Get PHY Configuration command. Selecting unsupported or
+	deselecting default PHYs will result in an Invalid Parameter
+	error.
+
+	This can be called at any point to change the Selected PHYs.
+
+	Refer Get PHY Configuration command for PHYs parameter.
+
+	This command generates a Command Complete event on success
+	or a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
 				Invalid Index
 
 
@@ -3782,3 +3879,20 @@ Extended Controller Information Changed Event
 
 	The event will only be sent to management sockets other than the
 	one through which the change was triggered.
+
+PHY Configuration Changed Event
+===============================
+
+	Event Code:		0x0026
+	Controller Index:	<controller id>
+	Event Parameters:	Selected_PHYs (4 Octets)
+
+	This event indicates that default PHYs have been updated.
+
+	This event will only be used after Set PHY Configuration
+	command has been used at least once.
+
+	The event will only be sent to management sockets other than the
+	one through which the change was triggered.
+
+	Refer Get PHY Configuration command for PHYs parameter.

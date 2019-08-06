@@ -17,6 +17,11 @@
  *
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
+#define _GNU_SOURCE
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -582,8 +587,9 @@ static bool parse_timeout(DBusMessageIter *iter,
 	if (client->to_id)
 		g_source_remove(client->to_id);
 
-	client->to_id = g_timeout_add_seconds(client->timeout, client_timeout,
-								client);
+	if (client->timeout > 0)
+		client->to_id = g_timeout_add_seconds(client->timeout,
+							client_timeout, client);
 
 	return true;
 }
@@ -869,6 +875,47 @@ static bool parse_discoverable_timeout(DBusMessageIter *iter,
 	return true;
 }
 
+static struct adv_secondary {
+	int flag;
+	const char *name;
+} secondary[] = {
+	{ MGMT_ADV_FLAG_SEC_1M, "1M" },
+	{ MGMT_ADV_FLAG_SEC_2M, "2M" },
+	{ MGMT_ADV_FLAG_SEC_CODED, "Coded" },
+	{ },
+};
+
+static bool parse_secondary(DBusMessageIter *iter,
+					struct btd_adv_client *client)
+{
+	const char *str;
+	struct adv_secondary *sec;
+
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_STRING)
+		return false;
+
+	/* Reset secondary channels before parsing */
+	client->flags &= 0xfe00;
+
+	dbus_message_iter_get_basic(iter, &str);
+
+	for (sec = secondary; sec && sec->name; sec++) {
+		if (strcmp(str, sec->name))
+			continue;
+
+		if (!(client->manager->supported_flags & sec->flag))
+			return false;
+
+		DBG("Secondary Channel: %s", str);
+
+		client->flags |= sec->flag;
+
+		return true;
+	}
+
+	return false;
+}
+
 static struct adv_parser {
 	const char *name;
 	bool (*func)(DBusMessageIter *iter, struct btd_adv_client *client);
@@ -886,6 +933,7 @@ static struct adv_parser {
 	{ "Data", parse_data },
 	{ "Discoverable", parse_discoverable },
 	{ "DiscoverableTimeout", parse_discoverable_timeout },
+	{ "SecondaryChannel", parse_secondary },
 	{ },
 };
 
@@ -1229,10 +1277,48 @@ static gboolean get_supported_includes(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static void append_secondary(struct btd_adv_manager *manager,
+						DBusMessageIter *iter)
+{
+	struct adv_secondary *sec;
+
+	for (sec = secondary; sec && sec->name; sec++) {
+		if (manager->supported_flags & sec->flag)
+			dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING,
+								&sec->name);
+	}
+}
+
+static gboolean secondary_exits(const GDBusPropertyTable *property, void *data)
+{
+	struct btd_adv_manager *manager = data;
+
+	/* 1M PHY shall always be supported if ext_adv is supported */
+	return manager->supported_flags & MGMT_ADV_FLAG_SEC_1M;
+}
+
+static gboolean get_supported_secondary(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct btd_adv_manager *manager = data;
+	DBusMessageIter entry;
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
+					DBUS_TYPE_STRING_AS_STRING, &entry);
+
+	append_secondary(manager, &entry);
+
+	dbus_message_iter_close_container(iter, &entry);
+
+	return TRUE;
+}
+
 static const GDBusPropertyTable properties[] = {
 	{ "ActiveInstances", "y", get_active_instances, NULL, NULL },
 	{ "SupportedInstances", "y", get_instances, NULL, NULL },
 	{ "SupportedIncludes", "as", get_supported_includes, NULL, NULL },
+	{ "SupportedSecondaryChannels", "as", get_supported_secondary, NULL,
+							secondary_exits },
 	{ }
 };
 

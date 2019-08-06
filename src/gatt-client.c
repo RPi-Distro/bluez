@@ -21,6 +21,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
@@ -90,7 +91,7 @@ struct async_dbus_op {
 	async_dbus_op_complete_t complete;
 };
 
-struct pipe_io {
+struct sock_io {
 	DBusMessage *msg;
 	struct io *io;
 	void (*destroy)(void *data);
@@ -109,8 +110,8 @@ struct characteristic {
 	char *path;
 
 	unsigned int ready_id;
-	struct pipe_io *write_io;
-	struct pipe_io *notify_io;
+	struct sock_io *write_io;
+	struct sock_io *notify_io;
 
 	struct async_dbus_op *read_op;
 	struct async_dbus_op *write_op;
@@ -388,7 +389,8 @@ fail:
 	desc->read_op = NULL;
 }
 
-static int parse_options(DBusMessageIter *iter, uint16_t *offset)
+static int parse_options(DBusMessageIter *iter, uint16_t *offset,
+						const char **type)
 {
 	DBusMessageIter dict;
 
@@ -413,6 +415,12 @@ static int parse_options(DBusMessageIter *iter, uint16_t *offset)
 			if (var != DBUS_TYPE_UINT16)
 				return -EINVAL;
 			dbus_message_iter_get_basic(&value, offset);
+		}
+
+		if (type && strcasecmp(key, "type") == 0) {
+			if (var != DBUS_TYPE_STRING)
+				return -EINVAL;
+			dbus_message_iter_get_basic(&value, type);
 		}
 
 		dbus_message_iter_next(&dict);
@@ -468,7 +476,7 @@ static DBusMessage *descriptor_read_value(DBusConnection *conn,
 
 	dbus_message_iter_init(msg, &iter);
 
-	if (parse_options(&iter, &offset))
+	if (parse_options(&iter, &offset, NULL))
 		return btd_error_invalid_args(msg);
 
 	if (desc->read_op) {
@@ -598,7 +606,7 @@ static DBusMessage *descriptor_write_value(DBusConnection *conn,
 
 	dbus_message_iter_next(&iter);
 
-	if (parse_options(&iter, &offset))
+	if (parse_options(&iter, &offset, NULL))
 		return btd_error_invalid_args(msg);
 
 	/*
@@ -932,7 +940,7 @@ static DBusMessage *characteristic_read_value(DBusConnection *conn,
 
 	dbus_message_iter_init(msg, &iter);
 
-	if (parse_options(&iter, &offset))
+	if (parse_options(&iter, &offset, NULL))
 		return btd_error_invalid_args(msg);
 
 	if (chrc->read_op) {
@@ -973,6 +981,7 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 	int value_len = 0;
 	bool supported = false;
 	uint16_t offset = 0;
+	const char *type = NULL;
 
 	if (!gatt)
 		return btd_error_failed(msg, "Not connected");
@@ -990,7 +999,7 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 
 	dbus_message_iter_next(&iter);
 
-	if (parse_options(&iter, &offset))
+	if (parse_options(&iter, &offset, &type))
 		return btd_error_invalid_args(msg);
 
 	/*
@@ -1004,7 +1013,8 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 	 *     - If value is larger than MTU - 3: long-write
 	 *   * "write-without-response" property set -> write command.
 	 */
-	if ((chrc->ext_props & BT_GATT_CHRC_EXT_PROP_RELIABLE_WRITE)) {
+	if ((!type && (chrc->ext_props & BT_GATT_CHRC_EXT_PROP_RELIABLE_WRITE))
+			|| (type && !strcasecmp(type, "reliable"))) {
 		supported = true;
 		chrc->write_op = start_long_write(msg, chrc->value_handle, gatt,
 						true, value, value_len, offset,
@@ -1013,7 +1023,8 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 			return NULL;
 	}
 
-	if (chrc->props & BT_GATT_CHRC_PROP_WRITE) {
+	if ((!type && chrc->props & BT_GATT_CHRC_PROP_WRITE) ||
+			(type && !strcasecmp(type, "request"))) {
 		uint16_t mtu;
 
 		supported = true;
@@ -1036,7 +1047,8 @@ static DBusMessage *characteristic_write_value(DBusConnection *conn,
 			return NULL;
 	}
 
-	if (!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
+	if ((type && strcasecmp(type, "command")) || offset ||
+			!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
 		goto fail;
 
 	supported = true;
@@ -1054,19 +1066,30 @@ fail:
 	return btd_error_not_supported(msg);
 }
 
-static bool chrc_pipe_read(struct io *io, void *user_data)
+static bool sock_read(struct io *io, void *user_data)
 {
 	struct characteristic *chrc = user_data;
 	struct bt_gatt_client *gatt = chrc->service->client->gatt;
+	struct msghdr msg;
 	uint8_t buf[512];
+	struct iovec iov;
 	int fd = io_get_fd(io);
 	ssize_t bytes_read;
 
-	bytes_read = read(fd, buf, sizeof(buf));
-	if (bytes_read < 0)
-		return false;
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
 
-	if (!gatt)
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	bytes_read = recvmsg(fd, &msg, MSG_DONTWAIT);
+	if (bytes_read < 0) {
+		error("recvmsg: %s", strerror(errno));
+		return false;
+	}
+
+	if (!gatt || bytes_read == 0)
 		return false;
 
 	bt_gatt_client_write_without_response(gatt, chrc->value_handle,
@@ -1076,7 +1099,7 @@ static bool chrc_pipe_read(struct io *io, void *user_data)
 	return true;
 }
 
-static void pipe_io_destroy(struct pipe_io *io)
+static void sock_io_destroy(struct sock_io *io)
 {
 	if (io->destroy)
 		io->destroy(io->data);
@@ -1088,20 +1111,19 @@ static void pipe_io_destroy(struct pipe_io *io)
 	free(io);
 }
 
-static void characteristic_destroy_pipe(struct characteristic *chrc,
-							struct io *io)
+static void destroy_sock(struct characteristic *chrc, struct io *io)
 {
 	queue_remove(chrc->service->client->ios, io);
 
 	if (chrc->write_io && io == chrc->write_io->io) {
-		pipe_io_destroy(chrc->write_io);
+		sock_io_destroy(chrc->write_io);
 		chrc->write_io = NULL;
 		g_dbus_emit_property_changed(btd_get_dbus_connection(),
 						chrc->path,
 						GATT_CHARACTERISTIC_IFACE,
 						"WriteAcquired");
 	} else if (chrc->notify_io) {
-		pipe_io_destroy(chrc->notify_io);
+		sock_io_destroy(chrc->notify_io);
 		chrc->notify_io = NULL;
 		g_dbus_emit_property_changed(btd_get_dbus_connection(),
 						chrc->path,
@@ -1110,22 +1132,21 @@ static void characteristic_destroy_pipe(struct characteristic *chrc,
 	}
 }
 
-static bool characteristic_pipe_hup(struct io *io, void *user_data)
+static bool sock_hup(struct io *io, void *user_data)
 {
 	struct characteristic *chrc = user_data;
 
 	DBG("%s: io %p", chrc->path, io);
 
-	characteristic_destroy_pipe(chrc, io);
+	destroy_sock(chrc, io);
 
 	return false;
 }
 
-static DBusMessage *characteristic_create_pipe(struct characteristic *chrc,
-						DBusMessage *msg)
+static DBusMessage *create_sock(struct characteristic *chrc, DBusMessage *msg)
 {
 	struct bt_gatt_client *gatt = chrc->service->client->gatt;
-	int pipefd[2];
+	int fds[2];
 	struct io *io;
 	bool dir;
 	uint16_t mtu;
@@ -1134,33 +1155,34 @@ static DBusMessage *characteristic_create_pipe(struct characteristic *chrc,
 	if (!gatt || !bt_gatt_client_is_ready(gatt))
 		return btd_error_failed(msg, "Not connected");
 
-	if (pipe2(pipefd, O_DIRECT | O_NONBLOCK | O_CLOEXEC) < 0)
+	if (socketpair(AF_LOCAL, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC,
+								0, fds) < 0)
 		return btd_error_failed(msg, strerror(errno));
 
 	dir = dbus_message_has_member(msg, "AcquireWrite");
 
-	io = io_new(pipefd[!dir]);
+	io = io_new(fds[!dir]);
 	if (!io) {
-		close(pipefd[0]);
-		close(pipefd[1]);
+		close(fds[0]);
+		close(fds[1]);
 		return btd_error_failed(msg, strerror(EIO));
 	}
 
 	io_set_close_on_destroy(io, true);
 
-	if (!io_set_read_handler(io, chrc_pipe_read, chrc, NULL))
+	if (!io_set_read_handler(io, sock_read, chrc, NULL))
 		goto fail;
 
-	if (!io_set_disconnect_handler(io, characteristic_pipe_hup, chrc, NULL))
+	if (!io_set_disconnect_handler(io, sock_hup, chrc, NULL))
 		goto fail;
 
 	mtu = bt_gatt_client_get_mtu(gatt);
 
-	reply = g_dbus_create_reply(msg, DBUS_TYPE_UNIX_FD, &pipefd[dir],
+	reply = g_dbus_create_reply(msg, DBUS_TYPE_UNIX_FD, &fds[dir],
 					DBUS_TYPE_UINT16, &mtu,
 					DBUS_TYPE_INVALID);
 
-	close(pipefd[dir]);
+	close(fds[dir]);
 
 	if (dir) {
 		chrc->write_io->io = io;
@@ -1185,7 +1207,7 @@ static DBusMessage *characteristic_create_pipe(struct characteristic *chrc,
 
 fail:
 	io_destroy(io);
-	close(pipefd[dir]);
+	close(fds[dir]);
 	return btd_error_failed(msg, strerror(EIO));
 }
 
@@ -1197,7 +1219,7 @@ static void characteristic_ready(bool success, uint8_t ecode, void *user_data)
 	chrc->ready_id = 0;
 
 	if (chrc->write_io && chrc->write_io->msg) {
-		reply = characteristic_create_pipe(chrc, chrc->write_io->msg);
+		reply = create_sock(chrc, chrc->write_io->msg);
 
 		g_dbus_send_message(btd_get_dbus_connection(), reply);
 
@@ -1206,7 +1228,7 @@ static void characteristic_ready(bool success, uint8_t ecode, void *user_data)
 	}
 
 	if (chrc->notify_io && chrc->notify_io->msg) {
-		reply = characteristic_create_pipe(chrc, chrc->notify_io->msg);
+		reply = create_sock(chrc, chrc->notify_io->msg);
 
 		g_dbus_send_message(btd_get_dbus_connection(), reply);
 
@@ -1230,7 +1252,7 @@ static DBusMessage *characteristic_acquire_write(DBusConnection *conn,
 	if (!(chrc->props & BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP))
 		return btd_error_not_supported(msg);
 
-	chrc->write_io = new0(struct pipe_io, 1);
+	chrc->write_io = new0(struct sock_io, 1);
 
 	if (!bt_gatt_client_is_ready(gatt)) {
 		/* GATT not ready, wait until it becomes ready */
@@ -1242,7 +1264,7 @@ static DBusMessage *characteristic_acquire_write(DBusConnection *conn,
 		return NULL;
 	}
 
-	return characteristic_create_pipe(chrc, msg);
+	return create_sock(chrc, msg);
 }
 
 struct notify_client {
@@ -1414,21 +1436,26 @@ static void register_notify_cb(uint16_t att_ecode, void *user_data)
 static void notify_io_cb(uint16_t value_handle, const uint8_t *value,
 					uint16_t length, void *user_data)
 {
+	struct msghdr msg;
 	struct iovec iov;
 	struct notify_client *client = user_data;
 	struct characteristic *chrc = client->chrc;
 	int err;
 
-	/* Drop notification if the pipe is not ready */
-	if (!chrc->notify_io->io)
+	/* Drop notification if the sock is not ready */
+	if (!chrc->notify_io || !chrc->notify_io->io)
 		return;
 
 	iov.iov_base = (void *) value;
 	iov.iov_len = length;
 
-	err = io_send(chrc->notify_io->io, &iov, 1);
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	err = sendmsg(io_get_fd(chrc->notify_io->io), &msg, MSG_NOSIGNAL);
 	if (err < 0)
-		error("io_send: %s", strerror(-err));
+		error("sendmsg: %s", strerror(errno));
 }
 
 static void register_notify_io_cb(uint16_t att_ecode, void *user_data)
@@ -1499,7 +1526,7 @@ static DBusMessage *characteristic_acquire_notify(DBusConnection *conn,
 
 	queue_push_tail(chrc->notify_clients, client);
 
-	chrc->notify_io = new0(struct pipe_io, 1);
+	chrc->notify_io = new0(struct sock_io, 1);
 	chrc->notify_io->data = client;
 	chrc->notify_io->msg = dbus_message_ref(msg);
 	chrc->notify_io->destroy = notify_io_destroy;
@@ -1586,15 +1613,15 @@ static DBusMessage *characteristic_stop_notify(DBusConnection *conn,
 	const char *sender = dbus_message_get_sender(msg);
 	struct notify_client *client;
 
+	if (chrc->notify_io) {
+		destroy_sock(chrc, chrc->notify_io->io);
+		return dbus_message_new_method_return(msg);
+	}
+
 	client = queue_remove_if(chrc->notify_clients, match_notify_sender,
 							(void *) sender);
 	if (!client)
 		return btd_error_failed(msg, "No notify session started");
-
-	if (chrc->notify_io) {
-		characteristic_destroy_pipe(chrc, chrc->notify_io->io);
-		return dbus_message_new_method_return(msg);
-	}
 
 	queue_remove(chrc->service->client->all_notify_clients, client);
 	bt_gatt_client_unregister_notify(gatt, client->notify_id);
@@ -1645,23 +1672,34 @@ static const GDBusMethodTable characteristic_methods[] = {
 	{ }
 };
 
+static void remove_client(void *data)
+{
+	struct notify_client *ntfy_client = data;
+	struct btd_gatt_client *client = ntfy_client->chrc->service->client;
+
+	queue_remove(client->all_notify_clients, ntfy_client);
+
+	notify_client_unref(ntfy_client);
+}
+
 static void characteristic_free(void *data)
 {
 	struct characteristic *chrc = data;
 
 	/* List should be empty here */
 	queue_destroy(chrc->descs, NULL);
-	queue_destroy(chrc->notify_clients, NULL);
 
 	if (chrc->write_io) {
 		queue_remove(chrc->service->client->ios, chrc->write_io->io);
-		pipe_io_destroy(chrc->write_io);
+		sock_io_destroy(chrc->write_io);
 	}
 
 	if (chrc->notify_io) {
 		queue_remove(chrc->service->client->ios, chrc->notify_io->io);
-		pipe_io_destroy(chrc->notify_io);
+		sock_io_destroy(chrc->notify_io);
 	}
+
+	queue_destroy(chrc->notify_clients, remove_client);
 
 	g_free(chrc->path);
 	free(chrc);
@@ -1715,16 +1753,6 @@ static struct characteristic *characteristic_create(
 	return chrc;
 }
 
-static void remove_client(void *data)
-{
-	struct notify_client *ntfy_client = data;
-	struct btd_gatt_client *client = ntfy_client->chrc->service->client;
-
-	queue_remove(client->all_notify_clients, ntfy_client);
-
-	notify_client_unref(ntfy_client);
-}
-
 static void unregister_characteristic(void *data)
 {
 	struct characteristic *chrc = data;
@@ -1738,7 +1766,6 @@ static void unregister_characteristic(void *data)
 	if (chrc->write_op)
 		bt_gatt_client_cancel(gatt, chrc->write_op->id);
 
-	queue_remove_all(chrc->notify_clients, NULL, NULL, remove_client);
 	queue_remove_all(chrc->descs, NULL, NULL, unregister_descriptor);
 
 	g_dbus_unregister_interface(btd_get_dbus_connection(), chrc->path,

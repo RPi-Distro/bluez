@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
@@ -780,7 +781,6 @@ int main(int argc, char *argv[])
 	bool use_redirect = false;
 	uint8_t type = HCI_PRIMARY;
 	const char *str;
-	sigset_t mask;
 
 	for (;;) {
 		int opt;
@@ -870,12 +870,6 @@ int main(int argc, char *argv[])
 
 	mainloop_init();
 
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
-
 	if (connect_address || use_redirect) {
 		int host_fd, dev_fd;
 
@@ -930,5 +924,5 @@ int main(int argc, char *argv[])
 							NULL, NULL);
 	}
 
-	return mainloop_run();
+	return mainloop_run_with_signal(signal_callback, NULL);
 }

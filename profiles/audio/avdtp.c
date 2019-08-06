@@ -412,6 +412,7 @@ struct avdtp {
 	struct pending_req *req;
 
 	guint dc_timer;
+	int dc_timeout;
 
 	/* Attempt stream setup instead of disconnecting */
 	gboolean stream_setup;
@@ -1152,10 +1153,12 @@ static void set_disconnect_timer(struct avdtp *session)
 	if (session->dc_timer)
 		remove_disconnect_timer(session);
 
-	if (!session->stream_setup && !session->streams)
+	DBG("timeout %d", session->dc_timeout);
+
+	if (!session->dc_timeout)
 		session->dc_timer = g_idle_add(disconnect_timeout, session);
 	else
-		session->dc_timer = g_timeout_add_seconds(DISCONNECT_TIMEOUT,
+		session->dc_timer = g_timeout_add_seconds(session->dc_timeout,
 							disconnect_timeout,
 							session);
 }
@@ -1797,6 +1800,8 @@ static gboolean avdtp_close_cmd(struct avdtp *session, uint8_t transaction,
 
 	avdtp_sep_set_state(session, sep, AVDTP_STATE_CLOSING);
 
+	session->dc_timeout = DISCONNECT_TIMEOUT;
+
 	if (!avdtp_send(session, transaction, AVDTP_MSG_TYPE_ACCEPT,
 						AVDTP_CLOSE, NULL, 0))
 		return FALSE;
@@ -1893,8 +1898,10 @@ static gboolean avdtp_abort_cmd(struct avdtp *session, uint8_t transaction,
 
 	ret = avdtp_send(session, transaction, AVDTP_MSG_TYPE_ACCEPT,
 						AVDTP_ABORT, NULL, 0);
-	if (ret)
+	if (ret) {
 		avdtp_sep_set_state(session, sep, AVDTP_STATE_ABORTING);
+		session->dc_timeout = DISCONNECT_TIMEOUT;
+	}
 
 	return ret;
 }
@@ -2377,6 +2384,8 @@ struct avdtp *avdtp_new(GIOChannel *chan, struct btd_device *device,
 	 * with respect to the disconnect timer */
 	session->stream_setup = TRUE;
 
+	session->dc_timeout = DISCONNECT_TIMEOUT;
+
 	avdtp_connect_cb(chan, NULL, session);
 
 	return session;
@@ -2638,12 +2647,15 @@ static gboolean avdtp_discover_resp(struct avdtp *session,
 		stream = find_stream_by_rseid(session, resp->seps[i].seid);
 
 		sep = find_remote_sep(session->seps, resp->seps[i].seid);
-		if (!sep) {
-			if (resp->seps[i].inuse && !stream)
-				continue;
-			sep = g_new0(struct avdtp_remote_sep, 1);
-			session->seps = g_slist_append(session->seps, sep);
-		}
+		if (sep && sep->type == resp->seps[i].type &&
+				sep->media_type == resp->seps[i].media_type)
+			continue;
+
+		if (resp->seps[i].inuse && !stream)
+			continue;
+
+		sep = g_new0(struct avdtp_remote_sep, 1);
+		session->seps = g_slist_append(session->seps, sep);
 
 		sep->stream = stream;
 		sep->seid = resp->seps[i].seid;
@@ -3161,6 +3173,16 @@ static int process_queue(struct avdtp *session)
 	return send_req(session, FALSE, req);
 }
 
+uint8_t avdtp_get_seid(struct avdtp_remote_sep *sep)
+{
+	return sep->seid;
+}
+
+uint8_t avdtp_get_type(struct avdtp_remote_sep *sep)
+{
+	return sep->type;
+}
+
 struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep)
 {
 	return sep->codec;
@@ -3180,6 +3202,37 @@ struct avdtp_service_capability *avdtp_service_cap_new(uint8_t category,
 	memcpy(cap->data, data, length);
 
 	return cap;
+}
+
+struct avdtp_remote_sep *avdtp_register_remote_sep(struct avdtp *session,
+							uint8_t seid,
+							uint8_t type,
+							GSList *caps)
+{
+	struct avdtp_remote_sep *sep;
+	GSList *l;
+
+	sep = find_remote_sep(session->seps, seid);
+	if (sep)
+		return sep;
+
+	sep = g_new0(struct avdtp_remote_sep, 1);
+	session->seps = g_slist_append(session->seps, sep);
+	sep->seid = seid;
+	sep->type = type;
+	sep->media_type = AVDTP_MEDIA_TYPE_AUDIO;
+	sep->caps = caps;
+
+	for (l = caps; l; l = g_slist_next(l)) {
+		struct avdtp_service_capability *cap = l->data;
+
+		if (cap->category == AVDTP_MEDIA_CODEC)
+			sep->codec = cap;
+	}
+
+	DBG("seid %d type %d media %d", sep->seid, sep->type, sep->media_type);
+
+	return sep;
 }
 
 static gboolean process_discover(gpointer data)
@@ -3468,8 +3521,10 @@ int avdtp_close(struct avdtp *session, struct avdtp_stream *stream,
 
 	ret = send_request(session, FALSE, stream, AVDTP_CLOSE,
 							&req, sizeof(req));
-	if (ret == 0)
+	if (ret == 0) {
 		stream->close_int = TRUE;
+		session->dc_timeout = 0;
+	}
 
 	return ret;
 }
@@ -3517,8 +3572,10 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 
 	ret = send_request(session, TRUE, stream, AVDTP_ABORT,
 							&req, sizeof(req));
-	if (ret == 0)
+	if (ret == 0) {
 		stream->abort_int = TRUE;
+		session->dc_timeout = 0;
+	}
 
 	return ret;
 }
@@ -3651,6 +3708,11 @@ const char *avdtp_strerror(struct avdtp_error *err)
 avdtp_state_t avdtp_sep_get_state(struct avdtp_local_sep *sep)
 {
 	return sep->state;
+}
+
+uint8_t avdtp_sep_get_seid(struct avdtp_local_sep *sep)
+{
+	return sep->info.seid;
 }
 
 struct btd_adapter *avdtp_get_adapter(struct avdtp *session)
