@@ -1,3 +1,9 @@
+bluez (5.50+git20190731.37cf5ad50-1~exp0) experimental; urgency=medium
+
+  * Snapshot, taken from the master (20190731).
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 06 Aug 2019 14:35:42 +0900
+
 bluez (5.50-1) unstable; urgency=medium
 
   * Update to 5.50.
