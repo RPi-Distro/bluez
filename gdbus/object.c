@@ -1346,6 +1346,16 @@ gboolean g_dbus_register_interface(DBusConnection *connection,
 {
 	struct generic_data *data;
 
+	if (!dbus_validate_path(path, NULL)) {
+		error("Invalid object path: %s", path);
+		return FALSE;
+	}
+
+	if (!dbus_validate_interface(name, NULL)) {
+		error("Invalid interface: %s", name);
+		return FALSE;
+	}
+
 	data = object_path_ref(connection, path);
 	if (data == NULL)
 		return FALSE;

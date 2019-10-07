@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -1800,11 +1801,11 @@ static struct media_item *media_folder_create_item(struct media_player *mp,
 	item->player = mp;
 	item->uid = uid;
 
-	if (uid > 0)
+	if (!uid && name[0] == '/')
+		item->path = g_strdup_printf("%s%s", mp->path, name);
+	else
 		item->path = g_strdup_printf("%s/item%" PRIu64 "",
 						folder->item->path, uid);
-	else
-		item->path = g_strdup_printf("%s%s", mp->path, name);
 
 	item->name = g_strdup(name);
 	item->type = type;

@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +46,14 @@
 #include "avdtp.h"
 #include "rfcomm.h"
 #include "bnep.h"
+
+
+#define L2CAP_MODE_BASIC		0x00
+#define L2CAP_MODE_RETRANS		0x01
+#define L2CAP_MODE_FLOWCTL		0x02
+#define L2CAP_MODE_ERTM			0x03
+#define L2CAP_MODE_STREAMING		0x04
+#define L2CAP_MODE_LE_FLOWCTL		0x80
 
 /* L2CAP Control Field bit masks */
 #define L2CAP_CTRL_SAR_MASK		0xC000
@@ -101,12 +110,13 @@ struct chan_data {
 	uint8_t  mode;
 	uint8_t  ext_ctrl;
 	uint8_t  seq_num;
+	uint16_t sdu;
 };
 
 static struct chan_data chan_list[MAX_CHAN];
 
-static void assign_scid(const struct l2cap_frame *frame,
-				uint16_t scid, uint16_t psm, uint8_t ctrlid)
+static void assign_scid(const struct l2cap_frame *frame, uint16_t scid,
+			uint16_t psm, uint8_t mode, uint8_t ctrlid)
 {
 	int i, n = -1;
 	uint8_t seq_num = 1;
@@ -153,7 +163,7 @@ static void assign_scid(const struct l2cap_frame *frame,
 
 	chan_list[n].psm = psm;
 	chan_list[n].ctrlid = ctrlid;
-	chan_list[n].mode = 0;
+	chan_list[n].mode = mode;
 
 	chan_list[n].seq_num = seq_num;
 }
@@ -280,44 +290,48 @@ static int get_chan_data_index(const struct l2cap_frame *frame)
 	return -1;
 }
 
+static struct chan_data *get_chan(const struct l2cap_frame *frame)
+{
+	int i;
+
+	if (frame->chan != UINT16_MAX)
+		return &chan_list[frame->chan];
+
+	i = get_chan_data_index(frame);
+	if (i < 0)
+		return NULL;
+
+	return &chan_list[i];
+}
+
 static uint16_t get_psm(const struct l2cap_frame *frame)
 {
-	int i = get_chan_data_index(frame);
+	struct chan_data *data = get_chan(frame);
 
-	if (i < 0)
+	if (!data)
 		return 0;
 
-	return chan_list[i].psm;
+	return data->psm;
 }
 
 static uint8_t get_mode(const struct l2cap_frame *frame)
 {
-	int i = get_chan_data_index(frame);
+	struct chan_data *data = get_chan(frame);
 
-	if (i < 0)
+	if (!data)
 		return 0;
 
-	return chan_list[i].mode;
-}
-
-static uint16_t get_chan(const struct l2cap_frame *frame)
-{
-	int i = get_chan_data_index(frame);
-
-	if (i < 0)
-		return 0;
-
-	return i;
+	return data->mode;
 }
 
 static uint8_t get_seq_num(const struct l2cap_frame *frame)
 {
-	int i = get_chan_data_index(frame);
+	struct chan_data *data = get_chan(frame);
 
-	if (i < 0)
+	if (!data)
 		return 0;
 
-	return chan_list[i].seq_num;
+	return data->seq_num;
 }
 
 static void assign_ext_ctrl(const struct l2cap_frame *frame,
@@ -348,12 +362,12 @@ static void assign_ext_ctrl(const struct l2cap_frame *frame,
 
 static uint8_t get_ext_ctrl(const struct l2cap_frame *frame)
 {
-	int i = get_chan_data_index(frame);
+	struct chan_data *data = get_chan(frame);
 
-	if (i < 0)
+	if (!data)
 		return 0;
 
-	return chan_list[i].ext_ctrl;
+	return data->ext_ctrl;
 }
 
 static char *sar2str(uint8_t sar)
@@ -385,6 +399,26 @@ static char *supervisory2str(uint8_t supervisory)
 		return "Select Reject (SREJ)";
 	default:
 		return "Bad Supervisory";
+	}
+}
+
+static char *mode2str(uint8_t mode)
+{
+	switch (mode) {
+	case L2CAP_MODE_BASIC:
+		return "Basic";
+	case L2CAP_MODE_RETRANS:
+		return "Retransmission";
+	case L2CAP_MODE_FLOWCTL:
+		return "Flow Control";
+	case L2CAP_MODE_ERTM:
+		return "Enhanced Retransmission";
+	case L2CAP_MODE_STREAMING:
+		return "Streaming";
+	case L2CAP_MODE_LE_FLOWCTL:
+		return "LE Flow Control";
+	default:
+		return "Unknown";
 	}
 }
 
@@ -784,28 +818,9 @@ static void print_config_options(const struct l2cap_frame *frame,
 			if (response)
 				assign_mode(frame, data[consumed + 2], cid);
 
-			switch (data[consumed + 2]) {
-			case 0x00:
-				str = "Basic";
-				break;
-			case 0x01:
-				str = "Retransmission";
-				break;
-			case 0x02:
-				str = "Flow control";
-				break;
-			case 0x03:
-				str = "Enhanced retransmission";
-				break;
-			case 0x04:
-				str = "Streaming";
-				break;
-			default:
-				str = "Reserved";
-				break;
-			}
 			print_field("  Mode: %s (0x%2.2x)",
-						str, data[consumed + 2]);
+					mode2str(data[consumed + 2]),
+					data[consumed + 2]);
 			print_field("  TX window size: %d", data[consumed + 3]);
 			print_field("  Max transmit: %d", data[consumed + 4]);
 			print_field("  Retransmission timeout: %d",
@@ -916,10 +931,7 @@ static void print_info_result(uint16_t result)
 	print_field("Result: %s (0x%4.4x)", str, le16_to_cpu(result));
 }
 
-static struct {
-	uint8_t bit;
-	const char *str;
-} features_table[] = {
+static const struct bitfield_data features_table[] = {
 	{  0, "Flow control mode"			},
 	{  1, "Retransmission mode"			},
 	{  2, "Bi-directional QoS"			},
@@ -936,26 +948,16 @@ static struct {
 
 static void print_features(uint32_t features)
 {
-	uint32_t mask = features;
-	int i;
+	uint32_t mask;
 
 	print_field("Features: 0x%8.8x", features);
 
-	for (i = 0; features_table[i].str; i++) {
-		if (features & (1 << features_table[i].bit)) {
-			print_field("  %s", features_table[i].str);
-			mask &= ~(1 << features_table[i].bit);
-		}
-	}
-
+	mask = print_bitfield(2, features, features_table);
 	if (mask)
 		print_field("  Unknown features (0x%8.8x)", mask);
 }
 
-static struct {
-	uint16_t cid;
-	const char *str;
-} channels_table[] = {
+static const struct bitfield_data channels_table[] = {
 	{ 0x0000, "Null identifier"		},
 	{ 0x0001, "L2CAP Signaling (BR/EDR)"	},
 	{ 0x0002, "Connectionless reception"	},
@@ -970,18 +972,11 @@ static struct {
 
 static void print_channels(uint64_t channels)
 {
-	uint64_t mask = channels;
-	int i;
+	uint64_t mask;
 
 	print_field("Channels: 0x%16.16" PRIx64, channels);
 
-	for (i = 0; channels_table[i].str; i++) {
-		if (channels & (1 << channels_table[i].cid)) {
-			print_field("  %s", channels_table[i].str);
-			mask &= ~(1 << channels_table[i].cid);
-		}
-	}
-
+	mask = print_bitfield(2, channels, channels_table);
 	if (mask)
 		print_field("  Unknown channels (0x%8.8" PRIx64 ")", mask);
 }
@@ -1110,7 +1105,8 @@ static void sig_conn_req(const struct l2cap_frame *frame)
 	print_psm(pdu->psm);
 	print_cid("Source", pdu->scid);
 
-	assign_scid(frame, le16_to_cpu(pdu->scid), le16_to_cpu(pdu->psm), 0);
+	assign_scid(frame, le16_to_cpu(pdu->scid), le16_to_cpu(pdu->psm),
+						L2CAP_MODE_BASIC, 0);
 }
 
 static void sig_conn_rsp(const struct l2cap_frame *frame)
@@ -1239,7 +1235,7 @@ static void sig_create_chan_req(const struct l2cap_frame *frame)
 	print_field("Controller ID: %d", pdu->ctrlid);
 
 	assign_scid(frame, le16_to_cpu(pdu->scid), le16_to_cpu(pdu->psm),
-								pdu->ctrlid);
+						L2CAP_MODE_BASIC, pdu->ctrlid);
 }
 
 static void sig_create_chan_rsp(const struct l2cap_frame *frame)
@@ -1312,7 +1308,8 @@ static void sig_le_conn_req(const struct l2cap_frame *frame)
 	print_field("MPS: %u", le16_to_cpu(pdu->mps));
 	print_field("Credits: %u", le16_to_cpu(pdu->credits));
 
-	assign_scid(frame, le16_to_cpu(pdu->scid), le16_to_cpu(pdu->psm), 0);
+	assign_scid(frame, le16_to_cpu(pdu->scid), le16_to_cpu(pdu->psm),
+						L2CAP_MODE_LE_FLOWCTL, 0);
 }
 
 static void sig_le_conn_rsp(const struct l2cap_frame *frame)
@@ -1404,7 +1401,8 @@ static const struct sig_opcode_data le_sig_opcode_table[] = {
 
 static void l2cap_frame_init(struct l2cap_frame *frame, uint16_t index, bool in,
 				uint16_t handle, uint8_t ident,
-				uint16_t cid, const void *data, uint16_t size)
+				uint16_t cid, uint16_t psm,
+				const void *data, uint16_t size)
 {
 	frame->index   = index;
 	frame->in      = in;
@@ -1413,10 +1411,10 @@ static void l2cap_frame_init(struct l2cap_frame *frame, uint16_t index, bool in,
 	frame->cid     = cid;
 	frame->data    = data;
 	frame->size    = size;
-	frame->psm     = get_psm(frame);
+	frame->chan    = get_chan_data_index(frame);
+	frame->psm     = psm ? psm : get_psm(frame);
 	frame->mode    = get_mode(frame);
-	frame->chan    = get_chan(frame);
-	frame->seq_num = get_seq_num(frame);
+	frame->seq_num = psm ? 1 : get_seq_num(frame);
 }
 
 static void bredr_sig_packet(uint16_t index, bool in, uint16_t handle,
@@ -1499,7 +1497,7 @@ static void bredr_sig_packet(uint16_t index, bool in, uint16_t handle,
 			}
 		}
 
-		l2cap_frame_init(&frame, index, in, handle, hdr->ident, cid,
+		l2cap_frame_init(&frame, index, in, handle, hdr->ident, cid, 0,
 								data, len);
 		opcode_data->func(&frame);
 
@@ -1581,7 +1579,8 @@ static void le_sig_packet(uint16_t index, bool in, uint16_t handle,
 		}
 	}
 
-	l2cap_frame_init(&frame, index, in, handle, hdr->ident, cid, data, len);
+	l2cap_frame_init(&frame, index, in, handle, hdr->ident, cid, 0,
+							data, len);
 	opcode_data->func(&frame);
 }
 
@@ -1612,7 +1611,7 @@ static void connless_packet(uint16_t index, bool in, uint16_t handle,
 		break;
 	}
 
-	l2cap_frame_init(&frame, index, in, handle, 0, cid, data, size);
+	l2cap_frame_init(&frame, index, in, handle, 0, cid, 0, data, size);
 }
 
 static void print_controller_list(const uint8_t *data, uint16_t size)
@@ -1981,7 +1980,7 @@ static void amp_packet(uint16_t index, bool in, uint16_t handle,
 		}
 	}
 
-	l2cap_frame_init(&frame, index, in, handle, 0, cid, data + 6, len);
+	l2cap_frame_init(&frame, index, in, handle, 0, cid, 0, data + 6, len);
 	opcode_data->func(&frame);
 }
 
@@ -2148,6 +2147,12 @@ static void att_error_response(const struct l2cap_frame *frame)
 		break;
 	case 0x11:
 		str = "Insufficient Resources";
+		break;
+	case 0x12:
+		str = "Database Out of Sync";
+		break;
+	case 0x13:
+		str = "Value Not Allowed";
 		break;
 	case 0xfd:
 		str = "CCC Improperly Configured";
@@ -2564,7 +2569,8 @@ static void att_packet(uint16_t index, bool in, uint16_t handle,
 		}
 	}
 
-	l2cap_frame_init(&frame, index, in, handle, 0, cid, data + 1, size - 1);
+	l2cap_frame_init(&frame, index, in, handle, 0, cid, 0,
+						data + 1, size - 1);
 	opcode_data->func(&frame);
 }
 
@@ -3020,14 +3026,16 @@ static void smp_packet(uint16_t index, bool in, uint16_t handle,
 		}
 	}
 
-	l2cap_frame_init(&frame, index, in, handle, 0, cid, data + 1, size - 1);
+	l2cap_frame_init(&frame, index, in, handle, 0, cid, 0,
+						data + 1, size - 1);
 	opcode_data->func(&frame);
 }
 
-static void l2cap_frame(uint16_t index, bool in, uint16_t handle,
-			uint16_t cid, const void *data, uint16_t size)
+void l2cap_frame(uint16_t index, bool in, uint16_t handle, uint16_t cid,
+			uint16_t psm, const void *data, uint16_t size)
 {
 	struct l2cap_frame frame;
+	struct chan_data *chan;
 	uint32_t ctrl32 = 0;
 	uint16_t ctrl16 = 0;
 	uint8_t ext_ctrl;
@@ -3053,9 +3061,32 @@ static void l2cap_frame(uint16_t index, bool in, uint16_t handle,
 		smp_packet(index, in, handle, cid, data, size);
 		break;
 	default:
-		l2cap_frame_init(&frame, index, in, handle, 0, cid, data, size);
+		l2cap_frame_init(&frame, index, in, handle, 0, cid, psm,
+							data, size);
 
-		if (frame.mode > 0) {
+		switch (frame.mode) {
+		case L2CAP_MODE_LE_FLOWCTL:
+			chan = get_chan(&frame);
+			if (!chan->sdu) {
+				if (!l2cap_frame_get_le16(&frame, &chan->sdu))
+					return;
+			}
+			print_indent(6, COLOR_CYAN, "Channel:", "",
+					COLOR_OFF, " %d len %d sdu %d"
+					" [PSM %d mode %s (0x%02x)] {chan %d}",
+					cid, size, chan->sdu, frame.psm,
+					mode2str(frame.mode), frame.mode,
+					frame.chan);
+			chan->sdu -= frame.size;
+			break;
+		case L2CAP_MODE_BASIC:
+			print_indent(6, COLOR_CYAN, "Channel:", "", COLOR_OFF,
+					" %d len %d [PSM %d mode %s (0x%02x)] "
+					"{chan %d}", cid, size, frame.psm,
+					mode2str(frame.mode), frame.mode,
+					frame.chan);
+			break;
+		default:
 			ext_ctrl = get_ext_ctrl(&frame);
 
 			if (ext_ctrl) {
@@ -3065,8 +3096,9 @@ static void l2cap_frame(uint16_t index, bool in, uint16_t handle,
 				print_indent(6, COLOR_CYAN, "Channel:", "",
 						COLOR_OFF, " %d len %d"
 						" ext_ctrl 0x%8.8x"
-						" [PSM %d mode %d] {chan %d}",
-						cid, size, ctrl32, frame.psm,
+						" [PSM %d mode %s (0x%02x)] "
+						"{chan %d}", cid, size, ctrl32,
+						frame.psm, mode2str(frame.mode),
 						frame.mode, frame.chan);
 
 				l2cap_ctrl_ext_parse(&frame, ctrl32);
@@ -3077,19 +3109,16 @@ static void l2cap_frame(uint16_t index, bool in, uint16_t handle,
 				print_indent(6, COLOR_CYAN, "Channel:", "",
 						COLOR_OFF, " %d len %d"
 						" ctrl 0x%4.4x"
-						" [PSM %d mode %d] {chan %d}",
-						cid, size, ctrl16, frame.psm,
+						" [PSM %d mode %s (0x%02x)] "
+						"{chan %d}", cid, size, ctrl16,
+						frame.psm, mode2str(frame.mode),
 						frame.mode, frame.chan);
 
 				l2cap_ctrl_parse(&frame, ctrl16);
 			}
 
 			printf("\n");
-		} else {
-			print_indent(6, COLOR_CYAN, "Channel:", "", COLOR_OFF,
-					" %d len %d [PSM %d mode %d] {chan %d}",
-						cid, size, frame.psm,
-						frame.mode, frame.chan);
+			break;
 		}
 
 		switch (frame.psm) {
@@ -3156,7 +3185,7 @@ void l2cap_packet(uint16_t index, bool in, uint16_t handle, uint8_t flags,
 
 		if (len == size) {
 			/* complete frame */
-			l2cap_frame(index, in, handle, cid, data, len);
+			l2cap_frame(index, in, handle, cid, 0, data, len);
 			return;
 		}
 
@@ -3201,7 +3230,7 @@ void l2cap_packet(uint16_t index, bool in, uint16_t handle, uint8_t flags,
 		if (!index_list[index][in].frag_len) {
 			/* complete frame */
 			l2cap_frame(index, in, handle,
-					index_list[index][in].frag_cid,
+					index_list[index][in].frag_cid, 0,
 					index_list[index][in].frag_buf,
 					index_list[index][in].frag_pos);
 			clear_fragment_buffer(index, in);
@@ -3236,7 +3265,7 @@ void l2cap_packet(uint16_t index, bool in, uint16_t handle, uint8_t flags,
 		}
 
 		/* complete frame */
-		l2cap_frame(index, in, handle, cid, data, len);
+		l2cap_frame(index, in, handle, cid, 0, data, len);
 		break;
 
 	default:

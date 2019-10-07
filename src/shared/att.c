@@ -570,6 +570,7 @@ static bool disconnect_cb(struct io *io, void *user_data)
 
 	io_destroy(att->io);
 	att->io = NULL;
+	att->fd = -1;
 
 	/* Notify request callbacks */
 	queue_remove_all(att->req_queue, NULL, NULL, disc_att_send_op);
@@ -835,6 +836,22 @@ static void handle_notify(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 		if (!opcode_match(notify->opcode, opcode))
 			continue;
 
+		/* BLUETOOTH CORE SPECIFICATION Version 5.1 | Vol 3, Part G
+		 * page 2370
+		 *
+		 * 4.3.1 Exchange MTU
+		 *
+		 * This sub-procedure shall not be used on a BR/EDR physical
+		 * link since the MTU size is negotiated using L2CAP channel
+		 * configuration procedures.
+		 */
+		if (bt_att_get_link_type(att) == BT_ATT_LINK_BREDR) {
+			switch (opcode) {
+			case BT_ATT_OP_MTU_REQ:
+				goto not_supported;
+			}
+		}
+
 		found = true;
 
 		if (notify->callback)
@@ -846,6 +863,7 @@ static void handle_notify(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 			break;
 	}
 
+not_supported:
 	/*
 	 * If this was not a command and no handler was registered for it,
 	 * respond with "Not Supported"

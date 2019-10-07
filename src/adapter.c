@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <inttypes.h>
 #include <errno.h>
@@ -157,6 +158,7 @@ struct discovery_filter {
 	int16_t rssi;
 	GSList *uuids;
 	bool duplicate;
+	bool discoverable;
 };
 
 struct watch_client {
@@ -196,6 +198,7 @@ struct btd_adapter {
 	char *name;			/* controller device name */
 	char *short_name;		/* controller short name */
 	uint32_t supported_settings;	/* controller supported settings */
+	uint32_t pending_settings;	/* pending controller settings */
 	uint32_t current_settings;	/* current controller settings */
 
 	char *path;			/* adapter object path */
@@ -218,6 +221,7 @@ struct btd_adapter {
 	uint8_t discovery_type;		/* current active discovery type */
 	uint8_t discovery_enable;	/* discovery enabled/disabled */
 	bool discovery_suspended;	/* discovery has been suspended */
+	bool discovery_discoverable;	/* discoverable while discovering */
 	GSList *discovery_list;		/* list of discovery clients */
 	GSList *set_filter_list;	/* list of clients that specified
 					 * filter, but don't scan yet
@@ -509,8 +513,10 @@ static void settings_changed(struct btd_adapter *adapter, uint32_t settings)
 	changed_mask = adapter->current_settings ^ settings;
 
 	adapter->current_settings = settings;
+	adapter->pending_settings &= ~changed_mask;
 
 	DBG("Changed settings: 0x%08x", changed_mask);
+	DBG("Pending settings: 0x%08x", adapter->pending_settings);
 
 	if (changed_mask & MGMT_SETTING_POWERED) {
 	        g_dbus_emit_property_changed(dbus_conn, adapter->path,
@@ -596,9 +602,30 @@ static bool set_mode(struct btd_adapter *adapter, uint16_t opcode,
 							uint8_t mode)
 {
 	struct mgmt_mode cp;
+	uint32_t setting = 0;
 
 	memset(&cp, 0, sizeof(cp));
 	cp.val = mode;
+
+	switch (mode) {
+	case MGMT_OP_SET_POWERED:
+		setting = MGMT_SETTING_POWERED;
+		break;
+	case MGMT_OP_SET_CONNECTABLE:
+		setting = MGMT_SETTING_CONNECTABLE;
+		break;
+	case MGMT_OP_SET_FAST_CONNECTABLE:
+		setting = MGMT_SETTING_FAST_CONNECTABLE;
+		break;
+	case MGMT_OP_SET_DISCOVERABLE:
+		setting = MGMT_SETTING_DISCOVERABLE;
+		break;
+	case MGMT_OP_SET_BONDABLE:
+		setting = MGMT_SETTING_DISCOVERABLE;
+		break;
+	}
+
+	adapter->pending_settings |= setting;
 
 	DBG("sending set mode command for index %u", adapter->dev_id);
 
@@ -1575,10 +1602,12 @@ static gboolean start_discovery_timeout(gpointer user_data)
 	sd_cp = adapter->current_discovery_filter;
 
 	DBG("sending MGMT_OP_START_SERVICE_DISCOVERY %d, %d, %d",
-				sd_cp->rssi, sd_cp->type, sd_cp->uuid_count);
+				sd_cp->rssi, sd_cp->type,
+				btohs(sd_cp->uuid_count));
 
 	mgmt_send(adapter->mgmt, MGMT_OP_START_SERVICE_DISCOVERY,
-		  adapter->dev_id, sizeof(*sd_cp) + sd_cp->uuid_count * 16,
+		  adapter->dev_id, sizeof(*sd_cp) +
+		  btohs(sd_cp->uuid_count) * 16,
 		  sd_cp, start_discovery_complete, adapter, NULL);
 
 	return FALSE;
@@ -1818,7 +1847,21 @@ static void discovery_free(void *user_data)
 	g_free(client);
 }
 
-static void discovery_remove(struct watch_client *client)
+static bool set_discovery_discoverable(struct btd_adapter *adapter, bool enable)
+{
+	if (adapter->discovery_discoverable == enable)
+		return true;
+
+	/* Reset discoverable filter if already set */
+	if (enable && (adapter->current_settings & MGMT_OP_SET_DISCOVERABLE))
+		return true;
+
+	adapter->discovery_discoverable = enable;
+
+	return set_discoverable(adapter, enable, 0);
+}
+
+static void discovery_remove(struct watch_client *client, bool exit)
 {
 	struct btd_adapter *adapter = client->adapter;
 
@@ -1830,7 +1873,11 @@ static void discovery_remove(struct watch_client *client)
 	adapter->discovery_list = g_slist_remove(adapter->discovery_list,
 								client);
 
-	discovery_free(client);
+	if (!exit && client->discovery_filter)
+		adapter->set_filter_list = g_slist_prepend(
+					adapter->set_filter_list, client);
+	else
+		discovery_free(client);
 
 	/*
 	 * If there are other client discoveries in progress, then leave
@@ -1859,8 +1906,11 @@ static void stop_discovery_complete(uint8_t status, uint16_t length,
 		goto done;
 	}
 
-	if (client->msg)
+	if (client->msg) {
 		g_dbus_send_reply(dbus_conn, client->msg, DBUS_TYPE_INVALID);
+		dbus_message_unref(client->msg);
+		client->msg = NULL;
+	}
 
 	adapter->discovery_type = 0x00;
 	adapter->discovery_enable = 0x00;
@@ -1873,7 +1923,7 @@ static void stop_discovery_complete(uint8_t status, uint16_t length,
 	trigger_passive_scanning(adapter);
 
 done:
-	discovery_remove(client);
+	discovery_remove(client, false);
 }
 
 static int compare_sender(gconstpointer a, gconstpointer b)
@@ -2028,7 +2078,7 @@ static int discovery_filter_to_mgmt_cp(struct btd_adapter *adapter,
 
 	cp->type = discovery_type;
 	cp->rssi = rssi;
-	cp->uuid_count = uuid_count;
+	cp->uuid_count = htobs(uuid_count);
 	populate_mgmt_filter_uuids(cp->uuids, uuids);
 
 	g_slist_free(uuids);
@@ -2066,6 +2116,8 @@ static bool filters_equal(struct mgmt_cp_start_service_discovery *a,
 static int update_discovery_filter(struct btd_adapter *adapter)
 {
 	struct mgmt_cp_start_service_discovery *sd_cp;
+	GSList *l;
+
 
 	DBG("");
 
@@ -2074,6 +2126,18 @@ static int update_discovery_filter(struct btd_adapter *adapter)
 				"discovery_filter_to_mgmt_cp returned error");
 		return -ENOMEM;
 	}
+
+	for (l = adapter->discovery_list; l; l = g_slist_next(l)) {
+		struct watch_client *client = l->data;
+
+		if (!client->discovery_filter)
+			continue;
+
+		if (client->discovery_filter->discoverable)
+			break;
+	}
+
+	set_discovery_discoverable(adapter, l ? true : false);
 
 	/*
 	 * If filters are equal, then don't update scan, except for when
@@ -2094,24 +2158,27 @@ static int update_discovery_filter(struct btd_adapter *adapter)
 	return -EINPROGRESS;
 }
 
-static int discovery_stop(struct watch_client *client)
+static int discovery_stop(struct watch_client *client, bool exit)
 {
 	struct btd_adapter *adapter = client->adapter;
 	struct mgmt_cp_stop_discovery cp;
 
 	/* Check if there are more client discovering */
 	if (g_slist_next(adapter->discovery_list)) {
-		discovery_remove(client);
+		discovery_remove(client, exit);
 		update_discovery_filter(adapter);
 		return 0;
 	}
+
+	if (adapter->discovery_discoverable)
+		set_discovery_discoverable(adapter, false);
 
 	/*
 	 * In the idle phase of a discovery, there is no need to stop it
 	 * and so it is enough to send out the signal and just return.
 	 */
 	if (adapter->discovery_enable == 0x00) {
-		discovery_remove(client);
+		discovery_remove(client, exit);
 		adapter->discovering = false;
 		g_dbus_emit_property_changed(dbus_conn, adapter->path,
 					ADAPTER_INTERFACE, "Discovering");
@@ -2136,7 +2203,7 @@ static void discovery_disconnect(DBusConnection *conn, void *user_data)
 
 	DBG("owner %s", client->owner);
 
-	discovery_stop(client);
+	discovery_stop(client, true);
 }
 
 /*
@@ -2200,6 +2267,7 @@ static DBusMessage *start_discovery(DBusConnection *conn,
 					     adapter->set_filter_list, client);
 		adapter->discovery_list = g_slist_prepend(
 					      adapter->discovery_list, client);
+
 		goto done;
 	}
 
@@ -2324,6 +2392,17 @@ static bool parse_duplicate_data(DBusMessageIter *value,
 	return true;
 }
 
+static bool parse_discoverable(DBusMessageIter *value,
+					struct discovery_filter *filter)
+{
+	if (dbus_message_iter_get_arg_type(value) != DBUS_TYPE_BOOLEAN)
+		return false;
+
+	dbus_message_iter_get_basic(value, &filter->discoverable);
+
+	return true;
+}
+
 struct filter_parser {
 	const char *name;
 	bool (*func)(DBusMessageIter *iter, struct discovery_filter *filter);
@@ -2333,6 +2412,7 @@ struct filter_parser {
 	{ "Pathloss", parse_pathloss },
 	{ "Transport", parse_transport },
 	{ "DuplicateData", parse_duplicate_data },
+	{ "Discoverable", parse_discoverable },
 	{ }
 };
 
@@ -2372,6 +2452,7 @@ static bool parse_discovery_filter_dict(struct btd_adapter *adapter,
 	(*filter)->rssi = DISTANCE_VAL_INVALID;
 	(*filter)->type = get_scan_type(adapter);
 	(*filter)->duplicate = false;
+	(*filter)->discoverable = false;
 
 	dbus_message_iter_init(msg, &iter);
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY ||
@@ -2417,8 +2498,10 @@ static bool parse_discovery_filter_dict(struct btd_adapter *adapter,
 		goto invalid_args;
 
 	DBG("filtered discovery params: transport: %d rssi: %d pathloss: %d "
-		" duplicate data: %s ", (*filter)->type, (*filter)->rssi,
-		(*filter)->pathloss, (*filter)->duplicate ? "true" : "false");
+		" duplicate data: %s discoverable %s", (*filter)->type,
+		(*filter)->rssi, (*filter)->pathloss,
+		(*filter)->duplicate ? "true" : "false",
+		(*filter)->discoverable ? "true" : "false");
 
 	return true;
 
@@ -2510,7 +2593,7 @@ static DBusMessage *stop_discovery(DBusConnection *conn,
 	if (client->msg)
 		return btd_error_busy(msg);
 
-	err = discovery_stop(client);
+	err = discovery_stop(client, false);
 	switch (err) {
 	case 0:
 		return dbus_message_new_method_return(msg);
@@ -2739,12 +2822,14 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 	else
 		current_enable = FALSE;
 
-	if (enable == current_enable) {
+	if (enable == current_enable || adapter->pending_settings & setting) {
 		g_dbus_pending_property_success(id);
 		return;
 	}
 
 	mode = (enable == TRUE) ? 0x01 : 0x00;
+
+	adapter->pending_settings |= setting;
 
 	switch (setting) {
 	case MGMT_SETTING_POWERED:
@@ -2798,7 +2883,7 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 	data->id = id;
 
 	if (mgmt_send(adapter->mgmt, opcode, adapter->dev_id, len, param,
-				property_set_mode_complete, data, g_free) > 0)
+			property_set_mode_complete, data, g_free) > 0)
 		return;
 
 	g_free(data);
@@ -2854,6 +2939,9 @@ static void property_set_discoverable(const GDBusPropertyTable *property,
 		return;
 	}
 
+	/* Reset discovery_discoverable as Discoverable takes precedence */
+	adapter->discovery_discoverable = false;
+
 	property_set_mode(adapter, MGMT_SETTING_DISCOVERABLE, iter, id);
 }
 
@@ -2875,6 +2963,7 @@ static void property_set_discoverable_timeout(
 				GDBusPendingPropertySet id, void *user_data)
 {
 	struct btd_adapter *adapter = user_data;
+	bool enabled;
 	dbus_uint32_t value;
 
 	dbus_message_iter_get_basic(iter, &value);
@@ -2888,8 +2977,19 @@ static void property_set_discoverable_timeout(
 	g_dbus_emit_property_changed(dbus_conn, adapter->path,
 				ADAPTER_INTERFACE, "DiscoverableTimeout");
 
+	if (adapter->pending_settings & MGMT_SETTING_DISCOVERABLE) {
+		if (adapter->current_settings & MGMT_SETTING_DISCOVERABLE)
+			enabled = false;
+		else
+			enabled = true;
+	} else {
+		if (adapter->current_settings & MGMT_SETTING_DISCOVERABLE)
+			enabled = true;
+		else
+			enabled = false;
+	}
 
-	if (adapter->current_settings & MGMT_SETTING_DISCOVERABLE)
+	if (enabled)
 		set_discoverable(adapter, 0x01, adapter->discoverable_timeout);
 }
 
@@ -7754,6 +7854,19 @@ int adapter_set_io_capability(struct btd_adapter *adapter, uint8_t io_cap)
 {
 	struct mgmt_cp_set_io_capability cp;
 
+	if (!main_opts.pairable) {
+		if (io_cap == IO_CAPABILITY_INVALID) {
+			if (adapter->current_settings & MGMT_SETTING_BONDABLE)
+				set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x00);
+
+			return 0;
+		}
+
+		if (!(adapter->current_settings & MGMT_SETTING_BONDABLE))
+			set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x01);
+	} else if (io_cap == IO_CAPABILITY_INVALID)
+		io_cap = IO_CAPABILITY_NOINPUTNOOUTPUT;
+
 	memset(&cp, 0, sizeof(cp));
 	cp.io_capability = io_cap;
 
@@ -8682,7 +8795,8 @@ static void read_info_complete(uint8_t status, uint16_t length,
 
 	set_name(adapter, btd_adapter_get_name(adapter));
 
-	if (!(adapter->current_settings & MGMT_SETTING_BONDABLE))
+	if (main_opts.pairable &&
+			!(adapter->current_settings & MGMT_SETTING_BONDABLE))
 		set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x01);
 
 	if (!kernel_conn_control)
@@ -8826,7 +8940,6 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 {
 	const struct mgmt_rp_read_commands *rp = param;
 	uint16_t num_commands, num_events;
-	const uint16_t *opcode;
 	size_t expected_len;
 	int i;
 
@@ -8856,10 +8969,8 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 		return;
 	}
 
-	opcode = rp->opcodes;
-
 	for (i = 0; i < num_commands; i++) {
-		uint16_t op = get_le16(opcode++);
+		uint16_t op = get_le16(rp->opcodes + i);
 
 		if (op == MGMT_OP_ADD_DEVICE) {
 			DBG("enabling kernel-side connection control");
