@@ -4,11 +4,11 @@ Origin: vendor
 Author: Nobuhiro Iwamatsu <iwamatsu@debian.org>
 
 diff --git a/src/bluetooth.conf b/src/bluetooth.conf
-index 10d2d36..dea71b8 100644
+index 8a1e25801..d6e1c7a03 100644
 --- a/src/bluetooth.conf
 +++ b/src/bluetooth.conf
-@@ -24,6 +24,11 @@
-     <allow send_interface="org.freedesktop.DBus.Properties"/>
+@@ -22,6 +22,11 @@
+     <allow send_interface="org.mpris.MediaPlayer2.Player"/>
    </policy>
  
 +  <!-- allow users of bluetooth group to communicate -->
@@ -16,6 +16,6 @@ index 10d2d36..dea71b8 100644
 +    <allow send_destination="org.bluez"/>
 +  </policy>
 +
-   <policy at_console="true">
+   <policy context="default">
      <allow send_destination="org.bluez"/>
    </policy>
