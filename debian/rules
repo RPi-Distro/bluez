@@ -36,7 +36,7 @@ CONFIGURE_FLAGS := \
 
 override_dh_install:
 	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libbluetooth.la
-	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/plugins/sixaxis.la
+	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/bluetooth/plugins/sixaxis.la
 
 	dh_install
 
