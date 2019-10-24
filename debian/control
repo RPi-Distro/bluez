@@ -3,7 +3,7 @@ Maintainer: Debian Bluetooth Maintainers <team+pkg-bluetooth@tracker.debian.org>
 Uploaders: Nobuhiro Iwamatsu <iwamatsu@debian.org>
 Section: admin
 Priority: optional
-Build-Depends: debhelper (>= 10),
+Build-Depends: debhelper (>= 12),
                flex,
                bison,
                libdbus-glib-1-dev,
