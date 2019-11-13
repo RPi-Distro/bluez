@@ -1,6 +1,8 @@
 bluez (5.51-1) experimental; urgency=medium
 
   * Update to 5.51.
+  * Fix lintian warnings:
+    - skip-systemd-native-flag-missing-pre-depends.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 07 Oct 2019 20:10:25 +0900
 

@@ -74,6 +74,7 @@ Depends: ${shlibs:Depends},
          udev,
          lsb-base,
          dbus
+Pre-Depends: ${misc:Pre-Depends}
 Suggests: pulseaudio-module-bluetooth
 Breaks: udev (<< 170-1)
 Conflicts: bluez-utils (<= 3.36-3),
