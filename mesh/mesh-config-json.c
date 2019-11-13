@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <ftw.h>
 #include <libgen.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -45,7 +46,7 @@
 #define MIN_SEQ_CACHE_VALUE	(2 * 32)
 #define MIN_SEQ_CACHE_TIME	(5 * 60)
 
-#define CHECK_KEY_IDX_RANGE(x) (((x) >= 0) && ((x) <= 4095))
+#define CHECK_KEY_IDX_RANGE(x) ((x) <= 4095)
 
 struct mesh_config {
 	json_object *jnode;
@@ -263,19 +264,44 @@ static json_object *get_key_object(json_object *jarray, uint16_t idx)
 
 	for (i = 0; i < sz; ++i) {
 		json_object *jentry, *jvalue;
-		uint32_t jidx;
+		const char *str;
+		uint16_t jidx;
 
 		jentry = json_object_array_get_idx(jarray, i);
 		if (!json_object_object_get_ex(jentry, "index", &jvalue))
 			return NULL;
 
-		jidx = json_object_get_int(jvalue);
+		str = json_object_get_string(jvalue);
+		if (sscanf(str, "%04hx", &jidx) != 1)
+			return NULL;
 
 		if (jidx == idx)
 			return jentry;
 	}
 
 	return NULL;
+}
+
+static bool get_key_index(json_object *jobj, const char *keyword,
+								uint16_t *index)
+{
+	uint16_t idx;
+	json_object *jvalue;
+	const char *str;
+
+	if (!json_object_object_get_ex(jobj, keyword, &jvalue))
+		return false;
+
+	str = json_object_get_string(jvalue);
+
+	if (sscanf(str, "%04hx", &idx) != 1)
+		return false;
+
+	if (!CHECK_KEY_IDX_RANGE(idx))
+		return false;
+
+	*index = (uint16_t) idx;
+	return true;
 }
 
 static json_object *jarray_key_del(json_object *jarray, int16_t idx)
@@ -288,16 +314,13 @@ static json_object *jarray_key_del(json_object *jarray, int16_t idx)
 		return NULL;
 
 	for (i = 0; i < sz; ++i) {
-		json_object *jentry, *jvalue;
+		json_object *jentry;
+		uint16_t nidx;
 
 		jentry = json_object_array_get_idx(jarray, i);
 
-		if (json_object_object_get_ex(jentry, "index", &jvalue)) {
-			int tmp = json_object_get_int(jvalue);
-
-			if (tmp == idx)
-				continue;
-		}
+		if (get_key_index(jentry, "index", &nidx) && nidx == idx)
+			continue;
 
 		json_object_get(jentry);
 		json_object_array_add(jarray_new, jentry);
@@ -416,21 +439,6 @@ static bool read_device_key(json_object *jobj, uint8_t key_buf[16])
 	if (!str2hex(str, strlen(str), key_buf, 16))
 		return false;
 
-	return true;
-}
-
-static bool get_key_index(json_object *jobj, const char *keyword,
-								uint16_t *index)
-{
-	int idx;
-
-	if (!get_int(jobj, keyword, &idx))
-		return false;
-
-	if (!CHECK_KEY_IDX_RANGE(idx))
-		return false;
-
-	*index = (uint16_t) idx;
 	return true;
 }
 
@@ -570,6 +578,7 @@ bool mesh_config_net_key_add(struct mesh_config *cfg, uint16_t idx,
 
 	jnode = cfg->jnode;
 
+	l_debug("netKey %4.4x", idx);
 	json_object_object_get_ex(jnode, "netKeys", &jarray);
 	if (jarray)
 		jentry = get_key_object(jarray, idx);
@@ -835,17 +844,22 @@ bool mesh_config_app_key_del(struct mesh_config *cfg, uint16_t net_idx,
 	return save_config(jnode, cfg->node_dir_path);
 }
 
-bool mesh_config_model_binding_add(struct mesh_config *cfg, uint8_t ele_idx,
-					bool vendor, uint32_t mod_id,
+bool mesh_config_model_binding_add(struct mesh_config *cfg, uint16_t ele_addr,
+						bool vendor, uint32_t mod_id,
 							uint16_t app_idx)
 {
 	json_object *jnode, *jmodel, *jstring, *jarray = NULL;
+	int ele_idx;
 	char buf[5];
 
 	if (!cfg)
 		return false;
 
 	jnode = cfg->jnode;
+
+	ele_idx = get_element_index(jnode, ele_addr);
+	if (ele_idx < 0)
+		return false;
 
 	jmodel = get_element_model(jnode, ele_idx, mod_id, vendor);
 	if (!jmodel)
@@ -875,17 +889,22 @@ bool mesh_config_model_binding_add(struct mesh_config *cfg, uint8_t ele_idx,
 	return save_config(jnode, cfg->node_dir_path);
 }
 
-bool mesh_config_model_binding_del(struct mesh_config *cfg, uint8_t ele_idx,
-					bool vendor, uint32_t mod_id,
+bool mesh_config_model_binding_del(struct mesh_config *cfg, uint16_t ele_addr,
+						bool vendor, uint32_t mod_id,
 							uint16_t app_idx)
 {
 	json_object *jnode, *jmodel, *jarray, *jarray_new;
+	int ele_idx;
 	char buf[5];
 
 	if (!cfg)
 		return false;
 
 	jnode = cfg->jnode;
+
+	ele_idx = get_element_index(jnode, ele_addr);
+	if (ele_idx < 0)
+		return false;
 
 	jmodel = get_element_model(jnode, ele_idx, mod_id, vendor);
 	if (!jmodel)
@@ -955,14 +974,19 @@ static bool parse_bindings(json_object *jarray, struct mesh_config_model *mod)
 	mod->bindings = l_new(uint16_t, cnt);
 
 	for (i = 0; i < cnt; ++i) {
-		int idx;
+		uint16_t idx;
+		const char *str;
 		json_object *jvalue;
 
 		jvalue = json_object_array_get_idx(jarray, i);
 		if (!jvalue)
 			return false;
 
-		idx = json_object_get_int(jvalue);
+		str = json_object_get_string(jvalue);
+
+		if (sscanf(str, "%04hx", &idx) != 1)
+			return false;
+
 		if (!CHECK_KEY_IDX_RANGE(idx))
 			return false;
 
@@ -1818,7 +1842,7 @@ bool mesh_config_net_key_set_phase(struct mesh_config *cfg, uint16_t idx,
 	return save_config(jnode, cfg->node_dir_path);
 }
 
-bool mesh_config_model_pub_add(struct mesh_config *cfg, uint16_t addr,
+bool mesh_config_model_pub_add(struct mesh_config *cfg, uint16_t ele_addr,
 					uint32_t mod_id, bool vendor,
 					struct mesh_config_pub *pub)
 {
@@ -1831,7 +1855,7 @@ bool mesh_config_model_pub_add(struct mesh_config *cfg, uint16_t addr,
 
 	jnode = cfg->jnode;
 
-	ele_idx = get_element_index(jnode, addr);
+	ele_idx = get_element_index(jnode, ele_addr);
 	if (ele_idx < 0)
 		return false;
 
@@ -1886,13 +1910,13 @@ fail:
 	return false;
 }
 
-static bool delete_model_property(json_object *jnode, uint16_t addr,
+static bool delete_model_property(json_object *jnode, uint16_t ele_addr,
 			uint32_t mod_id, bool vendor, const char *keyword)
 {
 	json_object *jmodel;
 	int ele_idx;
 
-	ele_idx = get_element_index(jnode, addr);
+	ele_idx = get_element_index(jnode, ele_addr);
 	if (ele_idx < 0)
 		return false;
 
@@ -1915,7 +1939,7 @@ bool mesh_config_model_pub_del(struct mesh_config *cfg, uint16_t addr,
 	return save_config(cfg->jnode, cfg->node_dir_path);
 }
 
-bool mesh_config_model_sub_add(struct mesh_config *cfg, uint16_t addr,
+bool mesh_config_model_sub_add(struct mesh_config *cfg, uint16_t ele_addr,
 						uint32_t mod_id, bool vendor,
 						struct mesh_config_sub *sub)
 {
@@ -1928,7 +1952,7 @@ bool mesh_config_model_sub_add(struct mesh_config *cfg, uint16_t addr,
 
 	jnode = cfg->jnode;
 
-	ele_idx = get_element_index(jnode, addr);
+	ele_idx = get_element_index(jnode, ele_addr);
 	if (ele_idx < 0)
 		return false;
 
@@ -1966,7 +1990,7 @@ bool mesh_config_model_sub_add(struct mesh_config *cfg, uint16_t addr,
 	return save_config(jnode, cfg->node_dir_path);
 }
 
-bool mesh_config_model_sub_del(struct mesh_config *cfg, uint16_t addr,
+bool mesh_config_model_sub_del(struct mesh_config *cfg, uint16_t ele_addr,
 						uint32_t mod_id, bool vendor,
 						struct mesh_config_sub *sub)
 {
@@ -1979,7 +2003,7 @@ bool mesh_config_model_sub_del(struct mesh_config *cfg, uint16_t addr,
 
 	jnode = cfg->jnode;
 
-	ele_idx = get_element_index(jnode, addr);
+	ele_idx = get_element_index(jnode, ele_addr);
 	if (ele_idx < 0)
 		return false;
 
@@ -2047,7 +2071,8 @@ bool mesh_config_write_seq_number(struct mesh_config *cfg, uint32_t seq,
 		return mesh_config_save(cfg, true, NULL, NULL);
 	}
 
-	if (get_int(cfg->jnode, "sequenceNumber", &value))
+	/* If resetting seq to Zero, make sure cached value reset as well */
+	if (seq && get_int(cfg->jnode, "sequenceNumber", &value))
 		cached = (uint32_t)value;
 
 	/*

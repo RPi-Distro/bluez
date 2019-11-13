@@ -353,9 +353,65 @@ static void forward_model(void *a, void *b)
 		fwd->done = true;
 }
 
+static int app_packet_decrypt(struct mesh_net *net, const uint8_t *data,
+				uint16_t size, bool szmict, uint16_t src,
+				uint16_t dst, uint8_t *virt, uint16_t virt_size,
+				uint8_t key_aid, uint32_t seq,
+				uint32_t iv_idx, uint8_t *out)
+{
+	struct l_queue *app_keys = mesh_net_get_app_keys(net);
+	const struct l_queue_entry *entry;
+
+	if (!app_keys)
+		return -1;
+
+	for (entry = l_queue_get_entries(app_keys); entry;
+							entry = entry->next) {
+		const uint8_t *old_key = NULL, *new_key = NULL;
+		uint8_t old_key_aid, new_key_aid;
+		int app_idx;
+		bool decrypted;
+
+		app_idx = appkey_get_key_idx(entry->data,
+							&old_key, &old_key_aid,
+							&new_key, &new_key_aid);
+
+		if (app_idx < 0)
+			continue;
+
+		if (old_key && old_key_aid == key_aid) {
+			decrypted = mesh_crypto_payload_decrypt(NULL, 0, data,
+						size, szmict, src, dst, key_aid,
+						seq, iv_idx, out, old_key);
+
+			if (decrypted) {
+				print_packet("Used App Key", old_key, 16);
+				return app_idx;
+			}
+
+			print_packet("Failed App Key", old_key, 16);
+		}
+
+		if (new_key && new_key_aid == key_aid) {
+			decrypted = mesh_crypto_payload_decrypt(NULL, 0, data,
+						size, szmict, src, dst, key_aid,
+						seq, iv_idx, out, new_key);
+
+			if (decrypted) {
+				print_packet("Used App Key", new_key, 16);
+				return app_idx;
+			}
+
+			print_packet("Failed App Key", new_key, 16);
+		}
+	}
+
+	return -1;
+}
+
 static int dev_packet_decrypt(struct mesh_node *node, const uint8_t *data,
 				uint16_t size, bool szmict, uint16_t src,
-				uint16_t dst, uint8_t key_id, uint32_t seq,
+				uint16_t dst, uint8_t key_aid, uint32_t seq,
 				uint32_t iv_idx, uint8_t *out)
 {
 	uint8_t dev_key[16];
@@ -366,7 +422,7 @@ static int dev_packet_decrypt(struct mesh_node *node, const uint8_t *data,
 		return -1;
 
 	if (mesh_crypto_payload_decrypt(NULL, 0, data, size, szmict, src,
-					dst, key_id, seq, iv_idx, out, key))
+					dst, key_aid, seq, iv_idx, out, key))
 		return APP_IDX_DEV_LOCAL;
 
 	if (!keyring_get_remote_dev_key(node, src, dev_key))
@@ -374,7 +430,7 @@ static int dev_packet_decrypt(struct mesh_node *node, const uint8_t *data,
 
 	key = dev_key;
 	if (mesh_crypto_payload_decrypt(NULL, 0, data, size, szmict, src,
-					dst, key_id, seq, iv_idx, out, key))
+					dst, key_aid, seq, iv_idx, out, key))
 		return APP_IDX_DEV_REMOTE;
 
 	return -1;
@@ -382,7 +438,7 @@ static int dev_packet_decrypt(struct mesh_node *node, const uint8_t *data,
 
 static int virt_packet_decrypt(struct mesh_net *net, const uint8_t *data,
 				uint16_t size, bool szmict, uint16_t src,
-				uint16_t dst, uint8_t key_id, uint32_t seq,
+				uint16_t dst, uint8_t key_aid, uint32_t seq,
 				uint32_t iv_idx, uint8_t *out,
 				struct mesh_virtual **decrypt_virt)
 {
@@ -395,10 +451,10 @@ static int virt_packet_decrypt(struct mesh_net *net, const uint8_t *data,
 		if (virt->addr != dst)
 			continue;
 
-		decrypt_idx = appkey_packet_decrypt(net, szmict, seq,
-							iv_idx, src, dst,
-							virt->label, 16, key_id,
-							data, size, out);
+		decrypt_idx = app_packet_decrypt(net, data, size, szmict, src,
+							dst, virt->label, 16,
+							key_aid, seq, iv_idx,
+							out);
 
 		if (decrypt_idx >= 0) {
 			*decrypt_virt = virt;
@@ -561,7 +617,6 @@ static int update_binding(struct mesh_node *node, uint16_t addr, uint32_t id,
 	int status;
 	struct mesh_model *mod;
 	bool is_present, is_vendor;
-	uint8_t ele_idx;
 
 	mod = find_model(node, addr, id, &status);
 	if (!mod) {
@@ -586,12 +641,10 @@ static int update_binding(struct mesh_node *node, uint16_t addr, uint32_t id,
 	if (is_present && !unbind)
 		return MESH_STATUS_SUCCESS;
 
-	ele_idx = (uint8_t) node_get_element_idx(node, addr);
-
 	if (unbind) {
 		model_unbind_idx(node, mod, app_idx);
 		if (!mesh_config_model_binding_del(node_config_get(node),
-					ele_idx, is_vendor, id, app_idx))
+					addr, is_vendor, id, app_idx))
 			return MESH_STATUS_STORAGE_FAIL;
 
 		return MESH_STATUS_SUCCESS;
@@ -601,7 +654,7 @@ static int update_binding(struct mesh_node *node, uint16_t addr, uint32_t id,
 		return MESH_STATUS_INSUFF_RESOURCES;
 
 	if (!mesh_config_model_binding_add(node_config_get(node),
-					ele_idx, is_vendor, id, app_idx))
+					addr, is_vendor, id, app_idx))
 		return MESH_STATUS_STORAGE_FAIL;
 
 	model_bind_idx(node, mod, app_idx);
@@ -735,14 +788,16 @@ static int add_sub(struct mesh_net *net, struct mesh_model *mod,
 }
 
 static void send_dev_key_msg_rcvd(struct mesh_node *node, uint8_t ele_idx,
-					uint16_t src, uint16_t net_idx,
-					uint16_t size, const uint8_t *data)
+					uint16_t src, uint16_t app_idx,
+					uint16_t net_idx, uint16_t size,
+					const uint8_t *data)
 {
 	struct l_dbus *dbus = dbus_get_bus();
 	struct l_dbus_message *msg;
 	struct l_dbus_message_builder *builder;
 	const char *owner;
 	const char *path;
+	bool remote = (app_idx != APP_IDX_DEV_LOCAL);
 
 	owner = node_get_owner(node);
 	path = node_get_element_path(node, ele_idx);
@@ -758,6 +813,7 @@ static void send_dev_key_msg_rcvd(struct mesh_node *node, uint8_t ele_idx,
 	builder = l_dbus_message_builder_new(msg);
 
 	l_dbus_message_builder_append_basic(builder, 'q', &src);
+	l_dbus_message_builder_append_basic(builder, 'b', &remote);
 	l_dbus_message_builder_append_basic(builder, 'q', &net_idx);
 	dbus_append_byte_array(builder, data, size);
 
@@ -768,7 +824,7 @@ static void send_dev_key_msg_rcvd(struct mesh_node *node, uint8_t ele_idx,
 }
 
 static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx, bool is_sub,
-					uint16_t src, uint16_t key_idx,
+					uint16_t src, uint16_t app_idx,
 					uint16_t size, const uint8_t *data)
 {
 	struct l_dbus *dbus = dbus_get_bus();
@@ -790,7 +846,7 @@ static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx, bool is_sub,
 	builder = l_dbus_message_builder_new(msg);
 
 	l_dbus_message_builder_append_basic(builder, 'q', &src);
-	l_dbus_message_builder_append_basic(builder, 'q', &key_idx);
+	l_dbus_message_builder_append_basic(builder, 'q', &app_idx);
 	l_dbus_message_builder_append_basic(builder, 'b', &is_sub);
 
 	dbus_append_byte_array(builder, data, size);
@@ -852,10 +908,10 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 							iv_index, clear_text,
 							&decrypt_virt);
 	else
-		decrypt_idx = appkey_packet_decrypt(net, szmict, seq0,
-							iv_index, src, dst,
-							NULL, 0, key_aid, data,
-							size, clear_text);
+		decrypt_idx = app_packet_decrypt(net, data, size, szmict, src,
+						dst, NULL, 0,
+						key_aid, seq0, iv_index,
+						clear_text);
 
 	if (decrypt_idx < 0) {
 		l_error("model.c - Failed to decrypt application payload");
@@ -936,8 +992,8 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 			else if (decrypt_idx == APP_IDX_DEV_REMOTE ||
 				(decrypt_idx == APP_IDX_DEV_LOCAL &&
 				 mesh_net_is_local_address(net, src, 1)))
-				send_dev_key_msg_rcvd(node, i, src, 0,
-						forward.size, forward.data);
+				send_dev_key_msg_rcvd(node, i, src, decrypt_idx,
+						0, forward.size, forward.data);
 		}
 
 		/*

@@ -123,6 +123,7 @@ ell_headers = ell/util.h \
 			ell/main.h \
 			ell/strv.h \
 			ell/string.h \
+			ell/utf8.h \
 			ell/dbus.h \
 			ell/dbus-service.h \
 			ell/dbus-client.h
@@ -142,6 +143,7 @@ ell_sources = ell/private.h ell/missing.h \
 			ell/string.c \
 			ell/cipher.c \
 			ell/checksum.c \
+			ell/utf8.c \
 			ell/dbus-private.h \
 			ell/dbus.c \
 			ell/dbus-message.c \
@@ -161,6 +163,10 @@ endif
 CLEANFILES += $(ell_built_sources)
 
 noinst_LTLIBRARIES += src/libshared-glib.la src/libshared-mainloop.la
+
+if LIBSHARED_ELL
+noinst_LTLIBRARIES += src/libshared-ell.la
+endif
 
 shared_sources = src/shared/io.h src/shared/timeout.h \
 			src/shared/queue.h src/shared/queue.c \
@@ -206,10 +212,11 @@ src_libshared_mainloop_la_SOURCES = $(shared_sources) \
 				src/shared/mainloop-notify.c
 
 if LIBSHARED_ELL
-noinst_LTLIBRARIES += src/libshared-ell.la
-
 src_libshared_ell_la_SOURCES = $(shared_sources) \
-				src/shared/io-ell.c
+				src/shared/io-ell.c \
+				src/shared/timeout-ell.c \
+				src/shared/mainloop.h \
+				src/shared/mainloop-ell.c
 endif
 
 attrib_sources = attrib/att.h attrib/att-database.h attrib/att.c \
@@ -513,6 +520,16 @@ unit_test_midi_LDADD = src/libshared-glib.la \
 			$(GLIB_LIBS) $(ALSA_LIBS)
 endif
 
+if MESH
+unit_tests += unit/test-mesh-crypto
+unit_test_mesh_crypto_CPPFLAGS = $(ell_cflags)
+unit_test_mesh_crypto_SOURCES = unit/test-mesh-crypto.c \
+				mesh/crypto.h ell/internal ell/ell.h \
+				$(ell_sources)
+unit_test_mesh_crypto_LDADD = src/libshared-ell.la \
+			$(ell_ldadd)
+endif
+
 if MAINTAINER_MODE
 noinst_PROGRAMS += $(unit_tests)
 endif
@@ -574,6 +591,7 @@ src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
 
 tools/%.rules:
+	$(AM_V_at)$(MKDIR_P) tools
 	$(AM_V_GEN)cp $(srcdir)/$(subst 97-,,$@) $@
 
 $(lib_libbluetooth_la_OBJECTS): $(local_headers)
