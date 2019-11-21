@@ -1,6 +1,7 @@
 bluez (5.52-1) unstable; urgency=medium
 
   * Update to 5.52.
+  * Add bluez-source package.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 13 Nov 2019 13:26:08 +0900
 
