@@ -57,3 +57,13 @@ override_dh_auto_test:
 override_dh_fixperms-indep:
 	dh_fixperms
 	chmod 0644 debian/bluez-test-scripts/usr/share/doc/bluez-test-scripts/examples/*
+
+override_dh_auto_install-indep: build_bluez-source
+BUILDDIRSOURCE := $(shell pwd)/debian/bluez-source-tmp
+build_bluez-source:
+	install -d debian/bluez-source/usr/src
+	mkdir -p $(BUILDDIRSOURCE)
+	tar --exclude debian --exclude .git --exclude .pc -cf - . | (cd $(BUILDDIRSOURCE) && tar -xf -)
+	cd $(dir $(BUILDDIRSOURCE)) \
+		&& tar -cjf $(shell pwd)/debian/bluez-source/usr/src/bluez.tar.bz2 \
+		$(notdir $(BUILDDIRSOURCE))
