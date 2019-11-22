@@ -1,4 +1,4 @@
-bluez (5.52-1) unstable; urgency=medium
+bluez (5.52-1) experimental; urgency=medium
 
   * Update to 5.52.
   * Add bluez-source package.
