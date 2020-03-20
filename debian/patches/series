@@ -11,3 +11,5 @@ shared-gatt-client-Fix-segfault-after-PIN-entry.patch
 main.conf-Add-more-details-Closes-904212.patch
 HOGP-must-only-accept-data-from-bonded-devices.patch
 HID-accepts-bonded-device-connections-only.patch
+input-hog-Attempt-to-set-security-level-if-not-bonde.patch
+input-Add-LEAutoSecurity-setting-to-input.conf.patch
