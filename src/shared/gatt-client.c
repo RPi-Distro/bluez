@@ -60,6 +60,7 @@ struct ready_cb {
 struct bt_gatt_client {
 	struct bt_att *att;
 	int ref_count;
+	uint8_t features;
 
 	struct bt_gatt_client *parent;
 	struct queue *clones;
@@ -94,7 +95,7 @@ struct bt_gatt_client {
 	struct queue *notify_list;
 	struct queue *notify_chrcs;
 	int next_reg_id;
-	unsigned int disc_id, notify_id, ind_id;
+	unsigned int disc_id, nfy_id, nfy_mult_id, ind_id;
 
 	/*
 	 * Handles of the GATT Service and the Service Changed characteristic
@@ -326,6 +327,7 @@ struct discovery_op {
 	struct queue *ext_prop_desc;
 	struct gatt_db_attribute *cur_svc;
 	struct gatt_db_attribute *hash;
+	uint8_t server_feat;
 	bool success;
 	uint16_t start;
 	uint16_t end;
@@ -1278,6 +1280,9 @@ static void notify_client_ready(struct bt_gatt_client *client, bool success,
 	bt_gatt_client_ref(client);
 	client->ready = success;
 
+	if (client->parent)
+		client->features = client->parent->features;
+
 	for (entry = queue_get_entries(client->ready_cbs); entry;
 							entry = entry->next) {
 		struct ready_cb *ready = entry->data;
@@ -1381,7 +1386,7 @@ static void db_hash_read_cb(bool success, uint8_t att_ecode,
 	util_hexdump(' ', value, len, client->debug_callback,
 						client->debug_data);
 
-	/* Store the new hash in the db */
+	/* Store ithe new hash in the db */
 	gatt_db_attribute_write(op->hash, 0, value, len, 0, NULL,
 					db_hash_write_value_cb, client);
 
@@ -1431,6 +1436,67 @@ static bool read_db_hash(struct discovery_op *op)
 	return true;
 }
 
+static void db_server_feat_read(bool success, uint8_t att_ecode,
+				struct bt_gatt_result *result, void *user_data)
+{
+	struct discovery_op *op = user_data;
+	struct bt_gatt_client *client = op->client;
+	const uint8_t *value;
+	uint16_t len, handle;
+	struct bt_gatt_iter iter;
+
+	if (!result)
+		return;
+
+	bt_gatt_iter_init(&iter, result);
+	bt_gatt_iter_next_read_by_type(&iter, &handle, &len, &value);
+
+	util_debug(client->debug_callback, client->debug_data,
+				"Server Features found: handle 0x%04x "
+				"length 0x%04x value 0x%02x", handle, len,
+				value[0]);
+
+	op->server_feat = value[0];
+}
+
+static void server_feat_read_value(struct gatt_db_attribute *attrib,
+						int err, const uint8_t *value,
+						size_t length, void *user_data)
+{
+	const uint8_t **feat = user_data;
+
+	if (err)
+		return;
+
+	*feat = value;
+}
+
+static void read_server_feat(struct discovery_op *op)
+{
+	struct bt_gatt_client *client = op->client;
+	struct gatt_db_attribute *attr = NULL;
+	const uint8_t *feat = NULL;
+	bt_uuid_t uuid;
+
+	bt_uuid16_create(&uuid, GATT_CHARAC_SERVER_FEAT);
+
+	gatt_db_find_by_type(client->db, 0x0001, 0xffff, &uuid,
+						get_first_attribute, &attr);
+	if (attr) {
+		/* Read stored value in the db */
+		gatt_db_attribute_read(attr, 0, BT_ATT_OP_READ_REQ, NULL,
+					server_feat_read_value, &feat);
+		if (feat)
+			return;
+	}
+
+	if (!bt_gatt_read_by_type(client->att, 0x0001, 0xffff, &uuid,
+							db_server_feat_read,
+							discovery_op_ref(op),
+							discovery_op_unref))
+		discovery_op_unref(op);
+}
+
 static void exchange_mtu_cb(bool success, uint8_t att_ecode, void *user_data)
 {
 	struct discovery_op *op = user_data;
@@ -1464,6 +1530,8 @@ static void exchange_mtu_cb(bool success, uint8_t att_ecode, void *user_data)
 					bt_att_get_mtu(client->att));
 
 discover:
+	read_server_feat(op);
+
 	if (read_db_hash(op)) {
 		op->success = false;
 		return;
@@ -1839,12 +1907,41 @@ static void service_changed_cb(uint16_t value_handle, const uint8_t *value,
 	queue_push_tail(client->svc_chngd_queue, op);
 }
 
+static void server_feat_write_value(struct gatt_db_attribute *attrib,
+						int err, void *user_data)
+{
+	struct bt_gatt_client *client = user_data;
+
+	util_debug(client->debug_callback, client->debug_data,
+			"Server Features Value set status: %d", err);
+}
+
+static void write_server_features(struct bt_gatt_client *client, uint8_t feat)
+{
+	bt_uuid_t uuid;
+	struct gatt_db_attribute *attr = NULL;
+
+	bt_uuid16_create(&uuid, GATT_CHARAC_SERVER_FEAT);
+
+	gatt_db_find_by_type(client->db, 0x0001, 0xffff, &uuid,
+						get_first_attribute, &attr);
+	if (!attr)
+		return;
+
+	/* Store value in the DB */
+	if (!gatt_db_attribute_write(attr, 0, &feat, sizeof(feat),
+					0, NULL, server_feat_write_value,
+					client))
+		util_debug(client->debug_callback, client->debug_data,
+					"Unable to store Server Features");
+}
+
 static void write_client_features(struct bt_gatt_client *client)
 {
 	bt_uuid_t uuid;
 	struct gatt_db_attribute *attr = NULL;
 	uint16_t handle;
-	uint8_t value;
+	const uint8_t *feat = NULL;
 
 	bt_uuid16_create(&uuid, GATT_CHARAC_CLI_FEAT);
 
@@ -1854,10 +1951,30 @@ static void write_client_features(struct bt_gatt_client *client)
 		return;
 
 	handle = gatt_db_attribute_get_handle(attr);
-	value = BT_GATT_CHRC_CLI_FEAT_ROBUST_CACHING;
 
-	bt_gatt_client_write_value(client, handle, &value, sizeof(value), NULL,
-								NULL, NULL);
+	client->features = BT_GATT_CHRC_CLI_FEAT_ROBUST_CACHING;
+
+	bt_uuid16_create(&uuid, GATT_CHARAC_SERVER_FEAT);
+
+	attr = NULL;
+	gatt_db_find_by_type(client->db, 0x0001, 0xffff, &uuid,
+						get_first_attribute, &attr);
+	if (attr) {
+		/* Read stored value in the db */
+		gatt_db_attribute_read(attr, 0, BT_ATT_OP_READ_REQ,
+						NULL, server_feat_read_value,
+						&feat);
+		if (feat && feat[0] & BT_GATT_CHRC_SERVER_FEAT_EATT)
+			client->features |= BT_GATT_CHRC_CLI_FEAT_EATT;
+	}
+
+	client->features |= BT_GATT_CHRC_CLI_FEAT_NFY_MULTI;
+
+	util_debug(client->debug_callback, client->debug_data,
+			"Writing Client Features 0x%02x", client->features);
+
+	bt_gatt_client_write_value(client, handle, &client->features,
+				sizeof(client->features), NULL, NULL, NULL);
 }
 
 static void init_complete(struct discovery_op *op, bool success,
@@ -1869,6 +1986,9 @@ static void init_complete(struct discovery_op *op, bool success,
 
 	if (!success)
 		goto fail;
+
+	if (op->server_feat)
+		write_server_features(client, op->server_feat);
 
 	write_client_features(client);
 
@@ -1909,7 +2029,7 @@ static bool gatt_client_init(struct bt_gatt_client *client, uint16_t mtu)
 	 * the MTU size is negotiated using L2CAP channel configuration
 	 * procedures.
 	 */
-	if (bt_att_get_link_type(client->att) == BT_ATT_LINK_BREDR)
+	if (bt_att_get_link_type(client->att) == BT_ATT_BREDR)
 		goto discover;
 
 	/* Check if MTU needs to be send */
@@ -1932,6 +2052,8 @@ static bool gatt_client_init(struct bt_gatt_client *client, uint16_t mtu)
 	return true;
 
 discover:
+	read_server_feat(op);
+
 	if (read_db_hash(op)) {
 		op->success = false;
 		goto done;
@@ -1952,9 +2074,10 @@ done:
 	return true;
 }
 
-struct pdu_data {
-	const void *pdu;
-	uint16_t length;
+struct value_data {
+	uint16_t handle;
+	uint16_t len;
+	const void *data;
 };
 
 static void disable_ccc_callback(uint8_t opcode, const void *pdu,
@@ -2005,43 +2128,61 @@ done:
 static void notify_handler(void *data, void *user_data)
 {
 	struct notify_data *notify_data = data;
-	struct pdu_data *pdu_data = user_data;
-	uint16_t value_handle;
-	const uint8_t *value = NULL;
+	struct value_data *value_data = user_data;
 
-	value_handle = get_le16(pdu_data->pdu);
-
-	if (notify_data->chrc->value_handle != value_handle)
+	if (notify_data->chrc->value_handle != value_data->handle)
 		return;
-
-	if (pdu_data->length > 2)
-		value = pdu_data->pdu + 2;
 
 	/*
 	 * Even if the notify data has a pending ATT request to write to the
 	 * CCC, there is really no reason not to notify the handlers.
 	 */
 	if (notify_data->notify)
-		notify_data->notify(value_handle, value, pdu_data->length - 2,
-							notify_data->user_data);
+		notify_data->notify(value_data->handle, value_data->data,
+				value_data->len, notify_data->user_data);
 }
 
-static void notify_cb(uint8_t opcode, const void *pdu, uint16_t length,
-								void *user_data)
+static void notify_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_client *client = user_data;
-	struct pdu_data pdu_data;
+	struct value_data data;
 
 	bt_gatt_client_ref(client);
 
-	memset(&pdu_data, 0, sizeof(pdu_data));
-	pdu_data.pdu = pdu;
-	pdu_data.length = length;
+	memset(&data, 0, sizeof(data));
 
-	queue_foreach(client->notify_list, notify_handler, &pdu_data);
+	if (opcode == BT_ATT_OP_HANDLE_NFY_MULT) {
+		while (length >= 4) {
+			data.handle = get_le16(pdu);
+			length -= 2;
+			pdu += 2;
 
-	if (opcode == BT_ATT_OP_HANDLE_VAL_IND && !client->parent)
-		bt_att_send(client->att, BT_ATT_OP_HANDLE_VAL_CONF, NULL, 0,
+			data.len = get_le16(pdu);
+			length -= 2;
+			pdu += 2;
+
+			data.data = pdu;
+
+			queue_foreach(client->notify_list, notify_handler,
+								&data);
+
+			length -= data.len;
+		}
+	} else {
+		data.handle = get_le16(pdu);
+		length -= 2;
+		pdu += 2;
+
+		data.len = length;
+		data.data = pdu;
+
+		queue_foreach(client->notify_list, notify_handler, &data);
+	}
+
+	if (opcode == BT_ATT_OP_HANDLE_IND && !client->parent)
+		bt_att_chan_send(chan, BT_ATT_OP_HANDLE_CONF, NULL, 0,
 							NULL, NULL, NULL);
 
 	bt_gatt_client_unref(client);
@@ -2060,7 +2201,8 @@ static void bt_gatt_client_free(struct bt_gatt_client *client)
 
 	if (client->att) {
 		bt_att_unregister_disconnect(client->att, client->disc_id);
-		bt_att_unregister(client->att, client->notify_id);
+		bt_att_unregister(client->att, client->nfy_id);
+		bt_att_unregister(client->att, client->nfy_mult_id);
 		bt_att_unregister(client->att, client->ind_id);
 		bt_att_unref(client->att);
 	}
@@ -2099,7 +2241,8 @@ static void att_disconnect_cb(int err, void *user_data)
 }
 
 static struct bt_gatt_client *gatt_client_new(struct gatt_db *db,
-							struct bt_att *att)
+							struct bt_att *att,
+							uint8_t features)
 {
 	struct bt_gatt_client *client;
 
@@ -2117,18 +2260,24 @@ static struct bt_gatt_client *gatt_client_new(struct gatt_db *db,
 	client->notify_chrcs = queue_new();
 	client->pending_requests = queue_new();
 
-	client->notify_id = bt_att_register(att, BT_ATT_OP_HANDLE_VAL_NOT,
+	client->nfy_id = bt_att_register(att, BT_ATT_OP_HANDLE_NFY,
 						notify_cb, client, NULL);
-	if (!client->notify_id)
+	if (!client->nfy_id)
 		goto fail;
 
-	client->ind_id = bt_att_register(att, BT_ATT_OP_HANDLE_VAL_IND,
+	client->nfy_mult_id = bt_att_register(att, BT_ATT_OP_HANDLE_NFY_MULT,
+						notify_cb, client, NULL);
+	if (!client->nfy_mult_id)
+		goto fail;
+
+	client->ind_id = bt_att_register(att, BT_ATT_OP_HANDLE_IND,
 						notify_cb, client, NULL);
 	if (!client->ind_id)
 		goto fail;
 
 	client->att = bt_att_ref(att);
 	client->db = gatt_db_ref(db);
+	client->features = features;
 
 	return client;
 
@@ -2140,14 +2289,15 @@ fail:
 
 struct bt_gatt_client *bt_gatt_client_new(struct gatt_db *db,
 							struct bt_att *att,
-							uint16_t mtu)
+							uint16_t mtu,
+							uint8_t features)
 {
 	struct bt_gatt_client *client;
 
 	if (!att || !db)
 		return NULL;
 
-	client = gatt_client_new(db, att);
+	client = gatt_client_new(db, att, features);
 	if (!client)
 		return NULL;
 
@@ -2166,7 +2316,7 @@ struct bt_gatt_client *bt_gatt_client_clone(struct bt_gatt_client *client)
 	if (!client)
 		return NULL;
 
-	clone = gatt_client_new(client->db, client->att);
+	clone = gatt_client_new(client->db, client->att, client->features);
 	if (!clone)
 		return NULL;
 
@@ -2284,12 +2434,31 @@ uint16_t bt_gatt_client_get_mtu(struct bt_gatt_client *client)
 	return bt_att_get_mtu(client->att);
 }
 
+struct bt_att *bt_gatt_client_get_att(struct bt_gatt_client *client)
+{
+	if (!client)
+		return NULL;
+
+	return client->att;
+}
+
 struct gatt_db *bt_gatt_client_get_db(struct bt_gatt_client *client)
 {
 	if (!client || !client->db)
 		return NULL;
 
 	return client->db;
+}
+
+uint8_t bt_gatt_client_get_features(struct bt_gatt_client *client)
+{
+	if (!client)
+		return 0;
+
+	if (client->parent)
+		return client->parent->features;
+
+	return client->features;
 }
 
 static bool match_req_id(const void *a, const void *b)
@@ -2499,7 +2668,9 @@ static void read_multiple_cb(uint8_t opcode, const void *pdu, uint16_t length,
 	uint8_t att_ecode;
 	bool success;
 
-	if (opcode != BT_ATT_OP_READ_MULT_RSP || (!pdu && length)) {
+	if ((opcode != BT_ATT_OP_READ_MULT_RSP &&
+			opcode != BT_ATT_OP_READ_MULT_VL_RSP) ||
+			(!pdu && length)) {
 		success = false;
 
 		if (opcode == BT_ATT_OP_ERROR_RSP)
@@ -2514,8 +2685,36 @@ static void read_multiple_cb(uint8_t opcode, const void *pdu, uint16_t length,
 		att_ecode = 0;
 	}
 
-	if (op->callback)
+	if (!op->callback)
+		return;
+
+	if (opcode == BT_ATT_OP_READ_MULT_RSP || att_ecode) {
 		op->callback(success, att_ecode, pdu, length, op->user_data);
+		return;
+	}
+
+	if (length < 2) {
+		op->callback(success, att_ecode, pdu, length, op->user_data);
+		return;
+	}
+
+	/* Parse response */
+	while (length >= 2) {
+		uint16_t len;
+
+		len = get_le16(pdu);
+		length -= 2;
+		pdu += 2;
+
+		/* The Length Value Tuple List may be truncated within the
+		 * first two octets of a tuple due to the size limits of the
+		 * current ATT_MTU.
+		 */
+		if (len > length)
+			length = len;
+
+		op->callback(success, att_ecode, pdu, len, op->user_data);
+	}
 }
 
 unsigned int bt_gatt_client_read_multiple(struct bt_gatt_client *client,
@@ -2527,6 +2726,7 @@ unsigned int bt_gatt_client_read_multiple(struct bt_gatt_client *client,
 	uint8_t pdu[num_handles * 2];
 	struct request *req;
 	struct read_op *op;
+	uint8_t opcode;
 	int i;
 
 	if (!client)
@@ -2556,8 +2756,11 @@ unsigned int bt_gatt_client_read_multiple(struct bt_gatt_client *client,
 	for (i = 0; i < num_handles; i++)
 		put_le16(handles[i], pdu + (2 * i));
 
-	req->att_id = bt_att_send(client->att, BT_ATT_OP_READ_MULT_REQ,
-							pdu, sizeof(pdu),
+	opcode = bt_gatt_client_get_features(client) &
+		BT_GATT_CHRC_CLI_FEAT_EATT ? BT_ATT_OP_READ_MULT_VL_REQ :
+		BT_ATT_OP_READ_MULT_REQ;
+
+	req->att_id = bt_att_send(client->att, opcode, pdu, sizeof(pdu),
 							read_multiple_cb, req,
 							request_unref);
 	if (!req->att_id) {

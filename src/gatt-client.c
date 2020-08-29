@@ -35,9 +35,11 @@
 #include "lib/uuid.h"
 
 #include "gdbus/gdbus.h"
+#include "btio/btio.h"
 
 #include "log.h"
 #include "error.h"
+#include "hcid.h"
 #include "adapter.h"
 #include "device.h"
 #include "src/shared/io.h"
@@ -59,6 +61,7 @@
 
 struct btd_gatt_client {
 	struct btd_device *device;
+	uint8_t features;
 	bool ready;
 	char devaddr[18];
 	struct gatt_db *db;
@@ -2154,6 +2157,58 @@ static void register_notify(void *data, void *user_data)
 	notify_client_free(notify_client);
 }
 
+static void eatt_connect_cb(GIOChannel *io, GError *gerr, gpointer user_data)
+{
+	struct btd_gatt_client *client = user_data;
+
+	if (gerr)
+		return;
+
+	device_attach_att(client->device, io);
+}
+
+static void eatt_connect(struct btd_gatt_client *client)
+{
+	struct bt_att *att = bt_gatt_client_get_att(client->gatt);
+	struct btd_device *dev = client->device;
+	struct btd_adapter *adapter = device_get_adapter(dev);
+	GIOChannel *io;
+	GError *gerr = NULL;
+	char addr[18];
+	int i;
+
+	if (bt_att_get_channels(att) == main_opts.gatt_channels)
+		return;
+
+	ba2str(device_get_address(dev), addr);
+
+	DBG("Connection attempt to: %s", addr);
+
+	for (i = bt_att_get_channels(att); i < main_opts.gatt_channels; i++) {
+		io = bt_io_connect(eatt_connect_cb, client, NULL, &gerr,
+					BT_IO_OPT_SOURCE_BDADDR,
+					btd_adapter_get_address(adapter),
+					BT_IO_OPT_SOURCE_TYPE,
+					btd_adapter_get_address_type(adapter),
+					BT_IO_OPT_DEST_BDADDR,
+					device_get_address(dev),
+					BT_IO_OPT_DEST_TYPE,
+					device_get_le_address_type(dev),
+					BT_IO_OPT_PSM, BT_ATT_EATT_PSM,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+					BT_IO_OPT_MTU, main_opts.gatt_mtu,
+					BT_IO_OPT_INVALID);
+		if (!io) {
+			error("EATT bt_io_connect(%s): %s", addr,
+							gerr->message);
+			g_error_free(gerr);
+			return;
+		}
+
+		g_io_channel_unref(io);
+	}
+}
+
 void btd_gatt_client_ready(struct btd_gatt_client *client)
 {
 	if (!client)
@@ -2175,6 +2230,15 @@ void btd_gatt_client_ready(struct btd_gatt_client *client)
 	DBG("GATT client ready");
 
 	create_services(client);
+
+	DBG("Features 0x%02x", client->features);
+
+	if (!client->features) {
+		client->features = bt_gatt_client_get_features(client->gatt);
+		DBG("Update Features 0x%02x", client->features);
+		if (client->features & BT_GATT_CHRC_CLI_FEAT_EATT)
+			eatt_connect(client);
+	}
 }
 
 void btd_gatt_client_connected(struct btd_gatt_client *client)
@@ -2197,6 +2261,11 @@ void btd_gatt_client_connected(struct btd_gatt_client *client)
 	 * for any pre-registered notification sessions.
 	 */
 	queue_foreach(client->all_notify_clients, register_notify, client);
+
+	if (!(client->features & BT_GATT_CHRC_CLI_FEAT_EATT))
+		return;
+
+	eatt_connect(client);
 }
 
 void btd_gatt_client_service_added(struct btd_gatt_client *client,

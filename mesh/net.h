@@ -117,6 +117,9 @@ struct mesh_node;
 #define FRND_OPCODE(x) \
 		((x) >= NET_OP_FRND_POLL && (x) <= NET_OP_FRND_CLEAR_CONFIRM)
 
+#define DEFAULT_MIN_DELAY		0
+#define DEFAULT_MAX_DELAY		25
+
 struct mesh_net_addr_range {
 	uint16_t low;
 	uint16_t high;
@@ -162,25 +165,40 @@ struct mesh_key_set {
 	uint8_t privacy_key[16];
 };
 
+struct friend_neg {
+	int8_t rssi;
+	bool clearing;
+};
+
+struct friend_act {
+	uint16_t *grp_list;
+	uint32_t last_hdr;
+	int16_t grp_cnt;
+	bool seq;
+	bool last;
+};
+
 struct mesh_friend {
 	struct mesh_net *net;
-	struct l_queue *pkt_cache;
 	struct l_timeout *timeout;
+	struct l_queue *pkt_cache;
 	void *pkt;
-	uint16_t *grp_list;
 	uint32_t poll_timeout;
-	uint32_t last_hdr;
 	uint32_t net_key_cur;
 	uint32_t net_key_upd;
-	uint16_t dst; /* Primary Element unicast addr */
+	uint16_t old_friend;
+	uint16_t net_idx;
+	uint16_t lp_addr;/* dst; * Primary Element unicast addr */
 	uint16_t fn_cnt;
 	uint16_t lp_cnt;
-	int16_t grp_cnt;
+	uint8_t	receive_delay;
 	uint8_t ele_cnt;
 	uint8_t frd;
 	uint8_t frw;
-	bool seq;
-	bool last;
+	union {
+		struct friend_neg negotiate;
+		struct friend_act active;
+	} u;
 };
 
 struct mesh_frnd_pkt {
@@ -261,9 +279,8 @@ void mesh_net_set_frnd_seq(struct mesh_net *net, bool seq);
 uint16_t mesh_net_get_address(struct mesh_net *net);
 bool mesh_net_register_unicast(struct mesh_net *net,
 					uint16_t unicast, uint8_t num_ele);
-bool mesh_net_set_friend(struct mesh_net *net, uint16_t friend_addr);
-uint16_t mesh_net_get_friend(struct mesh_net *net);
 uint8_t mesh_net_get_num_ele(struct mesh_net *net);
+void net_local_beacon(uint32_t key_id, uint8_t *beacon);
 bool mesh_net_set_beacon_mode(struct mesh_net *net, bool enable);
 bool mesh_net_set_proxy_mode(struct mesh_net *net, bool enable);
 bool mesh_net_set_relay_mode(struct mesh_net *net, bool enable, uint8_t cnt,
@@ -360,3 +377,9 @@ void mesh_net_transmit_params_get(struct mesh_net *net, uint8_t *count,
 struct mesh_prov *mesh_net_get_prov(struct mesh_net *net);
 void mesh_net_set_prov(struct mesh_net *net, struct mesh_prov *prov);
 uint32_t mesh_net_get_instant(struct mesh_net *net);
+struct l_queue *mesh_net_get_friends(struct mesh_net *net);
+struct l_queue *mesh_net_get_negotiations(struct mesh_net *net);
+bool net_msg_check_replay_cache(struct mesh_net *net, uint16_t src,
+				uint16_t crpl, uint32_t seq, uint32_t iv_index);
+void net_msg_add_replay_cache(struct mesh_net *net, uint16_t src, uint32_t seq,
+							uint32_t iv_index);

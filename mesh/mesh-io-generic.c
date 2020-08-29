@@ -31,27 +31,31 @@
 #include "lib/bluetooth.h"
 #include "lib/mgmt.h"
 
+#include "mesh/mesh-defs.h"
 #include "mesh/mesh-mgmt.h"
 #include "mesh/mesh-io.h"
 #include "mesh/mesh-io-api.h"
 #include "mesh/mesh-io-generic.h"
 
 struct mesh_io_private {
-	uint16_t index;
 	struct bt_hci *hci;
+	void *user_data;
+	mesh_io_ready_func_t ready_callback;
 	struct l_timeout *tx_timeout;
 	struct l_queue *rx_regs;
 	struct l_queue *tx_pkts;
-	uint8_t filters[4];
-	bool sending;
 	struct tx_pkt *tx;
+	uint16_t index;
 	uint16_t interval;
+	bool sending;
+	bool active;
 };
 
 struct pvt_rx_reg {
-	uint8_t filter_id;
 	mesh_io_recv_func_t cb;
 	void *user_data;
+	uint8_t len;
+	uint8_t filter[0];
 };
 
 struct process_data {
@@ -91,20 +95,17 @@ static uint32_t instant_remaining_ms(uint32_t instant)
 	return instant;
 }
 
-static void process_rx_callbacks(void *v_rx, void *v_reg)
+static void process_rx_callbacks(void *v_reg, void *v_rx)
 {
-	struct pvt_rx_reg *rx_reg = v_rx;
-	struct process_data *rx = v_reg;
-	uint8_t ad_type;
+	struct pvt_rx_reg *rx_reg = v_reg;
+	struct process_data *rx = v_rx;
 
-	ad_type = rx->pvt->filters[rx_reg->filter_id - 1];
-
-	if (rx->data[0] == ad_type && rx_reg->cb)
+	if (!memcmp(rx->data, rx_reg->filter, rx_reg->len))
 		rx_reg->cb(rx_reg->user_data, &rx->info, rx->data, rx->len);
 }
 
 static void process_rx(struct mesh_io_private *pvt, int8_t rssi,
-					uint32_t instant,
+					uint32_t instant, const uint8_t *addr,
 					const uint8_t *data, uint8_t len)
 {
 	struct process_data rx = {
@@ -112,6 +113,7 @@ static void process_rx(struct mesh_io_private *pvt, int8_t rssi,
 		.data = data,
 		.len = len,
 		.info.instant = instant,
+		.info.addr = addr,
 		.info.chan = 7,
 		.info.rssi = rssi,
 	};
@@ -123,6 +125,7 @@ static void event_adv_report(struct mesh_io *io, const void *buf, uint8_t size)
 {
 	const struct bt_hci_evt_le_adv_report *evt = buf;
 	const uint8_t *adv;
+	const uint8_t *addr;
 	uint32_t instant;
 	uint8_t adv_len;
 	uint16_t len = 0;
@@ -134,6 +137,7 @@ static void event_adv_report(struct mesh_io *io, const void *buf, uint8_t size)
 	instant = get_instant();
 	adv = evt->data;
 	adv_len = evt->data_len;
+	addr = evt->addr;
 
 	/* rssi is just beyond last byte of data */
 	rssi = (int8_t) adv[adv_len];
@@ -152,7 +156,7 @@ static void event_adv_report(struct mesh_io *io, const void *buf, uint8_t size)
 			break;
 
 		/* TODO: Create an Instant to use */
-		process_rx(io->pvt, rssi, instant, adv + 1, adv[0]);
+		process_rx(io->pvt, rssi, instant, addr, adv + 1, adv[0]);
 
 		adv += field_len + 1;
 	}
@@ -283,22 +287,29 @@ static void configure_hci(struct mesh_io_private *io)
 				sizeof(cmd), hci_generic_callback, NULL, NULL);
 }
 
-static bool hci_init(struct mesh_io *io)
+static void hci_init(void *user_data)
 {
+	struct mesh_io *io = user_data;
+	bool result = true;
+
 	io->pvt->hci = bt_hci_new_user_channel(io->pvt->index);
 	if (!io->pvt->hci) {
 		l_error("Failed to start mesh io (hci %u): %s", io->pvt->index,
 							strerror(errno));
-		return false;
+		result = false;
 	}
 
-	configure_hci(io->pvt);
+	if (result) {
+		configure_hci(io->pvt);
 
-	bt_hci_register(io->pvt->hci, BT_HCI_EVT_LE_META_EVENT,
+		bt_hci_register(io->pvt->hci, BT_HCI_EVT_LE_META_EVENT,
 						event_callback, io, NULL);
 
-	l_debug("Started mesh on hci %u", io->pvt->index);
-	return true;
+		l_debug("Started mesh on hci %u", io->pvt->index);
+	}
+
+	if (io->pvt->ready_callback)
+		io->pvt->ready_callback(io->pvt->user_data, result);
 }
 
 static void read_info(int index, void *user_data)
@@ -315,7 +326,8 @@ static void read_info(int index, void *user_data)
 	hci_init(io);
 }
 
-static bool dev_init(struct mesh_io *io, void *opts)
+static bool dev_init(struct mesh_io *io, void *opts,
+				mesh_io_ready_func_t cb, void *user_data)
 {
 	if (!io || io->pvt)
 		return false;
@@ -326,10 +338,15 @@ static bool dev_init(struct mesh_io *io, void *opts)
 	io->pvt->rx_regs = l_queue_new();
 	io->pvt->tx_pkts = l_queue_new();
 
+	io->pvt->ready_callback = cb;
+	io->pvt->user_data = user_data;
+
 	if (io->pvt->index == MGMT_INDEX_NONE)
 		return mesh_mgmt_list(read_info, io);
-	else
-		return hci_init(io);
+
+	l_idle_oneshot(hci_init, io, NULL);
+
+	return true;
 }
 
 static bool dev_destroy(struct mesh_io *io)
@@ -356,7 +373,7 @@ static bool dev_caps(struct mesh_io *io, struct mesh_io_caps *caps)
 	if (!pvt || !caps)
 		return false;
 
-	caps->max_num_filters = sizeof(pvt->filters);
+	caps->max_num_filters = 255;
 	caps->window_accuracy = 50;
 
 	return true;
@@ -688,12 +705,21 @@ static bool tx_cancel(struct mesh_io *io, const uint8_t *data, uint8_t len)
 	return true;
 }
 
-static bool find_by_filter_id(const void *a, const void *b)
+static bool find_by_filter(const void *a, const void *b)
 {
 	const struct pvt_rx_reg *rx_reg = a;
-	uint8_t filter_id = L_PTR_TO_UINT(b);
+	const uint8_t *filter = b;
 
-	return rx_reg->filter_id == filter_id;
+	return !memcmp(rx_reg->filter, filter, rx_reg->len);
+}
+
+static void scan_enable_rsp(const void *buf, uint8_t size,
+							void *user_data)
+{
+	uint8_t status = *((uint8_t *) buf);
+
+	if (status)
+		l_error("LE Scan enable failed (0x%02x)", status);
 }
 
 static void set_recv_scan_enable(const void *buf, uint8_t size,
@@ -705,31 +731,64 @@ static void set_recv_scan_enable(const void *buf, uint8_t size,
 	cmd.enable = 0x01;	/* Enable scanning */
 	cmd.filter_dup = 0x00;	/* Report duplicates */
 	bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_ENABLE,
-			&cmd, sizeof(cmd), NULL, NULL, NULL);
+			&cmd, sizeof(cmd), scan_enable_rsp, pvt, NULL);
 }
 
-static bool recv_register(struct mesh_io *io, uint8_t filter_id,
-				mesh_io_recv_func_t cb, void *user_data)
+static void scan_disable_rsp(const void *buf, uint8_t size,
+							void *user_data)
 {
 	struct bt_hci_cmd_le_set_scan_parameters cmd;
+	struct mesh_io_private *pvt = user_data;
+	uint8_t status = *((uint8_t *) buf);
+
+	if (status)
+		l_error("LE Scan disable failed (0x%02x)", status);
+
+	cmd.type = pvt->active ? 0x01 : 0x00;	/* Passive/Active scanning */
+	cmd.interval = L_CPU_TO_LE16(0x0010);	/* 10 ms */
+	cmd.window = L_CPU_TO_LE16(0x0010);	/* 10 ms */
+	cmd.own_addr_type = 0x01;		/* ADDR_TYPE_RANDOM */
+	cmd.filter_policy = 0x00;		/* Accept all */
+
+	bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_PARAMETERS,
+			&cmd, sizeof(cmd),
+			set_recv_scan_enable, pvt, NULL);
+}
+
+static bool find_active(const void *a, const void *b)
+{
+	const struct pvt_rx_reg *rx_reg = a;
+
+	/* Mesh specific AD types do *not* require active scanning,
+	 * so do not turn on Active Scanning on their account.
+	 */
+	if (rx_reg->filter[0] < MESH_AD_TYPE_PROVISION ||
+			rx_reg->filter[0] > MESH_AD_TYPE_BEACON)
+		return true;
+
+	return false;
+}
+
+static bool recv_register(struct mesh_io *io, const uint8_t *filter,
+			uint8_t len, mesh_io_recv_func_t cb, void *user_data)
+{
+	struct bt_hci_cmd_le_set_scan_enable cmd;
 	struct mesh_io_private *pvt = io->pvt;
 	struct pvt_rx_reg *rx_reg;
 	bool already_scanning;
+	bool active = false;
 
-	l_info("%s %d", __func__, filter_id);
-	if (!cb || !filter_id || filter_id > sizeof(pvt->filters))
+	if (!cb || !filter || !len)
 		return false;
 
-	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter_id,
-						L_UINT_TO_PTR(filter_id));
+	l_info("%s %2.2x", __func__, filter[0]);
+	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter, filter);
 
-	if (!rx_reg) {
-		rx_reg = l_new(struct pvt_rx_reg, 1);
-		if (!rx_reg)
-			return false;
-	}
+	l_free(rx_reg);
+	rx_reg = l_malloc(sizeof(*rx_reg) + len);
 
-	rx_reg->filter_id = filter_id;
+	memcpy(rx_reg->filter, filter, len);
+	rx_reg->len = len;
 	rx_reg->cb = cb;
 	rx_reg->user_data = user_data;
 
@@ -737,58 +796,48 @@ static bool recv_register(struct mesh_io *io, uint8_t filter_id,
 
 	l_queue_push_head(pvt->rx_regs, rx_reg);
 
-	if (!already_scanning) {
-		cmd.type = 0x00;			/* Passive scanning */
-		cmd.interval = L_CPU_TO_LE16(0x0010);	/* 10 ms */
-		cmd.window = L_CPU_TO_LE16(0x0010);	/* 10 ms */
-		cmd.own_addr_type = 0x01;		/* ADDR_TYPE_RANDOM */
-		cmd.filter_policy = 0x00;		/* Accept all */
+	/* Look for any AD types requiring Active Scanning */
+	if (l_queue_find(pvt->rx_regs, find_active, NULL))
+		active = true;
 
-		bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_PARAMETERS,
-				&cmd, sizeof(cmd),
-				set_recv_scan_enable, pvt, NULL);
+	if (!already_scanning || pvt->active != active) {
+		pvt->active = active;
+		cmd.enable = 0x00;	/* Disable scanning */
+		cmd.filter_dup = 0x00;	/* Report duplicates */
+		bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_ENABLE,
+				&cmd, sizeof(cmd), scan_disable_rsp, pvt, NULL);
+
 	}
 
 	return true;
 }
 
-static bool recv_deregister(struct mesh_io *io, uint8_t filter_id)
+static bool recv_deregister(struct mesh_io *io, const uint8_t *filter,
+								uint8_t len)
 {
-	struct bt_hci_cmd_le_set_scan_enable cmd;
+	struct bt_hci_cmd_le_set_scan_enable cmd = {0, 0};
 	struct mesh_io_private *pvt = io->pvt;
-
 	struct pvt_rx_reg *rx_reg;
+	bool active = false;
 
-	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter_id,
-						L_UINT_TO_PTR(filter_id));
+	rx_reg = l_queue_remove_if(pvt->rx_regs, find_by_filter, filter);
 
 	if (rx_reg)
 		l_free(rx_reg);
 
+	/* Look for any AD types requiring Active Scanning */
+	if (l_queue_find(pvt->rx_regs, find_active, NULL))
+		active = true;
+
 	if (l_queue_isempty(pvt->rx_regs)) {
-		cmd.enable = 0x00;	/* Disable scanning */
-		cmd.filter_dup = 0x00;	/* Report duplicates */
 		bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_ENABLE,
-				&cmd, sizeof(cmd), NULL, NULL, NULL);
+					&cmd, sizeof(cmd), NULL, NULL, NULL);
 
+	} else if (active != pvt->active) {
+		pvt->active = active;
+		bt_hci_send(pvt->hci, BT_HCI_CMD_LE_SET_SCAN_ENABLE,
+				&cmd, sizeof(cmd), scan_disable_rsp, pvt, NULL);
 	}
-
-	return true;
-}
-
-static bool filter_set(struct mesh_io *io,
-		uint8_t filter_id, const uint8_t *data, uint8_t len,
-		mesh_io_status_func_t callback, void *user_data)
-{
-	struct mesh_io_private *pvt = io->pvt;
-
-	l_info("%s id: %d, --> %2.2x", __func__, filter_id, data[0]);
-	if (!data || !len || !filter_id || filter_id > sizeof(pvt->filters))
-		return false;
-
-	pvt->filters[filter_id - 1] = data[0];
-
-	/* TODO: Delayed Call to successful status */
 
 	return true;
 }
@@ -800,6 +849,5 @@ const struct mesh_io_api mesh_io_generic = {
 	.send = send_tx,
 	.reg = recv_register,
 	.dereg = recv_deregister,
-	.set = filter_set,
 	.cancel = tx_cancel,
 };

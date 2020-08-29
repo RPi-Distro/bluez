@@ -40,11 +40,12 @@
 #include "gdbus/gdbus.h"
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
-#include "tools/mesh/node.h"
-#include "tools/mesh/util.h"
-#include "tools/mesh/gatt.h"
-#include "tools/mesh/prov.h"
-#include "tools/mesh/net.h"
+
+#include "tools/mesh-gatt/node.h"
+#include "tools/mesh-gatt/util.h"
+#include "tools/mesh-gatt/gatt.h"
+#include "tools/mesh-gatt/prov.h"
+#include "tools/mesh-gatt/net.h"
 
 #define MESH_PROV_DATA_OUT_UUID_STR	"00002adc-0000-1000-8000-00805f9b34fb"
 #define MESH_PROXY_DATA_OUT_UUID_STR	"00002ade-0000-1000-8000-00805f9b34fb"
@@ -415,7 +416,7 @@ static bool sock_read(struct io *io, bool prov, void *user_data)
 	msg.msg_iovlen = 1;
 
 	while ((len = recvmsg(fd, &msg, MSG_DONTWAIT))) {
-		if (len <= 0) {
+		if (len < 0) {
 			if (errno == EAGAIN)
 				break;
 			return false;
@@ -430,6 +431,11 @@ static bool sock_read(struct io *io, bool prov, void *user_data)
 				net_data_ready(res, len_sar);
 		}
 	}
+
+	/* When socket is orderly closed, then recvmsg returns 0 */
+	if (len == 0)
+		return false;
+
 	return true;
 }
 

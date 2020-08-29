@@ -37,12 +37,13 @@
 
 /*
  * The default values for mesh configuration. Can be
- * overwritten by values from mesh.conf
+ * overwritten by values from mesh-main.conf
  */
 #define DEFAULT_PROV_TIMEOUT 60
-#define DEFAULT_ALGORITHMS 0x0001
+#define DEFAULT_CRPL 100
+#define DEFAULT_FRIEND_QUEUE_SZ 32
 
-/* TODO: add more default values */
+#define DEFAULT_ALGORITHMS 0x0001
 
 struct scan_filter {
 	uint8_t id;
@@ -55,22 +56,44 @@ struct bt_mesh {
 	prov_rx_cb_t prov_rx;
 	void *prov_data;
 	uint32_t prov_timeout;
+	bool beacon_enabled;
+	bool friend_support;
+	bool relay_support;
+	bool lpn_support;
+	bool proxy_support;
+	uint16_t crpl;
 	uint16_t algorithms;
 	uint16_t req_index;
+	uint8_t friend_queue_sz;
 	uint8_t max_filters;
 };
 
 struct join_data{
 	struct l_dbus_message *msg;
 	struct mesh_agent *agent;
-	const char *sender;
+	char *sender;
 	const char *app_path;
 	struct mesh_node *node;
 	uint32_t disc_watch;
 	uint8_t *uuid;
 };
 
-static struct bt_mesh mesh;
+struct mesh_init_request {
+	mesh_ready_func_t cb;
+	void *user_data;
+};
+
+static struct bt_mesh mesh = {
+	.algorithms = DEFAULT_ALGORITHMS,
+	.prov_timeout = DEFAULT_PROV_TIMEOUT,
+	.beacon_enabled = true,
+	.friend_support = true,
+	.relay_support = true,
+	.lpn_support = false,
+	.proxy_support = false,
+	.crpl = DEFAULT_CRPL,
+	.friend_queue_sz = DEFAULT_FRIEND_QUEUE_SZ
+};
 
 /* We allow only one outstanding Join request */
 static struct join_data *join_pending;
@@ -118,29 +141,116 @@ static void prov_rx(void *user_data, struct mesh_io_recv_info *info,
 
 bool mesh_reg_prov_rx(prov_rx_cb_t cb, void *user_data)
 {
+	uint8_t prov_filter[] = {MESH_AD_TYPE_PROVISION};
+
 	if (mesh.prov_rx && mesh.prov_rx != cb)
 		return false;
 
 	mesh.prov_rx = cb;
 	mesh.prov_data = user_data;
 
-	return mesh_io_register_recv_cb(mesh.io, MESH_IO_FILTER_PROV,
-							prov_rx, &mesh);
+	return mesh_io_register_recv_cb(mesh.io, prov_filter,
+					sizeof(prov_filter), prov_rx, &mesh);
 }
 
 void mesh_unreg_prov_rx(prov_rx_cb_t cb)
 {
+	uint8_t prov_filter[] = {MESH_AD_TYPE_PROVISION};
+
 	if (mesh.prov_rx != cb)
 		return;
 
 	mesh.prov_rx = NULL;
 	mesh.prov_data = NULL;
-	mesh_io_deregister_recv_cb(mesh.io, MESH_IO_FILTER_PROV);
+	mesh_io_deregister_recv_cb(mesh.io, prov_filter, sizeof(prov_filter));
 }
 
-bool mesh_init(const char *config_dir, enum mesh_io_type type, void *opts)
+static void io_ready_callback(void *user_data, bool result)
+{
+	struct mesh_init_request *req = user_data;
+
+	if (result)
+		node_attach_io_all(mesh.io);
+
+	req->cb(req->user_data, result);
+
+	l_free(req);
+}
+
+bool mesh_beacon_enabled(void)
+{
+	return mesh.beacon_enabled;
+}
+
+bool mesh_relay_supported(void)
+{
+	return mesh.relay_support;
+}
+
+bool mesh_friendship_supported(void)
+{
+	return mesh.friend_support;
+}
+
+uint16_t mesh_get_crpl(void)
+{
+	return mesh.crpl;
+}
+
+uint8_t mesh_get_friend_queue_size(void)
+{
+	return mesh.friend_queue_sz;
+}
+
+static void parse_settings(const char *mesh_conf_fname)
+{
+	struct l_settings *settings;
+	char *str;
+	uint32_t value;
+
+	settings = l_settings_new();
+	if (!l_settings_load_from_file(settings, mesh_conf_fname))
+		return;
+
+	str = l_settings_get_string(settings, "General", "Beacon");
+	if (str) {
+		if (!strcasecmp(str, "true"))
+			mesh.beacon_enabled = true;
+		l_free(str);
+	}
+
+	str = l_settings_get_string(settings, "General", "Relay");
+	if (str) {
+		if (!strcasecmp(str, "false"))
+			mesh.relay_support = false;
+		l_free(str);
+	}
+
+	str = l_settings_get_string(settings, "General", "Friendship");
+	if (str) {
+		if (!strcasecmp(str, "false"))
+			mesh.friend_support = false;
+		l_free(str);
+	}
+
+	if (l_settings_get_uint(settings, "General", "CRPL", &value) &&
+							value <= 65535)
+		mesh.crpl = value;
+
+	if (l_settings_get_uint(settings, "General", "FriendQueueSize", &value)
+								&& value < 127)
+		mesh.friend_queue_sz = value;
+
+	if (l_settings_get_uint(settings, "General", "ProvTimeout", &value))
+		mesh.prov_timeout = value;
+}
+
+bool mesh_init(const char *config_dir, const char *mesh_conf_fname,
+					enum mesh_io_type type, void *opts,
+					mesh_ready_func_t cb, void *user_data)
 {
 	struct mesh_io_caps caps;
+	struct mesh_init_request *req;
 
 	if (mesh.io)
 		return true;
@@ -156,18 +266,27 @@ bool mesh_init(const char *config_dir, enum mesh_io_type type, void *opts)
 
 	l_info("Loading node configuration from %s", storage_dir);
 
+	if (!mesh_conf_fname)
+		mesh_conf_fname = CONFIGDIR "/mesh-main.conf";
+
+	parse_settings(mesh_conf_fname);
+
 	if (!node_load_from_storage(storage_dir))
 		return false;
 
-	mesh.io = mesh_io_new(type, opts);
-	if (!mesh.io)
+	req = l_new(struct mesh_init_request, 1);
+	req->cb = cb;
+	req->user_data = user_data;
+
+	mesh.io = mesh_io_new(type, opts, io_ready_callback, req);
+	if (!mesh.io) {
+		l_free(req);
 		return false;
+	}
 
 	l_debug("io %p", mesh.io);
 	mesh_io_get_caps(mesh.io, &caps);
 	mesh.max_filters = caps.max_num_filters;
-
-	node_attach_io_all(mesh.io);
 
 	return true;
 }
@@ -195,6 +314,7 @@ static void free_pending_join_call(bool failed)
 	if (failed)
 		node_remove(join_pending->node);
 
+	l_free(join_pending->sender);
 	l_free(join_pending);
 	join_pending = NULL;
 }
@@ -258,8 +378,10 @@ static void prov_disc_cb(struct l_dbus *bus, void *user_data)
 	if (!join_pending)
 		return;
 
-	if (join_pending->msg)
+	if (join_pending->msg) {
 		l_dbus_message_unref(join_pending->msg);
+		join_pending->msg = NULL;
+	}
 
 	acceptor_cancel(&mesh);
 	join_pending->disc_watch = 0;

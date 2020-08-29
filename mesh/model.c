@@ -42,6 +42,8 @@
 /* Divide and round to ceiling (up) to calculate segment count */
 #define CEILDIV(val, div) (((val) + (div) - 1) / (div))
 
+#define VIRTUAL_BASE			0x10000
+
 struct mesh_model {
 	const struct mesh_model_ops *cbs;
 	void *user_data;
@@ -54,7 +56,6 @@ struct mesh_model {
 };
 
 struct mesh_virtual {
-	uint32_t id; /* Internal ID of a stored virtual addr, min val 0x10000 */
 	uint16_t ref_cnt;
 	uint16_t addr; /* 16-bit virtual address, used in messages */
 	uint8_t label[16]; /* 128 bit label UUID */
@@ -70,7 +71,6 @@ struct mod_forward {
 	uint16_t app_idx;
 	uint16_t net_idx;
 	uint16_t size;
-	uint8_t ttl;
 	int8_t rssi;
 	bool szmict;
 	bool has_dst;
@@ -79,7 +79,6 @@ struct mod_forward {
 
 static struct l_queue *mesh_virtuals;
 
-static uint32_t virt_id_next = VIRTUAL_BASE;
 static struct timeval tx_start;
 
 static bool is_internal(uint32_t id)
@@ -118,14 +117,6 @@ static bool has_binding(struct l_queue *bindings, uint16_t idx)
 			return true;
 	}
 	return false;
-}
-
-static bool find_virt_by_id(const void *a, const void *b)
-{
-	const struct mesh_virtual *virt = a;
-	uint32_t id = L_PTR_TO_UINT(b);
-
-	return virt->id == id;
 }
 
 static bool find_virt_by_label(const void *a, const void *b)
@@ -295,15 +286,77 @@ static void config_update_model_bindings(struct mesh_node *node,
 	l_dbus_send(dbus, msg);
 }
 
+static void append_dict_subs_array(struct l_dbus_message_builder *builder,
+						struct l_queue *subs,
+						struct l_queue *virts,
+						const char *key)
+{
+	const struct l_queue_entry *entry;
+
+	l_dbus_message_builder_enter_dict(builder, "sv");
+	l_dbus_message_builder_append_basic(builder, 's', key);
+	l_dbus_message_builder_enter_variant(builder, "av");
+	l_dbus_message_builder_enter_array(builder, "v");
+
+	if (l_queue_isempty(subs))
+		goto virts;
+
+	for (entry = l_queue_get_entries(subs); entry; entry = entry->next) {
+		uint16_t grp = L_PTR_TO_UINT(entry->data);
+
+		l_dbus_message_builder_enter_variant(builder, "q");
+		l_dbus_message_builder_append_basic(builder, 'q', &grp);
+		l_dbus_message_builder_leave_variant(builder);
+	}
+
+virts:
+	if (l_queue_isempty(virts))
+		goto done;
+
+	for (entry = l_queue_get_entries(virts); entry; entry = entry->next) {
+		const struct mesh_virtual *virt = entry->data;
+
+		l_dbus_message_builder_enter_variant(builder, "ay");
+		dbus_append_byte_array(builder, virt->label,
+							sizeof(virt->label));
+		l_dbus_message_builder_leave_variant(builder);
+
+	}
+
+done:
+	l_dbus_message_builder_leave_array(builder);
+	l_dbus_message_builder_leave_variant(builder);
+	l_dbus_message_builder_leave_dict(builder);
+}
+
+static void config_update_model_subscriptions(struct mesh_node *node,
+							struct mesh_model *mod)
+{
+	struct l_dbus *dbus = dbus_get_bus();
+	struct l_dbus_message *msg;
+	struct l_dbus_message_builder *builder;
+
+	msg = create_config_update_msg(node, mod->ele_idx, mod->id,
+								&builder);
+	if (!msg)
+		return;
+
+	append_dict_subs_array(builder, mod->subs, mod->virtuals,
+							"Subscriptions");
+
+	l_dbus_message_builder_leave_array(builder);
+	l_dbus_message_builder_finalize(builder);
+	l_dbus_message_builder_destroy(builder);
+	l_dbus_send(dbus, msg);
+}
+
 static void forward_model(void *a, void *b)
 {
 	struct mesh_model *mod = a;
 	struct mod_forward *fwd = b;
 	struct mesh_virtual *virt;
-	uint32_t dst;
+	uint16_t dst;
 	bool result;
-
-	l_debug("model %8.8x with idx %3.3x", mod->id, fwd->app_idx);
 
 	if (fwd->app_idx != APP_IDX_DEV_LOCAL &&
 				fwd->app_idx != APP_IDX_DEV_REMOTE &&
@@ -311,24 +364,14 @@ static void forward_model(void *a, void *b)
 		return;
 
 	dst = fwd->dst;
-	if (dst == fwd->unicast || IS_FIXED_GROUP_ADDRESS(dst))
+
+	if (dst == fwd->unicast || IS_FIXED_GROUP_ADDRESS(dst)) {
 		fwd->has_dst = true;
-	else if (fwd->virt) {
+	} else if (fwd->virt) {
 		virt = l_queue_find(mod->virtuals, simple_match, fwd->virt);
-
-		/* Check that this is not own publication */
-		if (mod->pub && (virt && virt->id == mod->pub->addr))
-			return;
-
 		if (virt) {
-			/*
-			 * Map Virtual addresses to a usable namespace that
-			 * prevents us for forwarding a false positive
-			 * (multiple Virtual Addresses that map to the same
-			 * 16-bit virtual address identifier)
-			 */
 			fwd->has_dst = true;
-			dst = virt->id;
+			dst = virt->addr;
 		}
 	} else {
 		if (l_queue_find(mod->subs, simple_match, L_UINT_TO_PTR(dst)))
@@ -345,9 +388,9 @@ static void forward_model(void *a, void *b)
 	result = false;
 
 	if (mod->cbs->recv)
-		result = mod->cbs->recv(fwd->src, dst, fwd->unicast,
-				fwd->app_idx, fwd->net_idx,
-				fwd->data, fwd->size, fwd->ttl, mod->user_data);
+		result = mod->cbs->recv(fwd->src, dst, fwd->app_idx,
+				fwd->net_idx,
+				fwd->data, fwd->size, mod->user_data);
 
 	if (dst == fwd->unicast && result)
 		fwd->done = true;
@@ -380,8 +423,8 @@ static int app_packet_decrypt(struct mesh_net *net, const uint8_t *data,
 			continue;
 
 		if (old_key && old_key_aid == key_aid) {
-			decrypted = mesh_crypto_payload_decrypt(NULL, 0, data,
-						size, szmict, src, dst, key_aid,
+			decrypted = mesh_crypto_payload_decrypt(virt, virt_size,
+					data, size, szmict, src, dst, key_aid,
 						seq, iv_idx, out, old_key);
 
 			if (decrypted) {
@@ -393,8 +436,8 @@ static int app_packet_decrypt(struct mesh_net *net, const uint8_t *data,
 		}
 
 		if (new_key && new_key_aid == key_aid) {
-			decrypted = mesh_crypto_payload_decrypt(NULL, 0, data,
-						size, szmict, src, dst, key_aid,
+			decrypted = mesh_crypto_payload_decrypt(virt, virt_size,
+					data, size, szmict, src, dst, key_aid,
 						seq, iv_idx, out, new_key);
 
 			if (decrypted) {
@@ -544,7 +587,7 @@ static bool msg_send(struct mesh_node *node, bool credential, uint16_t src,
 
 	iv_index = mesh_net_get_iv_index(net);
 
-	seq_num = mesh_net_get_seq_num(net);
+	seq_num = mesh_net_next_seq_num(net);
 	if (!mesh_crypto_payload_encrypt(label, msg, out, msg_len, src, dst,
 				key_aid, seq_num, iv_index, szmic, key)) {
 		l_error("Failed to Encrypt Payload");
@@ -563,8 +606,13 @@ done:
 
 static void remove_pub(struct mesh_node *node, struct mesh_model *mod)
 {
-	l_free(mod->pub);
-	mod->pub = NULL;
+	if (mod->pub) {
+		if (mod->pub->virt)
+			unref_virt(mod->pub->virt);
+
+		l_free(mod->pub);
+		mod->pub = NULL;
+	}
 
 	if (!mod->cbs)
 		/* External models */
@@ -586,11 +634,9 @@ static void model_unbind_idx(struct mesh_node *node, struct mesh_model *mod,
 		/* Internal model */
 		mod->cbs->bind(idx, ACTION_DELETE);
 
-	if (mod->pub && idx != mod->pub->idx)
-		return;
-
 	/* Remove model publication if the publication key is unbound */
-	remove_pub(node, mod);
+	if (mod->pub && idx == mod->pub->idx)
+		remove_pub(node, mod);
 }
 
 static void model_bind_idx(struct mesh_node *node, struct mesh_model *mod,
@@ -682,60 +728,19 @@ static struct mesh_virtual *add_virtual(const uint8_t *v)
 
 	memcpy(virt->label, v, 16);
 	virt->ref_cnt = 1;
-	virt->id = virt_id_next++;
 	l_queue_push_head(mesh_virtuals, virt);
 
 	return virt;
 }
 
-static int set_pub(struct mesh_model *mod, const uint8_t *pub_addr,
+static int set_pub(struct mesh_model *mod, uint16_t pub_addr,
 			uint16_t idx, bool cred_flag, uint8_t ttl,
-			uint8_t period, uint8_t retransmit, bool b_virt,
-			uint16_t *dst)
+			uint8_t period, uint8_t retransmit)
 {
-	struct mesh_virtual *virt = NULL;
-	uint16_t grp;
+	if (!mod->pub)
+		mod->pub = l_new(struct mesh_model_pub, 1);
 
-	if (dst) {
-		if (b_virt)
-			*dst = 0;
-		else
-			*dst = l_get_le16(pub_addr);
-	}
-
-	if (b_virt) {
-		virt = add_virtual(pub_addr);
-		if (!virt)
-			return MESH_STATUS_STORAGE_FAIL;
-
-	}
-
-	/* If the old publication address is virtual, remove it from lists */
-	if (mod->pub && mod->pub->addr >= VIRTUAL_BASE) {
-		struct mesh_virtual *old_virt;
-
-		old_virt = l_queue_find(mod->virtuals, find_virt_by_id,
-						L_UINT_TO_PTR(mod->pub->addr));
-		if (old_virt) {
-			l_queue_remove(mod->virtuals, old_virt);
-			unref_virt(old_virt);
-		}
-	}
-
-	mod->pub = l_new(struct mesh_model_pub, 1);
-
-	if (b_virt) {
-		l_queue_push_head(mod->virtuals, virt);
-		grp = virt->addr;
-		mod->pub->addr = virt->id;
-	} else {
-		grp = l_get_le16(pub_addr);
-		mod->pub->addr = grp;
-	}
-
-	if (dst)
-		*dst = grp;
-
+	mod->pub->addr = pub_addr;
 	mod->pub->credential = cred_flag;
 	mod->pub->idx = idx;
 	mod->pub->ttl = ttl;
@@ -745,44 +750,67 @@ static int set_pub(struct mesh_model *mod, const uint8_t *pub_addr,
 	return MESH_STATUS_SUCCESS;
 }
 
-static int add_sub(struct mesh_net *net, struct mesh_model *mod,
-			const uint8_t *group, bool b_virt, uint16_t *dst)
+static int set_virt_pub(struct mesh_model *mod, const uint8_t *label,
+			uint16_t idx, bool cred_flag, uint8_t ttl,
+			uint8_t period, uint8_t retransmit)
 {
 	struct mesh_virtual *virt = NULL;
-	uint16_t grp;
 
-	if (b_virt) {
-		virt = add_virtual(group);
+	virt = add_virtual(label);
+	if (!virt)
+		return MESH_STATUS_STORAGE_FAIL;
+
+	if (!mod->pub)
+		mod->pub = l_new(struct mesh_model_pub, 1);
+
+	mod->pub->virt = virt;
+	return set_pub(mod, virt->addr, idx, cred_flag, ttl, period,
+								retransmit);
+}
+
+static int add_virt_sub(struct mesh_net *net, struct mesh_model *mod,
+			     const uint8_t *label, uint16_t *dst)
+{
+	struct mesh_virtual *virt = l_queue_find(mod->virtuals,
+						find_virt_by_label, label);
+
+	if (!virt) {
+		virt = add_virtual(label);
 		if (!virt)
 			return MESH_STATUS_STORAGE_FAIL;
 
-		grp = virt->addr;
-	} else {
-		grp = l_get_le16(group);
+		l_queue_push_head(mod->virtuals, virt);
+		mesh_net_dst_reg(net, virt->addr);
+		l_debug("Added virtual sub addr %4.4x", virt->addr);
 	}
 
 	if (dst)
-		*dst = grp;
+		*dst = virt->addr;
 
-	if (!mod->subs)
-		mod->subs = l_queue_new();
+	return MESH_STATUS_SUCCESS;
+}
 
-	/* Check if this group already exists */
-	if (l_queue_find(mod->subs, simple_match, L_UINT_TO_PTR(grp))) {
-		if (b_virt)
-			unref_virt(virt);
-
-		return MESH_STATUS_SUCCESS;
-	}
+static int add_sub(struct mesh_net *net, struct mesh_model *mod,
+			const uint8_t *group, bool b_virt, uint16_t *dst)
+{
+	uint16_t grp;
 
 	if (b_virt)
-		l_queue_push_head(mod->virtuals, virt);
+		return add_virt_sub(net, mod, group, dst);
 
-	l_queue_push_tail(mod->subs, L_UINT_TO_PTR(grp));
+	grp = l_get_le16(group);
+	if (dst)
+		*dst = grp;
 
-	l_debug("Added %4.4x", grp);
+	if (!l_queue_find(mod->subs, simple_match, L_UINT_TO_PTR(grp))) {
 
-	mesh_net_dst_reg(net, grp);
+		if (!mod->subs)
+			mod->subs = l_queue_new();
+
+		l_queue_push_tail(mod->subs, L_UINT_TO_PTR(grp));
+		mesh_net_dst_reg(net, grp);
+		l_debug("Added group subscription %4.4x", grp);
+	}
 
 	return MESH_STATUS_SUCCESS;
 }
@@ -823,8 +851,10 @@ static void send_dev_key_msg_rcvd(struct mesh_node *node, uint8_t ele_idx,
 	l_dbus_send(dbus, msg);
 }
 
-static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx, bool is_sub,
-					uint16_t src, uint16_t app_idx,
+static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx,
+					uint16_t src, uint16_t dst,
+					const struct mesh_virtual *virt,
+					uint16_t app_idx,
 					uint16_t size, const uint8_t *data)
 {
 	struct l_dbus *dbus = dbus_get_bus();
@@ -847,7 +877,17 @@ static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx, bool is_sub,
 
 	l_dbus_message_builder_append_basic(builder, 'q', &src);
 	l_dbus_message_builder_append_basic(builder, 'q', &app_idx);
-	l_dbus_message_builder_append_basic(builder, 'b', &is_sub);
+
+	if (virt) {
+		l_dbus_message_builder_enter_variant(builder, "ay");
+		dbus_append_byte_array(builder, virt->label,
+							sizeof(virt->label));
+		l_dbus_message_builder_leave_variant(builder);
+	} else {
+		l_dbus_message_builder_enter_variant(builder, "q");
+		l_dbus_message_builder_append_basic(builder, 'q', &dst);
+		l_dbus_message_builder_leave_variant(builder);
+	}
 
 	dbus_append_byte_array(builder, data, size);
 
@@ -857,7 +897,7 @@ static void send_msg_rcvd(struct mesh_node *node, uint8_t ele_idx, bool is_sub,
 }
 
 bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
-			uint32_t seq, uint32_t iv_index, uint8_t ttl,
+			uint32_t seq, uint32_t iv_index,
 			uint16_t net_idx, uint16_t src, uint16_t dst,
 			uint8_t key_aid, const uint8_t *data, uint16_t size)
 {
@@ -867,13 +907,12 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 		.dst = dst,
 		.data = NULL,
 		.size = size - (szmict ? 8 : 4),
-		.ttl = ttl,
 		.virt = NULL,
 	};
 	struct mesh_net *net = node_get_net(node);
 	uint8_t num_ele;
 	int decrypt_idx, i, ele_idx;
-	uint16_t addr;
+	uint16_t addr, crpl;
 	struct mesh_virtual *decrypt_virt = NULL;
 	bool result = false;
 	bool is_subscription;
@@ -888,10 +927,12 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 		/* Unicast and not addressed to us */
 		return false;
 
-	clear_text = l_malloc(size);
-	if (!clear_text)
+	/* Don't process if already in RPL */
+	crpl = node_get_crpl(node);
+	if (net_msg_check_replay_cache(net, src, crpl, seq, iv_index))
 		return false;
 
+	clear_text = l_malloc(size);
 	forward.data = clear_text;
 
 	/*
@@ -917,18 +958,6 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 		l_error("model.c - Failed to decrypt application payload");
 		result = false;
 		goto done;
-	}
-
-	/* print_packet("Clr Rx (pre-cache-check)", clear_text, size - 4); */
-
-	if (key_aid != APP_AID_DEV) {
-		uint16_t crpl = node_get_crpl(node);
-
-		if (appkey_msg_in_replay_cache(net, (uint16_t) decrypt_idx, src,
-							crpl, seq, iv_index)) {
-			result = true;
-			goto done;
-		}
 	}
 
 	print_packet("Clr Rx", clear_text, size - (szmict ? 8 : 4));
@@ -986,12 +1015,11 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 		 */
 		if (forward.has_dst && !forward.done) {
 			if ((decrypt_idx & APP_IDX_MASK) == decrypt_idx)
-				send_msg_rcvd(node, i, is_subscription, src,
+				send_msg_rcvd(node, i, src, dst, decrypt_virt,
 						forward.app_idx, forward.size,
 						forward.data);
 			else if (decrypt_idx == APP_IDX_DEV_REMOTE ||
-				(decrypt_idx == APP_IDX_DEV_LOCAL &&
-				 mesh_net_is_local_address(net, src, 1)))
+				 decrypt_idx == APP_IDX_DEV_LOCAL)
 				send_dev_key_msg_rcvd(node, i, src, decrypt_idx,
 						0, forward.size, forward.data);
 		}
@@ -1000,7 +1028,7 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 		 * Either the message has been processed internally or
 		 * has been passed on to an external model.
 		 */
-		result = forward.has_dst | forward.done;
+		result |= forward.has_dst | forward.done;
 
 		/* If the message was to unicast address, we are done */
 		if (!is_subscription && ele_idx == i)
@@ -1015,8 +1043,13 @@ bool mesh_model_rx(struct mesh_node *node, bool szmict, uint32_t seq0,
 			break;
 	}
 
+	/* If message has been handled by us, add to RPL */
+	if (result)
+		net_msg_add_replay_cache(net, src, seq, iv_index);
+
 done:
 	l_free(clear_text);
+
 	return result;
 }
 
@@ -1026,9 +1059,7 @@ int mesh_model_publish(struct mesh_node *node, uint32_t mod_id,
 {
 	struct mesh_net *net = node_get_net(node);
 	struct mesh_model *mod;
-	uint32_t target;
 	uint8_t *label = NULL;
-	uint16_t dst;
 	uint16_t net_idx;
 	bool result;
 	int status;
@@ -1055,35 +1086,21 @@ int mesh_model_publish(struct mesh_node *node, uint32_t mod_id,
 
 	gettimeofday(&tx_start, NULL);
 
-	target = mod->pub->addr;
-
-	if (IS_UNASSIGNED(target))
+	if (IS_UNASSIGNED(mod->pub->addr))
 		return MESH_ERROR_DOES_NOT_EXIST;
 
-	if (target >= VIRTUAL_BASE) {
-		struct mesh_virtual *virt;
+	if (mod->pub->virt)
+		label = mod->pub->virt->label;
 
-		virt = l_queue_find(mesh_virtuals, find_virt_by_id,
-						L_UINT_TO_PTR(target));
-		if (!virt)
-			return MESH_ERROR_NOT_FOUND;
-
-		label = virt->label;
-		dst = virt->addr;
-	} else {
-		dst = target;
-	}
-
-	l_debug("publish dst=%x", dst);
+	l_debug("publish dst=%x", mod->pub->addr);
 
 	net_idx = appkey_net_idx(net, mod->pub->idx);
 
 	result = msg_send(node, mod->pub->credential != 0, src,
-				dst, mod->pub->idx, net_idx, label, ttl,
-				msg, msg_len);
+				mod->pub->addr, mod->pub->idx, net_idx,
+				label, ttl, msg, msg_len);
 
 	return result ? MESH_ERROR_NONE : MESH_ERROR_FAILED;
-
 }
 
 bool mesh_model_send(struct mesh_node *node, uint16_t src, uint16_t dst,
@@ -1109,7 +1126,7 @@ bool mesh_model_send(struct mesh_node *node, uint16_t src, uint16_t dst,
 int mesh_model_pub_set(struct mesh_node *node, uint16_t addr, uint32_t id,
 			const uint8_t *pub_addr, uint16_t idx, bool cred_flag,
 			uint8_t ttl, uint8_t period, uint8_t retransmit,
-			bool b_virt, uint16_t *dst)
+			bool is_virt, uint16_t *dst)
 {
 	struct mesh_model *mod;
 	int status;
@@ -1128,13 +1145,25 @@ int mesh_model_pub_set(struct mesh_node *node, uint16_t addr, uint32_t id,
 	 * If the publication address is set to unassigned address value,
 	 * remove the publication
 	 */
-	if (!b_virt && IS_UNASSIGNED(l_get_le16(pub_addr))) {
+	if (!is_virt && IS_UNASSIGNED(l_get_le16(pub_addr))) {
 		remove_pub(node, mod);
 		return MESH_STATUS_SUCCESS;
 	}
 
-	status = set_pub(mod, pub_addr, idx, cred_flag, ttl, period, retransmit,
-								b_virt, dst);
+	/* Check if the old publication destination is a virtual label */
+	if (mod->pub && mod->pub->virt) {
+		unref_virt(mod->pub->virt);
+		mod->pub->virt = NULL;
+	}
+
+	if (!is_virt) {
+		status = set_pub(mod, l_get_le16(pub_addr), idx, cred_flag,
+						ttl, period, retransmit);
+	} else
+		status = set_virt_pub(mod, pub_addr, idx, cred_flag, ttl,
+						period, retransmit);
+
+	*dst = mod->pub->addr;
 
 	if (status != MESH_STATUS_SUCCESS)
 		return status;
@@ -1173,7 +1202,7 @@ void mesh_model_free(void *data)
 	l_free(mod);
 }
 
-static struct mesh_model *model_new(uint8_t ele_idx, uint32_t id)
+struct mesh_model *mesh_model_new(uint8_t ele_idx, uint32_t id)
 {
 	struct mesh_model *mod = l_new(struct mesh_model, 1);
 
@@ -1181,19 +1210,6 @@ static struct mesh_model *model_new(uint8_t ele_idx, uint32_t id)
 	mod->ele_idx = ele_idx;
 	mod->virtuals = l_queue_new();
 	return mod;
-}
-
-struct mesh_model *mesh_model_new(uint8_t ele_idx, uint16_t id)
-{
-	return model_new(ele_idx, id | VENDOR_ID_MASK);
-}
-
-struct mesh_model *mesh_model_vendor_new(uint8_t ele_idx, uint16_t vendor_id,
-								uint16_t mod_id)
-{
-	uint32_t id = mod_id | (vendor_id << 16);
-
-	return model_new(ele_idx, id);
 }
 
 /* Internal models only */
@@ -1355,12 +1371,25 @@ int mesh_model_sub_get(struct mesh_node *node, uint16_t addr, uint32_t id,
 		n += 2;
 	}
 
+	entry = l_queue_get_entries(mod->virtuals);
+
+	for (; entry; entry = entry->next) {
+		struct mesh_virtual *virt = entry->data;
+
+		if ((n + 2) > buf_size)
+			return MESH_STATUS_UNSPECIFIED_ERROR;
+
+		l_put_le16((uint16_t) L_PTR_TO_UINT(virt->addr), buf);
+		buf += 2;
+		n += 2;
+	}
+
 	*size = n;
 	return MESH_STATUS_SUCCESS;
 }
 
 int mesh_model_sub_add(struct mesh_node *node, uint16_t addr, uint32_t id,
-			const uint8_t *group, bool b_virt, uint16_t *dst)
+			const uint8_t *group, bool is_virt, uint16_t *dst)
 {
 	int status;
 	struct mesh_model *mod;
@@ -1369,15 +1398,23 @@ int mesh_model_sub_add(struct mesh_node *node, uint16_t addr, uint32_t id,
 	if (!mod)
 		return status;
 
-	return add_sub(node_get_net(node), mod, group, b_virt, dst);
+	status = add_sub(node_get_net(node), mod, group, is_virt, dst);
+
+	if (status != MESH_STATUS_SUCCESS)
+		return status;
+
+	if (!mod->cbs)
+		/* External models */
+		config_update_model_subscriptions(node, mod);
+
+	return MESH_STATUS_SUCCESS;
 }
 
 int mesh_model_sub_ovr(struct mesh_node *node, uint16_t addr, uint32_t id,
-			const uint8_t *group, bool b_virt, uint16_t *dst)
+			const uint8_t *group, bool is_virt, uint16_t *dst)
 {
 	int status;
 	struct l_queue *virtuals, *subs;
-	struct mesh_virtual *virt;
 	struct mesh_model *mod;
 
 	mod = find_model(node, addr, id, &status);
@@ -1392,20 +1429,7 @@ int mesh_model_sub_ovr(struct mesh_node *node, uint16_t addr, uint32_t id,
 	if (!mod->subs || !mod->virtuals)
 		return MESH_STATUS_INSUFF_RESOURCES;
 
-	/*
-	 * When overwriting the Subscription List,
-	 * make sure any virtual Publication address is preserved
-	 */
-	if (mod->pub && mod->pub->addr >= VIRTUAL_BASE) {
-		virt = l_queue_find(virtuals, find_virt_by_id,
-				L_UINT_TO_PTR(mod->pub->addr));
-		if (virt) {
-			virt->ref_cnt++;
-			l_queue_push_head(mod->virtuals, virt);
-		}
-	}
-
-	status = mesh_model_sub_add(node, addr, id, group, b_virt, dst);
+	status = add_sub(node_get_net(node), mod, group, is_virt, dst);
 
 	if (status != MESH_STATUS_SUCCESS) {
 		/* Adding new group failed, so revert to old lists */
@@ -1428,11 +1452,15 @@ int mesh_model_sub_ovr(struct mesh_node *node, uint16_t addr, uint32_t id,
 		l_queue_destroy(virtuals, unref_virt);
 	}
 
+	if (!mod->cbs)
+		/* External models */
+		config_update_model_subscriptions(node, mod);
+
 	return status;
 }
 
 int mesh_model_sub_del(struct mesh_node *node, uint16_t addr, uint32_t id,
-			const uint8_t *group, bool b_virt, uint16_t *dst)
+			const uint8_t *group, bool is_virt, uint16_t *dst)
 {
 	int status;
 	uint16_t grp;
@@ -1442,7 +1470,7 @@ int mesh_model_sub_del(struct mesh_node *node, uint16_t addr, uint32_t id,
 	if (!mod)
 		return status;
 
-	if (b_virt) {
+	if (is_virt) {
 		struct mesh_virtual *virt;
 
 		virt = l_queue_find(mod->virtuals, find_virt_by_label, group);
@@ -1463,6 +1491,10 @@ int mesh_model_sub_del(struct mesh_node *node, uint16_t addr, uint32_t id,
 	if (l_queue_remove(mod->subs, L_UINT_TO_PTR(grp)))
 		mesh_net_dst_unreg(node_get_net(node), grp);
 
+	if (!mod->cbs)
+		/* External models */
+		config_update_model_subscriptions(node, mod);
+
 	return MESH_STATUS_SUCCESS;
 }
 
@@ -1482,9 +1514,12 @@ int mesh_model_sub_del_all(struct mesh_node *node, uint16_t addr, uint32_t id)
 	for (; entry; entry = entry->next)
 		mesh_net_dst_unreg(net, (uint16_t) L_PTR_TO_UINT(entry->data));
 
-	l_queue_destroy(mod->subs, NULL);
-	l_queue_destroy(mod->virtuals, unref_virt);
-	mod->virtuals = l_queue_new();
+	l_queue_clear(mod->subs, NULL);
+	l_queue_clear(mod->virtuals, unref_virt);
+
+	if (!mod->cbs)
+		/* External models */
+		config_update_model_subscriptions(node, mod);
 
 	return MESH_STATUS_SUCCESS;
 }
@@ -1504,7 +1539,7 @@ struct mesh_model *mesh_model_setup(struct mesh_node *node, uint8_t ele_idx,
 		return NULL;
 	}
 
-	mod = model_new(ele_idx, db_mod->vendor ? db_mod->id :
+	mod = mesh_model_new(ele_idx, db_mod->vendor ? db_mod->id :
 						db_mod->id | VENDOR_ID_MASK);
 
 	/* Implicitly bind config server model to device key */
@@ -1534,22 +1569,16 @@ struct mesh_model *mesh_model_setup(struct mesh_node *node, uint8_t ele_idx,
 	}
 
 	/* Add publication if present */
-	if (pub && (pub->virt || !(IS_UNASSIGNED(pub->addr)))) {
-		uint8_t mod_addr[2];
-		uint8_t *pub_addr;
-		uint8_t retransmit = (pub->count << 5) +
-						(pub->interval / 50 - 1);
-
-		/* Add publication */
-		l_put_le16(pub->addr, &mod_addr);
-		pub_addr = pub->virt ? pub->virt_addr : mod_addr;
-
-		if (set_pub(mod, pub_addr, pub->idx, pub->credential, pub->ttl,
-			pub->period, retransmit, pub->virt, NULL) !=
-							MESH_STATUS_SUCCESS) {
-			mesh_model_free(mod);
-			return NULL;
-		}
+	if (pub) {
+		uint8_t retransmit = pub->count +
+					((pub->interval / 50 - 1) << 3);
+		if (pub->virt)
+			set_virt_pub(mod, pub->virt_addr, pub->idx,
+						pub->credential, pub->ttl,
+						pub->period, retransmit);
+		else if (!IS_UNASSIGNED(pub->addr))
+			set_pub(mod, pub->addr, pub->idx, pub->credential,
+				pub->ttl, pub->period, retransmit);
 	}
 
 	/* Add subscriptions if present */
@@ -1679,6 +1708,10 @@ void model_build_config(void *model, void *msg_builder)
 		dbus_append_dict_entry_basic(builder, "PublicationPeriod", "u",
 								&period);
 	}
+
+	if (l_queue_length(mod->subs) || l_queue_length(mod->virtuals))
+		append_dict_subs_array(builder, mod->subs, mod->virtuals,
+							"Subscriptions");
 
 	l_dbus_message_builder_leave_array(builder);
 	l_dbus_message_builder_leave_struct(builder);

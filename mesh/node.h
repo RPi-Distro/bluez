@@ -31,7 +31,7 @@ typedef void (*node_join_ready_func_t) (struct mesh_node *node,
 						struct mesh_agent *agent);
 
 void node_remove(struct mesh_node *node);
-void node_join(const char *app_path, const char *sender, const uint8_t *uuid,
+void node_join(const char *app_root, const char *sender, const uint8_t *uuid,
 						node_join_ready_func_t cb);
 uint8_t *node_uuid_get(struct mesh_node *node);
 struct mesh_net *node_get_net(struct mesh_node *node);
@@ -40,17 +40,15 @@ struct mesh_node *node_find_by_uuid(uint8_t uuid[16]);
 struct mesh_node *node_find_by_token(uint64_t token);
 bool node_is_provisioner(struct mesh_node *node);
 bool node_is_provisioned(struct mesh_node *node);
-bool node_app_key_delete(struct mesh_net *net, uint16_t addr,
-				uint16_t net_idx, uint16_t idx);
+void node_app_key_delete(struct mesh_node *node, uint16_t net_idx,
+							uint16_t app_idx);
 uint16_t node_get_primary(struct mesh_node *node);
 uint16_t node_get_primary_net_idx(struct mesh_node *node);
 void node_set_token(struct mesh_node *node, uint8_t token[8]);
 const uint8_t *node_get_token(struct mesh_node *node);
-void node_set_device_key(struct mesh_node *node, uint8_t key[16]);
 const uint8_t *node_get_device_key(struct mesh_node *node);
 void node_set_num_elements(struct mesh_node *node, uint8_t num_ele);
 uint8_t node_get_num_elements(struct mesh_node *node);
-bool node_parse_composition(struct mesh_node *node, uint8_t *buf, uint16_t len);
 bool node_add_binding(struct mesh_node *node, uint8_t ele_idx,
 			uint32_t model_id, uint16_t app_idx);
 bool node_del_binding(struct mesh_node *node, uint8_t ele_idx,
@@ -83,13 +81,13 @@ const char *node_get_app_path(struct mesh_node *node);
 bool node_add_pending_local(struct mesh_node *node, void *info);
 void node_attach_io_all(struct mesh_io *io);
 void node_attach_io(struct mesh_node *node, struct mesh_io *io);
-int node_attach(const char *app_path, const char *sender, uint64_t token,
+int node_attach(const char *app_root, const char *sender, uint64_t token,
 					node_ready_func_t cb, void *user_data);
 void node_build_attach_reply(struct mesh_node *node,
 						struct l_dbus_message *reply);
-void node_create(const char *app_path, const char *sender, const uint8_t *uuid,
+void node_create(const char *app_root, const char *sender, const uint8_t *uuid,
 					node_ready_func_t cb, void *user_data);
-bool node_import(const char *app_path, const char *sender, const uint8_t *uuid,
+bool node_import(const char *app_root, const char *sender, const uint8_t *uuid,
 			const uint8_t dev_key[16], const uint8_t net_key[16],
 			uint16_t net_idx, bool kr, bool ivu,
 			uint32_t iv_index, uint16_t unicast,

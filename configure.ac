@@ -1,5 +1,5 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.52)
+AC_INIT(bluez, 5.54)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -230,8 +230,8 @@ AC_ARG_ENABLE(mesh, AC_HELP_STRING([--enable-mesh],
 AM_CONDITIONAL(MESH, test "${enable_mesh}" = "yes")
 
 if (test "${enable_mesh}" = "yes"); then
-	PKG_CHECK_MODULES(JSONC, json-c, dummy=yes,
-				AC_MSG_ERROR(json-c is required))
+	PKG_CHECK_MODULES(JSONC, json-c >= 0.13, dummy=yes,
+				AC_MSG_ERROR(json-c >= 0.13 is required))
 	AC_SUBST(JSON_CFLAGS)
 	AC_SUBST(JSON_LIBS)
 fi
@@ -265,8 +265,8 @@ AC_ARG_ENABLE([external_ell], AC_HELP_STRING([--enable-external-ell],
 				[enable external Embedded Linux library]),
 					[enable_external_ell=${enableval}])
 if (test "${enable_external_ell}" = "yes"); then
-	PKG_CHECK_MODULES(ELL, ell >= 0.26, dummy=yes,
-		AC_MSG_ERROR(Embedded Linux library >= 0.26 is required))
+	PKG_CHECK_MODULES(ELL, ell >= 0.28, dummy=yes,
+		AC_MSG_ERROR(Embedded Linux library >= 0.28 is required))
 	AC_SUBST(ELL_CFLAGS)
 	AC_SUBST(ELL_LIBS)
 fi

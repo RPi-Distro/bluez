@@ -637,6 +637,9 @@ bool mesh_crypto_packet_build(bool ctl, uint8_t ttl,
 	uint32_t hdr;
 	size_t n;
 
+	if (seq > SEQ_MASK)
+		return false;
+
 	l_put_be32(seq, packet + 1);
 	packet[1] = (ctl ? CTL : 0) | (ttl & TTL_MASK);
 
@@ -699,7 +702,7 @@ bool mesh_crypto_packet_parse(const uint8_t *packet, uint8_t packet_len,
 	uint16_t this_dst;
 	bool is_segmented;
 
-	if (packet_len < 14)
+	if (packet_len < 10)
 		return false;
 
 	this_dst = l_get_be16(packet + 7);
@@ -730,7 +733,7 @@ bool mesh_crypto_packet_parse(const uint8_t *packet, uint8_t packet_len,
 		uint8_t this_opcode = packet[9] & OPCODE_MASK;
 
 		if (cookie)
-			*cookie = l_get_be32(packet + 9);
+			*cookie = l_get_be32(packet + 2) ^ packet[6];
 
 		if (opcode)
 			*opcode = this_opcode;

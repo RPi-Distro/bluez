@@ -232,11 +232,25 @@ class Element(dbus.service.Object):
 				ids.append(id)
 		return ids
 
+	def _get_v_models(self):
+		ids = []
+		for model in self.models:
+			id = model.get_id()
+			v = model.get_vendor()
+			if v != VENDOR_ID_NONE:
+				vendor_id = (v, id)
+				ids.append(vendor_id)
+		return ids
+
 	def get_properties(self):
+		vendor_models = self._get_v_models()
+		sig_models = self._get_sig_models()
+
 		return {
 			MESH_ELEMENT_IFACE: {
 			'Index': dbus.Byte(self.index),
-			'Models': dbus.Array(self._get_sig_models(), 'q')
+			'Models': dbus.Array(sig_models, 'q'),
+			'VendorModels': dbus.Array(vendor_models, '(qq)'),
 			}
 		}
 
@@ -254,10 +268,10 @@ class Element(dbus.service.Object):
 			self.UpdateModelConfiguration(mod_id, config[1])
 
 	@dbus.service.method(MESH_ELEMENT_IFACE,
-					in_signature="qqbay", out_signature="")
-	def MessageReceived(self, source, key, is_sub, data):
-		print('Message Received on Element ', end='')
-		print(self.index)
+					in_signature="qqvay", out_signature="")
+	def MessageReceived(self, source, key, destination, data):
+		print('Message Received on Element %d, src=%04x, dst=%s' %
+						self.index, source, destination)
 		for model in self.models:
 			model.process_message(source, key, data)
 
@@ -313,6 +327,19 @@ class Model():
 			print('Model publication period ', end='')
 			print(self.pub_period, end='')
 			print(' ms')
+		if 'Subscriptions' in config:
+			self.print_subscriptions(config.get('Subscriptions'))
+
+	def print_subscriptions(self, subscriptions):
+		print('Model subscriptions ', end='')
+		for sub in subscriptions:
+			if isinstance(sub, int):
+				print('%04x' % sub, end=' ')
+
+			if isinstance(sub, list):
+				label = uuid.UUID(bytes=b''.join(sub))
+				print(label, end=' ')
+		print()
 
 class OnOffServer(Model):
 	def __init__(self, model_id):

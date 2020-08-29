@@ -52,6 +52,7 @@ static uint8_t scan_uuid[16];
 static struct mesh_node *scan_node;
 static struct l_timeout *scan_timeout;
 static struct add_data *add_pending;
+static const uint8_t prvb[2] = {MESH_AD_TYPE_BEACON, 0x00};
 
 static void scan_cancel(struct l_timeout *timeout, void *user_data)
 {
@@ -66,7 +67,7 @@ static void scan_cancel(struct l_timeout *timeout, void *user_data)
 
 	net = node_get_net(node);
 	io = mesh_net_get_io(net);
-	mesh_io_deregister_recv_cb(io, MESH_IO_FILTER_PROV_BEACON);
+	mesh_io_deregister_recv_cb(io, prvb, sizeof(prvb));
 	scan_node = NULL;
 	scan_timeout = NULL;
 }
@@ -79,8 +80,6 @@ static void free_pending_add_call()
 	if (add_pending->disc_watch)
 		l_dbus_remove_watch(dbus_get_bus(),
 						add_pending->disc_watch);
-
-	mesh_agent_remove(add_pending->agent);
 
 	l_free(add_pending);
 	add_pending = NULL;
@@ -246,7 +245,7 @@ static struct l_dbus_message *add_node_call(struct l_dbus *dbus,
 	add_pending = l_new(struct add_data, 1);
 	memcpy(add_pending->uuid, uuid, 16);
 	add_pending->node = node;
-	add_pending->agent = node_get_agent(node);;
+	add_pending->agent = node_get_agent(node);
 
 	if (!node_is_provisioner(node) || (add_pending->agent == NULL)) {
 		l_info("Provisioner: %d", node_is_provisioner(node));
@@ -287,6 +286,10 @@ static struct l_dbus_message *import_node_call(struct l_dbus *dbus,
 	uint8_t num_ele;
 	uint8_t *key;
 	uint32_t n;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qyay", &primary, &num_ele,
 								&iter_key))
@@ -311,6 +314,10 @@ static struct l_dbus_message *delete_node_call(struct l_dbus *dbus,
 	struct mesh_net *net = node_get_net(node);
 	uint16_t primary;
 	uint8_t num_ele;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qy", &primary, &num_ele))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
@@ -368,6 +375,10 @@ static struct l_dbus_message *start_scan_call(struct l_dbus *dbus,
 	uint16_t duration;
 	struct mesh_io *io;
 	struct mesh_net *net;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &duration))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
@@ -387,7 +398,7 @@ static struct l_dbus_message *start_scan_call(struct l_dbus *dbus,
 	net = node_get_net(node);
 	io = mesh_net_get_io(net);
 	scan_node = node;
-	mesh_io_register_recv_cb(io, MESH_IO_FILTER_PROV_BEACON,
+	mesh_io_register_recv_cb(io, prvb, sizeof(prvb),
 						prov_beacon_recv, node);
 
 	if (duration)
@@ -402,11 +413,17 @@ static struct l_dbus_message *cancel_scan_call(struct l_dbus *dbus,
 						void *user_data)
 {
 	struct mesh_node *node = user_data;
+	const char *sender = l_dbus_message_get_sender(msg);
 
-	if (scan_node != node)
-		return dbus_error(msg, MESH_ERROR_BUSY, NULL);
+	if (strcmp(sender, node_get_owner(node)) || !node_is_provisioner(node))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
-	scan_cancel(NULL, node);
+	if (scan_node) {
+		if (scan_node != node)
+			return dbus_error(msg, MESH_ERROR_BUSY, NULL);
+
+		scan_cancel(NULL, node);
+	}
 
 	return l_dbus_message_new_method_return(msg);
 }
@@ -446,6 +463,10 @@ static struct l_dbus_message *create_subnet_call(struct l_dbus *dbus,
 	struct mesh_node *node = user_data;
 	uint8_t key[16];
 	uint16_t net_idx;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &net_idx) ||
 						net_idx == PRIMARY_NET_IDX)
@@ -464,6 +485,10 @@ static struct l_dbus_message *update_subnet_call(struct l_dbus *dbus,
 	struct mesh_node *node = user_data;
 	struct keyring_net_key key;
 	uint16_t net_idx;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &net_idx) ||
 						net_idx > MAX_KEY_IDX)
@@ -501,6 +526,10 @@ static struct l_dbus_message *delete_subnet_call(struct l_dbus *dbus,
 {
 	struct mesh_node *node = user_data;
 	uint16_t net_idx;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &net_idx) ||
 						net_idx > MAX_KEY_IDX)
@@ -520,6 +549,10 @@ static struct l_dbus_message *import_subnet_call(struct l_dbus *dbus,
 	uint16_t net_idx;
 	uint8_t *key;
 	uint32_t n;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qay", &net_idx, &iter_key))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
@@ -574,6 +607,10 @@ static struct l_dbus_message *create_appkey_call(struct l_dbus *dbus,
 	struct mesh_node *node = user_data;
 	uint16_t net_idx, app_idx;
 	uint8_t key[16];
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qq", &net_idx, &app_idx))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
@@ -591,6 +628,10 @@ static struct l_dbus_message *update_appkey_call(struct l_dbus *dbus,
 	struct keyring_net_key net_key;
 	struct keyring_app_key app_key;
 	uint16_t app_idx;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &app_idx) ||
 							app_idx > MAX_KEY_IDX)
@@ -618,6 +659,10 @@ static struct l_dbus_message *delete_appkey_call(struct l_dbus *dbus,
 {
 	struct mesh_node *node = user_data;
 	uint16_t app_idx;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "q", &app_idx))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
@@ -636,6 +681,10 @@ static struct l_dbus_message *import_appkey_call(struct l_dbus *dbus,
 	uint16_t net_idx, app_idx;
 	uint8_t *key;
 	uint32_t n;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qqay", &net_idx, &app_idx,
 								&iter_key))
@@ -657,6 +706,10 @@ static struct l_dbus_message *set_key_phase_call(struct l_dbus *dbus,
 	struct keyring_net_key key;
 	uint16_t net_idx;
 	uint8_t phase;
+	const char *sender = l_dbus_message_get_sender(msg);
+
+	if (strcmp(sender, node_get_owner(node)))
+		return dbus_error(msg, MESH_ERROR_NOT_AUTHORIZED, NULL);
 
 	if (!l_dbus_message_get_arguments(msg, "qy", &net_idx, &phase) ||
 					phase == KEY_REFRESH_PHASE_ONE ||
@@ -698,36 +751,35 @@ static struct l_dbus_message *set_key_phase_call(struct l_dbus *dbus,
 
 static void setup_management_interface(struct l_dbus_interface *iface)
 {
-	l_dbus_interface_method(iface, "AddNode", 0, add_node_call, "", "ay",
-								"uuid");
+	l_dbus_interface_method(iface, "AddNode", 0, add_node_call, "",
+								"ay", "uuid");
 	l_dbus_interface_method(iface, "ImportRemoteNode", 0, import_node_call,
-						"", "qyay", "", "primary",
-						"count", "dev_key");
+				"", "qyay", "primary", "count", "dev_key");
 	l_dbus_interface_method(iface, "DeleteRemoteNode", 0, delete_node_call,
-					"", "qy", "", "primary", "count");
+						"", "qy", "primary", "count");
 	l_dbus_interface_method(iface, "UnprovisionedScan", 0, start_scan_call,
-							"", "q", "", "seconds");
+							"", "q", "seconds");
 	l_dbus_interface_method(iface, "UnprovisionedScanCancel", 0,
 						cancel_scan_call, "", "");
 	l_dbus_interface_method(iface, "CreateSubnet", 0, create_subnet_call,
-						"", "q", "", "net_index");
+							"", "q", "net_index");
 	l_dbus_interface_method(iface, "UpdateSubnet", 0, update_subnet_call,
-						"", "q", "", "net_index");
+							"", "q", "net_index");
 	l_dbus_interface_method(iface, "DeleteSubnet", 0, delete_subnet_call,
-						"", "q", "", "net_index");
+							"", "q", "net_index");
 	l_dbus_interface_method(iface, "ImportSubnet", 0, import_subnet_call,
-					"", "qay", "", "net_index", "net_key");
+					"", "qay", "net_index", "net_key");
 	l_dbus_interface_method(iface, "CreateAppKey", 0, create_appkey_call,
-					"", "qq", "", "net_index", "app_index");
+					"", "qq", "net_index", "app_index");
 	l_dbus_interface_method(iface, "UpdateAppKey", 0, update_appkey_call,
-						"", "q", "", "app_index");
+							"", "q", "app_index");
 	l_dbus_interface_method(iface, "DeleteAppKey", 0, delete_appkey_call,
-						"", "q", "", "app_index");
+							"", "q", "app_index");
 	l_dbus_interface_method(iface, "ImportAppKey", 0, import_appkey_call,
-				"", "qqay", "", "net_index", "app_index",
-								"app_key");
-	l_dbus_interface_method(iface, "SetKeyPhase", 0, set_key_phase_call,
-					"", "qy", "", "net_index", "phase");
+							"", "qqay", "net_index",
+							"app_index", "app_key");
+	l_dbus_interface_method(iface, "SetKeyPhase", 0, set_key_phase_call, "",
+						"qy", "net_index", "phase");
 }
 
 bool manager_dbus_init(struct l_dbus *bus)
@@ -741,4 +793,12 @@ bool manager_dbus_init(struct l_dbus *bus)
 	}
 
 	return true;
+}
+
+void manager_scan_cancel(struct mesh_node *node)
+{
+	if (scan_node != node)
+		return;
+
+	scan_cancel(NULL, node);
 }

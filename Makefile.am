@@ -81,7 +81,7 @@ pkginclude_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 22:0:19
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 22:2:19
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -121,12 +121,22 @@ ell_headers = ell/util.h \
 			ell/io.h \
 			ell/idle.h \
 			ell/main.h \
+			ell/settings.h \
 			ell/strv.h \
 			ell/string.h \
 			ell/utf8.h \
 			ell/dbus.h \
 			ell/dbus-service.h \
-			ell/dbus-client.h
+			ell/dbus-client.h \
+			ell/key.h \
+			ell/cert.h \
+			ell/pem.h \
+			ell/base64.h \
+			ell/pkcs5.h \
+			ell/asn1-private.h \
+			ell/pkcs5-private.h \
+			ell/cert-private.h \
+			ell/pem-private.h
 
 ell_sources = ell/private.h ell/missing.h \
 			ell/util.c \
@@ -139,10 +149,16 @@ ell_sources = ell/private.h ell/missing.h \
 			ell/io.c \
 			ell/idle.c \
 			ell/main.c \
+			ell/settings.c \
 			ell/strv.c \
 			ell/string.c \
 			ell/cipher.c \
 			ell/checksum.c \
+			ell/pem.c \
+			ell/cert.c \
+			ell/key.c \
+			ell/pkcs5.c \
+			ell/base64.c \
 			ell/utf8.c \
 			ell/dbus-private.h \
 			ell/dbus.c \
@@ -524,10 +540,8 @@ if MESH
 unit_tests += unit/test-mesh-crypto
 unit_test_mesh_crypto_CPPFLAGS = $(ell_cflags)
 unit_test_mesh_crypto_SOURCES = unit/test-mesh-crypto.c \
-				mesh/crypto.h ell/internal ell/ell.h \
-				$(ell_sources)
-unit_test_mesh_crypto_LDADD = src/libshared-ell.la \
-			$(ell_ldadd)
+				mesh/crypto.h ell/internal ell/ell.h
+unit_test_mesh_crypto_LDADD = $(ell_ldadd)
 endif
 
 if MAINTAINER_MODE

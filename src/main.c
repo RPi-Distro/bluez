@@ -93,6 +93,7 @@ static const char *supported_options[] = {
 	"MultiProfile",
 	"FastConnectable",
 	"Privacy",
+	"JustWorksRepairing",
 	NULL
 };
 
@@ -108,6 +109,7 @@ static const char *gatt_options[] = {
 	"Cache",
 	"KeySize",
 	"ExchangeMTU",
+	"EATTChannels",
 	NULL
 };
 
@@ -192,6 +194,20 @@ static bt_gatt_cache_t parse_gatt_cache(const char *cache)
 		return BT_GATT_CACHE_ALWAYS;
 	}
 }
+
+static enum jw_repairing_t parse_jw_repairing(const char *jw_repairing)
+{
+	if (!strcmp(jw_repairing, "never")) {
+		return JW_REPAIRING_NEVER;
+	} else if (!strcmp(jw_repairing, "confirm")) {
+		return JW_REPAIRING_CONFIRM;
+	} else if (!strcmp(jw_repairing, "always")) {
+		return JW_REPAIRING_ALWAYS;
+	} else {
+		return JW_REPAIRING_NEVER;
+	}
+}
+
 
 static void check_options(GKeyFile *config, const char *group,
 						const char **options)
@@ -331,6 +347,18 @@ static void parse_config(GKeyFile *config)
 		g_free(str);
 	}
 
+	str = g_key_file_get_string(config, "General",
+						"JustWorksRepairing", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+		main_opts.jw_repairing = JW_REPAIRING_NEVER;
+	} else {
+		DBG("just_works_repairing=%s", str);
+		main_opts.jw_repairing = parse_jw_repairing(str);
+		g_free(str);
+	}
+
 	str = g_key_file_get_string(config, "General", "Name", &err);
 	if (err) {
 		DBG("%s", err->message);
@@ -444,6 +472,18 @@ static void parse_config(GKeyFile *config)
 		DBG("ExchangeMTU=%d", val);
 		main_opts.gatt_mtu = val;
 	}
+
+	val = g_key_file_get_integer(config, "GATT", "Channels", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("Channels=%d", val);
+		/* Ensure the channels is within a valid range. */
+		val = MIN(val, 5);
+		val = MAX(val, 1);
+		main_opts.gatt_channels = val;
+	}
 }
 
 static void init_defaults(void)
@@ -470,6 +510,7 @@ static void init_defaults(void)
 
 	main_opts.gatt_cache = BT_GATT_CACHE_ALWAYS;
 	main_opts.gatt_mtu = BT_ATT_MAX_LE_MTU;
+	main_opts.gatt_channels = 3;
 }
 
 static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,

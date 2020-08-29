@@ -29,6 +29,8 @@ Linux kernel v4.5	Version 1.11
 Linux kernel v4.6	Version 1.12
 Linux kernel v4.8	Version 1.13
 Linux kernel v4.9	Version 1.14
+Linux kernel v5.5	Version 1.15
+Linux kernel v5.6	Version 1.16 (not yet released)
 
 Version 1.1 introduces Set Device ID command.
 
@@ -85,6 +87,12 @@ Version 1.14 introduces Read Extended Controller Information command and
 Extended Controller Information Changed event. It also adds Set Appearance
 command. The advertising flags Appearance and Local Name for adding scan
 response information are now supported.
+
+Version 1.15 introduces Get PHY Configuration, Set PHY Configuration and
+Load Blocked Keys commands.
+
+Version 1.16 introduces Wideband Speech setting and its corresponding
+Set Wideband Speech command.
 
 
 Example
@@ -307,6 +315,8 @@ Read Controller Information Command
 		13	Privacy
 		14	Controller Configuration
 		15	Static Address
+		16	PHY Configuration
+		17	Wideband Speech
 
 	This command generates a Command Complete event on success or
 	a Command Status event on failure.
@@ -2896,6 +2906,8 @@ Read Extended Controller Information Command
 		13	Privacy
 		14	Controller Configuration
 		15	Static Address
+		16	PHY Configuration
+		17	Wideband Speech
 
 	The EIR_Data field contains information about class of device,
 	local name and other values. Not all of them might be present. For
@@ -2916,7 +2928,7 @@ Read Extended Controller Information Command
 Set Appearance Command
 ======================
 
-	Command Code:		0x0042
+	Command Code:		0x0043
 	Controller Index:	<controller id>
 	Command Parameters:	Appearance (2 Octets)
 	Return Parameters:
@@ -2945,7 +2957,7 @@ Set Appearance Command
 Get PHY Configuration Command
 =============================
 
-	Command Code:		0x0043
+	Command Code:		0x0044
 	Controller Index:	<controller id>
 	Command Parameters:
 	Return Parameters:	Supported_PHYs (4 Octet)
@@ -2988,7 +3000,7 @@ Get PHY Configuration Command
 Set PHY Configuration Command
 =============================
 
-	Command Code:		0x0044
+	Command Code:		0x0045
 	Controller Index:	<controller id>
 	Command Parameters: 	Selected_PHYs (4 Octet)
 	Return Parameters:
@@ -3011,6 +3023,74 @@ Set PHY Configuration Command
 	or a Command Status event on failure.
 
 	Possible errors:	Invalid Parameters
+				Invalid Index
+
+Load Blocked Keys Command
+===========================
+
+	Command Code:		0x0046
+	Controller Index:	<controller id>
+	Command Parameters:	Key_Count (2 Octets)
+				Key1 {
+					Key_Type (1 Octet)
+					Value (16 Octets)
+				}
+				Key2 { }
+				...
+	Return Parameters:
+
+	This command is used to feed the kernel a list of keys that
+	are known to be vulnerable.
+
+	If the pairing procedure produces any of these keys, they will be
+	silently dropped and any attempt to enable encryption rejected.
+
+	Currently defined Key_Type values are:
+
+			0x00	Link Key (BR/EDR)
+			0x01	Long Term Key (LE)
+			0x02	Identity Resolving Key (LE)
+
+	This command can be used when the controller is not powered.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Invalid Parameters
+				Invalid Index
+
+
+Set Wideband Speech Command
+===========================
+
+	Command Code:		0x0047
+	Controller Index:	<controller id>
+	Command Parameters:	Wideband_Speech (1 Octet)
+	Return Parameters:	Current_Settings (4 Octets)
+
+	This command is used to enable/disable Wideband Speech
+	support for a controller. The allowed values for the
+	Wideband_Speech command parameter are 0x00 and 0x01.
+	All other values will return Invalid Parameters.
+
+	The value 0x00 disables Wideband Speech, the value 0x01
+	enables Wideband Speech.
+
+	This command is only available for BR/EDR capable controllers and
+	require controller specific support.
+
+	This command can be used when the controller is not powered and
+	all settings will be programmed once powered.
+
+	In case the controller does not support Wideband Speech
+	the command will fail regardless with Not Supported error.
+
+	This command generates a Command Complete event on success or
+	a Command Status event on failure.
+
+	Possible errors:	Busy
+				Not Supported
+				Invalid Parameters
 				Invalid Index
 
 

@@ -401,6 +401,7 @@ struct avdtp {
 
 	struct avdtp_stream *pending_open;
 
+	uint32_t phy;
 	uint16_t imtu;
 	uint16_t omtu;
 
@@ -2291,6 +2292,9 @@ static void avdtp_connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	if (!session->io)
 		session->io = g_io_channel_ref(chan);
 
+	/* Check if kernel supports reading packet types */
+	bt_io_get(chan, NULL, BT_IO_OPT_PHY, &session->phy, BT_IO_OPT_INVALID);
+
 	bt_io_get(chan, &err,
 			BT_IO_OPT_OMTU, &session->omtu,
 			BT_IO_OPT_IMTU, &session->imtu,
@@ -2399,14 +2403,26 @@ static GIOChannel *l2cap_connect(struct avdtp *session)
 
 	src = btd_adapter_get_address(device_get_adapter(session->device));
 
-	io = bt_io_connect(avdtp_connect_cb, session,
-				NULL, &err,
-				BT_IO_OPT_SOURCE_BDADDR, src,
-				BT_IO_OPT_DEST_BDADDR,
-				device_get_address(session->device),
-				BT_IO_OPT_PSM, AVDTP_PSM,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
-				BT_IO_OPT_INVALID);
+	if (session->phy)
+		io = bt_io_connect(avdtp_connect_cb, session,
+					NULL, &err,
+					BT_IO_OPT_SOURCE_BDADDR, src,
+					BT_IO_OPT_DEST_BDADDR,
+					device_get_address(session->device),
+					BT_IO_OPT_PSM, AVDTP_PSM,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
+					/* Set Input MTU to 0 to auto-tune */
+					BT_IO_OPT_IMTU, 0,
+					BT_IO_OPT_INVALID);
+	else
+		io = bt_io_connect(avdtp_connect_cb, session,
+					NULL, &err,
+					BT_IO_OPT_SOURCE_BDADDR, src,
+					BT_IO_OPT_DEST_BDADDR,
+					device_get_address(session->device),
+					BT_IO_OPT_PSM, AVDTP_PSM,
+					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
+					BT_IO_OPT_INVALID);
 	if (!io) {
 		error("%s", err->message);
 		g_error_free(err);
@@ -3550,6 +3566,7 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 {
 	struct seid_req req;
 	int ret;
+	struct avdtp_local_sep *sep = stream->lsep;
 
 	if (!stream && session->discover) {
 		/* Don't call cb since it being aborted */
@@ -3563,6 +3580,8 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 
 	if (stream->lsep->state == AVDTP_STATE_ABORTING)
 		return -EINVAL;
+
+	avdtp_sep_set_state(session, sep, AVDTP_STATE_ABORTING);
 
 	if (session->req && stream == session->req->stream)
 		return cancel_request(session, ECANCELED);
