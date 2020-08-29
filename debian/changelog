@@ -1,3 +1,9 @@
+bluez (5.54-1) unstable; urgency=medium
+
+  * Update to 5.54.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 30 Aug 2020 06:48:15 +0900
+
 bluez (5.52-1) experimental; urgency=medium
 
   * Update to 5.52.
