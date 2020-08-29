@@ -1,6 +1,7 @@
 libbluetooth.so.3 libbluetooth3 #MINVER#
  ba2oui@Base 4.91
  ba2str@Base 4.91
+ ba2strlc@Base 5.54
  bachk@Base 4.91
  bafprintf@Base 4.91
  baprintf@Base 4.91

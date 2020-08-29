@@ -1,6 +1,7 @@
 bluez (5.54-1) unstable; urgency=medium
 
   * Update to 5.54.
+  * Update d/libbluetooth3.symbols.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sun, 30 Aug 2020 06:48:15 +0900
 
