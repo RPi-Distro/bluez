@@ -1,6 +1,6 @@
 bluez (5.54-1) unstable; urgency=medium
 
-  * Update to 5.54.
+  * Update to 5.54. (Closes: #946711, #966564, #925369)
   * Update d/libbluetooth3.symbols.
   * Delete unnecessary patches.
 
