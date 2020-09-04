@@ -6,7 +6,6 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 CONFIGURE_FLAGS := \
 	--disable-silent-rules \
 	--libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
-	--libexec=\$${prefix}/lib/ \
 	--enable-static \
 	--enable-tools \
 	--enable-cups \
@@ -31,6 +30,10 @@ CONFIGURE_FLAGS := \
 	--enable-health \
 	--enable-experimental
 
+ifeq ($(shell dpkg-vendor --is Ubuntu && echo yes) $(DEB_HOST_ARCH), yes i386)
+   skip_packages = -Nbluez-cups
+endif
+
 %:
 	dh $@ --with autoreconf
 
@@ -54,6 +57,13 @@ override_dh_installsystemd:
 
 override_dh_auto_test:
 	# disable
+
+override_dh_builddeb:
+	dh_builddeb ${skip_packages}
+
+override_dh_gencontrol:
+	dh_gencontrol ${skip_packages}
+
 override_dh_fixperms-indep:
 	dh_fixperms
 	chmod 0644 debian/bluez-test-scripts/usr/share/doc/bluez-test-scripts/examples/*
