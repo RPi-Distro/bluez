@@ -65,6 +65,7 @@ static struct adapter *default_ctrl;
 static GDBusProxy *default_dev;
 static GDBusProxy *default_attr;
 static GList *ctrl_list;
+static GList *battery_proxies;
 
 static const char *agent_arguments[] = {
 	"on",
@@ -107,7 +108,9 @@ static void disconnect_handler(DBusConnection *connection, void *user_data)
 	bt_shell_set_prompt(PROMPT_OFF);
 
 	g_list_free_full(ctrl_list, proxy_leak);
+	g_list_free_full(battery_proxies, proxy_leak);
 	ctrl_list = NULL;
+	battery_proxies = NULL;
 
 	default_ctrl = NULL;
 }
@@ -271,7 +274,7 @@ static void print_iter(const char *label, const char *name,
 		break;
 	case DBUS_TYPE_BYTE:
 		dbus_message_iter_get_basic(iter, &byte);
-		bt_shell_printf("%s%s: 0x%02x\n", label, name, byte);
+		bt_shell_printf("%s%s: 0x%02x (%d)\n", label, name, byte, byte);
 		break;
 	case DBUS_TYPE_VARIANT:
 		dbus_message_iter_recurse(iter, &subiter);
@@ -309,14 +312,20 @@ static void print_iter(const char *label, const char *name,
 	}
 }
 
-static void print_property(GDBusProxy *proxy, const char *name)
+static void print_property_with_label(GDBusProxy *proxy, const char *name,
+					const char *label)
 {
 	DBusMessageIter iter;
 
 	if (g_dbus_proxy_get_property(proxy, name, &iter) == FALSE)
 		return;
 
-	print_iter("\t", name, &iter);
+	print_iter("\t", label ? label : name, &iter);
+}
+
+static void print_property(GDBusProxy *proxy, const char *name)
+{
+	print_property_with_label(proxy, name, NULL);
 }
 
 static void print_uuid(const char *uuid)
@@ -445,6 +454,16 @@ done:
 	g_free(desc);
 }
 
+static void battery_added(GDBusProxy *proxy)
+{
+	battery_proxies = g_list_append(battery_proxies, proxy);
+}
+
+static void battery_removed(GDBusProxy *proxy)
+{
+	battery_proxies = g_list_remove(battery_proxies, proxy);
+}
+
 static void device_added(GDBusProxy *proxy)
 {
 	DBusMessageIter iter;
@@ -539,6 +558,8 @@ static void proxy_added(GDBusProxy *proxy, void *user_data)
 		gatt_add_manager(proxy);
 	} else if (!strcmp(interface, "org.bluez.LEAdvertisingManager1")) {
 		ad_manager_added(proxy);
+	} else if (!strcmp(interface, "org.bluez.Battery1")) {
+		battery_added(proxy);
 	}
 }
 
@@ -630,6 +651,8 @@ static void proxy_removed(GDBusProxy *proxy, void *user_data)
 		gatt_remove_manager(proxy);
 	} else if (!strcmp(interface, "org.bluez.LEAdvertisingManager1")) {
 		ad_unregister(dbus_conn, NULL);
+	} else if (!strcmp(interface, "org.bluez.Battery1")) {
+		battery_removed(proxy);
 	}
 }
 
@@ -763,6 +786,20 @@ static struct adapter *find_ctrl_by_address(GList *source, const char *address)
 	return NULL;
 }
 
+static GDBusProxy *find_battery_by_path(GList *source, const char *path)
+{
+	GList *list;
+
+	for (list = g_list_first(source); list; list = g_list_next(list)) {
+		GDBusProxy *proxy = list->data;
+
+		if (strcmp(g_dbus_proxy_get_path(proxy), path) == 0)
+			return proxy;
+	}
+
+	return NULL;
+}
+
 static GDBusProxy *find_proxy_by_address(GList *source, const char *address)
 {
 	GList *list;
@@ -888,6 +925,7 @@ static void cmd_show(int argc, char *argv[])
 	print_uuids(adapter->proxy);
 	print_property(adapter->proxy, "Modalias");
 	print_property(adapter->proxy, "Discovering");
+	print_property(adapter->proxy, "Roles");
 
 	if (adapter->ad_proxy) {
 		bt_shell_printf("Advertising Features:\n");
@@ -1606,6 +1644,7 @@ static struct GDBusProxy *find_device(int argc, char *argv[])
 static void cmd_info(int argc, char *argv[])
 {
 	GDBusProxy *proxy;
+	GDBusProxy *battery_proxy;
 	DBusMessageIter iter;
 	const char *address;
 
@@ -1637,6 +1676,7 @@ static void cmd_info(int argc, char *argv[])
 	print_property(proxy, "Trusted");
 	print_property(proxy, "Blocked");
 	print_property(proxy, "Connected");
+	print_property(proxy, "WakeAllowed");
 	print_property(proxy, "LegacyPairing");
 	print_uuids(proxy);
 	print_property(proxy, "Modalias");
@@ -1646,6 +1686,11 @@ static void cmd_info(int argc, char *argv[])
 	print_property(proxy, "TxPower");
 	print_property(proxy, "AdvertisingFlags");
 	print_property(proxy, "AdvertisingData");
+
+	battery_proxy = find_battery_by_path(battery_proxies,
+					g_dbus_proxy_get_path(proxy));
+	print_property_with_label(battery_proxy, "Percentage",
+					"Battery Percentage");
 
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }
@@ -1695,6 +1740,39 @@ static void cmd_pair(int argc, char *argv[])
 	}
 
 	bt_shell_printf("Attempting to pair with %s\n", proxy_address(proxy));
+}
+
+static void cancel_pairing_reply(DBusMessage *message, void *user_data)
+{
+	DBusError error;
+
+	dbus_error_init(&error);
+
+	if (dbus_set_error_from_message(&error, message) == TRUE) {
+		bt_shell_printf("Failed to cancel pairing: %s\n", error.name);
+		dbus_error_free(&error);
+		return;
+	}
+
+	bt_shell_printf("Cancel pairing successful\n");
+}
+
+static void cmd_cancel_pairing(int argc, char *argv[])
+{
+	GDBusProxy *proxy;
+
+	proxy = find_device(argc, argv);
+	if (!proxy)
+		return;
+
+	if (g_dbus_proxy_method_call(proxy, "CancelPairing", NULL,
+				cancel_pairing_reply, NULL, NULL) == FALSE) {
+		bt_shell_printf("Failed to cancel pairing\n");
+		return;
+	}
+
+	bt_shell_printf("Attempting to cancel pairing with %s\n",
+							proxy_address(proxy));
 }
 
 static void cmd_trust(int argc, char *argv[])
@@ -2771,6 +2849,8 @@ static const struct bt_shell_menu main_menu = {
 							dev_generator },
 	{ "pair",         "[dev]",    cmd_pair, "Pair with device",
 							dev_generator },
+	{ "cancel-pairing",  "[dev]",    cmd_cancel_pairing,
+				"Cancel pairing with device", dev_generator },
 	{ "trust",        "[dev]",    cmd_trust, "Trust device",
 							dev_generator },
 	{ "untrust",      "[dev]",    cmd_untrust, "Untrust device",

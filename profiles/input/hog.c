@@ -49,15 +49,16 @@
 #include "src/shared/util.h"
 #include "src/shared/uhid.h"
 #include "src/shared/queue.h"
+#include "src/shared/att.h"
+#include "src/shared/gatt-client.h"
 #include "src/plugin.h"
 
+#include "device.h"
 #include "suspend.h"
 #include "attrib/att.h"
 #include "attrib/gattrib.h"
 #include "attrib/gatt.h"
 #include "hog-lib.h"
-
-#define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
 
 struct hog_device {
 	struct btd_device	*device;
@@ -65,7 +66,13 @@ struct hog_device {
 };
 
 static gboolean suspend_supported = FALSE;
+static bool auto_sec = true;
 static struct queue *devices = NULL;
+
+void input_set_auto_sec(bool state)
+{
+	auto_sec = state;
+}
 
 static void hog_device_accept(struct hog_device *dev, struct gatt_db *db)
 {
@@ -159,6 +166,7 @@ static int hog_probe(struct btd_service *service)
 		return -EINVAL;
 
 	btd_service_set_user_data(service, dev);
+	device_set_wake_support(device, true);
 	return 0;
 }
 
@@ -187,8 +195,17 @@ static int hog_accept(struct btd_service *service)
 	}
 
 	/* HOGP 1.0 Section 6.1 requires bonding */
-	if (!device_is_bonded(device, btd_device_get_bdaddr_type(device)))
-		return -ECONNREFUSED;
+	if (!device_is_bonded(device, btd_device_get_bdaddr_type(device))) {
+		struct bt_gatt_client *client;
+
+		if (!auto_sec)
+			return -ECONNREFUSED;
+
+		client = btd_device_get_gatt_client(device);
+		if (!bt_gatt_client_set_security(client,
+						BT_ATT_SECURITY_MEDIUM))
+			return -ECONNREFUSED;
+	}
 
 	/* TODO: Replace GAttrib with bt_gatt_client */
 	bt_hog_attach(dev->hog, attrib);

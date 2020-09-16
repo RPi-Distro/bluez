@@ -36,6 +36,9 @@
 #define KEY_REFRESH_PHASE_TWO	0x02
 #define KEY_REFRESH_PHASE_THREE	0x03
 
+#define KEY_REFRESH_TRANS_TWO	0x02
+#define KEY_REFRESH_TRANS_THREE	0x03
+
 #define DEFAULT_TTL		0xff
 #define TTL_MASK		0x7f
 
@@ -105,11 +108,15 @@
 #define NET_IDX_INVALID	0xffff
 #define NET_NID_INVALID	0xff
 
+#define NET_IDX_MAX		0x0fff
+#define APP_IDX_MAX		0x0fff
+
 #define APP_IDX_MASK		0x0fff
 #define APP_IDX_DEV_REMOTE	0x6fff
 #define APP_IDX_DEV_LOCAL	0x7fff
 
 #define DEFAULT_SEQUENCE_NUMBER 0x000000
+#define SEQ_MASK		0xffffff
 
 #define IS_UNASSIGNED(x)	((x) == UNASSIGNED_ADDRESS)
 #define IS_UNICAST(x)		(((x) > UNASSIGNED_ADDRESS) && \

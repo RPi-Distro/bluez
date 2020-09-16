@@ -84,6 +84,7 @@ struct bt_att {
 	struct queue *req_queue;	/* Queued ATT protocol requests */
 	struct queue *ind_queue;	/* Queued ATT protocol indications */
 	struct queue *write_queue;	/* Queue of PDUs ready to send */
+	bool in_disc;			/* Cleanup queues on disconnect_cb */
 
 	bt_att_timeout_func_t timeout_callback;
 	bt_att_destroy_func_t timeout_destroy;
@@ -222,8 +223,10 @@ static void destroy_att_send_op(void *data)
 	free(op);
 }
 
-static void cancel_att_send_op(struct att_send_op *op)
+static void cancel_att_send_op(void *data)
 {
+	struct att_send_op *op = data;
+
 	if (op->destroy)
 		op->destroy(op->user_data);
 
@@ -631,11 +634,6 @@ static bool disconnect_cb(struct io *io, void *user_data)
 	/* Dettach channel */
 	queue_remove(att->chans, chan);
 
-	/* Notify request callbacks */
-	queue_remove_all(att->req_queue, NULL, NULL, disc_att_send_op);
-	queue_remove_all(att->ind_queue, NULL, NULL, disc_att_send_op);
-	queue_remove_all(att->write_queue, NULL, NULL, disc_att_send_op);
-
 	if (chan->pending_req) {
 		disc_att_send_op(chan->pending_req);
 		chan->pending_req = NULL;
@@ -653,6 +651,15 @@ static bool disconnect_cb(struct io *io, void *user_data)
 		return false;
 
 	bt_att_ref(att);
+
+	att->in_disc = true;
+
+	/* Notify request callbacks */
+	queue_remove_all(att->req_queue, NULL, NULL, disc_att_send_op);
+	queue_remove_all(att->ind_queue, NULL, NULL, disc_att_send_op);
+	queue_remove_all(att->write_queue, NULL, NULL, disc_att_send_op);
+
+	att->in_disc = false;
 
 	queue_foreach(att->disconn_list, disconn_handler, INT_TO_PTR(err));
 
@@ -881,15 +888,15 @@ static void respond_not_supported(struct bt_att *att, uint8_t opcode)
 									NULL);
 }
 
-static bool handle_signed(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
-								ssize_t pdu_len)
+static bool handle_signed(struct bt_att *att, uint8_t *pdu, ssize_t pdu_len)
 {
 	uint8_t *signature;
 	uint32_t sign_cnt;
 	struct sign_info *sign;
+	uint8_t opcode = pdu[0];
 
 	/* Check if there is enough data for a signature */
-	if (pdu_len < 2 + BT_ATT_SIGNATURE_LEN)
+	if (pdu_len < 3 + BT_ATT_SIGNATURE_LEN)
 		goto fail;
 
 	sign = att->remote_sign;
@@ -903,10 +910,8 @@ static bool handle_signed(struct bt_att *att, uint8_t opcode, uint8_t *pdu,
 	if (!sign->counter(&sign_cnt, sign->user_data))
 		goto fail;
 
-	/* Generate signature and verify it */
-	if (!bt_crypto_sign_att(att->crypto, sign->key, pdu,
-				pdu_len - BT_ATT_SIGNATURE_LEN, sign_cnt,
-				signature))
+	/* Verify received signature */
+	if (!bt_crypto_verify_att_sign(att->crypto, sign->key, pdu, pdu_len))
 		goto fail;
 
 	return true;
@@ -918,18 +923,13 @@ fail:
 	return false;
 }
 
-static void handle_notify(struct bt_att_chan *chan, uint8_t opcode,
-						uint8_t *pdu, ssize_t pdu_len)
+static void handle_notify(struct bt_att_chan *chan, uint8_t *pdu,
+							ssize_t pdu_len)
 {
 	struct bt_att *att = chan->att;
 	const struct queue_entry *entry;
 	bool found;
-
-	if ((opcode & ATT_OP_SIGNED_MASK) && !att->crypto) {
-		if (!handle_signed(att, opcode, pdu, pdu_len))
-			return;
-		pdu_len -= BT_ATT_SIGNATURE_LEN;
-	}
+	uint8_t opcode = pdu[0];
 
 	bt_att_ref(att);
 
@@ -943,6 +943,12 @@ static void handle_notify(struct bt_att_chan *chan, uint8_t opcode,
 
 		if (!opcode_match(notify->opcode, opcode))
 			continue;
+
+		if ((opcode & ATT_OP_SIGNED_MASK) && att->crypto) {
+			if (!handle_signed(att, pdu, pdu_len))
+				return;
+			pdu_len -= BT_ATT_SIGNATURE_LEN;
+		}
 
 		/* BLUETOOTH CORE SPECIFICATION Version 5.1 | Vol 3, Part G
 		 * page 2370
@@ -963,7 +969,7 @@ static void handle_notify(struct bt_att_chan *chan, uint8_t opcode,
 		found = true;
 
 		if (notify->callback)
-			notify->callback(chan, opcode, pdu, pdu_len,
+			notify->callback(chan, opcode, pdu + 1, pdu_len - 1,
 							notify->user_data);
 
 		/* callback could remove all entries from notify list */
@@ -1054,7 +1060,7 @@ static bool can_read_data(struct io *io, void *user_data)
 		util_debug(att->debug_callback, att->debug_data,
 					"(chan %p) ATT PDU received: 0x%02x",
 					chan, opcode);
-		handle_notify(chan, opcode, pdu + 1, bytes_read - 1);
+		handle_notify(chan, pdu, bytes_read);
 		break;
 	}
 
@@ -1575,6 +1581,30 @@ bool bt_att_chan_cancel(struct bt_att_chan *chan, unsigned int id)
 	return true;
 }
 
+static bool bt_att_disc_cancel(struct bt_att *att, unsigned int id)
+{
+	struct att_send_op *op;
+
+	op = queue_find(att->req_queue, match_op_id, UINT_TO_PTR(id));
+	if (op)
+		goto done;
+
+	op = queue_find(att->ind_queue, match_op_id, UINT_TO_PTR(id));
+	if (op)
+		goto done;
+
+	op = queue_find(att->write_queue, match_op_id, UINT_TO_PTR(id));
+
+done:
+	if (!op)
+		return false;
+
+	/* Just cancel since disconnect_cb will be cleaning up */
+	cancel_att_send_op(op);
+
+	return true;
+}
+
 bool bt_att_cancel(struct bt_att *att, unsigned int id)
 {
 	const struct queue_entry *entry;
@@ -1591,6 +1621,9 @@ bool bt_att_cancel(struct bt_att *att, unsigned int id)
 		if (bt_att_chan_cancel(chan, id))
 			return true;
 	}
+
+	if (att->in_disc)
+		return bt_att_disc_cancel(att, id);
 
 	op = queue_remove_if(att->req_queue, match_op_id, UINT_TO_PTR(id));
 	if (op)

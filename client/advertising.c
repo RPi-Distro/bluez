@@ -80,6 +80,7 @@ static struct ad {
 	bool appearance;
 } ad = {
 	.local_appearance = UINT16_MAX,
+	.discoverable = true,
 };
 
 static void ad_release(DBusConnection *conn)
@@ -184,7 +185,7 @@ static void print_ad(void)
 					bt_appear_to_str(ad.local_appearance),
 					ad.local_appearance);
 	else
-		bt_shell_printf("Apperance: %s\n",
+		bt_shell_printf("Appearance: %s\n",
 					ad.appearance ? "on" : "off");
 
 	bt_shell_printf("Discoverable: %s\n", ad.discoverable ? "on": "off");
@@ -885,7 +886,7 @@ void ad_advertise_local_appearance(DBusConnection *conn, long int *value)
 					bt_appear_to_str(ad.local_appearance),
 					ad.local_appearance);
 		else
-			bt_shell_printf("Apperance: %s\n",
+			bt_shell_printf("Appearance: %s\n",
 					ad.appearance ? "on" : "off");
 
 		return bt_shell_noninteractive_quit(EXIT_SUCCESS);

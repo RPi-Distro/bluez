@@ -119,9 +119,13 @@ static void client_free(void *data)
 	}
 
 	if (client->reg) {
-		g_dbus_send_message(btd_get_dbus_connection(),
-				dbus_message_new_method_return(client->reg));
+		DBusMessage *reply;
+
+		reply = btd_error_failed(client->reg,
+					"Failed to complete registration");
+		g_dbus_send_message(btd_get_dbus_connection(), reply);
 		dbus_message_unref(client->reg);
+		client->reg = NULL;
 	}
 
 	if (client->add_adv_id)
@@ -673,7 +677,14 @@ static bool set_flags(struct btd_adv_client *client, uint8_t flags)
 
 	/* Set BR/EDR Not Supported for LE only */
 	if (!btd_adapter_get_bredr(client->manager->adapter))
-		flags |= 0x04;
+		flags |= BT_AD_FLAG_NO_BREDR;
+
+	/* Set BR/EDR Not Supported if adapter is not discoverable but the
+	 * instance is.
+	 */
+	if ((flags & (BT_AD_FLAG_GENERAL | BT_AD_FLAG_LIMITED)) &&
+			!btd_adapter_get_discoverable(client->manager->adapter))
+		flags |= BT_AD_FLAG_NO_BREDR;
 
 	if (!bt_ad_add_flags(client->data, &flags, 1))
 		return false;
@@ -698,7 +709,7 @@ static bool parse_discoverable(DBusMessageIter *iter,
 	dbus_message_iter_get_basic(iter, &discoverable);
 
 	if (discoverable)
-		flags = 0x02;
+		flags = BT_AD_FLAG_GENERAL;
 	else
 		flags = 0x00;
 
@@ -1062,7 +1073,8 @@ static DBusMessage *parse_advertisement(struct btd_adv_client *client)
 		}
 
 		/* Set Limited Discoverable if DiscoverableTimeout is set */
-		if (client->disc_to_id && !set_flags(client, 0x01)) {
+		if (client->disc_to_id &&
+				!set_flags(client, BT_AD_FLAG_LIMITED)) {
 			error("Failed to set Limited Discoverable Flag");
 			goto fail;
 		}
@@ -1144,8 +1156,6 @@ static struct btd_adv_client *client_create(struct btd_adv_manager *manager,
 	g_dbus_client_set_proxy_handlers(client->client, client_proxy_added,
 							NULL, NULL, client);
 
-	client->reg = dbus_message_ref(msg);
-
 	client->data = bt_ad_new();
 	if (!client->data)
 		goto fail;
@@ -1207,6 +1217,8 @@ static DBusMessage *register_advertisement(DBusConnection *conn,
 	}
 
 	DBG("Registered advertisement at path %s", match.path);
+
+	client->reg = dbus_message_ref(msg);
 
 	queue_push_tail(manager->clients, client);
 

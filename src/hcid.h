@@ -41,18 +41,66 @@ enum jw_repairing_t {
 	JW_REPAIRING_ALWAYS,
 };
 
+enum mps_mode_t {
+	MPS_OFF,
+	MPS_SINGLE,
+	MPS_MULTIPLE,
+};
+
 struct main_opts {
 	char		*name;
 	uint32_t	class;
 	gboolean	pairable;
 	uint32_t	pairto;
 	uint32_t	discovto;
+	uint32_t	tmpto;
 	uint8_t		privacy;
+
+	struct {
+		uint16_t	num_entries;
+
+		uint16_t	br_page_scan_type;
+		uint16_t	br_page_scan_interval;
+		uint16_t	br_page_scan_win;
+
+		uint16_t	br_scan_type;
+		uint16_t	br_scan_interval;
+		uint16_t	br_scan_win;
+
+		uint16_t	br_link_supervision_timeout;
+		uint16_t	br_page_timeout;
+
+		uint16_t	br_min_sniff_interval;
+		uint16_t	br_max_sniff_interval;
+
+		uint16_t	le_min_adv_interval;
+		uint16_t	le_max_adv_interval;
+		uint16_t	le_multi_adv_rotation_interval;
+
+		uint16_t	le_scan_interval_autoconnect;
+		uint16_t	le_scan_win_autoconnect;
+		uint16_t	le_scan_interval_suspend;
+		uint16_t	le_scan_win_suspend;
+		uint16_t	le_scan_interval_discovery;
+		uint16_t	le_scan_win_discovery;
+		uint16_t	le_scan_interval_adv_monitor;
+		uint16_t	le_scan_win_adv_monitor;
+		uint16_t	le_scan_interval_connect;
+		uint16_t	le_scan_win_connect;
+
+		uint16_t	le_min_conn_interval;
+		uint16_t	le_max_conn_interval;
+		uint16_t	le_conn_latency;
+		uint16_t	le_conn_lsto;
+		uint16_t	le_autoconnect_timeout;
+	} default_params;
+
 
 	gboolean	reverse_discovery;
 	gboolean	name_resolv;
 	gboolean	debug_keys;
 	gboolean	fast_conn;
+	gboolean	refresh_discovery;
 
 	uint16_t	did_source;
 	uint16_t	did_vendor;
@@ -63,6 +111,7 @@ struct main_opts {
 	bt_gatt_cache_t gatt_cache;
 	uint16_t	gatt_mtu;
 	uint8_t		gatt_channels;
+	enum mps_mode_t	mps;
 
 	uint8_t		key_size;
 

@@ -100,6 +100,8 @@ typedef bool (*mesh_prov_acceptor_complete_func_t)(void *user_data,
 					uint8_t status,
 					struct mesh_prov_node_info *info);
 
+typedef void (*mesh_prov_initiator_start_func_t)(void *user_data, int err);
+
 typedef bool (*mesh_prov_initiator_data_req_func_t)(void *user_data,
 							uint8_t num_elem);
 
@@ -118,10 +120,10 @@ void acceptor_cancel(void *user_data);
 bool initiator_start(enum trans_type transport,
 		uint8_t uuid[16],
 		uint16_t max_ele,
-		uint16_t server, /* Only valid for PB-Remote */
 		uint32_t timeout, /* in seconds from mesh.conf */
 		struct mesh_agent *agent,
-		mesh_prov_initiator_data_req_func_t get_prov_data,
+		mesh_prov_initiator_start_func_t start_cb,
+		mesh_prov_initiator_data_req_func_t data_req_cb,
 		mesh_prov_initiator_complete_func_t complete_cb,
 		void *node, void *caller_data);
 void initiator_prov_data(uint16_t net_idx, uint16_t primary, void *caller_data);

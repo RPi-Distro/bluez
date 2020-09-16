@@ -97,8 +97,10 @@
 #define COLOR_UNKNOWN_SETTINGS_BIT	COLOR_WHITE_BG
 #define COLOR_UNKNOWN_ADDRESS_TYPE	COLOR_WHITE_BG
 #define COLOR_UNKNOWN_DEVICE_FLAG	COLOR_WHITE_BG
+#define COLOR_UNKNOWN_EXP_FEATURE_FLAG	COLOR_WHITE_BG
 #define COLOR_UNKNOWN_ADV_FLAG		COLOR_WHITE_BG
 #define COLOR_UNKNOWN_PHY		COLOR_WHITE_BG
+#define COLOR_UNKNOWN_ADDED_DEVICE_FLAG	COLOR_WHITE_BG
 
 #define COLOR_PHY_PACKET		COLOR_BLUE
 
@@ -274,7 +276,8 @@ struct index_data {
 	uint8_t  type;
 	uint8_t  bdaddr[6];
 	uint16_t manufacturer;
-	size_t	frame;
+	uint16_t msft_opcode;
+	size_t   frame;
 };
 
 static struct index_data index_list[MAX_INDEX];
@@ -3904,6 +3907,7 @@ void packet_monitor(struct timeval *tv, struct ucred *cred,
 			index_list[index].type = ni->type;
 			memcpy(index_list[index].bdaddr, ni->bdaddr, 6);
 			index_list[index].manufacturer = fallback_manufacturer;
+			index_list[index].msft_opcode = BT_HCI_CMD_NOP;
 		}
 
 		addr2str(ni->bdaddr, str);
@@ -3964,6 +3968,15 @@ void packet_monitor(struct timeval *tv, struct ucred *cred,
 		if (index < MAX_INDEX) {
 			memcpy(index_list[index].bdaddr, ii->bdaddr, 6);
 			index_list[index].manufacturer = manufacturer;
+
+			if (manufacturer == 2) {
+				/*
+				 * All Intel controllers that support the
+				 * Microsoft vendor extension are using
+				 * 0xFC1E for VsMsftOpCode.
+				 */
+				index_list[index].msft_opcode = 0xFC1E;
+			}
 		}
 
 		addr2str(ii->bdaddr, str);
@@ -5893,6 +5906,15 @@ static void read_local_codecs_rsp(const void *data, uint8_t size)
 
 	packet_hexdump(data + rsp->num_codecs + 3,
 					size - rsp->num_codecs - 3);
+}
+
+static void read_local_pairing_options_rsp(const void *data, uint8_t size)
+{
+	const struct bt_hci_rsp_read_local_pairing_options *rsp = data;
+
+	print_status(rsp->status);
+	print_field("Pairing options: 0x%2.2x", rsp->pairing_options);
+	print_field("Max encryption key size: %u octets", rsp->max_key_size);
 }
 
 static void read_failed_contact_counter_cmd(const void *data, uint8_t size)
@@ -8058,21 +8080,33 @@ static void le_big_term_sync_cmd(const void *data, uint8_t size)
 	print_field("BIG ID: 0x%2.2x", cmd->big_id);
 }
 
+static void print_iso_dir(const char *prefix, uint8_t dir)
+{
+	switch (dir) {
+	case 0x00:
+		print_field("%s: Input (Host to Controller) (0x%2.2x)",
+							prefix, dir);
+		return;
+	case 0x01:
+		print_field("%s: Output (Controller to Host) (0x%2.2x)",
+							prefix, dir);
+		return;
+	default:
+		print_field("%s: Unknown (0x%2.2x)", prefix, dir);
+	}
+}
+
 static void print_iso_path(const char *prefix, uint8_t path)
 {
 	switch (path) {
 	case 0x00:
-		print_field("%s Data Path: Disabled (0x%2.2x)", prefix, path);
-		return;
-	case 0x01:
-		print_field("%s Data Path: HCI (0x%2.2x)", prefix, path);
+		print_field("%s: HCI (0x%2.2x)", prefix, path);
 		return;
 	case 0xff:
-		print_field("%s Data Path: Test Mode (0x%2.2x)", prefix, path);
+		print_field("%s: Disabled (0x%2.2x)", prefix, path);
 		return;
 	default:
-		print_field("%s Data Path: Logical Channel Number (0x%2.2x)",
-							prefix, path);
+		print_field("%s: Logical Channel Number %u", prefix, path);
 	}
 }
 
@@ -8081,23 +8115,27 @@ static void le_setup_iso_path_cmd(const void *data, uint8_t size)
 	const struct bt_hci_cmd_le_setup_iso_path *cmd = data;
 
 	print_field("Handle: %d", le16_to_cpu(cmd->handle));
-	print_iso_path("Input", cmd->input_path);
-	print_iso_path("Output", cmd->output_path);
+	print_iso_dir("Data Path Direction", cmd->direction);
+	print_iso_path("Data Path", cmd->path);
+	print_codec("Coding Format", cmd->codec);
+	packet_print_company("Company Codec ID", le16_to_cpu(cmd->codec_cid));
+	print_field("Vendor Codec ID: %d", le16_to_cpu(cmd->codec_vid));
+	print_usec_interval("Controller Delay", cmd->delay);
+	print_field("Codec Configuration Length: %d", cmd->codec_cfg_len);
+	print_hex_field("Codec Configuration", cmd->codec_cfg,
+						cmd->codec_cfg_len);
 }
 
-static void print_iso_dir(uint8_t path_dir)
+static void le_setup_iso_path_rsp(const void *data, uint8_t size)
 {
-	switch (path_dir) {
-	case 0x00:
-		print_field("Data Path Direction: Input (0x%2.2x)", path_dir);
+	const struct bt_hci_rsp_le_setup_iso_path *rsp = data;
+
+	print_status(rsp->status);
+
+	if (size == 1)
 		return;
-	case 0x01:
-		print_field("Data Path Direction: Output (0x%2.2x)", path_dir);
-		return;
-	default:
-		print_field("Data Path Direction: Reserved (0x%2.2x)",
-							path_dir);
-	}
+
+	print_field("Handle: %d", le16_to_cpu(rsp->handle));
 }
 
 static void le_remove_iso_path_cmd(const void *data, uint8_t size)
@@ -8105,7 +8143,7 @@ static void le_remove_iso_path_cmd(const void *data, uint8_t size)
 	const struct bt_hci_cmd_le_remove_iso_path *cmd = data;
 
 	print_field("Connection Handle: %d", le16_to_cpu(cmd->handle));
-	print_iso_dir(cmd->path_dir);
+	print_iso_dir("Data Path Direction", cmd->direction);
 }
 
 static void le_req_peer_sca_cmd(const void *data, uint8_t size)
@@ -8113,6 +8151,22 @@ static void le_req_peer_sca_cmd(const void *data, uint8_t size)
 	const struct bt_hci_cmd_le_req_peer_sca *cmd = data;
 
 	print_field("Connection Handle: %d", le16_to_cpu(cmd->handle));
+}
+
+static void le_set_host_feature_cmd(const void *data, uint8_t size)
+{
+	const struct bt_hci_cmd_le_set_host_feature *cmd = data;
+	uint64_t mask;
+
+	print_field("Bit Number: %u", cmd->bit_number);
+
+	mask = print_bitfield(2, (((uint64_t) 1) << cmd->bit_number),
+							features_le);
+	if (mask)
+		print_text(COLOR_UNKNOWN_FEATURE_BIT, "  Unknown features "
+						"(0x%16.16" PRIx64 ")", mask);
+
+	print_field("Bit Value: %u", cmd->bit_value);
 }
 
 struct opcode_data {
@@ -8620,6 +8674,9 @@ static const struct opcode_data opcode_table[] = {
 	{ 0x100b, 237, "Read Local Supported Codecs",
 				null_cmd, 0, true,
 				read_local_codecs_rsp, 3, false },
+	{ 0x100c, 331, "Read Local Simple Pairing Options",
+				null_cmd, 0, true,
+				read_local_pairing_options_rsp, 3, true },
 
 	/* OGF 5 - Status Parameter */
 	{ 0x1401, 122, "Read Failed Contact Counter",
@@ -9006,7 +9063,9 @@ static const struct opcode_data opcode_table[] = {
 				"LE Setup Isochronous Data Path",
 				le_setup_iso_path_cmd,
 				sizeof(struct bt_hci_cmd_le_setup_iso_path),
-				true, status_rsp, 1, true },
+				true, le_setup_iso_path_rsp,
+				sizeof(struct bt_hci_rsp_le_setup_iso_path),
+				true },
 	{ BT_HCI_CMD_LE_REMOVE_ISO_PATH, BT_HCI_BIT_LE_REMOVE_ISO_PATH,
 				"LE Remove Isochronous Data Path",
 				le_remove_iso_path_cmd,
@@ -9025,6 +9084,10 @@ static const struct opcode_data opcode_table[] = {
 	{ BT_HCI_CMD_LE_ISO_TEST_END, BT_HCI_BIT_LE_ISO_TEST_END,
 				"LE Isochronous Read Test Counters", NULL, 0,
 				false },
+	{ BT_HCI_CMD_LE_SET_HOST_FEATURE, BT_HCI_BIT_LE_SET_HOST_FEATURE,
+				"LE Set Host Feature", le_set_host_feature_cmd,
+				sizeof(struct bt_hci_cmd_le_set_host_feature),
+				true, status_rsp, 1, true },
 	{ }
 };
 
@@ -11668,6 +11731,7 @@ static const struct bitfield_data mgmt_settings_table[] = {
 	{ 14, "Controller Configuration"},
 	{ 15, "Static Address"		},
 	{ 16, "PHY Configuration"	},
+	{ 17, "Wideband Speech"		},
 	{ }
 };
 
@@ -11925,6 +11989,26 @@ static void mgmt_print_oob_data(const void *data)
 	print_randomizer_p256(data + 48);
 }
 
+static const struct bitfield_data mgmt_exp_feature_flags_table[] = {
+	{  0, "Active"		},
+	{  1, "Settings change"	},
+	{ }
+};
+
+static void mgmt_print_exp_feature(const void *data)
+{
+	uint32_t flags = get_le32(data + 16);
+	uint32_t mask;
+
+	mgmt_print_uuid(data);
+	print_field("Flags: 0x%8.8x", flags);
+
+	mask = print_bitfield(2, flags, mgmt_exp_feature_flags_table);
+	if (mask)
+		print_text(COLOR_UNKNOWN_EXP_FEATURE_FLAG,
+				"  Unknown feature flag (0x%8.8x)", mask);
+}
+
 static void mgmt_null_cmd(const void *data, uint16_t size)
 {
 }
@@ -12151,7 +12235,7 @@ static void mgmt_load_link_keys_cmd(const void *data, uint16_t size)
 
 static void mgmt_load_long_term_keys_cmd(const void *data, uint16_t size)
 {
-	uint16_t num_keys = get_le16(data + 1);
+	uint16_t num_keys = get_le16(data);
 	int i;
 
 	print_field("Keys: %u", num_keys);
@@ -12581,7 +12665,7 @@ static void mgmt_set_privacy_cmd(const void *data, uint16_t size)
 
 static void mgmt_load_identity_resolving_keys_cmd(const void *data, uint16_t size)
 {
-	uint16_t num_keys = get_le16(data + 1);
+	uint16_t num_keys = get_le16(data);
 	int i;
 
 	print_field("Keys: %u", num_keys);
@@ -12987,6 +13071,85 @@ static void mgmt_set_phy_cmd(const void *data, uint16_t size)
 	mgmt_print_phys("Selected PHYs", selected_phys);
 }
 
+static void mgmt_read_exp_features_info_rsp(const void *data, uint16_t size)
+{
+	uint16_t num_features = get_le16(data);
+	int i;
+
+	print_field("Features: %u", num_features);
+
+	if (size - 2 != num_features * 20) {
+		packet_hexdump(data + 2, size - 2);
+		return;
+	}
+
+	for (i = 0; i < num_features; i++)
+		mgmt_print_exp_feature(data + 2 + (i * 20));
+}
+
+static void mgmt_set_exp_feature_cmd(const void *data, uint16_t size)
+{
+	uint8_t enable = get_u8(data + 16);
+
+	mgmt_print_uuid(data);
+	print_enable("Action", enable);
+}
+
+static void mgmt_set_exp_feature_rsp(const void *data, uint16_t size)
+{
+	mgmt_print_exp_feature(data);
+}
+
+static const struct bitfield_data mgmt_added_device_flags_table[] = {
+	{ 0, "Remote Wakeup"	},
+	{ }
+};
+
+static void mgmt_print_added_device_flags(char *label, uint32_t flags)
+{
+	uint32_t mask;
+
+	print_field("%s: 0x%8.8x", label, flags);
+	mask = print_bitfield(2, flags, mgmt_added_device_flags_table);
+	if (mask)
+		print_text(COLOR_UNKNOWN_ADDED_DEVICE_FLAG,
+			   "  Unknown Flags (0x%8.8x)", mask);
+}
+
+static void mgmt_get_device_flags_cmd(const void *data, uint16_t size)
+{
+	uint8_t type = get_u8(data + 6);
+
+	mgmt_print_address(data, type);
+}
+
+static void mgmt_get_device_flags_rsp(const void *data, uint16_t size)
+{
+	uint8_t type = get_u8(data + 6);
+	uint32_t supported_flags = get_le32(data + 7);
+	uint32_t current_flags = get_le32(data + 11);
+
+	mgmt_print_address(data, type);
+	mgmt_print_added_device_flags("Supported Flags", supported_flags);
+	mgmt_print_added_device_flags("Current Flags", current_flags);
+}
+
+static void mgmt_set_device_flags_cmd(const void *data, uint16_t size)
+{
+	uint8_t type = get_u8(data + 6);
+	uint32_t current_flags = get_le32(data + 7);
+
+	mgmt_print_address(data, type);
+	mgmt_print_added_device_flags("Current Flags", current_flags);
+}
+
+static void mgmt_set_device_flags_rsp(const void *data, uint16_t size)
+{
+	uint8_t type = get_u8(data + 6);
+
+	mgmt_print_address(data, type);
+}
+
 struct mgmt_data {
 	uint16_t opcode;
 	const char *str;
@@ -13206,6 +13369,18 @@ static const struct mgmt_data mgmt_command_table[] = {
 	{ 0x0045, "Set PHY Configuration",
 				mgmt_set_phy_cmd, 4, true,
 				mgmt_null_rsp, 0, true },
+	{ 0x0049, "Read Experimental Features Information",
+				mgmt_null_cmd, 0, true,
+				mgmt_read_exp_features_info_rsp, 2, false },
+	{ 0x004a, "Set Experimental Feature",
+				mgmt_set_exp_feature_cmd, 17, true,
+				mgmt_set_exp_feature_rsp, 20, true },
+	{ 0x004f, "Get Device Flags",
+				mgmt_get_device_flags_cmd, 7, true,
+				mgmt_get_device_flags_rsp, 15, true},
+	{ 0x0050, "Set Device Flags",
+				mgmt_set_device_flags_cmd, 11, true,
+				mgmt_set_device_flags_rsp, 7, true},
 	{ }
 };
 
@@ -13379,6 +13554,9 @@ static void mgmt_device_disconnected_evt(const void *data, uint16_t size)
 		break;
 	case 0x04:
 		str = "Connection terminated due to authentication failure";
+		break;
+	case 0x05:
+		str = "Connection terminated by local host for suspend";
 		break;
 	default:
 		str = "Reserved";
@@ -13591,6 +13769,70 @@ static void mgmt_phy_changed_evt(const void *data, uint16_t size)
 	mgmt_print_phys("Selected PHYs", selected_phys);
 }
 
+static void mgmt_exp_feature_changed_evt(const void *data, uint16_t size)
+{
+	mgmt_print_exp_feature(data);
+}
+
+static void mgmt_device_flags_changed_evt(const void *data, uint16_t size)
+{
+	uint8_t type = get_u8(data + 6);
+	uint32_t supported_flags = get_le32(data + 7);
+	uint32_t current_flags = get_le32(data + 11);
+
+	mgmt_print_address(data, type);
+	mgmt_print_added_device_flags("Supported Flags", supported_flags);
+	mgmt_print_added_device_flags("Current Flags", current_flags);
+}
+
+static void mgmt_controller_suspend_evt(const void *data, uint16_t size)
+{
+	uint8_t state = get_u8(data);
+	char *str;
+
+	switch (state) {
+	case 0x0:
+		str = "Controller running (failed to suspend)";
+		break;
+	case 0x1:
+		str = "Disconnected and not scanning";
+		break;
+	case 0x2:
+		str = "Page scanning and/or passive scanning";
+		break;
+	default:
+		str = "Unknown suspend state";
+		break;
+	}
+
+	print_field("Suspend state: %s (%d)", str, state);
+}
+
+static void mgmt_controller_resume_evt(const void *data, uint16_t size)
+{
+	uint8_t addr_type = get_u8(data + 6);
+	uint8_t wake_reason = get_u8(data + 7);
+	char *str;
+
+	switch (wake_reason) {
+	case 0x0:
+		str = "Resume from non-Bluetooth wake source";
+		break;
+	case 0x1:
+		str = "Wake due to unexpected event";
+		break;
+	case 0x2:
+		str = "Remote wake due to peer device connection";
+		break;
+	default:
+		str = "Unknown wake reason";
+		break;
+	}
+
+	print_field("Wake reason: %s (%d)", str, wake_reason);
+	mgmt_print_address(data, addr_type);
+}
+
 static const struct mgmt_data mgmt_event_table[] = {
 	{ 0x0001, "Command Complete",
 			mgmt_command_complete_evt, 3, false },
@@ -13668,6 +13910,14 @@ static const struct mgmt_data mgmt_event_table[] = {
 			mgmt_ext_controller_info_changed_evt, 2, false },
 	{ 0x0026, "PHY Configuration Changed",
 			mgmt_phy_changed_evt, 4, true },
+	{ 0x0027, "Experimental Feature Changed",
+			mgmt_exp_feature_changed_evt, 20, true },
+	{ 0x002a, "Device Flags Changed",
+			mgmt_device_flags_changed_evt, 15, true },
+	{ 0x002d, "Controller Suspended",
+			mgmt_controller_suspend_evt, 1, true },
+	{ 0x002e, "Controller Resumed",
+			mgmt_controller_resume_evt, 8, true },
 	{ }
 };
 

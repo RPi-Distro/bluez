@@ -41,6 +41,7 @@ bool gatt_db_remove_service(struct gatt_db *db,
 bool gatt_db_clear(struct gatt_db *db);
 bool gatt_db_clear_range(struct gatt_db *db, uint16_t start_handle,
 							uint16_t end_handle);
+bool gatt_db_hash_support(struct gatt_db *db);
 uint8_t *gatt_db_get_hash(struct gatt_db *db);
 
 struct gatt_db_attribute *gatt_db_insert_service(struct gatt_db *db,
@@ -280,3 +281,11 @@ bool gatt_db_attribute_write_result(struct gatt_db_attribute *attrib,
 bool gatt_db_attribute_reset(struct gatt_db_attribute *attrib);
 
 void *gatt_db_attribute_get_user_data(struct gatt_db_attribute *attrib);
+
+unsigned int gatt_db_attribute_register(struct gatt_db_attribute *attrib,
+					gatt_db_attribute_cb_t removed,
+					void *user_data,
+					gatt_db_destroy_func_t destroy);
+
+bool gatt_db_attribute_unregister(struct gatt_db_attribute *attrib,
+						unsigned int id);

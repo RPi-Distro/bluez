@@ -31,8 +31,9 @@
 #include "tools/mesh/keys.h"
 
 struct net_key {
-	uint16_t idx;
 	struct l_queue *app_keys;
+	uint16_t idx;
+	uint8_t phase;
 };
 
 static struct l_queue *net_keys;
@@ -78,6 +79,7 @@ void keys_add_net_key(uint16_t net_idx)
 
 	key = l_new(struct net_key, 1);
 	key->idx = net_idx;
+	key->phase = KEY_REFRESH_PHASE_NONE;
 
 	l_queue_push_tail(net_keys, key);
 }
@@ -95,6 +97,38 @@ void keys_del_net_key(uint16_t idx)
 
 	l_queue_destroy(key->app_keys, delete_bound_appkey);
 	l_free(key);
+}
+
+void keys_set_net_key_phase(uint16_t net_idx, uint8_t phase, bool save)
+{
+	struct net_key *key;
+
+	if (!net_keys)
+		return;
+
+	key = l_queue_find(net_keys, net_idx_match, L_UINT_TO_PTR(net_idx));
+	if (!key)
+		return;
+
+	key->phase = phase;
+
+	if (save && !mesh_db_net_key_phase_set(net_idx, phase))
+		bt_shell_printf("Failed to save updated KR phase\n");
+}
+
+bool keys_get_net_key_phase(uint16_t net_idx, uint8_t *phase)
+{
+	struct net_key *key;
+
+	if (!phase || !net_keys)
+		return false;
+
+	key = l_queue_find(net_keys, net_idx_match, L_UINT_TO_PTR(net_idx));
+	if (!key)
+		return false;
+
+	*phase = key->phase;
+	return true;
 }
 
 void keys_add_app_key(uint16_t net_idx, uint16_t app_idx)
@@ -159,14 +193,15 @@ static void print_appkey(void *app_key, void *user_data)
 {
 	uint16_t app_idx = L_PTR_TO_UINT(app_key);
 
-	bt_shell_printf("0x%3.3x, ", app_idx);
+	bt_shell_printf("%u (0x%3.3x), ", app_idx, app_idx);
 }
 
 static void print_netkey(void *net_key, void *user_data)
 {
 	struct net_key *key = net_key;
 
-	bt_shell_printf(COLOR_YELLOW "NetKey: 0x%3.3x\n" COLOR_OFF, key->idx);
+	bt_shell_printf(COLOR_YELLOW "NetKey: %u (0x%3.3x), phase: %u\n"
+				COLOR_OFF, key->idx, key->idx, key->phase);
 
 	if (!key->app_keys || l_queue_isempty(key->app_keys))
 		return;

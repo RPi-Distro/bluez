@@ -42,6 +42,7 @@
 #include "lib/uuid.h"
 
 #include "btio/btio.h"
+#include "src/hcid.h"
 #include "src/log.h"
 #include "src/shared/util.h"
 #include "src/shared/queue.h"
@@ -1063,9 +1064,15 @@ static void sep_free(gpointer data)
 
 static void remove_disconnect_timer(struct avdtp *session)
 {
+	if (!session->dc_timer)
+		return;
+
 	g_source_remove(session->dc_timer);
 	session->dc_timer = 0;
 	session->stream_setup = FALSE;
+
+	/* Release disconnect timer reference */
+	avdtp_unref(session);
 }
 
 static void avdtp_free(void *data)
@@ -1085,9 +1092,6 @@ static void avdtp_free(void *data)
 		g_source_remove(session->io_id);
 		session->io_id = 0;
 	}
-
-	if (session->dc_timer)
-		remove_disconnect_timer(session);
 
 	if (session->req)
 		pending_req_free(session->req);
@@ -1135,24 +1139,28 @@ static gboolean disconnect_timeout(gpointer user_data)
 	service = btd_device_get_service(session->device, A2DP_SINK_UUID);
 	if (service && stream_setup) {
 		sink_setup_stream(service, session);
-		return FALSE;
+		goto done;
 	}
 
 	service = btd_device_get_service(session->device, A2DP_SOURCE_UUID);
 	if (service && stream_setup) {
 		source_setup_stream(service, session);
-		return FALSE;
+		goto done;
 	}
 
 	connection_lost(session, ETIMEDOUT);
+
+done:
+	/* Release disconnect timer reference */
+	avdtp_unref(session);
 
 	return FALSE;
 }
 
 static void set_disconnect_timer(struct avdtp *session)
 {
-	if (session->dc_timer)
-		remove_disconnect_timer(session);
+	/* Take a ref while disconnect timer is active */
+	avdtp_ref(session);
 
 	DBG("timeout %d", session->dc_timeout);
 
@@ -1194,8 +1202,7 @@ struct avdtp *avdtp_ref(struct avdtp *session)
 {
 	session->ref++;
 	DBG("%p: ref=%d", session, session->ref);
-	if (session->dc_timer)
-		remove_disconnect_timer(session);
+	remove_disconnect_timer(session);
 	return session;
 }
 
@@ -1936,6 +1943,7 @@ static gboolean avdtp_delayreport_cmd(struct avdtp *session,
 	stream = sep->stream;
 
 	if (sep->state != AVDTP_STATE_CONFIGURED &&
+					sep->state != AVDTP_STATE_OPEN &&
 					sep->state != AVDTP_STATE_STREAMING) {
 		err = AVDTP_BAD_STATE;
 		goto failed;
@@ -2255,7 +2263,7 @@ static uint16_t get_version(struct avdtp *session)
 	const sdp_record_t *rec;
 	sdp_list_t *protos;
 	sdp_data_t *proto_desc;
-	uint16_t ver = 0x0100;
+	uint16_t ver = 0x0000;
 
 	rec = btd_device_get_record(session->device, A2DP_SINK_UUID);
 	if (!rec)
@@ -2395,13 +2403,24 @@ struct avdtp *avdtp_new(GIOChannel *chan, struct btd_device *device,
 	return session;
 }
 
+uint16_t avdtp_get_version(struct avdtp *session)
+{
+	return session->version;
+}
+
 static GIOChannel *l2cap_connect(struct avdtp *session)
 {
 	GError *err = NULL;
 	GIOChannel *io;
 	const bdaddr_t *src;
+	BtIOMode mode;
 
 	src = btd_adapter_get_address(device_get_adapter(session->device));
+
+	if (main_opts.mps == MPS_OFF)
+		mode = BT_IO_MODE_BASIC;
+	else
+		mode = BT_IO_MODE_STREAMING;
 
 	if (session->phy)
 		io = bt_io_connect(avdtp_connect_cb, session,
@@ -2410,6 +2429,7 @@ static GIOChannel *l2cap_connect(struct avdtp *session)
 					BT_IO_OPT_DEST_BDADDR,
 					device_get_address(session->device),
 					BT_IO_OPT_PSM, AVDTP_PSM,
+					BT_IO_OPT_MODE, mode,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 					/* Set Input MTU to 0 to auto-tune */
 					BT_IO_OPT_IMTU, 0,
@@ -2421,6 +2441,7 @@ static GIOChannel *l2cap_connect(struct avdtp *session)
 					BT_IO_OPT_DEST_BDADDR,
 					device_get_address(session->device),
 					BT_IO_OPT_PSM, AVDTP_PSM,
+					BT_IO_OPT_MODE, mode,
 					BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 					BT_IO_OPT_INVALID);
 	if (!io) {
@@ -3204,6 +3225,11 @@ struct avdtp_service_capability *avdtp_get_codec(struct avdtp_remote_sep *sep)
 	return sep->codec;
 }
 
+bool avdtp_get_delay_reporting(struct avdtp_remote_sep *sep)
+{
+	return sep->delay_reporting;
+}
+
 struct avdtp_service_capability *avdtp_service_cap_new(uint8_t category,
 							void *data, int length)
 {
@@ -3223,7 +3249,8 @@ struct avdtp_service_capability *avdtp_service_cap_new(uint8_t category,
 struct avdtp_remote_sep *avdtp_register_remote_sep(struct avdtp *session,
 							uint8_t seid,
 							uint8_t type,
-							GSList *caps)
+							GSList *caps,
+							bool delay_reporting)
 {
 	struct avdtp_remote_sep *sep;
 	GSList *l;
@@ -3238,6 +3265,7 @@ struct avdtp_remote_sep *avdtp_register_remote_sep(struct avdtp *session,
 	sep->type = type;
 	sep->media_type = AVDTP_MEDIA_TYPE_AUDIO;
 	sep->caps = caps;
+	sep->delay_reporting = delay_reporting;
 
 	for (l = caps; l; l = g_slist_next(l)) {
 		struct avdtp_service_capability *cap = l->data;
@@ -3246,7 +3274,9 @@ struct avdtp_remote_sep *avdtp_register_remote_sep(struct avdtp *session,
 			sep->codec = cap;
 	}
 
-	DBG("seid %d type %d media %d", sep->seid, sep->type, sep->media_type);
+	DBG("seid %d type %d media %d delay_reporting %s", sep->seid, sep->type,
+				sep->media_type,
+				sep->delay_reporting ? "true" : "false");
 
 	return sep;
 }
@@ -3566,7 +3596,6 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 {
 	struct seid_req req;
 	int ret;
-	struct avdtp_local_sep *sep = stream->lsep;
 
 	if (!stream && session->discover) {
 		/* Don't call cb since it being aborted */
@@ -3581,7 +3610,7 @@ int avdtp_abort(struct avdtp *session, struct avdtp_stream *stream)
 	if (stream->lsep->state == AVDTP_STATE_ABORTING)
 		return -EINVAL;
 
-	avdtp_sep_set_state(session, sep, AVDTP_STATE_ABORTING);
+	avdtp_sep_set_state(session, stream->lsep, AVDTP_STATE_ABORTING);
 
 	if (session->req && stream == session->req->stream)
 		return cancel_request(session, ECANCELED);

@@ -56,6 +56,12 @@ struct mgmt_hdr {
 } __packed;
 #define MGMT_HDR_SIZE	6
 
+struct mgmt_tlv {
+	uint16_t type;
+	uint8_t  length;
+	uint8_t  value[];
+} __packed;
+
 struct mgmt_addr_info {
 	bdaddr_t bdaddr;
 	uint8_t type;
@@ -586,9 +592,11 @@ struct mgmt_cp_set_phy_confguration {
 
 #define MGMT_OP_SET_BLOCKED_KEYS	0x0046
 
+#define MGMT_OP_SET_WIDEBAND_SPEECH	0x0047
+
 #define HCI_BLOCKED_KEY_TYPE_LINKKEY	0x00
-#define HCI_BLOCKED_KEY_TYPE_LTK		0x01
-#define HCI_BLOCKED_KEY_TYPE_IRK		0x02
+#define HCI_BLOCKED_KEY_TYPE_LTK	0x01
+#define HCI_BLOCKED_KEY_TYPE_IRK	0x02
 
 struct mgmt_blocked_key_info {
 	uint8_t type;
@@ -600,7 +608,110 @@ struct mgmt_cp_set_blocked_keys {
 	struct mgmt_blocked_key_info keys[0];
 } __packed;
 
-#define MGMT_OP_SET_WIDEBAND_SPEECH	0x0047
+#define MGMT_OP_READ_SECURITY_INFO	0x0048
+struct mgmt_rp_read_security_info {
+	uint16_t sec_len;
+	uint8_t  sec[0];
+} __packed;
+
+#define MGMT_OP_READ_EXP_FEATURES_INFO	0x0049
+struct mgmt_rp_read_exp_features_info {
+	uint16_t feature_count;
+	struct {
+		uint8_t  uuid[16];
+		uint32_t flags;
+	} features[];
+} __packed;
+
+#define MGMT_OP_SET_EXP_FEATURE		0x004a
+struct mgmt_cp_set_exp_feature {
+	uint8_t  uuid[16];
+	uint8_t  action;
+} __packed;
+#define MGMT_SET_EXP_FEATURE_SIZE	17
+struct mgmt_rp_set_exp_feature {
+	uint8_t  uuid[16];
+	uint32_t flags;
+} __packed;
+
+#define MGMT_OP_READ_DEF_SYSTEM_CONFIG	0x004b
+struct mgmt_rp_read_default_system_config {
+	uint8_t parameters[0]; /* mgmt_tlv */
+} __packed;
+
+#define MGMT_OP_SET_DEF_SYSTEM_CONFIG	0x004c
+struct mgmt_cp_set_default_system_config {
+	uint8_t parameters[0]; /* mgmt_tlv */
+} __packed;
+
+#define MGMT_OP_READ_DEF_RUNTIME_CONFIG	0x004d
+struct mgmt_rp_read_default_runtime_config {
+	uint8_t parameters[0]; /* mgmt_tlv */
+} __packed;
+
+#define MGMT_OP_SET_DEF_RUNTIME_CONFIG	0x004e
+struct mgmt_cp_set_default_runtime_config {
+	uint8_t parameters[0]; /* mgmt_tlv */
+} __packed;
+
+#define MGMT_OP_GET_DEVICE_FLAGS	0x004F
+#define MGMT_GET_DEVICE_FLAGS_SIZE	7
+struct mgmt_cp_get_device_flags {
+	struct mgmt_addr_info addr;
+} __packed;
+struct mgmt_rp_get_device_flags {
+	struct mgmt_addr_info addr;
+	uint32_t supported_flags;
+	uint32_t current_flags;
+} __packed;
+
+#define DEVICE_FLAG_REMOTE_WAKEUP	(1 << 0)
+
+#define MGMT_OP_SET_DEVICE_FLAGS	0x0050
+#define MGMT_SET_DEVICE_FLAGS_SIZE	11
+struct mgmt_cp_set_device_flags {
+	struct mgmt_addr_info addr;
+	uint32_t current_flags;
+} __packed;
+struct mgmt_rp_set_device_flags {
+	struct mgmt_addr_info addr;
+} __packed;
+
+#define MGMT_ADV_MONITOR_FEATURE_MASK_OR_PATTERNS	(1 << 0)
+
+#define MGMT_OP_READ_ADV_MONITOR_FEATURES	0x0051
+struct mgmt_rp_read_adv_monitor_features {
+	uint32_t supported_features;
+	uint32_t enabled_features;
+	uint16_t max_num_handles;
+	uint8_t max_num_patterns;
+	uint16_t num_handles;
+	uint16_t handles[0];
+}  __packed;
+
+struct mgmt_adv_pattern {
+	uint8_t ad_type;
+	uint8_t offset;
+	uint8_t length;
+	uint8_t value[31];
+} __packed;
+
+#define MGMT_OP_ADD_ADV_PATTERNS_MONITOR	0x0052
+struct mgmt_cp_add_adv_monitor {
+	uint8_t pattern_count;
+	struct mgmt_adv_pattern patterns[0];
+} __packed;
+struct mgmt_rp_add_adv_patterns_monitor {
+	uint16_t monitor_handle;
+} __packed;
+
+#define MGMT_OP_REMOVE_ADV_MONITOR		0x0053
+struct mgmt_cp_remove_adv_monitor {
+	uint16_t monitor_handle;
+} __packed;
+struct mgmt_rp_remove_adv_monitor {
+	uint16_t monitor_handle;
+} __packed;
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {
@@ -661,6 +772,7 @@ struct mgmt_ev_device_connected {
 #define MGMT_DEV_DISCONN_TIMEOUT	0x01
 #define MGMT_DEV_DISCONN_LOCAL_HOST	0x02
 #define MGMT_DEV_DISCONN_REMOTE		0x03
+#define MGMT_DEV_DISCONN_LOCAL_HOST_SUSPEND	0x05
 
 #define MGMT_EV_DEVICE_DISCONNECTED	0x000C
 struct mgmt_ev_device_disconnected {
@@ -825,6 +937,40 @@ struct mgmt_ev_phy_configuration_changed {
 	uint16_t	selected_phys;
 } __packed;
 
+#define MGMT_EV_EXP_FEATURE_CHANGE	0x0027
+struct mgmt_ev_exp_feature_changed {
+	uint8_t  uuid[16];
+	uint32_t flags;
+} __packed;
+
+#define MGMT_EV_DEVICE_FLAGS_CHANGED		0x002a
+struct mgmt_ev_device_flags_changed {
+	struct mgmt_addr_info addr;
+	uint32_t supported_flags;
+	uint32_t current_flags;
+} __packed;
+
+#define MGMT_EV_ADV_MONITOR_ADDED	0x002b
+struct mgmt_ev_adv_monitor_added {
+	uint16_t monitor_handle;
+}  __packed;
+
+#define MGMT_EV_ADV_MONITOR_REMOVED	0x002c
+struct mgmt_ev_adv_monitor_removed {
+	uint16_t monitor_handle;
+}  __packed;
+
+#define MGMT_EV_CONTROLLER_SUSPEND		0x002d
+struct mgmt_ev_controller_suspend {
+	uint8_t suspend_state;
+} __packed;
+
+#define MGMT_EV_CONTROLLER_RESUME		0x002e
+struct mgmt_ev_controller_resume {
+	struct mgmt_addr_info addr;
+	uint8_t wake_reason;
+} __packed;
+
 static const char *mgmt_op[] = {
 	"<0x0000>",
 	"Read Version",
@@ -897,6 +1043,17 @@ static const char *mgmt_op[] = {
 	"Get PHY Configuration",
 	"Set PHY Configuration",
 	"Set Blocked Keys",
+	"Set Wideband Speech",
+	"Read Security Information",			/* 0x0048 */
+	"Read Experimental Features Information",
+	"Set Experimental Feature",
+	"Read Default System Configuration",
+	"Set Default System Configuration",
+	"Get Device Flags",
+	"Set Device Flags",				/* 0x0050 */
+	"Read Advertisement Monitor Features",
+	"Add Advertisement Patterns Monitor",
+	"Remove Advertisement Monitor",
 };
 
 static const char *mgmt_ev[] = {
@@ -939,6 +1096,12 @@ static const char *mgmt_ev[] = {
 	"Advertising Removed",
 	"Extended Controller Information Changed",
 	"PHY Configuration Changed",
+	"Experimental Feature Changed",
+	"Device Flags Changed",
+	"Advertisement Monitor Added",			/* 0x002b */
+	"Advertisement Monitor Removed",
+	"Controller Suspend",
+	"Controller Resume",
 };
 
 static const char *mgmt_status[] = {

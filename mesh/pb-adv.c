@@ -157,8 +157,6 @@ static void send_adv_segs(struct pb_adv_session *session, const uint8_t *data,
 		init_size = size;
 	}
 
-	/* print_packet("FULL-TX", data, size); */
-
 	l_debug("Sending %u fragments for %u octets", max_seg + 1, size);
 
 	buf[6] = max_seg << 2;
@@ -168,7 +166,6 @@ static void send_adv_segs(struct pb_adv_session *session, const uint8_t *data,
 
 	l_debug("max_seg: %2.2x", max_seg);
 	l_debug("size: %2.2x, CRC: %2.2x", size, buf[9]);
-	/* print_packet("PB-TX", buf + 1, init_size + 9); */
 
 	pb_adv_send(session, MESH_IO_TX_COUNT_UNLIMITED, 200,
 							buf, init_size + 10);
@@ -185,8 +182,6 @@ static void send_adv_segs(struct pb_adv_session *session, const uint8_t *data,
 
 		buf[6] = (i << 2) | 0x02;
 		memcpy(buf + 7, data + consumed, seg_size);
-
-		/* print_packet("PB-TX", buf + 1, seg_size + 6); */
 
 		pb_adv_send(session, MESH_IO_TX_COUNT_UNLIMITED, 200,
 							buf, seg_size + 7);
@@ -223,12 +218,9 @@ static void tx_timeout(struct l_timeout *timeout, void *user_data)
 	if (!l_queue_find(pb_sessions, session_match, session))
 		return;
 
-	l_timeout_remove(session->tx_timeout);
-	session->tx_timeout = NULL;
-
 	mesh_send_cancel(filter, sizeof(filter));
 
-	l_info("TX timeout");
+	l_debug("TX timeout");
 	cb = session->close_cb;
 	user_data = session->user_data;
 	cb(user_data, 1);
@@ -392,17 +384,8 @@ static void pb_adv_packet(void *user_data, const uint8_t *pkt, uint16_t len)
 		break;
 
 	case PB_ADV_CLOSE:
-		l_timeout_remove(session->tx_timeout);
 		l_debug("Link closed notification: %2.2x", pkt[0]);
-		/* Wrap callback for pre-cleaning */
-		if (true) {
-			mesh_prov_close_func_t cb = session->close_cb;
-			void *user_data = session->user_data;
-
-			l_queue_remove(pb_sessions, session);
-			l_free(session);
-			cb(user_data, pkt[0]);
-		}
+		session->close_cb(session->user_data, pkt[0]);
 		break;
 
 	case PB_ADV_ACK:
@@ -572,4 +555,9 @@ void pb_adv_unreg(void *user_data)
 	send_close_ind(session, 0);
 	l_queue_remove(pb_sessions, session);
 	l_free(session);
+
+	if (!l_queue_length(pb_sessions)) {
+		l_queue_destroy(pb_sessions, l_free);
+		pb_sessions = NULL;
+	}
 }

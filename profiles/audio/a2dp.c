@@ -43,6 +43,7 @@
 
 #include "gdbus/gdbus.h"
 
+#include "src/hcid.h"
 #include "src/plugin.h"
 #include "src/adapter.h"
 #include "src/device.h"
@@ -654,7 +655,7 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 						endpoint_setconf_cb,
 						a2dp_sep->user_data);
 		if (ret == 0) {
-			/* Attempt to reverve discover if there are no remote
+			/* Attempt to reverse discover if there are no remote
 			 * SEPs.
 			 */
 			if (queue_isempty(setup->chan->seps))
@@ -735,7 +736,7 @@ static void endpoint_open_cb(struct a2dp_setup *setup, gboolean ret)
 	if (err == 0)
 		goto done;
 
-	error("Error on avdtp_open %s (%d)", strerror(-err), -err);
+	error("avdtp_open %s (%d)", strerror(-err), -err);
 	setup->stream = NULL;
 	finalize_setup_errno(setup, err, finalize_config, NULL);
 done:
@@ -813,7 +814,7 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	ret = avdtp_open(session, stream);
 	if (ret < 0) {
-		error("Error on avdtp_open %s (%d)", strerror(-ret), -ret);
+		error("avdtp_open %s (%d)", strerror(-ret), -ret);
 		setup->stream = NULL;
 		finalize_setup_errno(setup, ret, finalize_config, NULL);
 	}
@@ -1133,8 +1134,7 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	start_err = avdtp_start(session, a2dp_sep->stream);
 	if (start_err < 0 && start_err != -EINPROGRESS) {
-		error("avdtp_start: %s (%d)", strerror(-start_err),
-								-start_err);
+		error("avdtp_start: %s (%d)", strerror(-start_err), -start_err);
 		finalize_setup_errno(setup, start_err, finalize_suspend, NULL);
 	}
 }
@@ -1179,6 +1179,12 @@ static gboolean a2dp_reconfigure(gpointer data)
 	struct avdtp_media_codec_capability *rsep_codec;
 	struct avdtp_service_capability *cap;
 
+	if (!sep->lsep) {
+		error("no valid local SEP");
+		posix_err = -EINVAL;
+		goto failed;
+	}
+
 	if (setup->rsep) {
 		cap = avdtp_get_codec(setup->rsep->sep);
 		rsep_codec = (struct avdtp_media_codec_capability *) cap->data;
@@ -1186,6 +1192,12 @@ static gboolean a2dp_reconfigure(gpointer data)
 
 	if (!setup->rsep || sep->codec != rsep_codec->media_codec_type)
 		setup->rsep = find_remote_sep(setup->chan, sep);
+
+	if (!setup->rsep) {
+		error("unable to find remote SEP");
+		posix_err = -EINVAL;
+		goto failed;
+	}
 
 	posix_err = avdtp_set_configuration(setup->session, setup->rsep->sep,
 						sep->lsep,
@@ -1708,7 +1720,7 @@ static int a2dp_reconfig(struct a2dp_channel *chan, const char *sender,
 	return 0;
 
 fail:
-	setup_unref(setup);
+	setup_cb_free(cb_data);
 	return err;
 }
 
@@ -1836,11 +1848,25 @@ static gboolean get_device(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean get_delay_reporting(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct a2dp_remote_sep *sep = data;
+	dbus_bool_t delay_report;
+
+	delay_report = avdtp_get_delay_reporting(sep->sep);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &delay_report);
+
+	return TRUE;
+}
+
 static const GDBusPropertyTable sep_properties[] = {
 	{ "UUID", "s", get_uuid, NULL, NULL },
 	{ "Codec", "y", get_codec, NULL, NULL },
 	{ "Capabilities", "ay", get_capabilities, NULL, NULL },
 	{ "Device", "o", get_device, NULL, NULL },
+	{ "DelayReporting", "b", get_delay_reporting, NULL, NULL },
 	{ }
 };
 
@@ -1931,6 +1957,7 @@ static void load_remote_sep(struct a2dp_channel *chan, GKeyFile *key_file,
 	for (; *seids; seids++) {
 		uint8_t type;
 		uint8_t codec;
+		uint8_t delay_reporting;
 		GSList *l = NULL;
 		char caps[256];
 		uint8_t data[128];
@@ -1944,11 +1971,17 @@ static void load_remote_sep(struct a2dp_channel *chan, GKeyFile *key_file,
 		if (!value)
 			continue;
 
-		if (sscanf(value, "%02hhx:%02hhx:%s", &type, &codec,
+		/* Try loading with delay_reporting first */
+		if (sscanf(value, "%02hhx:%02hhx:%02hhx:%s", &type, &codec,
+					&delay_reporting, caps) != 4) {
+			/* Try old format */
+			if (sscanf(value, "%02hhx:%02hhx:%s", &type, &codec,
 								caps) != 3) {
-			warn("Unable to load Endpoint: seid %u", rseid);
-			g_free(value);
-			continue;
+				warn("Unable to load Endpoint: seid %u", rseid);
+				g_free(value);
+				continue;
+			}
+			delay_reporting = false;
 		}
 
 		for (i = 0, size = strlen(caps); i < size; i += 2) {
@@ -1956,7 +1989,6 @@ static void load_remote_sep(struct a2dp_channel *chan, GKeyFile *key_file,
 
 			if (sscanf(caps + i, "%02hhx", tmp) != 1) {
 				warn("Unable to load Endpoint: seid %u", rseid);
-				g_free(value);
 				break;
 			}
 		}
@@ -1968,7 +2000,8 @@ static void load_remote_sep(struct a2dp_channel *chan, GKeyFile *key_file,
 
 		caps_add_codec(&l, codec, data, size / 2);
 
-		rsep = avdtp_register_remote_sep(chan->session, rseid, type, l);
+		rsep = avdtp_register_remote_sep(chan->session, rseid, type, l,
+							delay_reporting);
 		if (!rsep) {
 			warn("Unable to register Endpoint: seid %u", rseid);
 			continue;
@@ -2186,6 +2219,12 @@ static void transport_cb(GIOChannel *io, GError *err, gpointer user_data)
 	struct a2dp_setup *setup = user_data;
 	uint16_t omtu, imtu;
 
+	if (!g_slist_find(setups, setup)) {
+		warn("bt_io_accept: setup %p no longer valid", setup);
+		g_io_channel_shutdown(io, TRUE, NULL);
+		return;
+	}
+
 	if (err) {
 		error("%s", err->message);
 		goto drop;
@@ -2293,14 +2332,21 @@ drop:
 static bool a2dp_server_listen(struct a2dp_server *server)
 {
 	GError *err = NULL;
+	BtIOMode mode;
 
 	if (server->io)
 		return true;
+
+	if (main_opts.mps == MPS_OFF)
+		mode = BT_IO_MODE_BASIC;
+	else
+		mode = BT_IO_MODE_STREAMING;
 
 	server->io = bt_io_listen(NULL, confirm_cb, server, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR,
 				btd_adapter_get_address(server->adapter),
 				BT_IO_OPT_PSM, AVDTP_PSM,
+				BT_IO_OPT_MODE, mode,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
 				BT_IO_OPT_MASTER, true,
 				BT_IO_OPT_INVALID);
@@ -2594,7 +2640,7 @@ static struct queue *a2dp_select_eps(struct avdtp *session, uint8_t type,
 static void store_remote_sep(void *data, void *user_data)
 {
 	struct a2dp_remote_sep *sep = data;
-	GKeyFile *key_file = (void *) user_data;
+	GKeyFile *key_file = user_data;
 	char seid[4], value[256];
 	struct avdtp_service_capability *service = avdtp_get_codec(sep->sep);
 	struct avdtp_media_codec_capability *codec = (void *) service->data;
@@ -2603,12 +2649,12 @@ static void store_remote_sep(void *data, void *user_data)
 
 	sprintf(seid, "%02hhx", avdtp_get_seid(sep->sep));
 
-	offset = sprintf(value, "%02hhx:%02hhx:", avdtp_get_type(sep->sep),
-						codec->media_codec_type);
+	offset = sprintf(value, "%02hhx:%02hhx:%02hhx:",
+			avdtp_get_type(sep->sep), codec->media_codec_type,
+			avdtp_get_delay_reporting(sep->sep));
 
 	for (i = 0; i < service->length - sizeof(*codec); i++)
 		offset += sprintf(value + offset, "%02hhx", codec->data[i]);
-
 
 	g_key_file_set_string(key_file, "Endpoints", seid, value);
 }
@@ -2633,7 +2679,8 @@ static void store_remote_seps(struct a2dp_channel *chan)
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
-	data = g_key_file_get_string(key_file, "Endpoints", "LastUsed", NULL);
+	data = g_key_file_get_string(key_file, "Endpoints", "LastUsed",
+								NULL);
 
 	/* Remove current endpoints since it might have changed */
 	g_key_file_remove_group(key_file, "Endpoints", NULL);
@@ -2641,7 +2688,8 @@ static void store_remote_seps(struct a2dp_channel *chan)
 	queue_foreach(chan->seps, store_remote_sep, key_file);
 
 	if (data) {
-		g_key_file_set_string(key_file, "Endpoints", "LastUsed", data);
+		g_key_file_set_string(key_file, "Endpoints", "LastUsed",
+						data);
 		g_free(data);
 	}
 
@@ -2656,15 +2704,22 @@ static void discover_cb(struct avdtp *session, GSList *seps,
 				struct avdtp_error *err, void *user_data)
 {
 	struct a2dp_setup *setup = user_data;
+	uint16_t version = avdtp_get_version(session);
 
-	DBG("err %p", err);
+	DBG("version 0x%04x err %p", version, err);
 
 	setup->seps = seps;
 	setup->err = err;
 
 	if (!err) {
 		g_slist_foreach(seps, register_remote_sep, setup->chan);
-		store_remote_seps(setup->chan);
+
+		/* Only store version has been initialized as features like
+		 * Delay Reporting may not be queried if the version in
+		 * unknown.
+		 */
+		if (version)
+			store_remote_seps(setup->chan);
 	}
 
 	finalize_discover(setup);
@@ -3335,4 +3390,4 @@ static void a2dp_exit(void)
 }
 
 BLUETOOTH_PLUGIN_DEFINE(a2dp, VERSION, BLUETOOTH_PLUGIN_PRIORITY_DEFAULT,
-							a2dp_init, a2dp_exit)
+		a2dp_init, a2dp_exit)

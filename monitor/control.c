@@ -200,7 +200,7 @@ static const char *settings_str[] = {
 	"powered", "connectable", "fast-connectable", "discoverable",
 	"bondable", "link-security", "ssp", "br/edr", "hs", "le",
 	"advertising", "secure-conn", "debug-keys", "privacy",
-	"configuration", "static-addr",
+	"configuration", "static-addr", "phy", "wbs"
 };
 
 static void mgmt_new_settings(uint16_t len, const void *buf)
@@ -1554,7 +1554,8 @@ int control_tracing(void)
 		return 0;
 	}
 
-	open_channel(HCI_CHANNEL_CONTROL);
+	if (packet_has_filter(PACKET_FILTER_SHOW_MGMT_SOCKET))
+		open_channel(HCI_CHANNEL_CONTROL);
 
 	return 0;
 }

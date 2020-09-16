@@ -177,6 +177,12 @@ struct csrk_info {
 	uint32_t counter;
 };
 
+enum {
+	WAKE_FLAG_DEFAULT = 0,
+	WAKE_FLAG_ENABLED,
+	WAKE_FLAG_DISABLED,
+};
+
 struct btd_device {
 	int ref_count;
 
@@ -189,6 +195,22 @@ struct btd_device {
 	bool		le;
 	bool		pending_paired;		/* "Paired" waiting for SDP */
 	bool		svc_refreshed;
+	bool		refresh_discovery;
+
+	/* Manage whether this device can wake the system from suspend.
+	 * - wake_support: Requires a profile that supports wake (i.e. HID)
+	 * - wake_allowed: Is wake currently allowed?
+	 * - pending_wake_allowed - Wake flag sent via set_device_flags
+	 * - wake_override - User configured wake setting
+	 */
+	bool		wake_support;
+	bool		wake_allowed;
+	bool		pending_wake_allowed;
+	uint8_t		wake_override;
+	GDBusPendingPropertySet wake_id;
+
+	uint32_t	supported_flags;
+	uint32_t	current_flags;
 	GSList		*svc_callbacks;
 	GSList		*eir_uuids;
 	struct bt_ad	*ad;
@@ -212,6 +234,7 @@ struct btd_device {
 	bool		connectable;
 	guint		disconn_timer;
 	guint		discov_timer;
+	guint		temporary_timer;	/* Temporary/disappear timer */
 	struct browse_req *browse;		/* service discover request */
 	struct bonding_req *bonding;
 	struct authentication_req *authr;	/* authentication request */
@@ -394,7 +417,7 @@ static gboolean store_device_info_cb(gpointer user_data)
 		g_key_file_remove_key(key_file, "General", "Alias", NULL);
 
 	if (device->class) {
-		sprintf(class, "0x%6.6x", device->class);
+		sprintf(class, "0x%6.6x", device->class & 0xffffff);
 		g_key_file_set_string(key_file, "General", "Class", class);
 	} else {
 		g_key_file_remove_key(key_file, "General", "Class", NULL);
@@ -414,6 +437,12 @@ static gboolean store_device_info_cb(gpointer user_data)
 
 	g_key_file_set_boolean(key_file, "General", "Blocked",
 							device->blocked);
+
+	if (device->wake_override != WAKE_FLAG_DEFAULT) {
+		g_key_file_set_boolean(key_file, "General", "WakeAllowed",
+				       device->wake_override ==
+					       WAKE_FLAG_ENABLED);
+	}
 
 	if (device->uuids) {
 		GSList *l;
@@ -670,6 +699,9 @@ static void device_free(gpointer user_data)
 
 	if (device->discov_timer)
 		g_source_remove(device->discov_timer);
+
+	if (device->temporary_timer)
+		g_source_remove(device->temporary_timer);
 
 	if (device->connect)
 		dbus_message_unref(device->connect);
@@ -1318,6 +1350,129 @@ dev_property_advertising_data_exist(const GDBusPropertyTable *property,
 	return bt_ad_has_data(device->ad, NULL);
 }
 
+static bool device_get_wake_support(struct btd_device *device)
+{
+	return device->wake_support;
+}
+
+void device_set_wake_support(struct btd_device *device, bool wake_support)
+{
+	device->wake_support = wake_support;
+
+	/* If wake configuration has not been made yet, set the initial
+	 * configuration.
+	 */
+	if (device->wake_override == WAKE_FLAG_DEFAULT) {
+		device_set_wake_override(device, wake_support);
+		device_set_wake_allowed(device, wake_support, -1U);
+	}
+}
+
+static bool device_get_wake_allowed(struct btd_device *device)
+{
+	return device->wake_allowed;
+}
+
+void device_set_wake_override(struct btd_device *device, bool wake_override)
+{
+	if (wake_override) {
+		device->wake_override = WAKE_FLAG_ENABLED;
+		device->current_flags |= DEVICE_FLAG_REMOTE_WAKEUP;
+	} else {
+		device->wake_override = WAKE_FLAG_DISABLED;
+		device->current_flags &= ~DEVICE_FLAG_REMOTE_WAKEUP;
+	}
+}
+
+void device_set_wake_allowed(struct btd_device *device, bool wake_allowed,
+			     GDBusPendingPropertySet id)
+{
+	/* Pending and current value are the same unless there is a change in
+	 * progress. Only update wake allowed if pending value doesn't match the
+	 * new value.
+	 */
+	if (wake_allowed == device->pending_wake_allowed)
+		return;
+
+	device->wake_id = id;
+	device->pending_wake_allowed = wake_allowed;
+	adapter_set_device_wakeable(device_get_adapter(device), device,
+				    wake_allowed);
+}
+
+void device_set_wake_allowed_complete(struct btd_device *device)
+{
+	if (device->wake_id != -1U) {
+		g_dbus_pending_property_success(device->wake_id);
+		device->wake_id = -1U;
+	}
+
+	device->wake_allowed = device->pending_wake_allowed;
+	g_dbus_emit_property_changed(dbus_conn, device->path,
+					DEVICE_INTERFACE, "WakeAllowed");
+
+	store_device_info(device);
+}
+
+
+static gboolean
+dev_property_get_wake_allowed(const GDBusPropertyTable *property,
+			     DBusMessageIter *iter, void *data)
+{
+	struct btd_device *device = data;
+	dbus_bool_t wake_allowed = device_get_wake_allowed(device);
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_BOOLEAN, &wake_allowed);
+
+	return TRUE;
+}
+
+static void dev_property_set_wake_allowed(const GDBusPropertyTable *property,
+					 DBusMessageIter *value,
+					 GDBusPendingPropertySet id, void *data)
+{
+	struct btd_device *device = data;
+	dbus_bool_t b;
+
+	if (dbus_message_iter_get_arg_type(value) != DBUS_TYPE_BOOLEAN) {
+		g_dbus_pending_property_error(id,
+					ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+		return;
+	}
+
+	if (device->temporary) {
+		g_dbus_pending_property_error(id,
+					ERROR_INTERFACE ".Unsupported",
+					"Cannot set property while temporary");
+		return;
+	}
+
+	/* Emit busy or success depending on current value. */
+	if (b == device->pending_wake_allowed) {
+		if (device->wake_allowed == device->pending_wake_allowed)
+			g_dbus_pending_property_success(id);
+		else
+			g_dbus_pending_property_error(
+				id, ERROR_INTERFACE ".Busy",
+				"Property change in progress");
+
+		return;
+	}
+
+	dbus_message_iter_get_basic(value, &b);
+	device_set_wake_override(device, b);
+	device_set_wake_allowed(device, b, id);
+}
+
+static gboolean dev_property_wake_allowed_exist(
+		const GDBusPropertyTable *property, void *data)
+{
+	struct btd_device *device = data;
+
+	return device_get_wake_support(device);
+}
+
 static gboolean disconnect_all(gpointer user_data)
 {
 	struct btd_device *device = user_data;
@@ -1626,15 +1781,19 @@ done:
 	if (!dev->connect)
 		return;
 
-	if (!err && dbus_message_is_method_call(dev->connect, DEVICE_INTERFACE,
-								"Connect"))
-		dev->general_connect = TRUE;
+	if (dbus_message_is_method_call(dev->connect, DEVICE_INTERFACE,
+							"Connect")) {
+		if (!err)
+			dev->general_connect = TRUE;
+		else if (find_service_with_state(dev->services,
+						BTD_SERVICE_STATE_CONNECTED))
+			/* Reset error if there are services connected */
+			err = 0;
+	}
 
 	DBG("returning response to %s", dbus_message_get_sender(dev->connect));
 
-	l = find_service_with_state(dev->services, BTD_SERVICE_STATE_CONNECTED);
-
-	if (err && l == NULL) {
+	if (err) {
 		/* Fallback to LE bearer if supported */
 		if (err == -EHOSTDOWN && dev->le && !dev->le_state.connected) {
 			err = device_connect_le(dev);
@@ -1646,7 +1805,7 @@ done:
 				btd_error_failed(dev->connect, strerror(-err)));
 	} else {
 		/* Start passive SDP discovery to update known services */
-		if (dev->bredr && !dev->svc_refreshed)
+		if (dev->bredr && !dev->svc_refreshed && dev->refresh_discovery)
 			device_browse_sdp(dev, NULL);
 		g_dbus_send_reply(dbus_conn, dev->connect, DBUS_TYPE_INVALID);
 	}
@@ -1857,7 +2016,9 @@ static DBusMessage *connect_profiles(struct btd_device *dev, uint8_t bdaddr_type
 	dev->pending = create_pending_list(dev, uuid);
 	if (!dev->pending) {
 		if (dev->svc_refreshed) {
-			if (find_service_with_state(dev->services,
+			if (dbus_message_is_method_call(msg, DEVICE_INTERFACE,
+							"Connect") &&
+				find_service_with_state(dev->services,
 						BTD_SERVICE_STATE_CONNECTED))
 				return dbus_message_new_method_return(msg);
 			else
@@ -2050,6 +2211,9 @@ static DBusMessage *disconnect_profile(DBusConnection *conn, DBusMessage *msg,
 	if (dev->disconnect)
 		return btd_error_in_progress(msg);
 
+	if (btd_service_get_state(service) == BTD_SERVICE_STATE_DISCONNECTED)
+		return dbus_message_new_method_return(msg);
+
 	dev->disconnect = dbus_message_ref(msg);
 
 	err = btd_service_disconnect(service);
@@ -2061,6 +2225,8 @@ static DBusMessage *disconnect_profile(DBusConnection *conn, DBusMessage *msg,
 
 	if (err == -ENOTSUP)
 		return btd_error_not_supported(msg);
+	else if (err == -EALREADY)
+		return dbus_message_new_method_return(msg);
 
 	return btd_error_failed(msg, strerror(-err));
 }
@@ -2404,6 +2570,11 @@ done:
 
 	if (req)
 		browse_request_free(req);
+}
+
+void device_set_refresh_discovery(struct btd_device *dev, bool refresh)
+{
+	dev->refresh_discovery = refresh;
 }
 
 static void device_set_svc_refreshed(struct btd_device *device, bool value)
@@ -2779,6 +2950,9 @@ static const GDBusPropertyTable device_properties[] = {
 	{ "AdvertisingData", "a{yv}", dev_property_get_advertising_data,
 				NULL, dev_property_advertising_data_exist,
 				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
+	{ "WakeAllowed", "b", dev_property_get_wake_allowed,
+				dev_property_set_wake_allowed,
+				dev_property_wake_allowed_exist },
 	{ }
 };
 
@@ -2819,6 +2993,12 @@ void device_add_connection(struct btd_device *dev, uint8_t bdaddr_type)
 	if (dev->le_state.connected && dev->bredr_state.connected)
 		return;
 
+	/* Remove temporary timer while connected */
+	if (dev->temporary_timer) {
+		g_source_remove(dev->temporary_timer);
+		dev->temporary_timer = 0;
+	}
+
 	g_dbus_emit_property_changed(dbus_conn, dev->path, DEVICE_INTERFACE,
 								"Connected");
 }
@@ -2826,6 +3006,7 @@ void device_add_connection(struct btd_device *dev, uint8_t bdaddr_type)
 void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 {
 	struct bearer_state *state = get_state(device, bdaddr_type);
+	DBusMessage *reply;
 
 	if (!state->connected)
 		return;
@@ -2838,6 +3019,18 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 	if (device->disconn_timer > 0) {
 		g_source_remove(device->disconn_timer);
 		device->disconn_timer = 0;
+	}
+
+	/* This could be executed while the client is waiting for Connect() but
+	 * att_connect_cb has not been invoked.
+	 * In that case reply the client that the connection failed.
+	 */
+	if (device->connect) {
+		DBG("connection removed while Connect() is waiting reply");
+		reply = btd_error_failed(device->connect, "Disconnected early");
+		g_dbus_send_message(dbus_conn, reply);
+		dbus_message_unref(device->connect);
+		device->connect = NULL;
 	}
 
 	while (device->disconnects) {
@@ -2863,6 +3056,8 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 
 	if (device->bredr_state.connected || device->le_state.connected)
 		return;
+
+	device_update_last_seen(device, bdaddr_type);
 
 	g_dbus_emit_property_changed(dbus_conn, device->path,
 						DEVICE_INTERFACE, "Connected");
@@ -3027,9 +3222,11 @@ static void convert_info(struct btd_device *device, GKeyFile *key_file)
 static void load_info(struct btd_device *device, const char *local,
 			const char *peer, GKeyFile *key_file)
 {
+	GError *gerr = NULL;
 	char *str;
 	gboolean store_needed = FALSE;
 	gboolean blocked;
+	gboolean wake_allowed;
 	char **uuids;
 	int source, vendor, product, version;
 	char **techno, **t;
@@ -3139,6 +3336,18 @@ next:
 							"Version", NULL);
 
 		btd_device_set_pnpid(device, source, vendor, product, version);
+	}
+
+	/* Wake allowed is only configured and stored if user changed it.
+	 * Otherwise, we enable if profile supports it.
+	 */
+	wake_allowed = g_key_file_get_boolean(key_file, "General",
+					      "WakeAllowed", &gerr);
+	if (!gerr) {
+		device_set_wake_override(device, wake_allowed);
+	} else {
+		g_error_free(gerr);
+		gerr = NULL;
 	}
 
 	if (store_needed)
@@ -3880,6 +4089,8 @@ static struct btd_device *device_new(struct btd_adapter *adapter,
 	device->db_id = gatt_db_register(device->db, gatt_service_added,
 					gatt_service_removed, device, NULL);
 
+	device->refresh_discovery = main_opts.refresh_discovery;
+
 	return btd_device_ref(device);
 }
 
@@ -4053,12 +4264,34 @@ void device_set_le_support(struct btd_device *device, uint8_t bdaddr_type)
 	store_device_info(device);
 }
 
+static gboolean device_disappeared(gpointer user_data)
+{
+	struct btd_device *dev = user_data;
+
+	dev->temporary_timer = 0;
+
+	btd_adapter_remove_device(dev->adapter, dev);
+
+	return FALSE;
+}
+
 void device_update_last_seen(struct btd_device *device, uint8_t bdaddr_type)
 {
 	if (bdaddr_type == BDADDR_BREDR)
 		device->bredr_seen = time(NULL);
 	else
 		device->le_seen = time(NULL);
+
+	if (!device_is_temporary(device))
+		return;
+
+	/* Restart temporary timer */
+	if (device->temporary_timer)
+		g_source_remove(device->temporary_timer);
+
+	device->temporary_timer = g_timeout_add_seconds(main_opts.tmpto,
+							device_disappeared,
+							device);
 }
 
 /* It is possible that we have two device objects for the same device in
@@ -4151,6 +4384,20 @@ static void delete_folder_tree(const char *dirname)
 	rmdir(dirname);
 }
 
+void device_remove_bonding(struct btd_device *device, uint8_t bdaddr_type)
+{
+	if (bdaddr_type == BDADDR_BREDR)
+		device->bredr_state.bonded = false;
+	else
+		device->le_state.bonded = false;
+
+	if (!device->bredr_state.bonded && !device->le_state.bonded)
+		btd_device_set_temporary(device, true);
+
+	btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
+							bdaddr_type);
+}
+
 static void device_remove_stored(struct btd_device *device)
 {
 	char device_addr[18];
@@ -4159,17 +4406,11 @@ static void device_remove_stored(struct btd_device *device)
 	char *data;
 	gsize length = 0;
 
-	if (device->bredr_state.bonded) {
-		device->bredr_state.bonded = false;
-		btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
-								BDADDR_BREDR);
-	}
+	if (device->bredr_state.bonded)
+		device_remove_bonding(device, BDADDR_BREDR);
 
-	if (device->le_state.bonded) {
-		device->le_state.bonded = false;
-		btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
-							device->bdaddr_type);
-	}
+	if (device->le_state.bonded)
+		device_remove_bonding(device, device->bdaddr_type);
 
 	device->bredr_state.paired = false;
 	device->le_state.paired = false;
@@ -5431,10 +5672,18 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 
 	device->temporary = temporary;
 
+	if (device->temporary_timer) {
+		g_source_remove(device->temporary_timer);
+		device->temporary_timer = 0;
+	}
+
 	if (temporary) {
 		if (device->bredr)
 			adapter_whitelist_remove(device->adapter, device);
 		adapter_connect_list_remove(device->adapter, device);
+		device->temporary_timer = g_timeout_add_seconds(main_opts.tmpto,
+							device_disappeared,
+							device);
 		return;
 	}
 
@@ -5779,6 +6028,14 @@ void device_bonding_complete(struct btd_device *device, uint8_t bdaddr_type,
 
 	if (status) {
 		device_cancel_authentication(device, TRUE);
+
+		/* Put the device back to the temporary state so that it will be
+		 * treated as a newly discovered device.
+		 */
+		if (!device_is_paired(device, bdaddr_type) &&
+				!device_is_trusted(device))
+			btd_device_set_temporary(device, true);
+
 		device_bonding_failed(device, status);
 		return;
 	}
@@ -6168,12 +6425,23 @@ int device_confirm_passkey(struct btd_device *device, uint8_t type,
 
 	auth->passkey = passkey;
 
-	if (confirm_hint)
+	if (confirm_hint) {
+		if (device->bonding != NULL) {
+			/* We know the client has indicated the intent to pair
+			 * with the peer device, so we can auto-accept.
+			 */
+			btd_adapter_confirm_reply(device->adapter,
+						  &device->bdaddr,
+						  type, TRUE);
+			return 0;
+		}
+
 		err = agent_request_authorization(auth->agent, device,
 						confirm_cb, auth, NULL);
-	else
+	} else {
 		err = agent_request_confirmation(auth->agent, device, passkey,
 						confirm_cb, auth, NULL);
+	}
 
 	if (err < 0) {
 		if (err == -EINPROGRESS) {
@@ -6534,6 +6802,48 @@ void btd_device_set_pnpid(struct btd_device *device, uint16_t source,
 						DEVICE_INTERFACE, "Modalias");
 
 	store_device_info(device);
+}
+
+uint32_t btd_device_get_current_flags(struct btd_device *dev)
+{
+	return dev->current_flags;
+}
+
+/* This event is sent immediately after add device on all mgmt sockets.
+ * Afterwards, it is only sent to mgmt sockets other than the one which called
+ * set_device_flags.
+ */
+void btd_device_flags_changed(struct btd_device *dev, uint32_t supported_flags,
+			      uint32_t current_flags)
+{
+	const uint32_t changed_flags = dev->current_flags ^ current_flags;
+	bool flag_value;
+
+	dev->supported_flags = supported_flags;
+	dev->current_flags = current_flags;
+
+	if (!changed_flags)
+		return;
+
+	if (changed_flags & DEVICE_FLAG_REMOTE_WAKEUP) {
+		flag_value = !!(current_flags & DEVICE_FLAG_REMOTE_WAKEUP);
+		dev->pending_wake_allowed = flag_value;
+
+		/* If an override exists and doesn't match the current state,
+		 * apply it. This logic will run after Add Device only and will
+		 * enable wake for previously paired devices.
+		 */
+		if (dev->wake_override != WAKE_FLAG_DEFAULT) {
+			bool wake_allowed =
+				dev->wake_override == WAKE_FLAG_ENABLED;
+			if (flag_value != wake_allowed)
+				device_set_wake_allowed(dev, wake_allowed, -1U);
+			else
+				device_set_wake_allowed_complete(dev);
+		} else {
+			device_set_wake_allowed_complete(dev);
+		}
+	}
 }
 
 static void service_state_changed(struct btd_service *service,
