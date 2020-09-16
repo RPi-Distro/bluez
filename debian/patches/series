@@ -9,5 +9,3 @@ org.bluez.obex.service.in.patch
 Fix-typo.patch
 shared-gatt-client-Fix-segfault-after-PIN-entry.patch
 main.conf-Add-more-details-Closes-904212.patch
-input-hog-Attempt-to-set-security-level-if-not-bonde.patch
-input-Add-LEAutoSecurity-setting-to-input.conf.patch
