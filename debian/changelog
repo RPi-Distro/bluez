@@ -1,6 +1,8 @@
 bluez (5.55-1) unstable; urgency=medium
 
   * Update to 5.55.
+  * Add --enable-hid2hci to configure's option.
+    Add --enable-hid2hci option to explicitly enable the hid2hci tool.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 16 Sep 2020 16:49:56 +0900
 

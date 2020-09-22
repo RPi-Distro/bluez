@@ -28,6 +28,7 @@ CONFIGURE_FLAGS := \
 	--enable-sixaxis \
 	--enable-deprecated \
 	--enable-health \
+	--enable-hid2hci \
 	--enable-experimental
 
 ifeq ($(shell dpkg-vendor --is Ubuntu && echo yes) $(DEB_HOST_ARCH), yes i386)
