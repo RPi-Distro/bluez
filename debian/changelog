@@ -1,6 +1,9 @@
 bluez (5.55-1) unstable; urgency=medium
 
   * Update to 5.55.
+  * Remove patches applied in upstream.
+    - input-hog-Attempt-to-set-security-level-if-not-bonde.patch
+    - input-Add-LEAutoSecurity-setting-to-input.conf.patch
   * Add --enable-hid2hci to configure's option.
     Add --enable-hid2hci option to explicitly enable the hid2hci tool.
 
