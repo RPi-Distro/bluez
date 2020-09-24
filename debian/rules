@@ -75,5 +75,9 @@ build_bluez-source:
 	mkdir -p $(BUILDDIRSOURCE)
 	tar --exclude debian --exclude .git --exclude .pc -cf - . | (cd $(BUILDDIRSOURCE) && tar -xf -)
 	cd $(dir $(BUILDDIRSOURCE)) \
-		&& tar -cjf $(shell pwd)/debian/bluez-source/usr/src/bluez.tar.bz2 \
+		&& tar --sort=name \
+			--mtime="@${SOURCE_DATE_EPOCH}" \
+			--owner=0 --group=0 --numeric-owner \
+			--pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
+			-cjf $(shell pwd)/debian/bluez-source/usr/src/bluez.tar.bz2 \
 		$(notdir $(BUILDDIRSOURCE))
