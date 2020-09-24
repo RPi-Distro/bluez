@@ -73,7 +73,13 @@ BUILDDIRSOURCE := $(shell pwd)/debian/tmp-source/bluez-source
 build_bluez-source:
 	install -d debian/bluez-source/usr/src
 	mkdir -p $(BUILDDIRSOURCE)
-	tar --exclude debian --exclude .git --exclude .pc -cf - . | (cd $(BUILDDIRSOURCE) && tar -xf -)
+	tar --exclude debian --exclude .git --exclude .pc \
+		--exclude autom4te.cache \
+		--exclude config.log \
+		--exclude config.status \
+		--exclude Makefile \
+		--exclude libtool \
+		-cf - . | (cd $(BUILDDIRSOURCE) && tar -xf -)
 	cd $(dir $(BUILDDIRSOURCE)) \
 		&& tar --sort=name \
 			--mtime="@${SOURCE_DATE_EPOCH}" \
