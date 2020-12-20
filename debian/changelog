@@ -1,3 +1,10 @@
+bluez (5.55-2) UNRELEASED; urgency=medium
+
+  * Update d/patches/allow-using-obexd-without-systemd-in-the-user-sessio.patch
+    Fix path of obexd. (Closes: #972070, #971533)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Mon, 21 Dec 2020 08:08:53 +0900
+
 bluez (5.55-1) unstable; urgency=medium
 
   * Update to 5.55.
@@ -87,7 +94,7 @@ bluez (5.49-3) unstable; urgency=medium
 bluez (5.49-2) unstable; urgency=medium
 
   * Fix bluetoothd segfault in btd_adv_manager_refresh() (Closes: #898201)
-    Add patches/adapter-Fix-accessing-NULL-adv_manager.patch. 
+    Add patches/adapter-Fix-accessing-NULL-adv_manager.patch.
     Cherry-picked from 37a30b5435a45c3f8e233309fc70fc7de92b2e76.
   * Fix segfault after PIN entry. (Closes: #884663)
     Add patches/shared-gatt-client-Fix-segfault-after-PIN-entry.patch.
