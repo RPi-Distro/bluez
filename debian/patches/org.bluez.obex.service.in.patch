@@ -7,6 +7,6 @@ Last-Update: 2017-03-17
 @@ -1,4 +1,4 @@
  [D-BUS Service]
  Name=org.bluez.obex
- Exec=@libexecdir@/obexd
+ Exec=@pkglibexecdir@/obexd
 -SystemdService=dbus-org.bluez.obex.service
 +SystemdService=obex.service
