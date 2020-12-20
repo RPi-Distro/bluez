@@ -36,7 +36,7 @@ ifeq ($(shell dpkg-vendor --is Ubuntu && echo yes) $(DEB_HOST_ARCH), yes i386)
 endif
 
 %:
-	dh $@ --with autoreconf
+	dh $@
 
 override_dh_install:
 	rm -rf  debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libbluetooth.la
