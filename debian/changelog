@@ -1,7 +1,8 @@
 bluez (5.55-2) UNRELEASED; urgency=medium
 
   * Update d/control.
-    Use debhelper-compat instead of debhelper, and update to 13.
+    * Use debhelper-compat instead of debhelper, and update to 13.\
+    * Bump Standards-Version to 4.5.1 (no change).
   * Update d/patches/allow-using-obexd-without-systemd-in-the-user-sessio.patch
     Fix path of obexd. (Closes: #972070, #971533)
   * Remove d/compat.
