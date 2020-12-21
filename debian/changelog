@@ -1,4 +1,4 @@
-bluez (5.55-2) UNRELEASED; urgency=medium
+bluez (5.55-2) unstable; urgency=medium
 
   * Update d/control.
     * Use debhelper-compat instead of debhelper, and update to 13.\
