@@ -9,6 +9,8 @@ bluez (5.55-2) UNRELEASED; urgency=medium
     * Add --exclude=.la to option of dh.
     * Add --enable-external-ell.
     * Enable mesh support, add bluez-meshd package. (Closes: #973579)
+    * Fix contains bluez-source-tmp directory. (Closes: #970130)
+      Thanks to Chris Lamb and Vagrant Cascadian.
   * Update d/patches/allow-using-obexd-without-systemd-in-the-user-sessio.patch
     Fix path of obexd. (Closes: #972070, #971533)
   * Remove d/compat.
