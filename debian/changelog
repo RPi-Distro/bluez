@@ -4,6 +4,7 @@ bluez (5.55-2) UNRELEASED; urgency=medium
     * Use debhelper-compat instead of debhelper, and update to 13.\
     * Bump Standards-Version to 4.5.1 (no change).
     * Add libell-dev to B-D.
+    * Add dbus-user-session to bluez-obexd's Recommends.
   * Update d/rules.
     * Drop unnecessary autoreconf option for dh.
     * Add --exclude=.la to option of dh.

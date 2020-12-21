@@ -109,6 +109,7 @@ Package: bluez-obexd
 Architecture: linux-any
 Depends: ${shlibs:Depends},
          ${misc:Depends}
+Recommends: dbus-user-session
 Conflicts: obexd-server,
            obexd-client
 Replaces: obexd-server,
