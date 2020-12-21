@@ -1,11 +1,12 @@
 bluez (5.55-2) unstable; urgency=medium
 
   * Update d/control.
-    * Use debhelper-compat instead of debhelper, and update to 13.\
+    * Use debhelper-compat instead of debhelper, and update to 13.
     * Bump Standards-Version to 4.5.1 (no change).
     * Add libell-dev to B-D.
     * Add dbus-user-session to bluez-obexd's Recommends.
     * Add libjson-c-dev to B-D.
+    * Use libdbus-1-dev instead of libdbus-glib-1-dev. (Closes: #955823)
   * Update d/rules.
     * Drop unnecessary autoreconf option for dh.
     * Add --exclude=.la to option of dh.

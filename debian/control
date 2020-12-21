@@ -6,7 +6,7 @@ Priority: optional
 Build-Depends: debhelper-compat (= 13),
                flex,
                bison,
-               libdbus-glib-1-dev,
+               libdbus-1-dev (>= 1.6),
                libglib2.0-dev,
                libcap-ng-dev,
 	       libdw-dev,
