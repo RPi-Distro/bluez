@@ -15,6 +15,7 @@ Build-Depends: debhelper-compat (= 13),
                libical-dev,
                libasound2-dev,
                libell-dev (>= 0.28),
+               libjson-c-dev (>= 0.13),
                udev,
                check,
                systemd
