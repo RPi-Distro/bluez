@@ -9,6 +9,7 @@ CONFIGURE_FLAGS := \
 	--enable-static \
 	--enable-tools \
 	--enable-cups \
+	--enable-mesh \
 	--enable-midi	\
 	--enable-datafiles \
 	--enable-threads \
