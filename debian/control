@@ -20,6 +20,7 @@ Build-Depends: debhelper-compat (= 13),
                check,
                systemd
 Standards-Version: 4.5.1
+Rules-Requires-Root: no
 Vcs-Browser: https://salsa.debian.org/bluetooth-team/bluez
 Vcs-Git: https://salsa.debian.org/bluetooth-team/bluez.git
 Homepage: http://www.bluez.org

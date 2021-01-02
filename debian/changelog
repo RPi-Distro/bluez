@@ -1,6 +1,8 @@
 bluez (5.55-3) unstable; urgency=medium
 
   * Add d/salsa-ci.yml.
+  * Update d/control.
+    * Add Rules-Requires-Root: no
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Sat, 02 Jan 2021 15:57:41 +0900
 
