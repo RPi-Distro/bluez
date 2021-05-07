@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -212,6 +203,10 @@ static bool prov_calc_secret(const uint8_t *pub, const uint8_t *priv,
 
 static bool acp_credentials(struct mesh_prov_acceptor *prov)
 {
+	if (!memcmp(prov->conf_inputs.prv_pub_key,
+					prov->conf_inputs.dev_pub_key, 64))
+		return false;
+
 	if (!prov_calc_secret(prov->conf_inputs.prv_pub_key,
 			prov->private_key, prov->secret))
 		return false;
@@ -538,6 +533,13 @@ static void acp_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 		break;
 
 	case PROV_RANDOM: /* Random Value */
+
+		/* Disallow matching random values */
+		if (!memcmp(prov->rand_auth_workspace, data, 16)) {
+			fail.reason = PROV_ERR_INVALID_PDU;
+			goto failure;
+		}
+
 		/* Calculate Session key (needed later) while data is fresh */
 		mesh_crypto_prov_prov_salt(prov->salt, data,
 						prov->rand_auth_workspace,

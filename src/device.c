@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
@@ -5,20 +6,6 @@
  *  Copyright (C) 2006-2010  Nokia Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -54,10 +41,11 @@
 #include "src/shared/gatt-client.h"
 #include "src/shared/gatt-server.h"
 #include "src/shared/ad.h"
+#include "src/shared/timeout.h"
 #include "btio/btio.h"
 #include "lib/mgmt.h"
 #include "attrib/att.h"
-#include "hcid.h"
+#include "btd.h"
 #include "adapter.h"
 #include "gatt-database.h"
 #include "attrib/gattrib.h"
@@ -232,9 +220,9 @@ struct btd_device {
 	GSList		*watches;		/* List of disconnect_data */
 	bool		temporary;
 	bool		connectable;
-	guint		disconn_timer;
-	guint		discov_timer;
-	guint		temporary_timer;	/* Temporary/disappear timer */
+	unsigned int	disconn_timer;
+	unsigned int	discov_timer;
+	unsigned int	temporary_timer;	/* Temporary/disappear timer */
 	struct browse_req *browse;		/* service discover request */
 	struct bonding_req *bonding;
 	struct authentication_req *authr;	/* authentication request */
@@ -476,7 +464,7 @@ static gboolean store_device_info_cb(gpointer user_data)
 	if (device->remote_csrk)
 		store_csrk(device->remote_csrk, key_file, "RemoteSignatureKey");
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -522,7 +510,9 @@ void device_store_cached_name(struct btd_device *dev, const char *name)
 	char d_addr[18];
 	GKeyFile *key_file;
 	char *data;
+	char *data_old;
 	gsize length = 0;
+	gsize length_old = 0;
 
 	if (device_address_is_private(dev)) {
 		DBG("Can't store name for private addressed device %s",
@@ -533,15 +523,21 @@ void device_store_cached_name(struct btd_device *dev, const char *name)
 	ba2str(&dev->bdaddr, d_addr);
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s",
 			btd_adapter_get_storage_dir(dev->adapter), d_addr);
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
+	data_old = g_key_file_to_data(key_file, &length_old, NULL);
+
 	g_key_file_set_string(key_file, "General", "Name", name);
 
 	data = g_key_file_to_data(key_file, &length, NULL);
-	g_file_set_contents(filename, data, length, NULL);
+
+	if ((length != length_old) || (memcmp(data, data_old, length)))
+		g_file_set_contents(filename, data, length, NULL);
+
 	g_free(data);
+	g_free(data_old);
 
 	g_key_file_free(key_file);
 }
@@ -566,7 +562,7 @@ static void browse_request_free(struct browse_req *req)
 
 static bool gatt_cache_is_enabled(struct btd_device *device)
 {
-	switch (main_opts.gatt_cache) {
+	switch (btd_opts.gatt_cache) {
 	case BT_GATT_CACHE_YES:
 		return device_is_paired(device, device->bdaddr_type);
 	case BT_GATT_CACHE_NO:
@@ -582,6 +578,7 @@ static void gatt_cache_cleanup(struct btd_device *device)
 	if (gatt_cache_is_enabled(device))
 		return;
 
+	bt_gatt_client_cancel_all(device->client);
 	gatt_db_clear(device->db);
 }
 
@@ -695,13 +692,13 @@ static void device_free(gpointer user_data)
 					(sdp_free_func_t) sdp_record_free);
 
 	if (device->disconn_timer)
-		g_source_remove(device->disconn_timer);
+		timeout_remove(device->disconn_timer);
 
 	if (device->discov_timer)
-		g_source_remove(device->discov_timer);
+		timeout_remove(device->discov_timer);
 
 	if (device->temporary_timer)
-		g_source_remove(device->temporary_timer);
+		timeout_remove(device->temporary_timer);
 
 	if (device->connect)
 		dbus_message_unref(device->connect);
@@ -1473,7 +1470,7 @@ static gboolean dev_property_wake_allowed_exist(
 	return device_get_wake_support(device);
 }
 
-static gboolean disconnect_all(gpointer user_data)
+static bool disconnect_all(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 
@@ -1498,7 +1495,7 @@ int device_block(struct btd_device *device, gboolean update_only)
 		return 0;
 
 	if (device->disconn_timer > 0)
-		g_source_remove(device->disconn_timer);
+		timeout_remove(device->disconn_timer);
 
 	disconnect_all(device);
 
@@ -1648,9 +1645,9 @@ void device_request_disconnect(struct btd_device *device, DBusMessage *msg)
 		return;
 	}
 
-	device->disconn_timer = g_timeout_add_seconds(DISCONNECT_TIMER,
+	device->disconn_timer = timeout_add_seconds(DISCONNECT_TIMER,
 							disconnect_all,
-							device);
+							device, NULL);
 }
 
 bool device_is_disconnecting(struct btd_device *device)
@@ -2109,7 +2106,7 @@ static DBusMessage *dev_connect(DBusConnection *conn, DBusMessage *msg,
 
 	if (dev->bredr_state.connected) {
 		/*
-		 * Check if services have been resolved and there is at list
+		 * Check if services have been resolved and there is at least
 		 * one connected before switching to connect LE.
 		 */
 		if (dev->bredr_state.svc_resolved &&
@@ -2294,7 +2291,7 @@ static void store_services(struct btd_device *device)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -2482,7 +2479,7 @@ static void store_gatt_db(struct btd_device *device)
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s",
 				btd_adapter_get_storage_dir(device->adapter),
 				dst_addr);
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -2995,7 +2992,7 @@ void device_add_connection(struct btd_device *dev, uint8_t bdaddr_type)
 
 	/* Remove temporary timer while connected */
 	if (dev->temporary_timer) {
-		g_source_remove(dev->temporary_timer);
+		timeout_remove(dev->temporary_timer);
 		dev->temporary_timer = 0;
 	}
 
@@ -3007,6 +3004,7 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 {
 	struct bearer_state *state = get_state(device, bdaddr_type);
 	DBusMessage *reply;
+	bool remove_device = false;
 
 	if (!state->connected)
 		return;
@@ -3017,7 +3015,7 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 	device_set_svc_refreshed(device, false);
 
 	if (device->disconn_timer > 0) {
-		g_source_remove(device->disconn_timer);
+		timeout_remove(device->disconn_timer);
 		device->disconn_timer = 0;
 	}
 
@@ -3035,6 +3033,10 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 
 	while (device->disconnects) {
 		DBusMessage *msg = device->disconnects->data;
+
+		if (dbus_message_is_method_call(msg, ADAPTER_INTERFACE,
+								"RemoveDevice"))
+			remove_device = true;
 
 		g_dbus_send_reply(dbus_conn, msg, DBUS_TYPE_INVALID);
 		device->disconnects = g_slist_remove(device->disconnects, msg);
@@ -3061,6 +3063,9 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 
 	g_dbus_emit_property_changed(dbus_conn, device->path,
 						DEVICE_INTERFACE, "Connected");
+
+	if (remove_device)
+		btd_adapter_remove_device(device->adapter, device);
 }
 
 guint device_add_disconnect_watch(struct btd_device *device,
@@ -4089,7 +4094,7 @@ static struct btd_device *device_new(struct btd_adapter *adapter,
 	device->db_id = gatt_db_register(device->db, gatt_service_added,
 					gatt_service_removed, device, NULL);
 
-	device->refresh_discovery = main_opts.refresh_discovery;
+	device->refresh_discovery = btd_opts.refresh_discovery;
 
 	return btd_device_ref(device);
 }
@@ -4264,7 +4269,7 @@ void device_set_le_support(struct btd_device *device, uint8_t bdaddr_type)
 	store_device_info(device);
 }
 
-static gboolean device_disappeared(gpointer user_data)
+static bool device_disappeared(gpointer user_data)
 {
 	struct btd_device *dev = user_data;
 
@@ -4287,11 +4292,11 @@ void device_update_last_seen(struct btd_device *device, uint8_t bdaddr_type)
 
 	/* Restart temporary timer */
 	if (device->temporary_timer)
-		g_source_remove(device->temporary_timer);
+		timeout_remove(device->temporary_timer);
 
-	device->temporary_timer = g_timeout_add_seconds(main_opts.tmpto,
+	device->temporary_timer = timeout_add_seconds(btd_opts.tmpto,
 							device_disappeared,
-							device);
+							device, NULL);
 }
 
 /* It is possible that we have two device objects for the same device in
@@ -4435,7 +4440,7 @@ static void device_remove_stored(struct btd_device *device)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -4446,6 +4451,11 @@ static void device_remove_stored(struct btd_device *device)
 void device_remove(struct btd_device *device, gboolean remove_stored)
 {
 	DBG("Removing device %s", device->path);
+
+	if (device->auto_connect) {
+		device->disable_auto_connect = TRUE;
+		device_set_auto_connect(device, FALSE);
+	}
 
 	if (device->bonding) {
 		uint8_t status;
@@ -4473,8 +4483,13 @@ void device_remove(struct btd_device *device, gboolean remove_stored)
 
 	if (btd_device_is_connected(device)) {
 		if (device->disconn_timer > 0)
-			g_source_remove(device->disconn_timer);
+			timeout_remove(device->disconn_timer);
 		disconnect_all(device);
+	}
+
+	if (device->temporary_timer > 0) {
+		timeout_remove(device->temporary_timer);
+		device->temporary_timer = 0;
 	}
 
 	if (device->store_id > 0) {
@@ -4875,7 +4890,7 @@ next:
 	if (sdp_key_file) {
 		data = g_key_file_to_data(sdp_key_file, &length, NULL);
 		if (length > 0) {
-			create_file(sdp_file, S_IRUSR | S_IWUSR);
+			create_file(sdp_file, 0600);
 			g_file_set_contents(sdp_file, data, length, NULL);
 		}
 
@@ -4886,7 +4901,7 @@ next:
 	if (att_key_file) {
 		data = g_key_file_to_data(att_key_file, &length, NULL);
 		if (length > 0) {
-			create_file(att_file, S_IRUSR | S_IWUSR);
+			create_file(att_file, 0600);
 			g_file_set_contents(att_file, data, length, NULL);
 		}
 
@@ -5164,7 +5179,7 @@ static void gatt_client_init(struct btd_device *device)
 {
 	gatt_client_cleanup(device);
 
-	if (!device->connect && !main_opts.reverse_discovery) {
+	if (!device->connect && !btd_opts.reverse_discovery) {
 		DBG("Reverse service discovery disabled: skipping GATT client");
 		return;
 	}
@@ -5217,7 +5232,7 @@ static void gatt_server_init(struct btd_device *device,
 	gatt_server_cleanup(device);
 
 	device->server = bt_gatt_server_new(db, device->att, device->att_mtu,
-						main_opts.key_size);
+						btd_opts.key_size);
 	if (!device->server) {
 		error("Failed to initialize bt_gatt_server");
 		return;
@@ -5280,7 +5295,7 @@ bool device_attach_att(struct btd_device *dev, GIOChannel *io)
 	}
 
 	if (dev->att) {
-		if (main_opts.gatt_channels == bt_att_get_channels(dev->att)) {
+		if (btd_opts.gatt_channels == bt_att_get_channels(dev->att)) {
 			DBG("EATT channel limit reached");
 			return false;
 		}
@@ -5308,7 +5323,7 @@ bool device_attach_att(struct btd_device *dev, GIOChannel *io)
 		}
 	}
 
-	dev->att_mtu = MIN(mtu, main_opts.gatt_mtu);
+	dev->att_mtu = MIN(mtu, btd_opts.gatt_mtu);
 	attrib = g_attrib_new(io,
 			cid == ATT_CID ? BT_ATT_DEFAULT_LE_MTU : dev->att_mtu,
 			false);
@@ -5321,6 +5336,8 @@ bool device_attach_att(struct btd_device *dev, GIOChannel *io)
 	dev->att = g_attrib_get_att(attrib);
 
 	bt_att_ref(dev->att);
+
+	bt_att_set_debug(dev->att, BT_ATT_DEBUG, gatt_debug, NULL, NULL);
 
 	dev->att_disconn_id = bt_att_register_disconnect(dev->att,
 						att_disconnected_cb, dev, NULL);
@@ -5620,7 +5637,7 @@ int device_discover_services(struct btd_device *device)
 		err = device_browse_gatt(device, NULL);
 
 	if (err == 0 && device->discov_timer) {
-		g_source_remove(device->discov_timer);
+		timeout_remove(device->discov_timer);
 		device->discov_timer = 0;
 	}
 
@@ -5673,7 +5690,7 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 	device->temporary = temporary;
 
 	if (device->temporary_timer) {
-		g_source_remove(device->temporary_timer);
+		timeout_remove(device->temporary_timer);
 		device->temporary_timer = 0;
 	}
 
@@ -5681,9 +5698,13 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 		if (device->bredr)
 			adapter_whitelist_remove(device->adapter, device);
 		adapter_connect_list_remove(device->adapter, device);
-		device->temporary_timer = g_timeout_add_seconds(main_opts.tmpto,
+		if (device->auto_connect) {
+			device->disable_auto_connect = TRUE;
+			device_set_auto_connect(device, FALSE);
+		}
+		device->temporary_timer = timeout_add_seconds(btd_opts.tmpto,
 							device_disappeared,
-							device);
+							device, NULL);
 		return;
 	}
 
@@ -5787,7 +5808,7 @@ void device_store_svc_chng_ccc(struct btd_device *device, uint8_t bdaddr_type,
 									value);
 	}
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -5811,18 +5832,11 @@ void device_load_svc_chng_ccc(struct btd_device *device, uint16_t *ccc_le,
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 
-	/*
-	 * If there is no "ServiceChanged" section we may be loading data from
-	 * old version which did not persist Service Changed CCC values. Let's
-	 * check if we are bonded and assume indications were enabled by peer
-	 * in such case - it should have done this anyway.
-	 */
 	if (!g_key_file_has_group(key_file, "ServiceChanged")) {
 		if (ccc_le)
-			*ccc_le = device->le_state.bonded ? 0x0002 : 0x0000;
+			*ccc_le = 0x0000;
 		if (ccc_bredr)
-			*ccc_bredr = device->bredr_state.bonded ?
-							0x0002 : 0x0000;
+			*ccc_bredr = 0x0000;
 		g_key_file_free(key_file);
 		return;
 	}
@@ -5921,7 +5935,7 @@ bool device_is_connectable(struct btd_device *device)
 	return (device->ad_flags[0] & 0x03);
 }
 
-static gboolean start_discovery(gpointer user_data)
+static bool start_discovery(gpointer user_data)
 {
 	struct btd_device *device = user_data;
 
@@ -6070,7 +6084,7 @@ void device_bonding_complete(struct btd_device *device, uint8_t bdaddr_type,
 		/* If we are initiators remove any discovery timer and just
 		 * start discovering services directly */
 		if (device->discov_timer) {
-			g_source_remove(device->discov_timer);
+			timeout_remove(device->discov_timer);
 			device->discov_timer = 0;
 		}
 
@@ -6082,15 +6096,15 @@ void device_bonding_complete(struct btd_device *device, uint8_t bdaddr_type,
 		bonding_request_free(bonding);
 	} else if (!state->svc_resolved) {
 		if (!device->browse && !device->discov_timer &&
-				main_opts.reverse_discovery) {
+				btd_opts.reverse_discovery) {
 			/* If we are not initiators and there is no currently
 			 * active discovery or discovery timer, set discovery
 			 * timer */
 			DBG("setting timer for reverse service discovery");
-			device->discov_timer = g_timeout_add_seconds(
+			device->discov_timer = timeout_add_seconds(
 							DISCOVERY_TIMER,
 							start_discovery,
-							device);
+							device, NULL);
 		}
 	}
 }
@@ -6126,11 +6140,14 @@ unsigned int device_wait_for_svc_complete(struct btd_device *dev,
 
 	dev->svc_callbacks = g_slist_prepend(dev->svc_callbacks, cb);
 
-	if (state->svc_resolved || !main_opts.reverse_discovery)
+	if (state->svc_resolved || !btd_opts.reverse_discovery)
 		cb->idle_id = g_idle_add(svc_idle_cb, cb);
 	else if (dev->discov_timer > 0) {
-		g_source_remove(dev->discov_timer);
-		dev->discov_timer = g_idle_add(start_discovery, dev);
+		timeout_remove(dev->discov_timer);
+		dev->discov_timer = timeout_add_seconds(
+						0,
+						start_discovery,
+						dev, NULL);
 	}
 
 	return cb->id;
@@ -6406,12 +6423,12 @@ int device_confirm_passkey(struct btd_device *device, uint8_t type,
 
 	/* Just-Works repairing policy */
 	if (confirm_hint && device_is_paired(device, type)) {
-		if (main_opts.jw_repairing == JW_REPAIRING_NEVER) {
+		if (btd_opts.jw_repairing == JW_REPAIRING_NEVER) {
 			btd_adapter_confirm_reply(device->adapter,
 						  &device->bdaddr,
 						  type, FALSE);
 			return 0;
-		} else if (main_opts.jw_repairing == JW_REPAIRING_ALWAYS) {
+		} else if (btd_opts.jw_repairing == JW_REPAIRING_ALWAYS) {
 			btd_adapter_confirm_reply(device->adapter,
 						  &device->bdaddr,
 						  type, TRUE);

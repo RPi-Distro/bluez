@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -28,7 +15,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <ctype.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -55,20 +41,30 @@ void *btd_malloc(size_t size)
 	return NULL;
 }
 
+void util_debug_va(util_debug_func_t function, void *user_data,
+				const char *format, va_list va)
+{
+	char str[78];
+
+	if (!function || !format)
+		return;
+
+	vsnprintf(str, sizeof(str), format, va);
+
+	function(str, user_data);
+}
+
 void util_debug(util_debug_func_t function, void *user_data,
 						const char *format, ...)
 {
-	char str[78];
 	va_list ap;
 
 	if (!function || !format)
 		return;
 
 	va_start(ap, format);
-	vsnprintf(str, sizeof(str), format, ap);
+	util_debug_va(function, user_data, format, ap);
 	va_end(ap);
-
-	function(str, user_data);
 }
 
 void util_hexdump(const char dir, const unsigned char *buf, size_t len,

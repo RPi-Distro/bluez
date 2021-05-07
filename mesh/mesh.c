@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -542,7 +533,7 @@ static struct l_dbus_message *join_network_call(struct l_dbus *dbus,
 						void *user_data)
 {
 	const char *app_path, *sender;
-	struct l_dbus_message_iter iter_uuid;
+	struct l_dbus_message_iter iter;
 	uint32_t n;
 
 	l_debug("Join network request");
@@ -552,14 +543,13 @@ static struct l_dbus_message *join_network_call(struct l_dbus *dbus,
 						"Provisioning in progress");
 
 	if (!l_dbus_message_get_arguments(msg, "oay", &app_path,
-								&iter_uuid))
+								&iter))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
 
 	join_pending = l_new(struct join_data, 1);
 
-	if (!l_dbus_message_iter_get_fixed_array(&iter_uuid,
-						&join_pending->uuid, &n)
-								|| n != 16) {
+	if (!l_dbus_message_iter_get_fixed_array(&iter, &join_pending->uuid, &n)
+			|| n != 16 || !l_uuid_is_valid(join_pending->uuid)) {
 		l_free(join_pending);
 		join_pending = NULL;
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS,
@@ -794,8 +784,8 @@ static struct l_dbus_message *create_network_call(struct l_dbus *dbus,
 								&iter_uuid))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
 
-	if (!l_dbus_message_iter_get_fixed_array(&iter_uuid, &uuid, &n)
-								|| n != 16)
+	if (!l_dbus_message_iter_get_fixed_array(&iter_uuid, &uuid, &n) ||
+					n != 16 || !l_uuid_is_valid(uuid))
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS,
 							"Bad device UUID");
 
@@ -844,8 +834,9 @@ static struct l_dbus_message *import_call(struct l_dbus *dbus,
 		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, NULL);
 
 	if (!l_dbus_message_iter_get_fixed_array(&iter_uuid, &uuid, &n) ||
-									n != 16)
-		return dbus_error(msg, MESH_ERROR_INVALID_ARGS, "Bad dev UUID");
+					n != 16 || !l_uuid_is_valid(uuid))
+		return dbus_error(msg, MESH_ERROR_INVALID_ARGS,
+							"Bad device UUID");
 
 	if (node_find_by_uuid(uuid))
 		return dbus_error(msg, MESH_ERROR_ALREADY_EXISTS,

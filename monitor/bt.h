@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
@@ -5,20 +6,6 @@
  *  Copyright (C) 2011-2014  Intel Corporation
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -1705,6 +1692,15 @@ struct bt_hci_cmd_write_ext_inquiry_length {
 	uint16_t interval;
 } __attribute__ ((packed));
 
+#define BT_HCI_CMD_CONFIG_DATA_PATH		0x0c83
+#define BT_HCI_BIT_CONFIG_DATA_PATH		BT_HCI_CMD_BIT(45, 5)
+struct bt_hci_cmd_config_data_path {
+	uint8_t  dir;
+	uint8_t  id;
+	uint8_t  vnd_config_len;
+	uint8_t  vnd_config[0];
+} __attribute__ ((packed));
+
 #define BT_HCI_CMD_READ_LOCAL_VERSION		0x1001
 struct bt_hci_rsp_read_local_version {
 	uint8_t  status;
@@ -1779,6 +1775,64 @@ struct bt_hci_rsp_read_local_pairing_options {
 	uint8_t  status;
 	uint8_t  pairing_options;
 	uint8_t  max_key_size;
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_LOCAL_CODECS_V2		0x100d
+#define BT_HCI_BIT_READ_LOCAL_CODECS_V2		BT_HCI_CMD_BIT(45, 2)
+#define BT_HCI_LOCAL_CODEC_BREDR_ACL		BIT(0)
+#define BT_HCI_LOCAL_CODEC_BREDR_SCO		BIT(1)
+#define BT_HCI_LOCAL_CODEC_LE_CIS		BIT(2)
+#define BT_HCI_LOCAL_CODEC_LE_BIS		BIT(3)
+
+struct bt_hci_vnd_codec {
+	uint8_t  id;
+	uint16_t cid;
+	uint16_t vid;
+	uint8_t  transport;
+} __attribute__ ((packed));
+
+struct bt_hci_codec {
+	uint8_t  id;
+	uint8_t  transport;
+} __attribute__ ((packed));
+
+struct bt_hci_rsp_read_local_codecs_v2 {
+	uint8_t  status;
+	uint8_t  num_codecs;
+	struct bt_hci_codec codec[0];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_LOCAL_CODEC_CAPS	0x100e
+#define BT_HCI_BIT_READ_LOCAL_CODEC_CAPS	BT_HCI_CMD_BIT(45, 3)
+struct bt_hci_cmd_read_local_codec_caps {
+	struct bt_hci_vnd_codec codec;
+	uint8_t  dir;
+} __attribute__ ((packed));
+
+struct bt_hci_codec_caps {
+	uint8_t  len;
+	uint8_t  data[0];
+} __attribute__ ((packed));
+
+struct bt_hci_rsp_read_local_codec_caps {
+	uint8_t  status;
+	uint8_t  num;
+	struct bt_hci_codec_caps caps[0];
+} __attribute__ ((packed));
+
+#define BT_HCI_CMD_READ_LOCAL_CTRL_DELAY	0x100f
+#define BT_HCI_BIT_READ_LOCAL_CTRL_DELAY	BT_HCI_CMD_BIT(45, 4)
+struct bt_hci_cmd_read_local_ctrl_delay {
+	struct bt_hci_vnd_codec codec;
+	uint8_t  dir;
+	uint8_t  codec_cfg_len;
+	uint8_t  codec_cfg[0];
+} __attribute__ ((packed));
+
+struct bt_hci_rsp_read_local_ctrl_delay {
+	uint8_t  status;
+	uint8_t  min_delay[3];
+	uint8_t  max_delay[3];
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_READ_FAILED_CONTACT_COUNTER	0x1401
@@ -2667,6 +2721,11 @@ struct bt_hci_cmd_le_remove_cig {
 	uint8_t  cig_id;
 } __attribute__ ((packed));
 
+struct bt_hci_rsp_le_remove_cig {
+	uint8_t  status;
+	uint8_t  cig_id;
+} __attribute__ ((packed));
+
 #define BT_HCI_CMD_LE_ACCEPT_CIS		0x2066
 #define BT_HCI_BIT_LE_ACCEPT_CIS		BT_HCI_CMD_BIT(42, 3)
 struct bt_hci_cmd_le_accept_cis {
@@ -2695,7 +2754,7 @@ struct bt_hci_bis {
 } __attribute__ ((packed));
 
 struct bt_hci_cmd_le_create_big {
-	uint8_t  big_id;
+	uint8_t  handle;
 	uint8_t  adv_handle;
 	uint8_t  num_bis;
 	struct bt_hci_bis bis[0];
@@ -2730,7 +2789,7 @@ struct bt_hci_cmd_le_create_big_test {
 #define BT_HCI_CMD_LE_TERM_BIG			0x206a
 #define BT_HCI_BIT_LE_TERM_BIG			BT_HCI_CMD_BIT(42, 7)
 struct bt_hci_cmd_le_term_big {
-	uint8_t  big_id;
+	uint8_t  handle;
 	uint8_t  reason;
 } __attribute__ ((packed));
 
@@ -2740,20 +2799,20 @@ struct bt_hci_bis_sync {
 } __attribute__ ((packed));
 
 struct bt_hci_cmd_le_big_create_sync {
-	uint8_t  big_id;
+	uint8_t  handle;
 	uint16_t sync_handle;
-	uint8_t  num_bis;
 	uint8_t  encryption;
 	uint8_t  bcode[16];
 	uint8_t  mse;
 	uint16_t timeout;
+	uint8_t  num_bis;
 	struct bt_hci_bis_sync bis[0];
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_LE_BIG_TERM_SYNC		0x206c
 #define BT_HCI_BIT_LE_BIG_TERM_SYNC		BT_HCI_CMD_BIT(43, 1)
 struct bt_hci_cmd_le_big_term_sync {
-	uint8_t  big_id;
+	uint8_t  handle;
 } __attribute__ ((packed));
 
 #define BT_HCI_CMD_LE_REQ_PEER_SCA		0x206d
@@ -3537,27 +3596,39 @@ struct bt_hci_evt_le_cis_req {
 #define BT_HCI_EVT_LE_BIG_COMPLETE			0x1b
 struct bt_hci_evt_le_big_complete {
 	uint8_t  status;
-	uint8_t  big_id;
+	uint8_t  handle;
 	uint8_t  sync_delay[3];
 	uint8_t  latency[3];
 	uint8_t  phy;
+	uint8_t  nse;
+	uint8_t  bn;
+	uint8_t  pto;
+	uint8_t  irc;
+	uint16_t max_pdu;
+	uint16_t interval;
 	uint8_t  num_bis;
-	uint16_t handle[0];
+	uint16_t bis_handle[0];
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_LE_BIG_TERMINATE			0x1c
 struct bt_hci_evt_le_big_terminate {
 	uint8_t  reason;
-	uint8_t  big_id;
+	uint8_t  handle;
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_LE_BIG_SYNC_ESTABILISHED		0x1d
 struct bt_hci_evt_le_big_sync_estabilished {
 	uint8_t  status;
-	uint8_t  big_id;
+	uint8_t  handle;
 	uint8_t  latency[3];
+	uint8_t  nse;
+	uint8_t  bn;
+	uint8_t  pto;
+	uint8_t  irc;
+	uint16_t max_pdu;
+	uint16_t interval;
 	uint8_t  num_bis;
-	uint16_t handle[0];
+	uint16_t bis[0];
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_LE_BIG_SYNC_LOST			0x1e

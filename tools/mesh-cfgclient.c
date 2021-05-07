@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -740,7 +731,7 @@ static void create_net_setup(struct l_dbus_message *msg, void *user_data)
 	struct l_dbus_message_builder *builder;
 
 	/* Generate random UUID */
-	l_getrandom(app.uuid, sizeof(app.uuid));
+	l_uuid_v4(app.uuid);
 
 	builder = l_dbus_message_builder_new(msg);
 
@@ -908,7 +899,7 @@ static void cmd_import_node(int argc, char *argv[])
 
 	/* Device UUID */
 	req->data1 = l_util_from_hexstring(argv[1], &sz);
-	if (!req->data1 || sz != 16) {
+	if (!req->data1 || sz != 16 || !l_uuid_is_valid(req->data1)) {
 		l_error("Failed to generate UUID array from %s", argv[1]);
 		goto fail;
 	}
@@ -1307,7 +1298,7 @@ static void add_node_setup(struct l_dbus_message *msg, void *user_data)
 	struct l_dbus_message_builder *builder;
 
 	uuid = l_util_from_hexstring(str, &sz);
-	if (!uuid || sz != 16) {
+	if (!uuid || sz != 16 || !l_uuid_is_valid(uuid)) {
 		l_error("Failed to generate UUID array from %s", str);
 		return;
 	}

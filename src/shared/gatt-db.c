@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2014  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -1849,6 +1836,38 @@ static uint8_t attribute_authorize(struct gatt_db_attribute *attrib,
 	return db->authorize(attrib, opcode, att, db->authorize_data);
 }
 
+bool gatt_db_attribute_set_fixed_length(struct gatt_db_attribute *attrib,
+						uint16_t len)
+{
+	struct gatt_db_service *service;
+
+	if (!attrib)
+		return false;
+
+	service = attrib->service;
+
+	/* Don't allow overwriting length of service attribute */
+	if (attrib->service->attributes[0] == attrib)
+		return false;
+
+	/* If attribute is a characteristic declaration ajust to its value */
+	if (!bt_uuid_cmp(&characteristic_uuid, &attrib->uuid)) {
+		int i;
+
+		/* Start from the attribute following the value handle */
+		for (i = 0; i < service->num_handles; i++) {
+			if (service->attributes[i] == attrib) {
+				attrib = service->attributes[i + 1];
+				break;
+			}
+		}
+	}
+
+	attrib->value_len = len;
+
+	return true;
+}
+
 bool gatt_db_attribute_read(struct gatt_db_attribute *attrib, uint16_t offset,
 				uint8_t opcode, struct bt_att *att,
 				gatt_db_attribute_read_t func, void *user_data)
@@ -1857,6 +1876,12 @@ bool gatt_db_attribute_read(struct gatt_db_attribute *attrib, uint16_t offset,
 
 	if (!attrib || !func)
 		return false;
+
+	/* Check boundaries if value_len is set */
+	if (attrib->value_len && offset > attrib->value_len) {
+		func(attrib, BT_ATT_ERROR_INVALID_OFFSET, NULL, 0, user_data);
+		return true;
+	}
 
 	if (attrib->read_func) {
 		struct pending_read *p;
@@ -1880,12 +1905,6 @@ bool gatt_db_attribute_read(struct gatt_db_attribute *attrib, uint16_t offset,
 
 		attrib->read_func(attrib, p->id, offset, opcode, att,
 							attrib->user_data);
-		return true;
-	}
-
-	/* Check boundary if value is stored in the db */
-	if (offset > attrib->value_len) {
-		func(attrib, BT_ATT_ERROR_INVALID_OFFSET, NULL, 0, user_data);
 		return true;
 	}
 
@@ -1943,18 +1962,30 @@ bool gatt_db_attribute_write(struct gatt_db_attribute *attrib, uint16_t offset,
 					gatt_db_attribute_write_t func,
 					void *user_data)
 {
+	uint8_t err = 0;
+
 	if (!attrib || !func)
 		return false;
 
 	if (attrib->write_func) {
 		struct pending_write *p;
-		uint8_t err;
+
+		/* Check boundaries if value_len is set */
+		if (attrib->value_len) {
+			if (offset > attrib->value_len) {
+				err = BT_ATT_ERROR_INVALID_OFFSET;
+				goto done;
+			}
+
+			if (offset + len > attrib->value_len) {
+				err = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+				goto done;
+			}
+		}
 
 		err = attribute_authorize(attrib, opcode, att);
-		if (err) {
-			func(attrib, err, user_data);
-			return true;
-		}
+		if (err)
+			goto done;
 
 		p = new0(struct pending_write, 1);
 		p->attrib = attrib;
@@ -1996,7 +2027,7 @@ bool gatt_db_attribute_write(struct gatt_db_attribute *attrib, uint16_t offset,
 	memcpy(&attrib->value[offset], value, len);
 
 done:
-	func(attrib, 0, user_data);
+	func(attrib, err, user_data);
 
 	return true;
 }

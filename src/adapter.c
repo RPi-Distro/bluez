@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
@@ -5,20 +6,6 @@
  *  Copyright (C) 2006-2010  Nokia Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -59,9 +46,10 @@
 #include "src/shared/queue.h"
 #include "src/shared/att.h"
 #include "src/shared/gatt-db.h"
+#include "src/shared/timeout.h"
 
 #include "btio/btio.h"
-#include "hcid.h"
+#include "btd.h"
 #include "sdpd.h"
 #include "adapter.h"
 #include "device.h"
@@ -77,9 +65,9 @@
 #include "attrib-server.h"
 #include "gatt-database.h"
 #include "advertising.h"
+#include "adv_monitor.h"
 #include "eir.h"
-
-#define ADAPTER_INTERFACE	"org.bluez.Adapter1"
+#include "battery.h"
 
 #define MODE_OFF		0x00
 #define MODE_CONNECTABLE	0x01
@@ -116,13 +104,7 @@ static const struct mgmt_blocked_key_info blocked_keys[] = {
 
 static DBusConnection *dbus_conn = NULL;
 
-static bool kernel_conn_control = false;
-
-static bool kernel_blocked_keys_supported = false;
-
-static bool kernel_set_system_config = false;
-
-static bool kernel_exp_features = false;
+static uint32_t kernel_features = 0;
 
 static GList *adapter_list = NULL;
 static unsigned int adapter_remaining = 0;
@@ -256,10 +238,12 @@ struct btd_adapter {
 	struct discovery_client *client;	/* active discovery client */
 
 	GSList *discovery_found;	/* list of found devices */
-	guint discovery_idle_timeout;	/* timeout between discovery runs */
-	guint passive_scan_timeout;	/* timeout between passive scans */
+	unsigned int discovery_idle_timeout; /* timeout between discovery
+					      * runs
+					      */
+	unsigned int passive_scan_timeout; /* timeout between passive scans */
 
-	guint pairable_timeout_id;	/* pairable timeout id */
+	unsigned int pairable_timeout_id;	/* pairable timeout id */
 	guint auth_idle_id;		/* Pending authorization dequeue */
 	GQueue *auths;			/* Ongoing and pending auths */
 	bool pincode_requested;		/* PIN requested during last bonding */
@@ -272,6 +256,10 @@ struct btd_adapter {
 	struct btd_gatt_database *database;
 	struct btd_adv_manager *adv_manager;
 
+	struct btd_adv_monitor_manager *adv_monitor_manager;
+
+	struct btd_battery_provider_manager *battery_provider_manager;
+
 	gboolean initialized;
 
 	GSList *pin_callbacks;
@@ -283,13 +271,13 @@ struct btd_adapter {
 	struct oob_handler *oob_handler;
 
 	unsigned int load_ltks_id;
-	guint load_ltks_timeout;
+	unsigned int load_ltks_timeout;
 
 	unsigned int confirm_name_id;
-	guint confirm_name_timeout;
+	unsigned int confirm_name_timeout;
 
 	unsigned int pair_device_id;
-	guint pair_device_timeout;
+	unsigned int pair_device_timeout;
 
 	unsigned int db_id;		/* Service event handler for GATT db */
 
@@ -492,7 +480,7 @@ static void store_adapter_info(struct btd_adapter *adapter)
 
 	key_file = g_key_file_new();
 
-	if (adapter->pairable_timeout != main_opts.pairto)
+	if (adapter->pairable_timeout != btd_opts.pairto)
 		g_key_file_set_integer(key_file, "General", "PairableTimeout",
 					adapter->pairable_timeout);
 
@@ -505,7 +493,7 @@ static void store_adapter_info(struct btd_adapter *adapter)
 	g_key_file_set_boolean(key_file, "General", "Discoverable",
 							discoverable);
 
-	if (adapter->discoverable_timeout != main_opts.discovto)
+	if (adapter->discoverable_timeout != btd_opts.discovto)
 		g_key_file_set_integer(key_file, "General",
 					"DiscoverableTimeout",
 					adapter->discoverable_timeout);
@@ -517,7 +505,7 @@ static void store_adapter_info(struct btd_adapter *adapter)
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/settings",
 					btd_adapter_get_storage_dir(adapter));
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -563,11 +551,10 @@ static void settings_changed(struct btd_adapter *adapter, uint32_t settings)
 		}
 	}
 
-	if (changed_mask & MGMT_SETTING_LE) {
-		if ((adapter->current_settings & MGMT_SETTING_POWERED) &&
+	if ((changed_mask & MGMT_SETTING_LE) &&
+				btd_adapter_get_powered(adapter) &&
 				(adapter->current_settings & MGMT_SETTING_LE))
-			trigger_passive_scanning(adapter);
-	}
+		trigger_passive_scanning(adapter);
 
 	if (changed_mask & MGMT_SETTING_DISCOVERABLE) {
 		g_dbus_emit_property_changed(dbus_conn, adapter->path,
@@ -625,6 +612,19 @@ static void set_mode_complete(uint8_t status, uint16_t length,
 	new_settings_callback(adapter->dev_id, length, param, adapter);
 }
 
+static void remove_temporary_devices(struct btd_adapter *adapter)
+{
+	GSList *l, *next;
+
+	for (l = adapter->devices; l; l = next) {
+		struct btd_device *dev = l->data;
+
+		next = g_slist_next(l);
+		if (device_is_temporary(dev))
+			btd_adapter_remove_device(adapter, dev);
+	}
+}
+
 static bool set_mode(struct btd_adapter *adapter, uint16_t opcode,
 							uint8_t mode)
 {
@@ -634,7 +634,7 @@ static bool set_mode(struct btd_adapter *adapter, uint16_t opcode,
 	memset(&cp, 0, sizeof(cp));
 	cp.val = mode;
 
-	switch (mode) {
+	switch (opcode) {
 	case MGMT_OP_SET_POWERED:
 		setting = MGMT_SETTING_POWERED;
 		break;
@@ -648,7 +648,7 @@ static bool set_mode(struct btd_adapter *adapter, uint16_t opcode,
 		setting = MGMT_SETTING_DISCOVERABLE;
 		break;
 	case MGMT_OP_SET_BONDABLE:
-		setting = MGMT_SETTING_DISCOVERABLE;
+		setting = MGMT_SETTING_BONDABLE;
 		break;
 	}
 
@@ -678,7 +678,7 @@ static bool set_discoverable(struct btd_adapter *adapter, uint8_t mode,
 
 	DBG("sending set mode command for index %u", adapter->dev_id);
 
-	if (kernel_conn_control) {
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL)) {
 		if (mode)
 			set_mode(adapter, MGMT_OP_SET_CONNECTABLE, mode);
 		else
@@ -698,7 +698,7 @@ static bool set_discoverable(struct btd_adapter *adapter, uint8_t mode,
 	return false;
 }
 
-static gboolean pairable_timeout_handler(gpointer user_data)
+static bool pairable_timeout_handler(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
@@ -712,7 +712,7 @@ static gboolean pairable_timeout_handler(gpointer user_data)
 static void trigger_pairable_timeout(struct btd_adapter *adapter)
 {
 	if (adapter->pairable_timeout_id > 0) {
-		g_source_remove(adapter->pairable_timeout_id);
+		timeout_remove(adapter->pairable_timeout_id);
 		adapter->pairable_timeout_id = 0;
 	}
 
@@ -721,8 +721,9 @@ static void trigger_pairable_timeout(struct btd_adapter *adapter)
 
 	if (adapter->pairable_timeout > 0)
 		adapter->pairable_timeout_id =
-			g_timeout_add_seconds(adapter->pairable_timeout,
-					pairable_timeout_handler, adapter);
+			timeout_add_seconds(adapter->pairable_timeout,
+					pairable_timeout_handler, adapter,
+					NULL);
 }
 
 static void local_name_changed_callback(uint16_t index, uint16_t length,
@@ -888,6 +889,30 @@ struct btd_device *btd_adapter_find_device(struct btd_adapter *adapter,
 		device_set_le_support(device, bdaddr_type);
 
 	return device;
+}
+
+static int device_path_cmp(gconstpointer a, gconstpointer b)
+{
+	const struct btd_device *device = a;
+	const char *path = b;
+	const char *dev_path = device_get_path(device);
+
+	return strcasecmp(dev_path, path);
+}
+
+struct btd_device *btd_adapter_find_device_by_path(struct btd_adapter *adapter,
+						   const char *path)
+{
+	GSList *list;
+
+	if (!adapter)
+		return NULL;
+
+	list = g_slist_find_custom(adapter->devices, path, device_path_cmp);
+	if (!list)
+		return NULL;
+
+	return list->data;
 }
 
 static void uuid_to_uuid128(uuid_t *uuid128, const uuid_t *uuid)
@@ -1232,6 +1257,7 @@ void btd_adapter_remove_device(struct btd_adapter *adapter,
 	adapter->connect_list = g_slist_remove(adapter->connect_list, dev);
 
 	adapter->devices = g_slist_remove(adapter->devices, dev);
+	btd_adv_monitor_device_remove(adapter->adv_monitor_manager, dev);
 
 	adapter->discovery_found = g_slist_remove(adapter->discovery_found,
 									dev);
@@ -1301,7 +1327,7 @@ static void passive_scanning_complete(uint8_t status, uint16_t length,
 	}
 }
 
-static gboolean passive_scanning_timeout(gpointer user_data)
+static bool passive_scanning_timeout(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 	struct mgmt_cp_start_discovery cp;
@@ -1325,7 +1351,7 @@ static void trigger_passive_scanning(struct btd_adapter *adapter)
 	DBG("");
 
 	if (adapter->passive_scan_timeout > 0) {
-		g_source_remove(adapter->passive_scan_timeout);
+		timeout_remove(adapter->passive_scan_timeout);
 		adapter->passive_scan_timeout = 0;
 	}
 
@@ -1334,7 +1360,7 @@ static void trigger_passive_scanning(struct btd_adapter *adapter)
 	 * no need to start any discovery. The kernel will keep scanning
 	 * as long as devices are in its auto-connection list.
 	 */
-	if (kernel_conn_control)
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	/*
@@ -1364,8 +1390,9 @@ static void trigger_passive_scanning(struct btd_adapter *adapter)
 	if (!adapter->connect_list)
 		return;
 
-	adapter->passive_scan_timeout = g_timeout_add_seconds(CONN_SCAN_TIMEOUT,
-					passive_scanning_timeout, adapter);
+	adapter->passive_scan_timeout = timeout_add_seconds(CONN_SCAN_TIMEOUT,
+					passive_scanning_timeout, adapter,
+					NULL);
 }
 
 static void stop_passive_scanning_complete(uint8_t status, uint16_t length,
@@ -1385,7 +1412,7 @@ static void stop_passive_scanning_complete(uint8_t status, uint16_t length,
 	 * no need to stop any discovery. The kernel will handle the
 	 * auto-connection by itself.
 	 */
-	if (kernel_conn_control)
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	/*
@@ -1445,7 +1472,7 @@ static void cancel_passive_scanning(struct btd_adapter *adapter)
 	DBG("");
 
 	if (adapter->passive_scan_timeout > 0) {
-		g_source_remove(adapter->passive_scan_timeout);
+		timeout_remove(adapter->passive_scan_timeout);
 		adapter->passive_scan_timeout = 0;
 	}
 }
@@ -1490,7 +1517,7 @@ static void discovery_cleanup(struct btd_adapter *adapter, int timeout)
 	adapter->discovery_type = 0x00;
 
 	if (adapter->discovery_idle_timeout > 0) {
-		g_source_remove(adapter->discovery_idle_timeout);
+		timeout_remove(adapter->discovery_idle_timeout);
 		adapter->discovery_idle_timeout = 0;
 	}
 
@@ -1514,6 +1541,7 @@ static void discovery_cleanup(struct btd_adapter *adapter, int timeout)
 static void discovery_free(void *user_data)
 {
 	struct discovery_client *client = user_data;
+	struct btd_adapter *adapter = client->adapter;
 
 	DBG("%p", client);
 
@@ -1525,8 +1553,14 @@ static void discovery_free(void *user_data)
 		client->discovery_filter = NULL;
 	}
 
-	if (client->msg)
+	if (client->msg) {
+		if (client == adapter->client) {
+			g_dbus_send_message(dbus_conn,
+						btd_error_busy(client->msg));
+			adapter->client = NULL;
+		}
 		dbus_message_unref(client->msg);
+	}
 
 	g_free(client->owner);
 	g_free(client);
@@ -1659,7 +1693,7 @@ static void start_discovery_complete(uint8_t status, uint16_t length,
 	trigger_start_discovery(adapter, IDLE_DISCOV_TIMEOUT * 2);
 }
 
-static gboolean start_discovery_timeout(gpointer user_data)
+static bool start_discovery_timeout(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 	struct mgmt_cp_start_service_discovery *sd_cp;
@@ -1755,7 +1789,7 @@ static void trigger_start_discovery(struct btd_adapter *adapter, guint delay)
 	cancel_passive_scanning(adapter);
 
 	if (adapter->discovery_idle_timeout > 0) {
-		g_source_remove(adapter->discovery_idle_timeout);
+		timeout_remove(adapter->discovery_idle_timeout);
 		adapter->discovery_idle_timeout = 0;
 	}
 
@@ -1765,11 +1799,11 @@ static void trigger_start_discovery(struct btd_adapter *adapter, guint delay)
 	 *
 	 * This is safe-guard and should actually never trigger.
 	 */
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return;
 
-	adapter->discovery_idle_timeout = g_timeout_add_seconds(delay,
-					start_discovery_timeout, adapter);
+	adapter->discovery_idle_timeout = timeout_add_seconds(delay,
+					start_discovery_timeout, adapter, NULL);
 }
 
 static void suspend_discovery_complete(uint8_t status, uint16_t length,
@@ -1808,7 +1842,7 @@ static void suspend_discovery(struct btd_adapter *adapter)
 	 * The restart will be triggered when the discovery is resumed.
 	 */
 	if (adapter->discovery_idle_timeout > 0) {
-		g_source_remove(adapter->discovery_idle_timeout);
+		timeout_remove(adapter->discovery_idle_timeout);
 		adapter->discovery_idle_timeout = 0;
 	}
 
@@ -1889,7 +1923,7 @@ static void discovering_callback(uint16_t index, uint16_t length,
 
 	case 0x01:
 		if (adapter->discovery_idle_timeout > 0) {
-			g_source_remove(adapter->discovery_idle_timeout);
+			timeout_remove(adapter->discovery_idle_timeout);
 			adapter->discovery_idle_timeout = 0;
 		}
 
@@ -2256,7 +2290,7 @@ static DBusMessage *start_discovery(DBusConnection *conn,
 
 	DBG("sender %s", sender);
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return btd_error_not_ready(msg);
 
 	is_discovering = get_discovery_client(adapter, sender, &client);
@@ -2375,7 +2409,7 @@ static bool parse_pathloss(DBusMessageIter *value,
 	return true;
 }
 
-static bool parse_transport(DBusMessageIter *value, 
+static bool parse_transport(DBusMessageIter *value,
 					struct discovery_filter *filter)
 {
 	char *transport_str;
@@ -2556,7 +2590,7 @@ static DBusMessage *set_discovery_filter(DBusConnection *conn,
 
 	DBG("sender %s", sender);
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return btd_error_not_ready(msg);
 
 	if (MGMT_VERSION(mgmt_version, mgmt_revision) < MGMT_VERSION(1, 8))
@@ -2613,7 +2647,7 @@ static DBusMessage *stop_discovery(DBusConnection *conn,
 
 	DBG("sender %s", sender);
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return btd_error_not_ready(msg);
 
 	list = g_slist_find_custom(adapter->discovery_list, sender,
@@ -2816,7 +2850,7 @@ static void property_set_mode_complete(uint8_t status, uint16_t length,
 
 static void clear_discoverable(struct btd_adapter *adapter)
 {
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	if (!(adapter->current_settings & MGMT_SETTING_DISCOVERABLE))
@@ -2851,12 +2885,18 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 
 	dbus_message_iter_get_basic(value, &enable);
 
+	if (adapter->pending_settings & setting) {
+		g_dbus_pending_property_error(id, ERROR_INTERFACE ".Busy",
+						NULL);
+		return;
+	}
+
 	if (adapter->current_settings & setting)
 		current_enable = TRUE;
 	else
 		current_enable = FALSE;
 
-	if (enable == current_enable || adapter->pending_settings & setting) {
+	if (enable == current_enable) {
 		g_dbus_pending_property_success(id);
 		return;
 	}
@@ -2871,12 +2911,14 @@ static void property_set_mode(struct btd_adapter *adapter, uint32_t setting,
 		param = &mode;
 		len = sizeof(mode);
 
-		if (!mode)
+		if (!mode) {
 			clear_discoverable(adapter);
+			remove_temporary_devices(adapter);
+		}
 
 		break;
 	case MGMT_SETTING_DISCOVERABLE:
-		if (kernel_conn_control) {
+		if (btd_has_kernel_features(KERNEL_CONN_CONTROL)) {
 			if (mode) {
 				set_mode(adapter, MGMT_OP_SET_CONNECTABLE,
 									mode);
@@ -2967,7 +3009,7 @@ static void property_set_discoverable(const GDBusPropertyTable *property,
 	struct btd_adapter *adapter = user_data;
 
 	if (adapter->discoverable_timeout > 0 &&
-			!(adapter->current_settings & MGMT_SETTING_POWERED)) {
+			!btd_adapter_get_powered(adapter)) {
 		g_dbus_pending_property_error(id, ERROR_INTERFACE ".Failed",
 								"Not Powered");
 		return;
@@ -3202,15 +3244,6 @@ static gboolean property_get_roles(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
-static int device_path_cmp(gconstpointer a, gconstpointer b)
-{
-	const struct btd_device *device = a;
-	const char *path = b;
-	const char *dev_path = device_get_path(device);
-
-	return strcasecmp(dev_path, path);
-}
-
 static DBusMessage *remove_device(DBusConnection *conn,
 					DBusMessage *msg, void *user_data)
 {
@@ -3227,7 +3260,7 @@ static DBusMessage *remove_device(DBusConnection *conn,
 	if (!list)
 		return btd_error_does_not_exist(msg);
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return btd_error_not_ready(msg);
 
 	device = list->data;
@@ -3378,7 +3411,7 @@ static DBusMessage *connect_device(DBusConnection *conn,
 
 	DBG("sender %s", dbus_message_get_sender(msg));
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return btd_error_not_ready(msg);
 
 	dbus_message_iter_init(msg, &iter);
@@ -3903,7 +3936,7 @@ static void load_link_keys(struct btd_adapter *adapter, GSList *keys,
 							adapter->dev_id);
 }
 
-static gboolean load_ltks_timeout(gpointer user_data)
+static bool load_ltks_timeout(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
@@ -3931,7 +3964,7 @@ static void load_ltks_complete(uint8_t status, uint16_t length,
 
 	adapter->load_ltks_id = 0;
 
-	g_source_remove(adapter->load_ltks_timeout);
+	timeout_remove(adapter->load_ltks_timeout);
 	adapter->load_ltks_timeout = 0;
 
 	DBG("LTKs loaded for hci%u", adapter->dev_id);
@@ -4008,8 +4041,9 @@ static void load_ltks(struct btd_adapter *adapter, GSList *keys)
 	 * and forgets to send a command complete response. However in
 	 * case of failures it does send a command status.
 	 */
-	adapter->load_ltks_timeout = g_timeout_add_seconds(2,
-						load_ltks_timeout, adapter);
+	adapter->load_ltks_timeout = timeout_add_seconds(2,
+						load_ltks_timeout, adapter,
+						NULL);
 }
 
 static void load_irks_complete(uint8_t status, uint16_t length,
@@ -4181,268 +4215,239 @@ static void probe_devices(void *user_data)
 	device_probe_profiles(device, btd_device_get_uuids(device));
 }
 
-static void load_default_system_params(struct btd_adapter *adapter)
+static bool load_bredr_defaults(struct btd_adapter *adapter,
+				struct mgmt_tlv_list *list,
+				struct btd_br_defaults *defaults)
 {
-	struct {
-		struct mgmt_tlv entry;
-		union {
-			uint16_t u16;
-		};
-	} __packed *params;
-	uint16_t i = 0;
-	size_t len = 0;
-	unsigned int err;
+	if (btd_opts.mode == BT_MODE_LE)
+		return true;
 
-	if (!main_opts.default_params.num_entries || !kernel_set_system_config)
+	if (defaults->page_scan_type != 0xFFFF) {
+		if (!mgmt_tlv_add_fixed(list, 0x0000,
+					&defaults->page_scan_type))
+			return false;
+	}
+
+	if (defaults->page_scan_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0001,
+					&defaults->page_scan_interval))
+			return false;
+	}
+
+	if (defaults->page_scan_win) {
+		if (!mgmt_tlv_add_fixed(list, 0x0002,
+					&defaults->page_scan_win))
+			return false;
+	}
+
+	if (defaults->scan_type != 0xFFFF) {
+		if (!mgmt_tlv_add_fixed(list, 0x0003,
+					&defaults->scan_type))
+			return false;
+	}
+
+	if (defaults->scan_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0004,
+					&defaults->scan_interval))
+			return false;
+	}
+
+	if (defaults->scan_win) {
+		if (!mgmt_tlv_add_fixed(list, 0x0005,
+					&defaults->scan_win))
+			return false;
+	}
+
+	if (defaults->link_supervision_timeout) {
+		if (!mgmt_tlv_add_fixed(list, 0x0006,
+					&defaults->link_supervision_timeout))
+			return false;
+	}
+
+	if (defaults->page_timeout) {
+		if (!mgmt_tlv_add_fixed(list, 0x0007,
+					&defaults->page_timeout))
+			return false;
+	}
+
+	if (defaults->min_sniff_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0008,
+					&defaults->min_sniff_interval))
+			return false;
+	}
+
+	if (defaults->max_sniff_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0009,
+					&defaults->max_sniff_interval))
+			return false;
+	}
+
+	return true;
+}
+
+static bool load_le_defaults(struct btd_adapter *adapter,
+				struct mgmt_tlv_list *list,
+				struct btd_le_defaults *defaults)
+{
+	if (btd_opts.mode == BT_MODE_BREDR)
+		return true;
+
+	if (defaults->min_adv_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x000a,
+					&defaults->min_adv_interval))
+			return false;
+	}
+
+	if (defaults->max_adv_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x000b,
+					&defaults->max_adv_interval))
+			return false;
+	}
+
+	if (defaults->adv_rotation_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x000c,
+					&defaults->adv_rotation_interval))
+			return false;
+	}
+
+	if (defaults->scan_interval_autoconnect) {
+		if (!mgmt_tlv_add_fixed(list, 0x000d,
+					&defaults->scan_interval_autoconnect))
+			return false;
+	}
+
+	if (defaults->scan_win_autoconnect) {
+		if (!mgmt_tlv_add_fixed(list, 0x000e,
+					&defaults->scan_win_autoconnect))
+			return false;
+	}
+
+	if (defaults->scan_interval_suspend) {
+		if (!mgmt_tlv_add_fixed(list, 0x000f,
+					&defaults->scan_interval_suspend))
+			return false;
+	}
+
+	if (defaults->scan_win_suspend) {
+		if (!mgmt_tlv_add_fixed(list, 0x0010,
+					&defaults->scan_win_suspend))
+			return false;
+	}
+
+	if (defaults->scan_interval_discovery) {
+		if (!mgmt_tlv_add_fixed(list, 0x0011,
+					&defaults->scan_interval_discovery))
+			return false;
+	}
+
+	if (defaults->scan_win_discovery) {
+		if (!mgmt_tlv_add_fixed(list, 0x0012,
+					&defaults->scan_win_discovery))
+			return false;
+	}
+
+	if (defaults->scan_interval_adv_monitor) {
+		if (!mgmt_tlv_add_fixed(list, 0x0013,
+					&defaults->scan_interval_adv_monitor))
+			return false;
+	}
+
+	if (defaults->scan_win_adv_monitor) {
+		if (!mgmt_tlv_add_fixed(list, 0x0014,
+					&defaults->scan_win_adv_monitor))
+			return false;
+	}
+
+	if (defaults->scan_interval_connect) {
+		if (!mgmt_tlv_add_fixed(list, 0x0015,
+					&defaults->scan_interval_connect))
+			return false;
+	}
+
+	if (defaults->scan_win_connect) {
+		if (!mgmt_tlv_add_fixed(list, 0x0016,
+					&defaults->scan_win_connect))
+			return false;
+	}
+
+	if (defaults->min_conn_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0017,
+					&defaults->min_conn_interval))
+			return false;
+	}
+
+	if (defaults->max_conn_interval) {
+		if (!mgmt_tlv_add_fixed(list, 0x0018,
+					&defaults->max_conn_interval))
+			return false;
+	}
+
+	if (defaults->conn_latency) {
+		if (!mgmt_tlv_add_fixed(list, 0x0019,
+					&defaults->conn_latency))
+			return false;
+	}
+
+	if (defaults->conn_lsto) {
+		if (!mgmt_tlv_add_fixed(list, 0x001a,
+					&defaults->conn_lsto))
+			return false;
+	}
+
+	if (defaults->autoconnect_timeout) {
+		if (!mgmt_tlv_add_fixed(list, 0x001b,
+					&defaults->autoconnect_timeout))
+			return false;
+	}
+
+	if (defaults->advmon_allowlist_scan_duration) {
+		if (!mgmt_tlv_add_fixed(list, 0x001d,
+				&defaults->advmon_allowlist_scan_duration))
+			return false;
+	}
+
+	if (defaults->advmon_no_filter_scan_duration) {
+		if (!mgmt_tlv_add_fixed(list, 0x001e,
+				&defaults->advmon_no_filter_scan_duration))
+			return false;
+	}
+
+	if (defaults->enable_advmon_interleave_scan != 0xFF) {
+		if (!mgmt_tlv_add_fixed(list, 0x001f,
+				&defaults->enable_advmon_interleave_scan))
+			return false;
+	}
+
+	return true;
+}
+
+static void load_defaults(struct btd_adapter *adapter)
+{
+	struct mgmt_tlv_list *list;
+	unsigned int err = 0;
+
+	if (!btd_opts.defaults.num_entries ||
+	    !btd_has_kernel_features(KERNEL_SET_SYSTEM_CONFIG))
 		return;
 
-	params = malloc0(sizeof(*params) *
-			main_opts.default_params.num_entries);
+	list = mgmt_tlv_list_new();
 
-	len = sizeof(params->entry) * main_opts.default_params.num_entries;
+	if (!load_bredr_defaults(adapter, list, &btd_opts.defaults.br))
+		goto done;
 
-	if (main_opts.default_params.br_page_scan_type != 0xFFFF) {
-		params[i].entry.type = 0x0000;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_page_scan_type;
-		++i;
-		len += sizeof(params[i].u16);
-	}
+	if (!load_le_defaults(adapter, list, &btd_opts.defaults.le))
+		goto done;
 
-	if (main_opts.default_params.br_page_scan_interval) {
-		params[i].entry.type = 0x0001;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_page_scan_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
+	err = mgmt_send_tlv(adapter->mgmt, MGMT_OP_SET_DEF_SYSTEM_CONFIG,
+			adapter->dev_id, list, NULL, NULL, NULL);
 
-	if (main_opts.default_params.br_page_scan_win) {
-		params[i].entry.type = 0x0002;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_page_scan_win;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_scan_type != 0xFFFF) {
-		params[i].entry.type = 0x0003;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_scan_type;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_scan_interval) {
-		params[i].entry.type = 0x0004;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_scan_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_scan_win) {
-		params[i].entry.type = 0x0005;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_scan_win;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_link_supervision_timeout) {
-		params[i].entry.type = 0x0006;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.br_link_supervision_timeout;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_page_timeout) {
-		params[i].entry.type = 0x0007;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_page_timeout;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_min_sniff_interval) {
-		params[i].entry.type = 0x0008;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_min_sniff_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.br_max_sniff_interval) {
-		params[i].entry.type = 0x0009;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.br_max_sniff_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_min_adv_interval) {
-		params[i].entry.type = 0x000a;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_min_adv_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_max_adv_interval) {
-		params[i].entry.type = 0x000b;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_max_adv_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_multi_adv_rotation_interval) {
-		params[i].entry.type = 0x000c;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_multi_adv_rotation_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_interval_autoconnect) {
-		params[i].entry.type = 0x000d;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_interval_autoconnect;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_win_autoconnect) {
-		params[i].entry.type = 0x000e;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_win_autoconnect;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_interval_suspend) {
-		params[i].entry.type = 0x000f;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_interval_suspend;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_win_suspend) {
-		params[i].entry.type = 0x0010;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_scan_win_suspend;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_interval_discovery) {
-		params[i].entry.type = 0x0011;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_interval_discovery;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_win_discovery) {
-		params[i].entry.type = 0x0012;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_win_discovery;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_interval_adv_monitor) {
-		params[i].entry.type = 0x0013;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_interval_adv_monitor;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_win_adv_monitor) {
-		params[i].entry.type = 0x0014;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_win_adv_monitor;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_interval_connect) {
-		params[i].entry.type = 0x0015;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 =
-			main_opts.default_params.le_scan_interval_connect;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_scan_win_connect) {
-		params[i].entry.type = 0x0016;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_scan_win_connect;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_min_conn_interval) {
-		params[i].entry.type = 0x0017;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_min_conn_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_max_conn_interval) {
-		params[i].entry.type = 0x0018;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_max_conn_interval;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_conn_latency) {
-		params[i].entry.type = 0x0019;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_conn_latency;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_conn_lsto) {
-		params[i].entry.type = 0x001a;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_conn_lsto;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	if (main_opts.default_params.le_autoconnect_timeout) {
-		params[i].entry.type = 0x001b;
-		params[i].entry.length = sizeof(params[i].u16);
-		params[i].u16 = main_opts.default_params.le_autoconnect_timeout;
-		++i;
-		len += sizeof(params[i].u16);
-	}
-
-	err = mgmt_send(adapter->mgmt, MGMT_OP_SET_DEF_SYSTEM_CONFIG,
-			adapter->dev_id, len, params, NULL, NULL, NULL);
+done:
 	if (!err)
 		btd_error(adapter->dev_id,
 				"Failed to set default system config for hci%u",
 				adapter->dev_id);
 
-	free(params);
+	mgmt_tlv_list_free(list);
 }
 
 static void load_devices(struct btd_adapter *adapter)
@@ -4592,7 +4597,7 @@ free:
 
 	closedir(dir);
 
-	load_link_keys(adapter, keys, main_opts.debug_keys);
+	load_link_keys(adapter, keys, btd_opts.debug_keys);
 	g_slist_free_full(keys, g_free);
 
 	load_ltks(adapter, ltks);
@@ -4808,7 +4813,8 @@ bool btd_adapter_get_pairable(struct btd_adapter *adapter)
 
 bool btd_adapter_get_powered(struct btd_adapter *adapter)
 {
-	if (adapter->current_settings & MGMT_SETTING_POWERED)
+	if ((adapter->current_settings & MGMT_SETTING_POWERED) &&
+			!(adapter->pending_settings & MGMT_SETTING_POWERED))
 		return true;
 
 	return false;
@@ -4878,7 +4884,7 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 	 * adapter_auto_connect_add() function is used to maintain what to
 	 * connect.
 	 */
-	if (kernel_conn_control)
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return 0;
 
 	if (g_slist_find(adapter->connect_list, device)) {
@@ -4899,7 +4905,7 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 							adapter->system_name);
 
 done:
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return 0;
 
 	trigger_passive_scanning(adapter);
@@ -4918,7 +4924,7 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 	if (device == adapter->connect_le)
 		adapter->connect_le = NULL;
 
-	if (kernel_conn_control)
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	if (!g_slist_find(adapter->connect_list, device)) {
@@ -4936,7 +4942,7 @@ void adapter_connect_list_remove(struct btd_adapter *adapter,
 		return;
 	}
 
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return;
 
 	trigger_passive_scanning(adapter);
@@ -4980,7 +4986,7 @@ void adapter_whitelist_add(struct btd_adapter *adapter, struct btd_device *dev)
 {
 	struct mgmt_cp_add_device cp;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	memset(&cp, 0, sizeof(cp));
@@ -5019,7 +5025,7 @@ void adapter_whitelist_remove(struct btd_adapter *adapter, struct btd_device *de
 {
 	struct mgmt_cp_remove_device cp;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	memset(&cp, 0, sizeof(cp));
@@ -5075,7 +5081,7 @@ void adapter_auto_connect_add(struct btd_adapter *adapter,
 	uint8_t bdaddr_type;
 	unsigned int id;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	if (g_slist_find(adapter->connect_list, device)) {
@@ -5147,7 +5153,7 @@ void adapter_set_device_wakeable(struct btd_adapter *adapter,
 	const bdaddr_t *bdaddr;
 	uint8_t bdaddr_type;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	bdaddr = device_get_address(device);
@@ -5224,7 +5230,7 @@ void adapter_auto_connect_remove(struct btd_adapter *adapter,
 	uint8_t bdaddr_type;
 	unsigned int id;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	if (!g_slist_find(adapter->connect_list, device)) {
@@ -5337,23 +5343,23 @@ static void adapter_free(gpointer user_data)
 	remove_discovery_list(adapter);
 
 	if (adapter->pairable_timeout_id > 0) {
-		g_source_remove(adapter->pairable_timeout_id);
+		timeout_remove(adapter->pairable_timeout_id);
 		adapter->pairable_timeout_id = 0;
 	}
 
 	if (adapter->passive_scan_timeout > 0) {
-		g_source_remove(adapter->passive_scan_timeout);
+		timeout_remove(adapter->passive_scan_timeout);
 		adapter->passive_scan_timeout = 0;
 	}
 
 	if (adapter->load_ltks_timeout > 0)
-		g_source_remove(adapter->load_ltks_timeout);
+		timeout_remove(adapter->load_ltks_timeout);
 
 	if (adapter->confirm_name_timeout > 0)
-		g_source_remove(adapter->confirm_name_timeout);
+		timeout_remove(adapter->confirm_name_timeout);
 
 	if (adapter->pair_device_timeout > 0)
-		g_source_remove(adapter->pair_device_timeout);
+		timeout_remove(adapter->pair_device_timeout);
 
 	if (adapter->auth_idle_id)
 		g_source_remove(adapter->auth_idle_id);
@@ -5433,7 +5439,7 @@ static void convert_names_entry(char *key, char *value, void *user_data)
 		return;
 
 	snprintf(filename, PATH_MAX, STORAGEDIR "/%s/cache/%s", address, str);
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
@@ -5669,7 +5675,7 @@ static void convert_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -5765,7 +5771,7 @@ static void store_sdp_record(char *local, char *peer, int handle, char *value)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -5839,7 +5845,7 @@ static void convert_sdp_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -5904,7 +5910,7 @@ static void convert_primaries_entry(char *key, char *value, void *user_data)
 	if (length == 0)
 		goto end;
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 	g_file_set_contents(filename, data, length, NULL);
 
 	if (device_type < 0)
@@ -5921,7 +5927,7 @@ static void convert_primaries_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -5970,7 +5976,7 @@ static void convert_ccc_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -6017,7 +6023,7 @@ static void convert_gatt_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -6062,7 +6068,7 @@ static void convert_proximity_entry(char *key, char *value, void *user_data)
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
-		create_file(filename, S_IRUSR | S_IWUSR);
+		create_file(filename, 0600);
 		g_file_set_contents(filename, data, length, NULL);
 	}
 
@@ -6160,7 +6166,7 @@ static void convert_config(struct btd_adapter *adapter, const char *filename,
 	if (read_local_name(&adapter->bdaddr, str) == 0)
 		g_key_file_set_string(key_file, "General", "Alias", str);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, data, length, NULL);
@@ -6262,7 +6268,7 @@ static void load_config(struct btd_adapter *adapter)
 	adapter->pairable_timeout = g_key_file_get_integer(key_file, "General",
 						"PairableTimeout", &gerr);
 	if (gerr) {
-		adapter->pairable_timeout = main_opts.pairto;
+		adapter->pairable_timeout = btd_opts.pairto;
 		g_error_free(gerr);
 		gerr = NULL;
 	}
@@ -6280,7 +6286,7 @@ static void load_config(struct btd_adapter *adapter)
 	adapter->discoverable_timeout = g_key_file_get_integer(key_file,
 				"General", "DiscoverableTimeout", &gerr);
 	if (gerr) {
-		adapter->discoverable_timeout = main_opts.discovto;
+		adapter->discoverable_timeout = btd_opts.discovto;
 		g_error_free(gerr);
 		gerr = NULL;
 	}
@@ -6308,15 +6314,15 @@ static struct btd_adapter *btd_adapter_new(uint16_t index)
 	 * configuration. This is to make sure that sane defaults are
 	 * always present.
 	 */
-	adapter->system_name = g_strdup(main_opts.name);
-	adapter->major_class = (main_opts.class & 0x001f00) >> 8;
-	adapter->minor_class = (main_opts.class & 0x0000fc) >> 2;
-	adapter->modalias = bt_modalias(main_opts.did_source,
-						main_opts.did_vendor,
-						main_opts.did_product,
-						main_opts.did_version);
-	adapter->discoverable_timeout = main_opts.discovto;
-	adapter->pairable_timeout = main_opts.pairto;
+	adapter->system_name = g_strdup(btd_opts.name);
+	adapter->major_class = (btd_opts.class & 0x001f00) >> 8;
+	adapter->minor_class = (btd_opts.class & 0x0000fc) >> 2;
+	adapter->modalias = bt_modalias(btd_opts.did_source,
+						btd_opts.did_vendor,
+						btd_opts.did_product,
+						btd_opts.did_version);
+	adapter->discoverable_timeout = btd_opts.discovto;
+	adapter->pairable_timeout = btd_opts.pairto;
 
 	DBG("System name: %s", adapter->system_name);
 	DBG("Major class: %u", adapter->major_class);
@@ -6360,6 +6366,12 @@ static void adapter_remove(struct btd_adapter *adapter)
 	btd_adv_manager_destroy(adapter->adv_manager);
 	adapter->adv_manager = NULL;
 
+	btd_adv_monitor_manager_destroy(adapter->adv_monitor_manager);
+	adapter->adv_monitor_manager = NULL;
+
+	btd_battery_provider_manager_destroy(adapter->battery_provider_manager);
+	adapter->battery_provider_manager = NULL;
+
 	g_slist_free(adapter->pin_callbacks);
 	adapter->pin_callbacks = NULL;
 
@@ -6380,7 +6392,7 @@ const bdaddr_t *btd_adapter_get_address(struct btd_adapter *adapter)
 	return &adapter->bdaddr;
 }
 
-static gboolean confirm_name_timeout(gpointer user_data)
+static bool confirm_name_timeout(gpointer user_data)
 {
 	struct btd_adapter *adapter = user_data;
 
@@ -6408,7 +6420,7 @@ static void confirm_name_complete(uint8_t status, uint16_t length,
 
 	adapter->confirm_name_id = 0;
 
-	g_source_remove(adapter->confirm_name_timeout);
+	timeout_remove(adapter->confirm_name_timeout);
 	adapter->confirm_name_timeout = 0;
 
 	DBG("Confirm name complete for hci%u", adapter->dev_id);
@@ -6439,7 +6451,7 @@ static void confirm_name(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 	}
 
 	if (adapter->confirm_name_timeout > 0) {
-		g_source_remove(adapter->confirm_name_timeout);
+		timeout_remove(adapter->confirm_name_timeout);
 		adapter->confirm_name_timeout = 0;
 	}
 
@@ -6464,8 +6476,9 @@ static void confirm_name(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 	 * and forgets to send a command complete response. However in
 	 * case of failures it does send a command status.
 	 */
-	adapter->confirm_name_timeout = g_timeout_add_seconds(2,
-						confirm_name_timeout, adapter);
+	adapter->confirm_name_timeout = timeout_add_seconds(2,
+						confirm_name_timeout, adapter,
+						NULL);
 }
 
 static void adapter_msd_notify(struct btd_adapter *adapter,
@@ -6610,10 +6623,28 @@ static void update_found_devices(struct btd_adapter *adapter,
 					const uint8_t *data, uint8_t data_len)
 {
 	struct btd_device *dev;
+	struct bt_ad *ad = NULL;
 	struct eir_data eir_data;
 	bool name_known, discoverable;
 	char addr[18];
 	bool duplicate = false;
+	struct queue *matched_monitors = NULL;
+
+	if (bdaddr_type != BDADDR_BREDR)
+		ad = bt_ad_new_with_data(data_len, data);
+
+	/* During the background scanning, update the device only when the data
+	 * match at least one Adv monitor
+	 */
+	if (ad) {
+		matched_monitors = btd_adv_monitor_content_filter(
+					adapter->adv_monitor_manager, ad);
+		bt_ad_unref(ad);
+		ad = NULL;
+	}
+
+	if (!adapter->discovering && !matched_monitors)
+		return;
 
 	memset(&eir_data, 0, sizeof(eir_data));
 	eir_parse(&eir_data, data, data_len);
@@ -6659,18 +6690,22 @@ static void update_found_devices(struct btd_adapter *adapter,
 		device_store_cached_name(dev, eir_data.name);
 
 	/*
-	 * Only skip devices that are not connected, are temporary and there
-	 * is no active discovery session ongoing.
+	 * Only skip devices that are not connected, are temporary, and there
+	 * is no active discovery session ongoing and no matched Adv monitors
 	 */
-	if (!btd_device_is_connected(dev) && (device_is_temporary(dev) &&
-						 !adapter->discovery_list)) {
+	if (!btd_device_is_connected(dev) &&
+		(device_is_temporary(dev) && !adapter->discovery_list) &&
+		!matched_monitors) {
 		eir_data_free(&eir_data);
 		return;
 	}
 
-	/* Don't continue if not discoverable or if filter don't match */
-	if (!discoverable || (adapter->filtered_discovery &&
-	    !is_filter_match(adapter->discovery_list, &eir_data, rssi))) {
+	/* If there is no matched Adv monitors, don't continue if not
+	 * discoverable or if active discovery filter don't match.
+	 */
+	if (!matched_monitors && (!discoverable ||
+		(adapter->filtered_discovery && !is_filter_match(
+				adapter->discovery_list, &eir_data, rssi)))) {
 		eir_data_free(&eir_data);
 		return;
 	}
@@ -6727,6 +6762,14 @@ static void update_found_devices(struct btd_adapter *adapter,
 
 	eir_data_free(&eir_data);
 
+	/* After the device is updated, notify the matched Adv monitors */
+	if (matched_monitors) {
+		btd_adv_monitor_notify_monitors(adapter->adv_monitor_manager,
+						dev, rssi, matched_monitors);
+		queue_destroy(matched_monitors, NULL);
+		matched_monitors = NULL;
+	}
+
 	/*
 	 * Only if at least one client has requested discovery, maintain
 	 * list of found devices and name confirming for legacy devices.
@@ -6764,7 +6807,7 @@ connect_le:
 	 * If kernel background scan is used then the kernel is
 	 * responsible for connecting.
 	 */
-	if (kernel_conn_control)
+	if (btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return;
 
 	/*
@@ -7164,7 +7207,7 @@ int btd_cancel_authorization(guint id)
 
 int btd_adapter_restore_powered(struct btd_adapter *adapter)
 {
-	if (adapter->current_settings & MGMT_SETTING_POWERED)
+	if (btd_adapter_get_powered(adapter))
 		return 0;
 
 	set_mode(adapter, MGMT_OP_SET_POWERED, 0x01);
@@ -7199,7 +7242,7 @@ void btd_adapter_register_msd_cb(struct btd_adapter *adapter,
 int btd_adapter_set_fast_connectable(struct btd_adapter *adapter,
 							gboolean enable)
 {
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return -EINVAL;
 
 	set_mode(adapter, MGMT_OP_SET_FAST_CONNECTABLE, enable ? 0x01 : 0x00);
@@ -7211,7 +7254,7 @@ int btd_adapter_read_clock(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 				int which, int timeout, uint32_t *clock,
 				uint16_t *accuracy)
 {
-	if (!(adapter->current_settings & MGMT_SETTING_POWERED))
+	if (!btd_adapter_get_powered(adapter))
 		return -EINVAL;
 
 	return -ENOSYS;
@@ -7686,7 +7729,7 @@ static void free_pair_device_data(void *user_data)
 	g_free(data);
 }
 
-static gboolean pair_device_timeout(gpointer user_data)
+static bool pair_device_timeout(gpointer user_data)
 {
 	struct pair_device_data *data = user_data;
 	struct btd_adapter *adapter = data->adapter;
@@ -7713,7 +7756,7 @@ static void pair_device_complete(uint8_t status, uint16_t length,
 	adapter->pair_device_id = 0;
 
 	if (adapter->pair_device_timeout > 0) {
-		g_source_remove(adapter->pair_device_timeout);
+		timeout_remove(adapter->pair_device_timeout);
 		adapter->pair_device_timeout = 0;
 	}
 
@@ -7799,8 +7842,9 @@ int adapter_bonding_attempt(struct btd_adapter *adapter, const bdaddr_t *bdaddr,
 	 * request never times out. Therefore, add a timer to clean up
 	 * if no response arrives
 	 */
-	adapter->pair_device_timeout = g_timeout_add_seconds(BONDING_TIMEOUT,
-						pair_device_timeout, data);
+	adapter->pair_device_timeout = timeout_add_seconds(BONDING_TIMEOUT,
+						pair_device_timeout, data,
+						NULL);
 
 	return 0;
 }
@@ -7932,7 +7976,7 @@ static void store_link_key(struct btd_adapter *adapter,
 	g_key_file_set_integer(key_file, "LinkKey", "Type", type);
 	g_key_file_set_integer(key_file, "LinkKey", "PINLength", pin_length);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -8029,7 +8073,7 @@ static void store_longtermkey(struct btd_adapter *adapter, const bdaddr_t *peer,
 	g_key_file_set_integer(key_file, group, "EDiv", ediv);
 	g_key_file_set_uint64(key_file, group, "Rand", rand);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -8153,7 +8197,7 @@ static void store_csrk(struct btd_adapter *adapter, const bdaddr_t *peer,
 	g_key_file_set_integer(key_file, group, "Counter", counter);
 	g_key_file_set_boolean(key_file, group, "Authenticated", auth);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	str = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, str, length, NULL);
@@ -8221,7 +8265,7 @@ static void store_irk(struct btd_adapter *adapter, const bdaddr_t *peer,
 
 	g_key_file_set_string(key_file, "IdentityResolvingKey", "Key", str);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	store_data = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, store_data, length, NULL);
@@ -8313,7 +8357,7 @@ static void store_conn_param(struct btd_adapter *adapter, const bdaddr_t *peer,
 	g_key_file_set_integer(key_file, "ConnectionParameters",
 						"Timeout", timeout);
 
-	create_file(filename, S_IRUSR | S_IWUSR);
+	create_file(filename, 0600);
 
 	store_data = g_key_file_to_data(key_file, &length, NULL);
 	g_file_set_contents(filename, store_data, length, NULL);
@@ -8367,7 +8411,7 @@ int adapter_set_io_capability(struct btd_adapter *adapter, uint8_t io_cap)
 {
 	struct mgmt_cp_set_io_capability cp;
 
-	if (!main_opts.pairable) {
+	if (!btd_opts.pairable) {
 		if (io_cap == IO_CAPABILITY_INVALID) {
 			if (adapter->current_settings & MGMT_SETTING_BONDABLE)
 				set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x00);
@@ -8620,7 +8664,7 @@ static int adapter_register(struct btd_adapter *adapter)
 	 * non-LE controllers.
 	 */
 	if (!(adapter->supported_settings & MGMT_SETTING_LE) ||
-					main_opts.mode == BT_MODE_BREDR)
+					btd_opts.mode == BT_MODE_BREDR)
 		goto load;
 
 	adapter->database = btd_gatt_database_new(adapter);
@@ -8632,6 +8676,28 @@ static int adapter_register(struct btd_adapter *adapter)
 	}
 
 	adapter->adv_manager = btd_adv_manager_new(adapter, adapter->mgmt);
+
+	if (g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL) {
+		if (adapter->supported_settings & MGMT_SETTING_LE) {
+			adapter->adv_monitor_manager =
+				btd_adv_monitor_manager_create(adapter,
+								adapter->mgmt);
+			if (!adapter->adv_monitor_manager) {
+				btd_error(adapter->dev_id,
+						"Failed to create Adv Monitor "
+						"Manager for adapter");
+				return -EINVAL;
+			}
+		} else {
+			btd_info(adapter->dev_id, "Adv Monitor Manager "
+					"skipped, LE unavailable");
+		}
+	}
+
+	if (g_dbus_get_flags() & G_DBUS_FLAG_ENABLE_EXPERIMENTAL) {
+		adapter->battery_provider_manager =
+			btd_battery_provider_manager_create(adapter);
+	}
 
 	db = btd_gatt_database_get_db(adapter->database);
 	adapter->db_id = gatt_db_register(db, services_modified,
@@ -8649,7 +8715,7 @@ load:
 	load_drivers(adapter);
 	btd_profile_foreach(probe_profile, adapter);
 	clear_blocked(adapter);
-	load_default_system_params(adapter);
+	load_defaults(adapter);
 	load_devices(adapter);
 
 	/* restore Service Changed CCC value for bonded devices */
@@ -8657,17 +8723,17 @@ load:
 
 	/* retrieve the active connections: address the scenario where
 	 * the are active connections before the daemon've started */
-	if (adapter->current_settings & MGMT_SETTING_POWERED)
+	if (btd_adapter_get_powered(adapter))
 		load_connections(adapter);
 
 	adapter->initialized = TRUE;
 
-	if (main_opts.did_source) {
+	if (btd_opts.did_source) {
 		/* DeviceID record is added by sdpd-server before any other
 		 * record is registered. */
 		adapter_service_insert(adapter, sdp_record_find(0x10000));
-		set_did(adapter, main_opts.did_vendor, main_opts.did_product,
-				main_opts.did_version, main_opts.did_source);
+		set_did(adapter, btd_opts.did_vendor, btd_opts.did_product,
+				btd_opts.did_version, btd_opts.did_source);
 	}
 
 	DBG("Adapter %s registered", adapter->path);
@@ -8774,6 +8840,33 @@ static void connected_callback(uint16_t index, uint16_t length,
 		adapter_msd_notify(adapter, device, eir_data.msd_list);
 
 	eir_data_free(&eir_data);
+}
+
+static void controller_resume_notify(struct btd_adapter *adapter)
+{
+	GSList *l;
+
+	for (l = adapter->drivers; l; l = g_slist_next(l)) {
+		struct btd_adapter_driver *driver = l->data;
+		if (driver->resume)
+			driver->resume(adapter);
+	}
+}
+
+static void controller_resume_callback(uint16_t index, uint16_t length,
+				       const void *param, void *user_data)
+{
+	const struct mgmt_ev_controller_resume *ev = param;
+	struct btd_adapter *adapter = user_data;
+
+	if (length < sizeof(*ev)) {
+		btd_error(adapter->dev_id, "Too small device resume event");
+		return;
+	}
+
+	info("Controller resume with wake event 0x%x", ev->wake_reason);
+
+	controller_resume_notify(adapter);
 }
 
 static void device_blocked_callback(uint16_t index, uint16_t length,
@@ -8964,7 +9057,7 @@ static int clear_devices(struct btd_adapter *adapter)
 {
 	struct mgmt_cp_remove_device cp;
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		return 0;
 
 	memset(&cp, 0, sizeof(cp));
@@ -9235,7 +9328,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	missing_settings = adapter->current_settings ^
 						adapter->supported_settings;
 
-	switch (main_opts.mode) {
+	switch (btd_opts.mode) {
 	case BT_MODE_DUAL:
 		if (missing_settings & MGMT_SETTING_SSP)
 			set_mode(adapter, MGMT_OP_SET_SSP, 0x01);
@@ -9276,13 +9369,13 @@ static void read_info_complete(uint8_t status, uint16_t length,
 		set_mode(adapter, MGMT_OP_SET_SECURE_CONN, 0x01);
 
 	if (adapter->supported_settings & MGMT_SETTING_PRIVACY)
-		set_privacy(adapter, main_opts.privacy);
+		set_privacy(adapter, btd_opts.privacy);
 
-	if (main_opts.fast_conn &&
+	if (btd_opts.fast_conn &&
 			(missing_settings & MGMT_SETTING_FAST_CONNECTABLE))
 		set_mode(adapter, MGMT_OP_SET_FAST_CONNECTABLE, 0x01);
 
-	if (kernel_exp_features)
+	if (btd_has_kernel_features(KERNEL_EXP_FEATURES))
 		read_exp_features(adapter);
 
 	err = adapter_register(adapter);
@@ -9399,22 +9492,28 @@ static void read_info_complete(uint8_t status, uint16_t length,
 						user_passkey_notify_callback,
 						adapter, NULL);
 
+	mgmt_register(adapter->mgmt, MGMT_EV_CONTROLLER_RESUME,
+						adapter->dev_id,
+						controller_resume_callback,
+						adapter, NULL);
+
 	set_dev_class(adapter);
 
 	set_name(adapter, btd_adapter_get_name(adapter));
 
-	if (kernel_blocked_keys_supported && !set_blocked_keys(adapter)) {
+	if (btd_has_kernel_features(KERNEL_BLOCKED_KEYS_SUPPORTED) &&
+	    !set_blocked_keys(adapter)) {
 		btd_error(adapter->dev_id,
 				"Failed to set blocked keys for index %u",
 				adapter->dev_id);
 		goto failed;
 	}
 
-	if (main_opts.pairable &&
+	if (btd_opts.pairable &&
 			!(adapter->current_settings & MGMT_SETTING_BONDABLE))
 		set_mode(adapter, MGMT_OP_SET_BONDABLE, 0x01);
 
-	if (!kernel_conn_control)
+	if (!btd_has_kernel_features(KERNEL_CONN_CONTROL))
 		set_mode(adapter, MGMT_OP_SET_CONNECTABLE, 0x01);
 	else if (adapter->current_settings & MGMT_SETTING_CONNECTABLE)
 		set_mode(adapter, MGMT_OP_SET_CONNECTABLE, 0x00);
@@ -9422,7 +9521,7 @@ static void read_info_complete(uint8_t status, uint16_t length,
 	if (adapter->stored_discoverable && !adapter->discoverable_timeout)
 		set_discoverable(adapter, 0x01, 0);
 
-	if (adapter->current_settings & MGMT_SETTING_POWERED)
+	if (btd_adapter_get_powered(adapter))
 		adapter_start(adapter);
 
 	return;
@@ -9442,6 +9541,43 @@ failed:
 	btd_adapter_unref(adapter);
 }
 
+static void reset_adv_monitors_complete(uint8_t status, uint16_t length,
+					const void *param, void *user_data)
+{
+	const struct mgmt_rp_remove_adv_monitor *rp = param;
+
+	if (status != MGMT_STATUS_SUCCESS) {
+		error("Failed to reset Adv Monitors: %s (0x%02x)",
+			mgmt_errstr(status), status);
+		return;
+	}
+
+	if (length < sizeof(*rp)) {
+		error("Wrong size of remove Adv Monitor response for reset "
+			"all Adv Monitors");
+		return;
+	}
+
+	DBG("Removed all Adv Monitors");
+}
+
+static void reset_adv_monitors(uint16_t index)
+{
+	struct mgmt_cp_remove_adv_monitor cp;
+
+	DBG("sending remove Adv Monitor command with handle 0");
+
+	/* Handle 0 indicates to remove all */
+	cp.monitor_handle = 0;
+	if (mgmt_send(mgmt_master, MGMT_OP_REMOVE_ADV_MONITOR, index,
+			sizeof(cp), &cp, reset_adv_monitors_complete, NULL,
+			NULL) > 0) {
+		return;
+	}
+
+	error("Failed to reset Adv Monitors");
+}
+
 static void index_added(uint16_t index, uint16_t length, const void *param,
 							void *user_data)
 {
@@ -9455,6 +9591,8 @@ static void index_added(uint16_t index, uint16_t length, const void *param,
 			"Ignoring index added for an already existing adapter");
 		return;
 	}
+
+	reset_adv_monitors(index);
 
 	adapter = btd_adapter_new(index);
 	if (!adapter) {
@@ -9590,21 +9728,40 @@ static void read_commands_complete(uint8_t status, uint16_t length,
 		switch (op) {
 		case MGMT_OP_ADD_DEVICE:
 			DBG("enabling kernel-side connection control");
-			kernel_conn_control = true;
+			kernel_features |= KERNEL_CONN_CONTROL;
 			break;
 		case MGMT_OP_SET_BLOCKED_KEYS:
 			DBG("kernel supports the set_blocked_keys op");
-			kernel_blocked_keys_supported = true;
+			kernel_features |= KERNEL_BLOCKED_KEYS_SUPPORTED;
 			break;
 		case MGMT_OP_SET_DEF_SYSTEM_CONFIG:
 			DBG("kernel supports set system confic");
-			kernel_set_system_config = true;
+			kernel_features |= KERNEL_SET_SYSTEM_CONFIG;
 			break;
 		case MGMT_OP_READ_EXP_FEATURES_INFO:
 			DBG("kernel supports exp features");
-			kernel_exp_features = true;
+			kernel_features |= KERNEL_EXP_FEATURES;
+			break;
+		case MGMT_OP_ADD_EXT_ADV_PARAMS:
+			DBG("kernel supports ext adv commands");
+			kernel_features |= KERNEL_HAS_EXT_ADV_ADD_CMDS;
+			break;
+		case MGMT_OP_READ_CONTROLLER_CAP:
+			DBG("kernel supports controller cap command");
+			kernel_features |= KERNEL_HAS_CONTROLLER_CAP_CMD;
 			break;
 		default:
+			break;
+		}
+	}
+
+	for (i = 0; i < num_events; i++) {
+		uint16_t ev = get_le16(rp->opcodes + num_commands + i);
+
+		switch(ev) {
+		case MGMT_EV_CONTROLLER_RESUME:
+			DBG("kernel supports suspend/resume events");
+			kernel_features |= KERNEL_HAS_RESUME_EVT;
 			break;
 		}
 	}
@@ -9747,6 +9904,7 @@ void adapter_shutdown(void)
 			continue;
 
 		clear_discoverable(adapter);
+		remove_temporary_devices(adapter);
 		set_mode(adapter, MGMT_OP_SET_POWERED, 0x00);
 
 		adapter_remaining++;
@@ -9767,4 +9925,9 @@ bool btd_le_connect_before_pairing(void)
 		return true;
 
 	return false;
+}
+
+bool btd_has_kernel_features(uint32_t features)
+{
+	return (kernel_features & features) ? true : false;
 }

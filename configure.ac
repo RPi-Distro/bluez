@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.55)
+AC_INIT(bluez, 5.58)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -47,6 +48,8 @@ AC_ARG_ENABLE(threads, AC_HELP_STRING([--enable-threads],
 		[enable threading support]), [enable_threads=${enableval}])
 
 AC_CHECK_FUNCS(explicit_bzero)
+
+AC_CHECK_FUNCS(rawmemchr)
 
 AC_CHECK_FUNC(signalfd, dummy=yes,
 			AC_MSG_ERROR(signalfd support is required))
@@ -262,8 +265,8 @@ AC_ARG_ENABLE([external_ell], AC_HELP_STRING([--enable-external-ell],
 				[enable external Embedded Linux library]),
 					[enable_external_ell=${enableval}])
 if (test "${enable_external_ell}" = "yes"); then
-	PKG_CHECK_MODULES(ELL, ell >= 0.28, dummy=yes,
-		AC_MSG_ERROR(Embedded Linux library >= 0.28 is required))
+	PKG_CHECK_MODULES(ELL, ell >= 0.39, dummy=yes,
+		AC_MSG_ERROR(Embedded Linux library >= 0.39 is required))
 	AC_SUBST(ELL_CFLAGS)
 	AC_SUBST(ELL_LIBS)
 fi

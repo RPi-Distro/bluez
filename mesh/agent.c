@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -104,7 +95,7 @@ static bool simple_match(const void *a, const void *b)
 	return a == b;
 }
 
-static void parse_prov_caps(struct mesh_agent_prov_caps *caps,
+static bool parse_prov_caps(struct mesh_agent_prov_caps *caps,
 				struct l_dbus_message_iter *property)
 {
 	struct l_dbus_message_iter iter_caps;
@@ -112,7 +103,7 @@ static void parse_prov_caps(struct mesh_agent_prov_caps *caps,
 	uint32_t i;
 
 	if (!l_dbus_message_iter_get_variant(property, "as", &iter_caps))
-		return;
+		return false;
 
 	while (l_dbus_message_iter_next_entry(&iter_caps, &str)) {
 		for (i = 0; i < L_ARRAY_SIZE(cap_table); i++) {
@@ -138,9 +129,10 @@ static void parse_prov_caps(struct mesh_agent_prov_caps *caps,
 			caps->static_type = 1;
 	}
 
+	return true;
 }
 
-static void parse_oob_info(struct mesh_agent_prov_caps *caps,
+static bool parse_oob_info(struct mesh_agent_prov_caps *caps,
 				struct l_dbus_message_iter *property)
 {
 	struct l_dbus_message_iter iter_oob;
@@ -148,7 +140,7 @@ static void parse_oob_info(struct mesh_agent_prov_caps *caps,
 	const char *str;
 
 	if (!l_dbus_message_iter_get_variant(property, "as", &iter_oob))
-		return;
+		return false;
 
 	while (l_dbus_message_iter_next_entry(&iter_oob, &str)) {
 		for (i = 0; i < L_ARRAY_SIZE(oob_table); i++) {
@@ -157,9 +149,11 @@ static void parse_oob_info(struct mesh_agent_prov_caps *caps,
 			caps->oob_info |= oob_table[i].mask;
 		}
 	}
+
+	return true;
 }
 
-static void parse_properties(struct mesh_agent *agent,
+static bool parse_properties(struct mesh_agent *agent,
 					struct l_dbus_message_iter *properties)
 {
 	const char *key, *uri_string;
@@ -169,15 +163,20 @@ static void parse_properties(struct mesh_agent *agent,
 
 	while (l_dbus_message_iter_next_entry(properties, &key, &variant)) {
 		if (!strcmp(key, "Capabilities")) {
-			parse_prov_caps(&agent->caps, &variant);
+			if (!parse_prov_caps(&agent->caps, &variant))
+				return false;
 		} else if (!strcmp(key, "URI")) {
-			l_dbus_message_iter_get_variant(&variant, "s",
-								&uri_string);
+			if (!l_dbus_message_iter_get_variant(&variant, "s",
+								&uri_string))
+				return false;
 			/* TODO: compute hash */
 		} else if (!strcmp(key, "OutOfBandInfo")) {
-			parse_oob_info(&agent->caps, &variant);
+			if (!parse_oob_info(&agent->caps, &variant))
+				return false;
 		}
 	}
+
+	return true;
 }
 
 static void agent_free(void *agent_data)
@@ -262,7 +261,10 @@ struct mesh_agent *mesh_agent_create(const char *path, const char *owner,
 	agent->owner = l_strdup(owner);
 	agent->path = l_strdup(path);
 
-	parse_properties(agent, properties);
+	if (!parse_properties(agent, properties)) {
+		l_free(agent);
+		return NULL;
+	}
 
 	l_queue_push_tail(agents, agent);
 
@@ -321,15 +323,17 @@ static void properties_reply(struct l_dbus_message *reply, void *user_data)
 	err = get_reply_error(reply);
 
 	if (err != MESH_ERROR_NONE)
-		goto fail;
+		goto done;
 
 	if (!l_dbus_message_get_arguments(reply, "a{sv}", &properties)) {
 		err = MESH_ERROR_FAILED;
-		goto fail;
+		goto done;
 	}
 
-	parse_properties(agent, &properties);
-fail:
+	if (!parse_properties(agent, &properties))
+		err = MESH_ERROR_FAILED;
+
+done:
 	if (req->cb) {
 		cb = req->cb;
 		cb(req->user_data, err);
@@ -434,7 +438,7 @@ static void key_reply(struct l_dbus_message *reply, void *user_data)
 	mesh_agent_key_cb_t cb;
 	struct l_dbus_message_iter iter_array;
 	uint32_t n = 0, expected_len = 0;
-	uint8_t *buf;
+	uint8_t *buf = NULL;
 	int err;
 
 	if (!l_queue_find(agents, simple_match, agent) || !agent->req)

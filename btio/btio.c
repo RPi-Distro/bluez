@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
@@ -5,20 +6,6 @@
  *  Copyright (C) 2009-2010  Marcel Holtmann <marcel@holtmann.org>
  *  Copyright (C) 2009-2010  Nokia Corporation
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -287,7 +274,7 @@ static void server_add(GIOChannel *io, BtIOConnect connect,
 	server->destroy = destroy;
 
 	cond = G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
-	g_io_add_watch_full(io, G_PRIORITY_DEFAULT, cond, server_cb, server,
+	g_io_add_watch_full(io, G_PRIORITY_HIGH, cond, server_cb, server,
 					(GDestroyNotify) server_remove);
 }
 
@@ -304,7 +291,7 @@ static void connect_add(GIOChannel *io, BtIOConnect connect, bdaddr_t dst,
 	conn->dst = dst;
 
 	cond = G_IO_OUT | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
-	g_io_add_watch_full(io, G_PRIORITY_DEFAULT, cond, connect_cb, conn,
+	g_io_add_watch_full(io, G_PRIORITY_HIGH, cond, connect_cb, conn,
 					(GDestroyNotify) connect_remove);
 }
 
@@ -320,7 +307,7 @@ static void accept_add(GIOChannel *io, BtIOConnect connect, gpointer user_data,
 	accept->destroy = destroy;
 
 	cond = G_IO_OUT | G_IO_ERR | G_IO_HUP | G_IO_NVAL;
-	g_io_add_watch_full(io, G_PRIORITY_DEFAULT, cond, accept_cb, accept,
+	g_io_add_watch_full(io, G_PRIORITY_HIGH, cond, accept_cb, accept,
 					(GDestroyNotify) accept_remove);
 }
 
@@ -1714,8 +1701,11 @@ GIOChannel *bt_io_connect(BtIOConnect connect, gpointer user_data,
 
 	/* Use DEFER_SETUP when connecting using Ext-Flowctl */
 	if (opts.mode == BT_IO_MODE_EXT_FLOWCTL && opts.defer) {
-		setsockopt(sock, SOL_BLUETOOTH, BT_DEFER_SETUP, &opts.defer,
-							sizeof(opts.defer));
+		if (setsockopt(sock, SOL_BLUETOOTH, BT_DEFER_SETUP,
+					&opts.defer, sizeof(opts.defer)) < 0) {
+			ERROR_FAILED(gerr, "setsockopt(BT_DEFER_SETUP)", errno);
+			return NULL;
+		}
 	}
 
 	switch (opts.type) {
@@ -1774,8 +1764,11 @@ GIOChannel *bt_io_listen(BtIOConnect connect, BtIOConfirm confirm,
 	sock = g_io_channel_unix_get_fd(io);
 
 	if (confirm)
-		setsockopt(sock, SOL_BLUETOOTH, BT_DEFER_SETUP, &opts.defer,
-							sizeof(opts.defer));
+		if (setsockopt(sock, SOL_BLUETOOTH, BT_DEFER_SETUP,
+					&opts.defer, sizeof(opts.defer)) < 0) {
+			ERROR_FAILED(err, "setsockopt(BT_DEFER_SETUP)", errno);
+			return NULL;
+		}
 
 	if (listen(sock, 5) < 0) {
 		ERROR_FAILED(err, "listen", errno);
