@@ -1,0 +1,24 @@
+From d9fdbedf0ee3a5981e2d83d85b547b7750303acb Mon Sep 17 00:00:00 2001
+From: Marcel Holtmann <marcel@holtmann.org>
+Date: Thu, 29 Apr 2021 10:14:28 +0200
+Subject: [PATCH] build: Create directory for ell/useful.h
+
+---
+ Makefile.am | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Makefile.am b/Makefile.am
+index f98243f72..319331bb2 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -627,6 +627,7 @@ lib/bluetooth/%.h: lib/%.h
+ 	$(AM_V_GEN)$(LN_S) -f $(abspath $<) $@
+ 
+ ell/shared: Makefile
++	$(AM_V_at)$(MKDIR_P) ell
+ 	$(AM_V_GEN)for f in $(ell_shared) ; do \
+ 		if [ ! -f $$f ] ; then \
+ 			$(LN_S) -t ell -f $(abs_srcdir)/../ell/$$f ; \
+-- 
+2.30.0
+
