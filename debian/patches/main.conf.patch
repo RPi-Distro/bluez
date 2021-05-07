@@ -1,10 +1,13 @@
 diff --git a/src/main.conf b/src/main.conf
-index a6492761b..a6da84f85 100644
+index f47cab46d..e791caaf7 100644
 --- a/src/main.conf
 +++ b/src/main.conf
-@@ -93,4 +93,4 @@
+@@ -235,7 +235,7 @@
  # AutoEnable defines option to enable all controllers when they are found.
  # This includes adapters present on start as well as adapters that are plugged
  # in later on. Defaults to 'false'.
 -#AutoEnable=false
 +AutoEnable=true
+ 
+ # Audio devices that were disconnected due to suspend will be reconnected on
+ # resume. ResumeDelay determines the delay between when the controller
