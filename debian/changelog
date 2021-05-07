@@ -1,3 +1,9 @@
+bluez (5.58-1~exp0) experimental; urgency=medium
+
+  * Update to 5.58.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 07 May 2021 18:25:31 +0900
+
 bluez (5.55-3) unstable; urgency=medium
 
   * Add d/salsa-ci.yml.
