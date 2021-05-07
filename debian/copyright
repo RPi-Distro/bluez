@@ -626,8 +626,7 @@ Copyright: 2006-2011, Nokia Corporation
   2004-2011, Marcel Holtmann <marcel@holtmann.org>
 License: GPL-2+
 
-Files: tools/bccmd.c
-  tools/bdaddr.c
+Files: tools/bdaddr.c
   tools/ciptool.c
   tools/csr.c
   tools/csr.h
