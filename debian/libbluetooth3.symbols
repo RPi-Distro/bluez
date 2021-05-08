@@ -12,6 +12,7 @@ libbluetooth.so.3 libbluetooth3 #MINVER#
  bt_compidtostr@Base 4.91
  bt_error@Base 4.91
  bt_free@Base 4.91
+ bt_malloc0@Base 5.58
  bt_malloc@Base 4.91
  hci_authenticate_link@Base 4.91
  hci_bustostr@Base 4.91
