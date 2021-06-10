@@ -1,3 +1,13 @@
+bluez (5.55-3.1) unstable; urgency=high
+
+  * Non-maintainer upload.
+  * main: Don't warn for unset config option (Closes: #989495)
+  * shared/gatt-server: Fix not properly checking for secure flags
+    (CVE-2020-26558, CVE-2021-0129) (Closes: #989614)
+  * gatt: Fix potential buffer out-of-bound (CVE-2021-3588) (Closes: #989700)
+
+ -- Salvatore Bonaccorso <carnil@debian.org>  Thu, 10 Jun 2021 21:34:56 +0200
+
 bluez (5.55-3) unstable; urgency=medium
 
   * Add d/salsa-ci.yml.

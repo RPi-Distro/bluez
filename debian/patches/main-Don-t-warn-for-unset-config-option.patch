@@ -1,0 +1,23 @@
+From: Luiz Augusto von Dentz <luiz.von.dentz@intel.com>
+Date: Mon, 9 Nov 2020 14:57:56 -0800
+Subject: main: Don't warn for unset config option
+Origin: https://git.kernel.org/pub/scm/bluetooth/bluez.git/commit/?id=02e46e9df6b0d897e6ba67dc3ea18e5e9c510e44
+Bug-Debian: https://bugs.debian.org/989495
+Bug: https://github.com/bluez/bluez/issues/51
+
+Unset options shall not be printed if debug is not enabled.
+---
+ src/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/src/main.c
++++ b/src/main.c
+@@ -444,7 +444,7 @@ static void parse_controller_config(GKey
+ 		int val = g_key_file_get_integer(config, "Controller",
+ 						params[i].val_name, &err);
+ 		if (err) {
+-			warn("%s", err->message);
++			DBG("%s", err->message);
+ 			g_clear_error(&err);
+ 		} else {
+ 			info("%s=%d", params[i].val_name, val);
