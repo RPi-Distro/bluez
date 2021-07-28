@@ -10,3 +10,4 @@ Fix-typo.patch
 shared-gatt-client-Fix-segfault-after-PIN-entry.patch
 main.conf-Add-more-details-Closes-904212.patch
 headers-use-releative-symlinks.patch
+Change-shebang-from-usr-bin-python-to-usr-bin-python.patch
