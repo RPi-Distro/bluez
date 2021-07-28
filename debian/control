@@ -16,6 +16,7 @@ Build-Depends: debhelper-compat (= 13),
                libasound2-dev,
                libell-dev (>= 0.39),
                libjson-c-dev (>= 0.13),
+	       python3-docutils,
                udev,
                check,
                systemd
