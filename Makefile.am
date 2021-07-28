@@ -12,10 +12,6 @@ bin_PROGRAMS =
 
 noinst_PROGRAMS =
 
-dist_man_MANS =
-
-dist_noinst_MANS =
-
 CLEANFILES =
 
 EXTRA_DIST =
@@ -60,6 +56,10 @@ else
 build_plugindir = $(plugindir)
 endif
 
+if MANPAGES
+man_MANS =
+endif
+manual_pages =
 
 plugin_LTLIBRARIES =
 
@@ -115,6 +115,8 @@ ell_headers = ell/util.h \
 			ell/hashmap.h \
 			ell/random.h \
 			ell/signal.h \
+			ell/time.h \
+			ell/time-private.h \
 			ell/timeout.h \
 			ell/cipher.h \
 			ell/checksum.h \
@@ -136,7 +138,14 @@ ell_headers = ell/util.h \
 			ell/cert-private.h \
 			ell/pem-private.h \
 			ell/uuid.h \
-			ell/main-private.h
+			ell/useful.h \
+			ell/main-private.h \
+			ell/tester.h \
+			ell/tls.h \
+			ell/tls-private.h \
+			ell/ecc.h \
+			ell/ecc-private.h \
+			ell/ecdh.h
 
 ell_sources = ell/private.h ell/missing.h \
 			ell/util.c \
@@ -145,6 +154,7 @@ ell_sources = ell/private.h ell/missing.h \
 			ell/hashmap.c \
 			ell/random.c \
 			ell/signal.c \
+			ell/time.c \
 			ell/timeout.c \
 			ell/io.c \
 			ell/idle.c \
@@ -172,7 +182,15 @@ ell_sources = ell/private.h ell/missing.h \
 			ell/gvariant-util.c \
 			ell/siphash-private.h \
 			ell/siphash.c \
-			ell/uuid.c
+			ell/uuid.c \
+			ell/tester.c \
+			ell/tls.c \
+			ell/tls-extensions.c \
+			ell/tls-suites.c \
+			ell/tls-record.c \
+			ell/ecc.c \
+			ell/ecc-external.c \
+			ell/ecdh.c
 
 ell_shared = ell/useful.h
 
@@ -194,7 +212,7 @@ shared_sources = src/shared/io.h src/shared/timeout.h \
 			src/shared/crypto.h src/shared/crypto.c \
 			src/shared/ecc.h src/shared/ecc.c \
 			src/shared/ringbuf.h src/shared/ringbuf.c \
-			src/shared/tester.h src/shared/tester.c \
+			src/shared/tester.h\
 			src/shared/hci.h src/shared/hci.c \
 			src/shared/hci-crypto.h src/shared/hci-crypto.c \
 			src/shared/hfp.h src/shared/hfp.c \
@@ -221,7 +239,8 @@ src_libshared_glib_la_SOURCES = $(shared_sources) \
 				src/shared/timeout-glib.c \
 				src/shared/mainloop-glib.c \
 				src/shared/mainloop-notify.h \
-				src/shared/mainloop-notify.c
+				src/shared/mainloop-notify.c \
+				src/shared/tester.c
 
 src_libshared_mainloop_la_SOURCES = $(shared_sources) \
 				src/shared/io-mainloop.c \
@@ -323,7 +342,10 @@ nodist_src_bluetoothd_SOURCES = $(builtin_files)
 
 CLEANFILES += $(builtin_files) src/bluetooth.service
 
-man_MANS = src/bluetoothd.8
+if MANPAGES
+man_MANS += src/bluetoothd.8
+endif
+manual_pages += src/bluetoothd.8
 
 EXTRA_DIST += src/genbuiltin src/bluetooth.conf \
 			src/main.conf profiles/network/network.conf \
@@ -473,6 +495,7 @@ unit_test_gdbus_client_SOURCES = unit/test-gdbus-client.c
 unit_test_gdbus_client_LDADD = gdbus/libgdbus-internal.la \
 				src/libshared-glib.la $(GLIB_LIBS) $(DBUS_LIBS)
 
+if OBEX
 unit_tests += unit/test-gobex-header unit/test-gobex-packet unit/test-gobex \
 			unit/test-gobex-transfer unit/test-gobex-apparam
 
@@ -495,6 +518,7 @@ unit_test_gobex_transfer_LDADD = $(GLIB_LIBS)
 unit_test_gobex_apparam_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex-apparam.c
 unit_test_gobex_apparam_LDADD = $(GLIB_LIBS)
+endif
 
 unit_tests += unit/test-lib
 
@@ -572,13 +596,8 @@ if LIBRARY
 pkgconfig_DATA = lib/bluez.pc
 endif
 
-manual_pages = doc/btmon.1
-
-if MANPAGES
-dist_noinst_MANS += $(manual_pages)
-endif
-
-EXTRA_DIST += $(manual_pages:.1=.txt)
+EXTRA_DIST += $(manual_pages) $(patsubst %.1,%.rst, \
+				$(patsubst %.8,%.rst,$(manual_pages)))
 
 DISTCHECK_CONFIGURE_FLAGS = --disable-datafiles --enable-library \
 						--enable-health \
@@ -600,11 +619,23 @@ SED_PROCESS = $(AM_V_GEN)$(MKDIR_P) $(dir $@) && \
 		$(SED) -e 's,@pkglibexecdir\@,$(pkglibexecdir),g' \
 		< $< > $@
 
+if RUN_RST2MAN
+RST2MAN_PROCESS = $(AM_V_GEN)$(MKDIR_P) $(dir $@) && \
+			$(RST2MAN) --strict --no-raw \
+			--no-generator --no-datestamp $< $@
+else
+RST2MAN_PROCESS = $(AM_V_GEN)test -f $@ || \
+		{ echo "Generated manual page $@ does not exist"; false; }
+endif
+
 %.service: %.service.in Makefile
 	$(SED_PROCESS)
 
-%.1: %.txt
-	$(AM_V_GEN)a2x --doctype manpage --format manpage $(srcdir)/$<
+%.1: %.rst Makefile
+	$(RST2MAN_PROCESS)
+
+%.8: %.rst Makefile
+	$(RST2MAN_PROCESS)
 
 src/builtin.h: src/genbuiltin $(builtin_sources)
 	$(AM_V_GEN)$(srcdir)/src/genbuiltin $(builtin_modules) > $@
@@ -620,6 +651,7 @@ lib/bluetooth/%.h: lib/%.h
 	$(AM_V_GEN)$(LN_S) -f $(abspath $<) $@
 
 ell/shared: Makefile
+	$(AM_V_at)$(MKDIR_P) ell
 	$(AM_V_GEN)for f in $(ell_shared) ; do \
 		if [ ! -f $$f ] ; then \
 			$(LN_S) -t ell -f $(abs_srcdir)/../ell/$$f ; \

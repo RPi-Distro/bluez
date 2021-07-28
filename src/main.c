@@ -145,6 +145,11 @@ static const char *avdtp_options[] = {
 	NULL
 };
 
+static const char *advmon_options[] = {
+	"RSSISamplingPeriod",
+	NULL
+};
+
 static const struct group_table {
 	const char *name;
 	const char **options;
@@ -155,6 +160,7 @@ static const struct group_table {
 	{ "Policy",	policy_options },
 	{ "GATT",	gatt_options },
 	{ "AVDTP",	avdtp_options },
+	{ "AdvMon",	advmon_options },
 	{ }
 };
 
@@ -715,6 +721,13 @@ static void parse_config(GKeyFile *config)
 	else
 		btd_opts.refresh_discovery = boolean;
 
+	boolean = g_key_file_get_boolean(config, "General",
+						"Experimental", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		btd_opts.experimental = boolean;
+
 	str = g_key_file_get_string(config, "GATT", "Cache", &err);
 	if (err) {
 		DBG("%s", err->message);
@@ -774,9 +787,10 @@ static void parse_config(GKeyFile *config)
 			DBG("Invalid mode option: %s", str);
 			btd_opts.avdtp.session_mode = BT_IO_MODE_BASIC;
 		}
+		g_free(str);
 	}
 
-	val = g_key_file_get_integer(config, "AVDTP", "StreamMode", &err);
+	str = g_key_file_get_string(config, "AVDTP", "StreamMode", &err);
 	if (err) {
 		DBG("%s", err->message);
 		g_clear_error(&err);
@@ -791,6 +805,19 @@ static void parse_config(GKeyFile *config)
 			DBG("Invalid mode option: %s", str);
 			btd_opts.avdtp.stream_mode = BT_IO_MODE_BASIC;
 		}
+		g_free(str);
+	}
+
+	val = g_key_file_get_integer(config, "AdvMon", "RSSISamplingPeriod",
+									&err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		val = MIN(val, 0xFF);
+		val = MAX(val, 0);
+		DBG("RSSISamplingPeriod=%d", val);
+		btd_opts.advmon.rssi_sampling_period = val;
 	}
 
 	parse_br_config(config);
@@ -812,6 +839,7 @@ static void init_defaults(void)
 	btd_opts.name_resolv = TRUE;
 	btd_opts.debug_keys = FALSE;
 	btd_opts.refresh_discovery = TRUE;
+	btd_opts.experimental = false;
 
 	btd_opts.defaults.num_entries = 0;
 	btd_opts.defaults.br.page_scan_type = 0xFFFF;
@@ -832,6 +860,8 @@ static void init_defaults(void)
 
 	btd_opts.avdtp.session_mode = BT_IO_MODE_BASIC;
 	btd_opts.avdtp.stream_mode = BT_IO_MODE_BASIC;
+
+	btd_opts.advmon.rssi_sampling_period = 0;
 }
 
 static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
@@ -891,7 +921,6 @@ static char *option_configfile = NULL;
 static gboolean option_compat = FALSE;
 static gboolean option_detach = TRUE;
 static gboolean option_version = FALSE;
-static gboolean option_experimental = FALSE;
 
 static void free_options(void)
 {
@@ -975,7 +1004,7 @@ static GOptionEntry options[] = {
 			"Specify an explicit path to the config file", "FILE"},
 	{ "compat", 'C', 0, G_OPTION_ARG_NONE, &option_compat,
 				"Provide deprecated command line interfaces" },
-	{ "experimental", 'E', 0, G_OPTION_ARG_NONE, &option_experimental,
+	{ "experimental", 'E', 0, G_OPTION_ARG_NONE, &btd_opts.experimental,
 				"Enable experimental interfaces" },
 	{ "nodetach", 'n', G_OPTION_FLAG_REVERSE,
 				G_OPTION_ARG_NONE, &option_detach,
@@ -1042,7 +1071,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	if (option_experimental)
+	if (btd_opts.experimental)
 		gdbus_flags = G_DBUS_FLAG_ENABLE_EXPERIMENTAL;
 
 	g_dbus_set_flags(gdbus_flags);

@@ -1794,6 +1794,12 @@ static gboolean notify_addressed_player_changed(gpointer user_data)
 				};
 	uint8_t i;
 
+	/*
+	 * Set changed_id to an non-zero value to indicate addreddsed player
+	 * changed.
+	 */
+	player->changed_id = 1;
+
 	avrcp_player_event(player, AVRCP_EVENT_ADDRESSED_PLAYER_CHANGED, NULL);
 
 	/*
@@ -1912,6 +1918,14 @@ static size_t handle_vendordep_pdu(struct avctp *conn, uint8_t transaction,
 	if (operand_count < AVRCP_HEADER_LENGTH) {
 		pdu->params[0] = AVRCP_STATUS_INVALID_COMMAND;
 		goto err_metadata;
+	}
+
+	operands += sizeof(*pdu);
+	operand_count -= sizeof(*pdu);
+
+	if (pdu->params_len != operand_count) {
+		DBG("AVRCP PDU parameters length don't match");
+		pdu->params_len = operand_count;
 	}
 
 	for (handler = session->control_handlers; handler->pdu_id; handler++) {
@@ -3500,8 +3514,10 @@ static struct avrcp_player *create_ct_player(struct avrcp *session,
 	path = device_get_path(session->dev);
 
 	mp = media_player_controller_create(path, id);
-	if (mp == NULL)
+	if (mp == NULL) {
+		g_free(player);
 		return NULL;
+	}
 
 	media_player_set_callbacks(mp, &ct_cbs, player);
 	player->user_data = mp;

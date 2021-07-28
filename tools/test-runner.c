@@ -247,6 +247,7 @@ static void start_qemu(void)
 				"rootfstype=9p "
 				"rootflags=trans=virtio,version=9p2000.L "
 				"acpi=off pci=noacpi noapic quiet ro init=%s "
+				"bluetooth.enable_ecred=1"
 				"TESTHOME=%s TESTDBUS=%u TESTMONITOR=%u "
 				"TESTDEVS=%d TESTAUTO=%u TESTARGS=\'%s\'",
 				initcmd, cwd, start_dbus, start_monitor,
@@ -467,8 +468,9 @@ static const char *daemon_table[] = {
 static pid_t start_bluetooth_daemon(const char *home)
 {
 	const char *daemon = NULL;
-	char *argv[3], *envp[2];
+	char *argv[5], *envp[2];
 	pid_t pid;
+	struct stat st;
 	int i;
 
 	if (chdir(home + 5) < 0) {
@@ -477,7 +479,6 @@ static pid_t start_bluetooth_daemon(const char *home)
 	}
 
 	for (i = 0; daemon_table[i]; i++) {
-		struct stat st;
 
 		if (!stat(daemon_table[i], &st)) {
 			daemon = daemon_table[i];
@@ -495,6 +496,12 @@ static pid_t start_bluetooth_daemon(const char *home)
 	argv[0] = (char *) daemon;
 	argv[1] = "--nodetach";
 	argv[2] = NULL;
+
+	if (!stat("src/main.conf", &st)) {
+		argv[2] = "-f";
+		argv[3] = "src/main.conf";
+		argv[4] = NULL;
+	}
 
 	envp[0] = "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket";
 	envp[1] = NULL;
