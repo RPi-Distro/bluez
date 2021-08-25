@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -211,6 +202,10 @@ static bool prov_calc_secret(const uint8_t *pub, const uint8_t *priv,
 
 static bool int_credentials(struct mesh_prov_initiator *prov)
 {
+	if (!memcmp(prov->conf_inputs.prv_pub_key,
+					prov->conf_inputs.dev_pub_key, 64))
+		return false;
+
 	if (!prov_calc_secret(prov->conf_inputs.dev_pub_key,
 				prov->private_key, prov->secret))
 		return false;
@@ -227,6 +222,9 @@ static bool int_credentials(struct mesh_prov_initiator *prov)
 
 	print_packet("PublicKeyProv", prov->conf_inputs.prv_pub_key, 64);
 	print_packet("PublicKeyDev", prov->conf_inputs.dev_pub_key, 64);
+
+	/* Print DBG out in Mesh order */
+	swap_u256_bytes(prov->private_key);
 	print_packet("PrivateKeyLocal", prov->private_key, 32);
 	print_packet("ConfirmationInputs", &prov->conf_inputs,
 						sizeof(prov->conf_inputs));
@@ -284,6 +282,7 @@ static void send_confirm(struct mesh_prov_initiator *prov)
 	msg.opcode = PROV_CONFIRM;
 	mesh_crypto_aes_cmac(prov->calc_key, prov->rand_auth_workspace,
 			32, msg.conf);
+	memcpy(prov->confirm, msg.conf, sizeof(prov->confirm));
 	prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
 	prov->state = INT_PROV_CONF_SENT;
 	prov->expected = PROV_CONFIRM;
@@ -737,6 +736,13 @@ static void int_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 	case PROV_CONFIRM: /* Confirmation */
 		prov->state = INT_PROV_CONF_ACKED;
 		/* RXed Device Confirmation */
+
+		/* Disallow echoed values */
+		if (!memcmp(prov->confirm, data, 16)) {
+			fail_code[1] = PROV_ERR_INVALID_PDU;
+			goto failure;
+		}
+
 		memcpy(prov->confirm, data, 16);
 		print_packet("ConfirmationDevice", prov->confirm, 16);
 		send_random(prov);
@@ -744,6 +750,12 @@ static void int_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 
 	case PROV_RANDOM: /* Random */
 		prov->state = INT_PROV_RAND_ACKED;
+
+		/* Disallow matching random values */
+		if (!memcmp(prov->rand_auth_workspace, data, 16)) {
+			fail_code[1] = PROV_ERR_INVALID_PDU;
+			goto failure;
+		}
 
 		/* RXed Device Confirmation */
 		calc_local_material(data);

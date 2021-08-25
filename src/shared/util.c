@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -28,7 +15,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <ctype.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -55,20 +41,30 @@ void *btd_malloc(size_t size)
 	return NULL;
 }
 
+void util_debug_va(util_debug_func_t function, void *user_data,
+				const char *format, va_list va)
+{
+	char str[78];
+
+	if (!function || !format)
+		return;
+
+	vsnprintf(str, sizeof(str), format, va);
+
+	function(str, user_data);
+}
+
 void util_debug(util_debug_func_t function, void *user_data,
 						const char *format, ...)
 {
-	char str[78];
 	va_list ap;
 
 	if (!function || !format)
 		return;
 
 	va_start(ap, format);
-	vsnprintf(str, sizeof(str), format, ap);
+	util_debug_va(function, user_data, format, ap);
 	va_end(ap);
-
-	function(str, user_data);
 }
 
 void util_hexdump(const char dir, const unsigned char *buf, size_t len,
@@ -1023,6 +1019,12 @@ static const struct {
 	{ "6e400001-b5a3-f393-e0a9-e50e24dcca9e", "Nordic UART Service" },
 	{ "6e400002-b5a3-f393-e0a9-e50e24dcca9e", "Nordic UART TX"	},
 	{ "6e400003-b5a3-f393-e0a9-e50e24dcca9e", "Nordic UART RX"	},
+	/* BlueZ Experimental Features */
+	{ "d4992530-b9ec-469f-ab01-6c481c47da1c", "BlueZ Experimental Debug" },
+	{ "671b10b5-42c0-4696-9227-eb28d1b049d6",
+		"BlueZ Experimental Simultaneous Central and Peripheral" },
+	{ "15c0a148-c273-11ea-b3de-0242ac130004",
+		"BlueZ Experimental LL privacy" },
 	{ }
 };
 
@@ -1044,6 +1046,18 @@ const char *bt_uuid32_to_str(uint32_t uuid)
 		return bt_uuid16_to_str(uuid & 0x0000ffff);
 
 	return "Unknown";
+}
+
+const char *bt_uuid128_to_str(const uint8_t uuid[16])
+{
+	char uuidstr[37];
+
+	sprintf(uuidstr, "%8.8x-%4.4x-%4.4x-%4.4x-%8.8x%4.4x",
+				get_le32(&uuid[12]), get_le16(&uuid[10]),
+				get_le16(&uuid[8]), get_le16(&uuid[6]),
+				get_le32(&uuid[2]), get_le16(&uuid[0]));
+
+	return bt_uuidstr_to_str(uuidstr);
 }
 
 const char *bt_uuidstr_to_str(const char *uuid)

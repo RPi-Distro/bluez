@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -139,34 +126,40 @@ static int cmac_aes_setup(void)
 	return fd;
 }
 
+static struct bt_crypto *singleton;
+
 struct bt_crypto *bt_crypto_new(void)
 {
-	struct bt_crypto *crypto;
+	if (singleton)
+		return bt_crypto_ref(singleton);
 
-	crypto = new0(struct bt_crypto, 1);
+	singleton = new0(struct bt_crypto, 1);
 
-	crypto->ecb_aes = ecb_aes_setup();
-	if (crypto->ecb_aes < 0) {
-		free(crypto);
+	singleton->ecb_aes = ecb_aes_setup();
+	if (singleton->ecb_aes < 0) {
+		free(singleton);
+		singleton = NULL;
 		return NULL;
 	}
 
-	crypto->urandom = urandom_setup();
-	if (crypto->urandom < 0) {
-		close(crypto->ecb_aes);
-		free(crypto);
+	singleton->urandom = urandom_setup();
+	if (singleton->urandom < 0) {
+		close(singleton->ecb_aes);
+		free(singleton);
+		singleton = NULL;
 		return NULL;
 	}
 
-	crypto->cmac_aes = cmac_aes_setup();
-	if (crypto->cmac_aes < 0) {
-		close(crypto->urandom);
-		close(crypto->ecb_aes);
-		free(crypto);
+	singleton->cmac_aes = cmac_aes_setup();
+	if (singleton->cmac_aes < 0) {
+		close(singleton->urandom);
+		close(singleton->ecb_aes);
+		free(singleton);
+		singleton = NULL;
 		return NULL;
 	}
 
-	return bt_crypto_ref(crypto);
+	return bt_crypto_ref(singleton);
 }
 
 struct bt_crypto *bt_crypto_ref(struct bt_crypto *crypto)
@@ -192,6 +185,7 @@ void bt_crypto_unref(struct bt_crypto *crypto)
 	close(crypto->cmac_aes);
 
 	free(crypto);
+	singleton = NULL;
 }
 
 bool bt_crypto_random_bytes(struct bt_crypto *crypto,

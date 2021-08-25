@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -51,25 +42,14 @@ static const uint16_t expected_pdu_size[] = {
 
 #define BEACON_TYPE_UNPROVISIONED		0x00
 
+struct deferred_cmd {
+	uint16_t len;
+	uint8_t cmd[];
+};
+
 static const uint8_t pkt_filter = MESH_AD_TYPE_PROVISION;
 static const uint8_t bec_filter[] = {MESH_AD_TYPE_BEACON,
 						BEACON_TYPE_UNPROVISIONED};
-
-enum acp_state {
-	ACP_PROV_IDLE = 0,
-	ACP_PROV_CAPS_SENT,
-	ACP_PROV_CAPS_ACKED,
-	ACP_PROV_KEY_SENT,
-	ACP_PROV_KEY_ACKED,
-	ACP_PROV_INP_CMPLT_SENT,
-	ACP_PROV_INP_CMPLT_ACKED,
-	ACP_PROV_CONF_SENT,
-	ACP_PROV_CONF_ACKED,
-	ACP_PROV_RAND_SENT,
-	ACP_PROV_RAND_ACKED,
-	ACP_PROV_CMPLT_SENT,
-	ACP_PROV_FAIL_SENT,
-};
 
 #define MAT_REMOTE_PUBLIC	0x01
 #define MAT_LOCAL_PRIVATE	0x02
@@ -79,12 +59,13 @@ enum acp_state {
 struct mesh_prov_acceptor {
 	mesh_prov_acceptor_complete_func_t cmplt;
 	prov_trans_tx_t trans_tx;
+	struct l_queue *ob;
 	void *agent;
 	void *caller_data;
 	void *trans_data;
 	struct l_timeout *timeout;
 	uint32_t to_secs;
-	enum acp_state	state;
+	uint8_t out_opcode;
 	uint8_t transport;
 	uint8_t material;
 	uint8_t expected;
@@ -108,6 +89,7 @@ static void acceptor_free(void)
 		return;
 
 	l_timeout_remove(prov->timeout);
+	l_queue_destroy(prov->ob, l_free);
 
 	mesh_send_cancel(bec_filter, sizeof(bec_filter));
 	mesh_send_cancel(&pkt_filter, sizeof(pkt_filter));
@@ -135,6 +117,21 @@ static void acp_prov_close(void *user_data, uint8_t reason)
 	acceptor_free();
 }
 
+static void prov_send(struct mesh_prov_acceptor *prov, void *cmd, uint16_t len)
+{
+	struct deferred_cmd *defer;
+
+	if (prov->out_opcode == PROV_NONE) {
+		prov->out_opcode = *(uint8_t *) cmd;
+		prov->trans_tx(prov->trans_data, cmd, len);
+	} else {
+		defer = l_malloc(len + sizeof(struct deferred_cmd));
+		defer->len = len;
+		memcpy(defer->cmd, cmd, len);
+		l_queue_push_tail(prov->ob, defer);
+	}
+}
+
 static void prov_to(struct l_timeout *timeout, void *user_data)
 {
 	struct mesh_prov_acceptor *rx_prov = user_data;
@@ -149,7 +146,7 @@ static void prov_to(struct l_timeout *timeout, void *user_data)
 	if (prov->cmplt && prov->trans_tx) {
 		prov->cmplt(prov->caller_data, PROV_ERR_TIMEOUT, NULL);
 		prov->cmplt = NULL;
-		prov->trans_tx(prov->trans_data, fail_code, 2);
+		prov_send(prov, fail_code, 2);
 		prov->timeout = l_timeout_create(1, prov_to, prov, NULL);
 		return;
 	}
@@ -212,6 +209,10 @@ static bool prov_calc_secret(const uint8_t *pub, const uint8_t *priv,
 
 static bool acp_credentials(struct mesh_prov_acceptor *prov)
 {
+	if (!memcmp(prov->conf_inputs.prv_pub_key,
+					prov->conf_inputs.dev_pub_key, 64))
+		return false;
+
 	if (!prov_calc_secret(prov->conf_inputs.prv_pub_key,
 			prov->private_key, prov->secret))
 		return false;
@@ -228,7 +229,11 @@ static bool acp_credentials(struct mesh_prov_acceptor *prov)
 
 	print_packet("PublicKeyProv", prov->conf_inputs.prv_pub_key, 64);
 	print_packet("PublicKeyDev", prov->conf_inputs.dev_pub_key, 64);
+
+	/* Normalize for debug out -- No longer needed for calculations */
+	swap_u256_bytes(prov->private_key);
 	print_packet("PrivateKeyLocal", prov->private_key, 32);
+
 	print_packet("ConfirmationInputs", &prov->conf_inputs,
 						sizeof(prov->conf_inputs));
 	print_packet("ECDHSecret", prov->secret, 32);
@@ -259,7 +264,7 @@ static void number_cb(void *user_data, int err, uint32_t number)
 	if (err) {
 		msg.opcode = PROV_FAILED;
 		msg.reason = PROV_ERR_UNEXPECTED_ERR;
-		prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+		prov_send(prov, &msg, sizeof(msg));
 		return;
 	}
 
@@ -268,7 +273,7 @@ static void number_cb(void *user_data, int err, uint32_t number)
 	l_put_be32(number, prov->rand_auth_workspace + 44);
 	prov->material |= MAT_RAND_AUTH;
 	msg.opcode = PROV_INP_CMPLT;
-	prov->trans_tx(prov->trans_data, &msg.opcode, 1);
+	prov_send(prov, &msg.opcode, 1);
 }
 
 static void static_cb(void *user_data, int err, uint8_t *key, uint32_t len)
@@ -282,7 +287,7 @@ static void static_cb(void *user_data, int err, uint8_t *key, uint32_t len)
 	if (err || !key || len != 16) {
 		msg.opcode = PROV_FAILED;
 		msg.reason = PROV_ERR_UNEXPECTED_ERR;
-		prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+		prov_send(prov, &msg, sizeof(msg));
 		return;
 	}
 
@@ -293,7 +298,7 @@ static void static_cb(void *user_data, int err, uint8_t *key, uint32_t len)
 
 	if (prov->conf_inputs.start.auth_action == PROV_ACTION_IN_ALPHA) {
 		msg.opcode = PROV_INP_CMPLT;
-		prov->trans_tx(prov->trans_data, &msg.opcode, 1);
+		prov_send(prov, &msg.opcode, 1);
 	}
 }
 
@@ -308,15 +313,17 @@ static void priv_key_cb(void *user_data, int err, uint8_t *key, uint32_t len)
 	if (err || !key || len != 32) {
 		msg.opcode = PROV_FAILED;
 		msg.reason = PROV_ERR_UNEXPECTED_ERR;
-		prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+		prov_send(prov, &msg, sizeof(msg));
 		return;
 	}
 
+	/* API delivers Mesh byte order, switch to little endian */
+	swap_u256_bytes(key);
 	memcpy(prov->private_key, key, 32);
 	ecc_make_public_key(prov->private_key,
 			prov->conf_inputs.dev_pub_key);
 
-	/* Convert to Mesh byte order */
+	/* Convert Public key to Mesh byte order */
 	swap_u256_bytes(prov->conf_inputs.dev_pub_key);
 	swap_u256_bytes(prov->conf_inputs.dev_pub_key + 32);
 
@@ -325,7 +332,7 @@ static void priv_key_cb(void *user_data, int err, uint8_t *key, uint32_t len)
 		if (!acp_credentials(prov)) {
 			msg.opcode = PROV_FAILED;
 			msg.reason = PROV_ERR_UNEXPECTED_ERR;
-			prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+			prov_send(prov, &msg, sizeof(msg));
 		}
 	}
 }
@@ -338,9 +345,8 @@ static void send_caps(struct mesh_prov_acceptor *prov)
 	memcpy(&msg.caps, &prov->conf_inputs.caps,
 			sizeof(prov->conf_inputs.caps));
 
-	prov->state = ACP_PROV_CAPS_SENT;
 	prov->expected = PROV_START;
-	prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+	prov_send(prov, &msg, sizeof(msg));
 }
 
 static void send_pub_key(struct mesh_prov_acceptor *prov)
@@ -349,17 +355,23 @@ static void send_pub_key(struct mesh_prov_acceptor *prov)
 
 	msg.opcode = PROV_PUB_KEY;
 	memcpy(msg.pub_key, prov->conf_inputs.dev_pub_key, sizeof(msg.pub_key));
-	prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+	prov_send(prov, &msg, sizeof(msg));
 }
 
-static void send_conf(struct mesh_prov_acceptor *prov)
+static bool send_conf(struct mesh_prov_acceptor *prov)
 {
 	struct prov_conf_msg msg;
 
 	msg.opcode = PROV_CONFIRM;
 	mesh_crypto_aes_cmac(prov->calc_key, prov->rand_auth_workspace, 32,
 								msg.conf);
-	prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+
+	/* Fail if confirmations match */
+	if (!memcmp(msg.conf, prov->confirm, sizeof(msg.conf)))
+		return false;
+
+	prov_send(prov, &msg, sizeof(msg));
+	return true;
 }
 
 static void send_rand(struct mesh_prov_acceptor *prov)
@@ -368,7 +380,7 @@ static void send_rand(struct mesh_prov_acceptor *prov)
 
 	msg.opcode = PROV_RANDOM;
 	memcpy(msg.rand, prov->rand_auth_workspace, sizeof(msg.rand));
-	prov->trans_tx(prov->trans_data, &msg, sizeof(msg));
+	prov_send(prov, &msg, sizeof(msg));
 }
 
 static void acp_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
@@ -534,10 +546,20 @@ static void acp_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 		memcpy(prov->confirm, data, 16);
 		prov->expected = PROV_RANDOM;
 
-		send_conf(prov);
+		if (!send_conf(prov)) {
+			fail.reason = PROV_ERR_INVALID_PDU;
+			goto failure;
+		}
 		break;
 
 	case PROV_RANDOM: /* Random Value */
+
+		/* Disallow matching random values */
+		if (!memcmp(prov->rand_auth_workspace, data, 16)) {
+			fail.reason = PROV_ERR_INVALID_PDU;
+			goto failure;
+		}
+
 		/* Calculate Session key (needed later) while data is fresh */
 		mesh_crypto_prov_prov_salt(prov->salt, data,
 						prov->rand_auth_workspace,
@@ -597,8 +619,7 @@ static void acp_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 
 		if (result) {
 			prov->rand_auth_workspace[0] = PROV_COMPLETE;
-			prov->trans_tx(prov->trans_data,
-					prov->rand_auth_workspace, 1);
+			prov_send(prov, prov->rand_auth_workspace, 1);
 			goto cleanup;
 		} else {
 			fail.reason = PROV_ERR_UNEXPECTED_ERR;
@@ -621,7 +642,7 @@ static void acp_prov_rx(void *user_data, const uint8_t *data, uint16_t len)
 
 failure:
 	fail.opcode = PROV_FAILED;
-	prov->trans_tx(prov->trans_data, &fail, sizeof(fail));
+	prov_send(prov, &fail, sizeof(fail));
 	if (prov->cmplt)
 		prov->cmplt(prov->caller_data, fail.reason, NULL);
 	prov->cmplt = NULL;
@@ -635,7 +656,23 @@ cleanup:
 
 static void acp_prov_ack(void *user_data, uint8_t msg_num)
 {
-	/* TODO: Handle PB-ADV Ack */
+	struct mesh_prov_acceptor *rx_prov = user_data;
+	struct deferred_cmd *deferred;
+
+	if (rx_prov != prov)
+		return;
+
+	if (prov->out_opcode == PROV_NONE)
+		return;
+
+	prov->out_opcode = PROV_NONE;
+
+	deferred = l_queue_pop_head(prov->ob);
+	if (!deferred)
+		return;
+
+	prov_send(prov, deferred->cmd, deferred->len);
+	l_free(deferred);
 }
 
 
@@ -663,7 +700,9 @@ bool acceptor_start(uint8_t num_ele, uint8_t uuid[16],
 	prov->to_secs = timeout;
 	prov->agent = agent;
 	prov->cmplt = complete_cb;
+	prov->ob = l_queue_new();
 	prov->previous = -1;
+	prov->out_opcode = PROV_NONE;
 	prov->caller_data = caller_data;
 
 	caps = mesh_agent_get_caps(agent);

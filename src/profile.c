@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012  Intel Corporation. All rights reserved.
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -760,6 +747,30 @@ void btd_profile_foreach(void (*func)(struct btd_profile *p, void *data),
 
 		func(&profile->p, data);
 	}
+}
+
+static struct btd_profile *btd_profile_find_uuid(const char *uuid)
+{
+	GSList *l, *next;
+
+	for (l = profiles; l != NULL; l = next) {
+		struct btd_profile *p = l->data;
+
+		if (!g_strcmp0(p->local_uuid, uuid))
+			return p;
+		next = g_slist_next(l);
+	}
+
+	for (l = ext_profiles; l != NULL; l = next) {
+		struct ext_profile *ext = l->data;
+		struct btd_profile *p = &ext->p;
+
+		if (!g_strcmp0(p->local_uuid, uuid))
+			return p;
+		next = g_slist_next(l);
+	}
+
+	return NULL;
 }
 
 int btd_profile_register(struct btd_profile *profile)
@@ -2453,6 +2464,12 @@ static DBusMessage *register_profile(DBusConnection *conn,
 
 	dbus_message_iter_get_basic(&args, &uuid);
 	dbus_message_iter_next(&args);
+
+	if (btd_profile_find_uuid(uuid)) {
+		warn("%s tried to register %s which is already registered",
+								sender, uuid);
+		return btd_error_not_permitted(msg, "UUID already registered");
+	}
 
 	if (dbus_message_iter_get_arg_type(&args) != DBUS_TYPE_ARRAY)
 		return btd_error_invalid_args(msg);

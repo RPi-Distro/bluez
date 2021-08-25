@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018-2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -1174,6 +1165,7 @@ static struct mesh_friend_msg *mesh_friend_msg_new(uint8_t seg_max)
 
 		size += (seg_max + 1) * sizeof(struct mesh_friend_seg_12);
 		frnd_msg = l_malloc(size);
+		memset(frnd_msg, 0, size);
 	} else
 		frnd_msg = l_new(struct mesh_friend_msg, 1);
 
@@ -2609,6 +2601,8 @@ static int key_refresh_finish(struct mesh_net *net, uint16_t idx)
 
 	l_queue_foreach(net->friends, frnd_kr_phase3, net);
 
+	appkey_finalize(net, idx);
+
 	if (!mesh_config_net_key_set_phase(node_config_get(net->node), idx,
 							KEY_REFRESH_PHASE_NONE))
 		return MESH_STATUS_STORAGE_FAIL;
@@ -2616,29 +2610,33 @@ static int key_refresh_finish(struct mesh_net *net, uint16_t idx)
 	return MESH_STATUS_SUCCESS;
 }
 
-static void update_kr_state(struct mesh_subnet *subnet, bool kr, uint32_t id)
+static bool update_kr_state(struct mesh_subnet *subnet, bool kr, uint32_t id)
 {
 	/* Figure out the key refresh phase */
 	if (kr) {
 		if (id == subnet->net_key_upd) {
 			l_debug("Beacon based KR phase 2 change");
-			key_refresh_phase_two(subnet->net, subnet->idx);
+			return (key_refresh_phase_two(subnet->net, subnet->idx)
+							== MESH_STATUS_SUCCESS);
 		}
 	} else {
 		if (id == subnet->net_key_upd) {
 			l_debug("Beacon based KR phase 3 change");
-			key_refresh_finish(subnet->net, subnet->idx);
+			return (key_refresh_finish(subnet->net, subnet->idx)
+							== MESH_STATUS_SUCCESS);
 		}
 	}
+
+	return false;
 }
 
-static void update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
+static bool update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
 								bool ivu)
 {
 	if ((iv_index - ivu) > (net->iv_index - net->iv_update)) {
 		/* Don't accept IV_Index changes when performing SAR Out */
 		if (l_queue_length(net->sar_out))
-			return;
+			return false;
 	}
 
 	/* If first beacon seen, accept without judgement */
@@ -2646,7 +2644,7 @@ static void update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
 		if (ivu) {
 			/* Ignore beacons with IVU if IV already updated */
 			if (iv_index == net->iv_index && !net->iv_update)
-				return;
+				return false;
 
 			/*
 			 * Other devices will be accepting old or new iv_index,
@@ -2667,12 +2665,12 @@ static void update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
 		if (!net->iv_update &&
 				net->iv_upd_state == IV_UPD_NORMAL_HOLD) {
 			l_error("Update attempted too soon");
-			return;
+			return false;
 		}
 
 		/* Ignore beacons with IVU if IV already updated */
 		if (iv_index == net->iv_index)
-			return;
+			return false;
 
 		if (!net->iv_update) {
 			l_debug("iv_upd_state = IV_UPD_UPDATING");
@@ -2682,7 +2680,7 @@ static void update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
 		}
 	} else if (net->iv_update) {
 		l_error("IVU clear attempted too soon");
-		return;
+		return false;
 	}
 
 	if ((iv_index - ivu) > (net->iv_index - net->iv_update))
@@ -2701,10 +2699,12 @@ static void update_iv_ivu_state(struct mesh_net *net, uint32_t iv_index,
 
 	net->iv_index = iv_index;
 	net->iv_update = ivu;
+	return true;
 }
 
 static void process_beacon(void *net_ptr, void *user_data)
 {
+	bool updated = false;
 	struct mesh_net *net = net_ptr;
 	struct net_beacon_data *beacon_data = user_data;
 	uint32_t ivi;
@@ -2738,13 +2738,15 @@ static void process_beacon(void *net_ptr, void *user_data)
 	 */
 	if (net->iv_upd_state == IV_UPD_INIT || ivi != net->iv_index ||
 							ivu != net->iv_update)
-		update_iv_ivu_state(net, ivi, ivu);
+		updated |= update_iv_ivu_state(net, ivi, ivu);
 
 	if (kr != local_kr)
-		update_kr_state(subnet, kr, beacon_data->key_id);
+		updated |= update_kr_state(subnet, kr, beacon_data->key_id);
 
-	net_key_beacon_refresh(beacon_data->key_id, net->iv_index,
-		!!(subnet->kr_phase == KEY_REFRESH_PHASE_TWO), net->iv_update);
+	if (updated)
+		net_key_beacon_refresh(beacon_data->key_id, net->iv_index,
+				!!(subnet->kr_phase == KEY_REFRESH_PHASE_TWO),
+								net->iv_update);
 }
 
 static void beacon_recv(void *user_data, struct mesh_io_recv_info *info,
@@ -2908,8 +2910,12 @@ struct mesh_io *mesh_net_detach(struct mesh_net *net)
 	io = net->io;
 
 	mesh_io_send_cancel(net->io, &type, 1);
-	mesh_io_deregister_recv_cb(io, snb, sizeof(snb));
-	mesh_io_deregister_recv_cb(io, pkt, sizeof(pkt));
+
+	/* Only deregister io if this is the last network detached.*/
+	if (l_queue_length(nets) < 2) {
+		mesh_io_deregister_recv_cb(io, snb, sizeof(snb));
+		mesh_io_deregister_recv_cb(io, pkt, sizeof(pkt));
+	}
 
 	net->io = NULL;
 	l_queue_remove(nets, net);
@@ -3587,16 +3593,21 @@ int mesh_net_set_heartbeat_sub(struct mesh_net *net, uint16_t src, uint16_t dst,
 		sub->max_hops = 0;
 
 	} else if (!period_log && src == sub->src && dst == sub->dst) {
+		if (IS_GROUP(sub->dst))
+			mesh_net_dst_unreg(net, sub->dst);
+
 		/* Preserve collected data, but disable */
 		sub->enabled = false;
 		sub->period = 0;
 
-	} else if (sub->dst != dst) {
-		if (IS_GROUP(sub->dst))
-			mesh_net_dst_unreg(net, sub->dst);
+	} else {
+		if (sub->dst != dst) {
+			if (IS_GROUP(sub->dst))
+				mesh_net_dst_unreg(net, sub->dst);
 
-		if (IS_GROUP(dst))
-			mesh_net_dst_reg(net, dst);
+			if (IS_GROUP(dst))
+				mesh_net_dst_reg(net, dst);
+		}
 
 		sub->enabled = !!period_log;
 		sub->src = src;

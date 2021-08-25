@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2016  Intel Corporation. All rights reserved.
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -65,6 +52,8 @@ static struct ad {
 	char *type;
 	char *local_name;
 	char *secondary;
+	uint32_t min_interval;
+	uint32_t max_interval;
 	uint16_t local_appearance;
 	uint16_t duration;
 	uint16_t timeout;
@@ -195,6 +184,10 @@ static void print_ad(void)
 
 	if (ad.timeout)
 		bt_shell_printf("Timeout: %u sec\n", ad.timeout);
+
+	if (ad.min_interval)
+		bt_shell_printf("Interval: %u-%u msec\n", ad.min_interval,
+					ad.max_interval);
 }
 
 static void register_reply(DBusMessage *message, void *user_data)
@@ -458,6 +451,36 @@ static gboolean get_secondary(const GDBusPropertyTable *property,
 	return TRUE;
 }
 
+static gboolean min_interval_exits(const GDBusPropertyTable *property,
+							void *data)
+{
+	return ad.min_interval;
+}
+
+static gboolean get_min_interval(const GDBusPropertyTable *property,
+				DBusMessageIter *iter, void *user_data)
+{
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32,
+						&ad.min_interval);
+
+	return TRUE;
+}
+
+static gboolean max_interval_exits(const GDBusPropertyTable *property,
+							void *data)
+{
+	return ad.max_interval;
+}
+
+static gboolean get_max_interval(const GDBusPropertyTable *property,
+				DBusMessageIter *iter, void *user_data)
+{
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32,
+						&ad.max_interval);
+
+	return TRUE;
+}
+
 static const GDBusPropertyTable ad_props[] = {
 	{ "Type", "s", get_type },
 	{ "ServiceUUIDs", "as", get_uuids, NULL, uuids_exists },
@@ -473,6 +496,8 @@ static const GDBusPropertyTable ad_props[] = {
 	{ "Appearance", "q", get_appearance, NULL, appearance_exits },
 	{ "Duration", "q", get_duration, NULL, duration_exits },
 	{ "Timeout", "q", get_timeout, NULL, timeout_exits },
+	{ "MinInterval", "u", get_min_interval, NULL, min_interval_exits },
+	{ "MaxInterval", "u", get_max_interval, NULL, max_interval_exits },
 	{ "SecondaryChannel", "s", get_secondary, NULL, secondary_exits },
 	{ }
 };
@@ -486,6 +511,9 @@ void ad_register(DBusConnection *conn, GDBusProxy *manager, const char *type)
 
 	g_free(ad.type);
 	ad.type = g_strdup(type);
+
+	if (!strcasecmp(ad.type, "Broadcast"))
+		ad.discoverable = false;
 
 	if (g_dbus_register_interface(conn, AD_PATH, AD_IFACE, ad_methods,
 					NULL, ad_props, NULL, NULL) == FALSE) {
@@ -961,6 +989,30 @@ void ad_advertise_secondary(DBusConnection *conn, const char *value)
 
 	g_dbus_emit_property_changed(conn, AD_PATH, AD_IFACE,
 							"SecondaryChannel");
+
+	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+}
+
+void ad_advertise_interval(DBusConnection *conn, uint32_t *min, uint32_t *max)
+{
+	if (!min && !max) {
+		if (ad.min_interval && ad.max_interval)
+			bt_shell_printf("Interval: %u-%u msec\n",
+					ad.min_interval, ad.max_interval);
+		return bt_shell_noninteractive_quit(EXIT_SUCCESS);
+	}
+
+	if (ad.min_interval != *min) {
+		ad.min_interval = *min;
+		g_dbus_emit_property_changed(conn, AD_PATH, AD_IFACE,
+							"MinInterval");
+	}
+
+	if (ad.max_interval != *max) {
+		ad.max_interval = *max;
+		g_dbus_emit_property_changed(conn, AD_PATH, AD_IFACE,
+							"MaxInterval");
+	}
 
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 }

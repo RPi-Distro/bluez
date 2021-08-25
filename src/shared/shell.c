@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2017  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -365,6 +352,16 @@ static int cmd_exec(const struct bt_shell_menu_entry *entry,
 	int flags = WRDE_NOCMD;
 	bool optargs = false;
 
+	if (argc == 2 && (!memcmp(argv[1], "help", 4) ||
+				!memcmp(argv[1], "--help", 6))) {
+		printf("%s\n", entry->desc);
+		printf(COLOR_HIGHLIGHT "Usage:" COLOR_OFF "\n");
+		printf("\t %s %-*s\n", entry->cmd,
+				(int)(CMD_LENGTH - strlen(entry->cmd)),
+					!entry->arg ? "" : entry->arg);
+		return 0;
+	}
+
 	if (!entry->arg || entry->arg[0] == '\0') {
 		if (argc > 1) {
 			print_text(COLOR_HIGHLIGHT, "Too many arguments");
@@ -624,6 +621,7 @@ void bt_shell_prompt_input(const char *label, const char *msg,
 		prompt->user_data = user_data;
 
 		queue_push_tail(data.prompts, prompt);
+		free(str);
 
 		return;
 	}

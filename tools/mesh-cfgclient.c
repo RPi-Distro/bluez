@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2019  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -113,7 +104,17 @@ static struct model_info *cfgcli;
 static struct l_queue *devices;
 
 static bool prov_in_progress;
-static const char *caps[] = {"static-oob", "out-numeric", "in-numeric"};
+static const char * const caps[] = {"static-oob",
+				"push",
+				"twist",
+				"blink",
+				"beep",
+				"vibrate",
+				"public-oob",
+				"out-alpha",
+				"in-alpha",
+				"out-numeric",
+				"in-numeric"};
 
 static bool have_config;
 
@@ -428,7 +429,7 @@ static void agent_input_done(oob_type_t type, void *buf, uint16_t len,
 	struct l_dbus_message *reply = NULL;
 	struct l_dbus_message_builder *builder;
 	uint32_t val_u32;
-	uint8_t oob_data[16];
+	uint8_t oob_data[64];
 
 	switch (type) {
 	case NONE:
@@ -444,15 +445,15 @@ static void agent_input_done(oob_type_t type, void *buf, uint16_t len,
 		/* Fall Through */
 
 	case HEXADECIMAL:
-		if (len > 16) {
+		if (len > sizeof(oob_data)) {
 			bt_shell_printf("Bad input length\n");
 			break;
 		}
-		memset(oob_data, 0, 16);
+		memset(oob_data, 0, sizeof(oob_data));
 		memcpy(oob_data, buf, len);
 		reply = l_dbus_message_new_method_return(msg);
 		builder = l_dbus_message_builder_new(reply);
-		append_byte_array(builder, oob_data, 16);
+		append_byte_array(builder, oob_data, len);
 		l_dbus_message_builder_finalize(builder);
 		l_dbus_message_builder_destroy(builder);
 		break;
@@ -589,6 +590,16 @@ static struct l_dbus_message *prompt_numeric_call(struct l_dbus *dbus,
 	return NULL;
 }
 
+static struct l_dbus_message *prompt_public_call(struct l_dbus *dbus,
+						struct l_dbus_message *msg,
+						void *user_data)
+{
+	l_dbus_message_ref(msg);
+	agent_input_request(HEXADECIMAL, 64, "Enter 512 bit Public Key",
+			agent_input_done, msg);
+	return NULL;
+}
+
 static struct l_dbus_message *prompt_static_call(struct l_dbus *dbus,
 						struct l_dbus_message *msg,
 						void *user_data)
@@ -627,6 +638,8 @@ static void setup_agent_iface(struct l_dbus_interface *iface)
 						"u", "s", "number", "type");
 	l_dbus_interface_method(iface, "PromptStatic", 0, prompt_static_call,
 						"ay", "s", "data", "type");
+	l_dbus_interface_method(iface, "PublicKey", 0, prompt_public_call,
+							"ay", "", "data");
 }
 
 static bool register_agent(void)
@@ -740,7 +753,7 @@ static void create_net_setup(struct l_dbus_message *msg, void *user_data)
 	struct l_dbus_message_builder *builder;
 
 	/* Generate random UUID */
-	l_getrandom(app.uuid, sizeof(app.uuid));
+	l_uuid_v4(app.uuid);
 
 	builder = l_dbus_message_builder_new(msg);
 
@@ -908,7 +921,7 @@ static void cmd_import_node(int argc, char *argv[])
 
 	/* Device UUID */
 	req->data1 = l_util_from_hexstring(argv[1], &sz);
-	if (!req->data1 || sz != 16) {
+	if (!req->data1 || sz != 16 || !l_uuid_is_valid(req->data1)) {
 		l_error("Failed to generate UUID array from %s", argv[1]);
 		goto fail;
 	}
@@ -923,7 +936,7 @@ static void cmd_import_node(int argc, char *argv[])
 
 	/* Number of elements */
 	if (sscanf(argv[4], "%u", &req->arg3) != 1)
-		return;
+		goto fail;
 
 	/* DevKey */
 	req->data2 = l_util_from_hexstring(argv[5], &sz);
@@ -1307,7 +1320,7 @@ static void add_node_setup(struct l_dbus_message *msg, void *user_data)
 	struct l_dbus_message_builder *builder;
 
 	uuid = l_util_from_hexstring(str, &sz);
-	if (!uuid || sz != 16) {
+	if (!uuid || sz != 16 || !l_uuid_is_valid(uuid)) {
 		l_error("Failed to generate UUID array from %s", str);
 		return;
 	}

@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2017  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -409,8 +396,10 @@ bool node_parse_composition(struct mesh_node *node, uint8_t *data, uint16_t len)
 		uint16_t vendor_id;
 		struct mesh_element *ele;
 		ele = g_malloc0(sizeof(struct mesh_element));
-		if (!ele)
+		if (!ele) {
+			g_free(comp);
 			return false;
+		}
 
 		ele->index = i;
 		ele->loc = get_le16(data);
@@ -425,8 +414,10 @@ bool node_parse_composition(struct mesh_node *node, uint8_t *data, uint16_t len)
 			mod_id = get_le16(data);
 			/* initialize uppper 16 bits to 0xffff for SIG models */
 			mod_id |= 0xffff0000;
-			if (!node_set_model(node, ele->index, mod_id))
+			if (!node_set_model(node, ele->index, mod_id)) {
+				g_free(comp);
 				return false;
+			}
 			data += 2;
 			len -= 2;
 		}
@@ -434,8 +425,10 @@ bool node_parse_composition(struct mesh_node *node, uint8_t *data, uint16_t len)
 			mod_id = get_le16(data + 2);
 			vendor_id = get_le16(data);
 			mod_id |= (vendor_id << 16);
-			if (!node_set_model(node, ele->index, mod_id))
+			if (!node_set_model(node, ele->index, mod_id)) {
+				g_free(comp);
 				return false;
+			}
 			data += 4;
 			len -= 4;
 		}

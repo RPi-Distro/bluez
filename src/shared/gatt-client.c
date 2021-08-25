@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2014  Google Inc.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -1598,20 +1585,20 @@ static bool notify_data_write_ccc(struct notify_data *notify_data, bool enable,
 {
 	uint8_t pdu[4];
 	unsigned int att_id;
+	uint16_t properties = notify_data->chrc->properties;
 
 	assert(notify_data->chrc->ccc_handle);
 	memset(pdu, 0, sizeof(pdu));
 	put_le16(notify_data->chrc->ccc_handle, pdu);
 
 	if (enable) {
-		/* Try to enable notifications and/or indications based on
+		/* Try to enable notifications or indications based on
 		 * whatever the characteristic supports.
 		 */
-		if (notify_data->chrc->properties & BT_GATT_CHRC_PROP_NOTIFY)
+		if (properties & BT_GATT_CHRC_PROP_NOTIFY)
 			pdu[2] = 0x01;
-
-		if (notify_data->chrc->properties & BT_GATT_CHRC_PROP_INDICATE)
-			pdu[2] |= 0x02;
+		else if (properties & BT_GATT_CHRC_PROP_INDICATE)
+			pdu[2] = 0x02;
 
 		if (!pdu[2])
 			return false;
@@ -2186,12 +2173,16 @@ static void notify_cb(struct bt_att_chan *chan, uint8_t opcode,
 			length -= 2;
 			pdu += 2;
 
+			if (data.len > length)
+				data.len = length;
+
 			data.data = pdu;
 
 			queue_foreach(client->notify_list, notify_handler,
 								&data);
 
 			length -= data.len;
+			pdu += data.len;
 		}
 	} else {
 		data.handle = get_le16(pdu);

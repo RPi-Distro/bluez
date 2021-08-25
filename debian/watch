@@ -1,2 +1,2 @@
-version=3
-http://www.kernel.org/pub/linux/bluetooth/ .*bluez-([.\d]+)\.tar\.xz
+version=4
+https://www.kernel.org/pub/linux/bluetooth/ .*bluez-([.\d]+)\.tar\.xz

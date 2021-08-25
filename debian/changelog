@@ -1,3 +1,27 @@
+bluez (5.60-1~exp0) experimental; urgency=medium
+
+  * Update to 5.60.
+  * Update d/patches
+    * Drop d/patches/build-Create-directory-for-ell-useful.h.patch.
+    * Add Change-shebang-from-usr-bin-python-to-usr-bin-python.patch.
+  * Update manpages.
+  * Update d/bluez-meshd.install.
+    * Add usr/bin/mesh-cfgtest.
+  * Update d/watch.
+    * use https.
+    * pdate to v4.
+  * Update d/control.
+    * Add python3-docutils to B-D.
+  * Delete d/source.lintian-overrides.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 28 Jul 2021 09:40:02 +0900
+
+bluez (5.58-1~exp0) experimental; urgency=medium
+
+  * Update to 5.58.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 07 May 2021 18:25:31 +0900
+
 bluez (5.55-3.1) unstable; urgency=high
 
   * Non-maintainer upload.

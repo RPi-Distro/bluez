@@ -1,5 +1,5 @@
-debian/tmp/usr/share/man/man1/bccmd.1
 debian/tmp/usr/share/man/man1/btattach.1
+debian/tmp/usr/share/man/man1/btmon.1
 debian/tmp/usr/share/man/man1/ciptool.1
 debian/tmp/usr/share/man/man1/hciattach.1
 debian/tmp/usr/share/man/man1/hciconfig.1
@@ -10,6 +10,7 @@ debian/tmp/usr/share/man/man1/rctest.1
 debian/tmp/usr/share/man/man1/rfcomm.1
 debian/tmp/usr/share/man/man1/sdptool.1
 debian/tmp/usr/share/man/man8/bluetoothd.8
+debian/tmp/usr/share/man/man8/bluetooth-meshd.8
 debian/manpages/l2test.1
 debian/manpages/btmon.1
 debian/manpages/bluetoothctl.1

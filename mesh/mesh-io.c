@@ -1,19 +1,10 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2018  Intel Corporation. All rights reserved.
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
  *
  */
 
@@ -31,10 +22,12 @@
 
 /* List of Mesh-IO Type headers */
 #include "mesh/mesh-io-generic.h"
+#include "mesh/mesh-io-unit.h"
 
 /* List of Supported Mesh-IO Types */
 static const struct mesh_io_table table[] = {
-	{MESH_IO_TYPE_GENERIC,	&mesh_io_generic}
+	{MESH_IO_TYPE_GENERIC, &mesh_io_generic},
+	{MESH_IO_TYPE_UNIT_TEST, &mesh_io_unit},
 };
 
 static struct l_queue *io_list;
@@ -73,12 +66,9 @@ struct mesh_io *mesh_io_new(enum mesh_io_type type, void *opts,
 
 	io = l_new(struct mesh_io, 1);
 
-	if (!io)
-		return NULL;
-
 	io->type = type;
-
 	io->api = api;
+
 	if (!api->init(io, opts, cb, user_data))
 		goto fail;
 

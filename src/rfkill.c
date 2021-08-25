@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -41,7 +28,7 @@
 
 #include "log.h"
 #include "adapter.h"
-#include "hcid.h"
+#include "btd.h"
 
 enum rfkill_type {
 	RFKILL_TYPE_ALL = 0,
@@ -66,12 +53,12 @@ struct rfkill_event {
 	uint8_t  soft;
 	uint8_t  hard;
 };
+#define RFKILL_EVENT_SIZE_V1    8
 
 static gboolean rfkill_event(GIOChannel *chan,
 				GIOCondition cond, gpointer data)
 {
-	unsigned char buf[32];
-	struct rfkill_event *event = (void *) buf;
+	struct rfkill_event event = { 0 };
 	struct btd_adapter *adapter;
 	char sysname[PATH_MAX];
 	ssize_t len;
@@ -82,34 +69,32 @@ static gboolean rfkill_event(GIOChannel *chan,
 
 	fd = g_io_channel_unix_get_fd(chan);
 
-	memset(buf, 0, sizeof(buf));
-
-	len = read(fd, buf, sizeof(buf));
+	len = read(fd, &event, sizeof(event));
 	if (len < 0) {
 		if (errno == EAGAIN)
 			return TRUE;
 		return FALSE;
 	}
 
-	if (len != sizeof(struct rfkill_event))
+	if (len < RFKILL_EVENT_SIZE_V1)
 		return TRUE;
 
 	DBG("RFKILL event idx %u type %u op %u soft %u hard %u",
-					event->idx, event->type, event->op,
-						event->soft, event->hard);
+					event.idx, event.type, event.op,
+						event.soft, event.hard);
 
-	if (event->soft || event->hard)
+	if (event.soft || event.hard)
 		return TRUE;
 
-	if (event->op != RFKILL_OP_CHANGE)
+	if (event.op != RFKILL_OP_CHANGE)
 		return TRUE;
 
-	if (event->type != RFKILL_TYPE_BLUETOOTH &&
-					event->type != RFKILL_TYPE_ALL)
+	if (event.type != RFKILL_TYPE_BLUETOOTH &&
+					event.type != RFKILL_TYPE_ALL)
 		return TRUE;
 
 	snprintf(sysname, sizeof(sysname) - 1,
-			"/sys/class/rfkill/rfkill%u/name", event->idx);
+			"/sys/class/rfkill/rfkill%u/name", event.idx);
 
 	fd = open(sysname, O_RDONLY);
 	if (fd < 0)

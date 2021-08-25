@@ -1,23 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012  Intel Corporation. All rights reserved.
  *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -41,6 +28,7 @@
 #include "agent.h"
 #include "gatt.h"
 #include "advertising.h"
+#include "adv_monitor.h"
 
 /* String display constants */
 #define COLORED_NEW	COLOR_GREEN "NEW" COLOR_OFF
@@ -58,6 +46,7 @@ static char *auto_register_agent = NULL;
 struct adapter {
 	GDBusProxy *proxy;
 	GDBusProxy *ad_proxy;
+	GDBusProxy *adv_monitor_proxy;
 	GList *devices;
 };
 
@@ -528,6 +517,19 @@ static void ad_manager_added(GDBusProxy *proxy)
 	adapter->ad_proxy = proxy;
 }
 
+static void admon_manager_added(GDBusProxy *proxy)
+{
+	struct adapter *adapter;
+
+	adapter = find_ctrl(ctrl_list, g_dbus_proxy_get_path(proxy));
+	if (!adapter)
+		adapter = adapter_new(proxy);
+
+	adapter->adv_monitor_proxy = proxy;
+	adv_monitor_add_manager(dbus_conn, proxy);
+	adv_monitor_register_app(dbus_conn);
+}
+
 static void proxy_added(GDBusProxy *proxy, void *user_data)
 {
 	const char *interface;
@@ -560,6 +562,9 @@ static void proxy_added(GDBusProxy *proxy, void *user_data)
 		ad_manager_added(proxy);
 	} else if (!strcmp(interface, "org.bluez.Battery1")) {
 		battery_added(proxy);
+	} else if (!strcmp(interface,
+				"org.bluez.AdvertisementMonitorManager1")) {
+		admon_manager_added(proxy);
 	}
 }
 
@@ -653,6 +658,9 @@ static void proxy_removed(GDBusProxy *proxy, void *user_data)
 		ad_unregister(dbus_conn, NULL);
 	} else if (!strcmp(interface, "org.bluez.Battery1")) {
 		battery_removed(proxy);
+	} else if (!strcmp(interface,
+			"org.bluez.AdvertisementMonitorManager1")) {
+		adv_monitor_remove_manager(dbus_conn);
 	}
 }
 
@@ -933,6 +941,15 @@ static void cmd_show(int argc, char *argv[])
 		print_property(adapter->ad_proxy, "SupportedInstances");
 		print_property(adapter->ad_proxy, "SupportedIncludes");
 		print_property(adapter->ad_proxy, "SupportedSecondaryChannels");
+		print_property(adapter->ad_proxy, "SupportedCapabilities");
+		print_property(adapter->ad_proxy, "SupportedFeatures");
+	}
+
+	if (adapter->adv_monitor_proxy) {
+		bt_shell_printf("Advertisement Monitor Features:\n");
+		print_property(adapter->adv_monitor_proxy,
+						"SupportedMonitorTypes");
+		print_property(adapter->adv_monitor_proxy, "SupportedFeatures");
 	}
 
 	return bt_shell_noninteractive_quit(EXIT_SUCCESS);
@@ -2608,6 +2625,40 @@ static void cmd_advertise_secondary(int argc, char *argv[])
 	ad_advertise_secondary(dbus_conn, argv[1]);
 }
 
+static void cmd_advertise_interval(int argc, char *argv[])
+{
+	uint32_t min, max;
+	char *endptr = NULL;
+
+	if (argc < 2) {
+		ad_advertise_interval(dbus_conn, NULL, NULL);
+		return;
+	}
+
+	min = strtol(argv[1], &endptr, 0);
+	if (!endptr || *endptr != '\0' || min < 20 || min > 10485) {
+		bt_shell_printf("Invalid argument\n");
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	max = min;
+
+	if (argc > 2) {
+		max = strtol(argv[1], &endptr, 0);
+		if (!endptr || *endptr != '\0' || max < 20 || max > 10485) {
+			bt_shell_printf("Invalid argument\n");
+			return bt_shell_noninteractive_quit(EXIT_FAILURE);
+		}
+	}
+
+	if (min > max) {
+		bt_shell_printf("Invalid argument: %u > %u\n", min, max);
+		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+	}
+
+	ad_advertise_interval(dbus_conn, &min, &max);
+}
+
 static void ad_clear_uuids(void)
 {
 	ad_disable_uuids(dbus_conn);
@@ -2666,6 +2717,14 @@ static void ad_clear_secondary(void)
 	ad_advertise_secondary(dbus_conn, value);
 }
 
+static void ad_clear_interval(void)
+{
+	uint32_t min = 0;
+	uint32_t max = 0;
+
+	ad_advertise_interval(dbus_conn, &min, &max);
+}
+
 static const struct clear_entry ad_clear[] = {
 	{ "uuids",		ad_clear_uuids },
 	{ "service",		ad_clear_service },
@@ -2677,6 +2736,7 @@ static const struct clear_entry ad_clear[] = {
 	{ "duration",		ad_clear_duration },
 	{ "timeout",		ad_clear_timeout },
 	{ "secondary",		ad_clear_secondary },
+	{ "interval",		ad_clear_interval },
 	{}
 };
 
@@ -2689,6 +2749,79 @@ static void cmd_ad_clear(int argc, char *argv[])
 
 	if(!data_clear(ad_clear, all ? "all" : argv[1]))
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+}
+
+static void print_add_or_pattern_usage(void)
+{
+	bt_shell_printf("pattern format:\n"
+			"\t<start_position> <ad_data_type> <content_of_pattern>\n");
+	bt_shell_printf("e.g.\n"
+			"\tadd-or-pattern 1 2 01ab55 3 4 23cd66\n");
+}
+
+static void cmd_adv_monitor_print_usage(int argc, char *argv[])
+{
+	if (strcmp(argv[1], "add-or-pattern") == 0)
+		print_add_or_pattern_usage();
+	else
+		bt_shell_printf("Invalid argument %s", argv[1]);
+}
+
+static void cmd_adv_monitor_set_rssi_threshold(int argc, char *argv[])
+{
+	int low_threshold, high_threshold;
+
+	low_threshold = atoi(argv[1]);
+	high_threshold = atoi(argv[2]);
+	adv_monitor_set_rssi_threshold(low_threshold, high_threshold);
+}
+
+static void cmd_adv_monitor_set_rssi_timeout(int argc, char *argv[])
+{
+	int low_timeout, high_timeout;
+
+	low_timeout = atoi(argv[1]);
+	high_timeout = atoi(argv[2]);
+	adv_monitor_set_rssi_timeout(low_timeout, high_timeout);
+}
+
+static void cmd_adv_monitor_set_rssi_sampling_period(int argc, char *argv[])
+{
+	int sampling = atoi(argv[1]);
+
+	adv_monitor_set_rssi_sampling_period(sampling);
+}
+
+static void cmd_adv_monitor_add_or_monitor(int argc, char *argv[])
+{
+	adv_monitor_add_monitor(dbus_conn, "or_patterns", argc, argv);
+}
+
+static void cmd_adv_monitor_print_monitor(int argc, char *argv[])
+{
+	int monitor_idx;
+
+	if (strcmp(argv[1], "all") == 0)
+		monitor_idx = -1;
+	else
+		monitor_idx = atoi(argv[1]);
+	adv_monitor_print_monitor(dbus_conn, monitor_idx);
+}
+
+static void cmd_adv_monitor_remove_monitor(int argc, char *argv[])
+{
+	int monitor_idx;
+
+	if (strcmp(argv[1], "all") == 0)
+		monitor_idx = -1;
+	else
+		monitor_idx = atoi(argv[1]);
+	adv_monitor_remove_monitor(dbus_conn, monitor_idx);
+}
+
+static void cmd_adv_monitor_get_supported_info(int argc, char *argv[])
+{
+	adv_monitor_get_supported_info();
 }
 
 static const struct bt_shell_menu advertise_menu = {
@@ -2722,8 +2855,43 @@ static const struct bt_shell_menu advertise_menu = {
 			"Set/Get advertise timeout" },
 	{ "secondary", "[1M/2M/Coded]", cmd_advertise_secondary,
 			"Set/Get advertise secondary channel" },
+	{ "interval", "[min] [max] ", cmd_advertise_interval,
+			"Set/Get advertise interval range" },
 	{ "clear", "[uuids/service/manufacturer/config-name...]", cmd_ad_clear,
 			"Clear advertise config" },
+	{ } },
+};
+
+static const struct bt_shell_menu advertise_monitor_menu = {
+	.name = "monitor",
+	.desc = "Advertisement Monitor Options Submenu",
+	.entries = {
+	{ "set-rssi-threshold", "<low_threshold> <high_threshold>",
+				cmd_adv_monitor_set_rssi_threshold,
+				"Set RSSI threshold parameter" },
+	{ "set-rssi-timeout", "<low_timeout> <high_timeout>",
+				cmd_adv_monitor_set_rssi_timeout,
+				"Set RSSI timeout parameter" },
+	{ "set-rssi-sampling-period", "<sampling_period>",
+				cmd_adv_monitor_set_rssi_sampling_period,
+				"Set RSSI sampling period parameter" },
+	{ "add-or-pattern", "[patterns=pattern1 pattern2 ...]",
+				cmd_adv_monitor_add_or_monitor,
+				"Register 'or pattern' type monitor with the "
+				"specified RSSI parameters" },
+	{ "get-pattern", "<monitor-id/all>",
+				cmd_adv_monitor_print_monitor,
+				"Get advertisement monitor" },
+	{ "remove-pattern", "<monitor-id/all>",
+				cmd_adv_monitor_remove_monitor,
+				"Remove advertisement monitor" },
+	{ "get-supported-info", NULL,
+				cmd_adv_monitor_get_supported_info,
+				"Get advertisement manager supported "
+				"features and supported monitor types" },
+	{ "print-usage", "<add-or-pattern>",
+				cmd_adv_monitor_print_usage,
+				"Print the command usage"},
 	{ } },
 };
 
@@ -2904,6 +3072,7 @@ int main(int argc, char *argv[])
 	bt_shell_init(argc, argv, &opt);
 	bt_shell_set_menu(&main_menu);
 	bt_shell_add_submenu(&advertise_menu);
+	bt_shell_add_submenu(&advertise_monitor_menu);
 	bt_shell_add_submenu(&scan_menu);
 	bt_shell_add_submenu(&gatt_menu);
 	bt_shell_set_prompt(PROMPT_OFF);

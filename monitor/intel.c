@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 /*
  *
  *  BlueZ - Bluetooth protocol stack for Linux
@@ -5,20 +6,6 @@
  *  Copyright (C) 2011-2014  Intel Corporation
  *  Copyright (C) 2002-2010  Marcel Holtmann <marcel@holtmann.org>
  *
- *
- *  This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU Lesser General Public
- *  License as published by the Free Software Foundation; either
- *  version 2.1 of the License, or (at your option) any later version.
- *
- *  This library is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  Lesser General Public License for more details.
- *
- *  You should have received a copy of the GNU Lesser General Public
- *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
 
@@ -484,6 +471,26 @@ static void memory_write_cmd(const void *data, uint8_t size)
 	packet_hexdump(data + 6, size - 6);
 }
 
+static void read_supported_features_cmd(const void *data, uint8_t size)
+{
+	uint8_t page = get_u8(data);
+
+	print_field("Page: 0x%2.2x", page);
+}
+
+static void read_supported_features_rsp(const void *data, uint8_t size)
+{
+	uint8_t status = get_u8(data);
+	uint8_t page = get_u8(data + 1);
+	uint8_t max_pages = get_u8(data + 2);
+
+	print_status(status);
+	print_field("Page: 0x%2.2x", page);
+	print_field("Max Pages: 0x%2.2x", max_pages);
+	print_field("Supported Features:");
+	packet_hexdump(data + 3, size - 3);
+}
+
 static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x001, "Reset",
 			reset_cmd, 8, true,
@@ -546,6 +553,10 @@ static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x08e, "Memory Write",
 			memory_write_cmd, 6, false,
 			status_rsp, 1, true },
+	{ 0x0a6, "Read Supported Features",
+			read_supported_features_cmd, 1, true,
+			read_supported_features_rsp, 19, true },
+
 	{ }
 };
 

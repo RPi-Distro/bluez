@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.55)
+AC_INIT(bluez, 5.60)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -47,6 +48,8 @@ AC_ARG_ENABLE(threads, AC_HELP_STRING([--enable-threads],
 		[enable threading support]), [enable_threads=${enableval}])
 
 AC_CHECK_FUNCS(explicit_bzero)
+
+AC_CHECK_FUNCS(rawmemchr)
 
 AC_CHECK_FUNC(signalfd, dummy=yes,
 			AC_MSG_ERROR(signalfd support is required))
@@ -262,8 +265,8 @@ AC_ARG_ENABLE([external_ell], AC_HELP_STRING([--enable-external-ell],
 				[enable external Embedded Linux library]),
 					[enable_external_ell=${enableval}])
 if (test "${enable_external_ell}" = "yes"); then
-	PKG_CHECK_MODULES(ELL, ell >= 0.28, dummy=yes,
-		AC_MSG_ERROR(Embedded Linux library >= 0.28 is required))
+	PKG_CHECK_MODULES(ELL, ell >= 0.39, dummy=yes,
+		AC_MSG_ERROR(Embedded Linux library >= 0.39 is required))
 	AC_SUBST(ELL_CFLAGS)
 	AC_SUBST(ELL_LIBS)
 fi
@@ -320,10 +323,17 @@ AC_ARG_ENABLE(datafiles, AC_HELP_STRING([--disable-datafiles],
 					[enable_datafiles=${enableval}])
 AM_CONDITIONAL(DATAFILES, test "${enable_datafiles}" != "no")
 
-AC_ARG_ENABLE(manpages, AC_HELP_STRING([--enable-manpages],
-			[enable building of manual pages]),
+AC_ARG_ENABLE(manpages, AC_HELP_STRING([--disable-manpages],
+			[disable building of manual pages]),
 					[enable_manpages=${enableval}])
-AM_CONDITIONAL(MANPAGES, test "${enable_manpages}" = "yes")
+if (test "${enable_manpages}" != "no"); then
+	AC_CHECK_PROGS(RST2MAN, [rst2man rst2man.py], "no")
+	if (test "${RST2MAN}" = "no" ); then
+		AC_MSG_ERROR([rst2man is required])
+	fi
+fi
+AM_CONDITIONAL(MANPAGES, test "${enable_manpages}" != "no")
+AM_CONDITIONAL(RUN_RST2MAN, test "${enable_manpages}" != "no" && test "${RST2MAN}" != "no")
 
 AC_ARG_ENABLE(testing, AC_HELP_STRING([--enable-testing],
 			[enable testing tools]),
@@ -382,6 +392,7 @@ AC_SUBST(CONFIGDIR, "${configdir}")
 
 AC_DEFINE_UNQUOTED(MESH_STORAGEDIR, "${storagedir}/mesh",
 			[Directory for the mesh daemon storage files])
+AC_SUBST(MESH_STORAGEDIR, "${storagedir}/mesh")
 
 AC_ARG_ENABLE(android, AC_HELP_STRING([--enable-android],
 			[enable BlueZ for Android]),
@@ -405,4 +416,4 @@ fi
 AC_DEFINE_UNQUOTED(ANDROID_STORAGEDIR, "${storagedir}/android",
 			[Directory for the Android daemon storage files])
 
-AC_OUTPUT(Makefile src/bluetoothd.8 lib/bluez.pc)
+AC_OUTPUT(Makefile src/bluetoothd.rst lib/bluez.pc mesh/bluetooth-meshd.rst)
