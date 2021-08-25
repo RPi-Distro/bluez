@@ -1,3 +1,9 @@
+bluez (5.61-1) UNRELEASED; urgency=medium
+
+  * Update to 5.61.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 25 Aug 2021 17:33:39 +0900
+
 bluez (5.60-1~exp0) experimental; urgency=medium
 
   * Update to 5.60.
