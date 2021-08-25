@@ -53,6 +53,8 @@
 #define BTSNOOP_OPCODE_CTRL_CLOSE	15
 #define BTSNOOP_OPCODE_CTRL_COMMAND	16
 #define BTSNOOP_OPCODE_CTRL_EVENT	17
+#define BTSNOOP_OPCODE_ISO_TX_PKT	18
+#define BTSNOOP_OPCODE_ISO_RX_PKT	19
 
 #define BTSNOOP_MAX_PACKET_SIZE		(1486 + 4)
 
@@ -99,7 +101,8 @@ struct btsnoop_opcode_user_logging {
 struct btsnoop;
 
 struct btsnoop *btsnoop_open(const char *path, unsigned long flags);
-struct btsnoop *btsnoop_create(const char *path, uint32_t format);
+struct btsnoop *btsnoop_create(const char *path, size_t max_size,
+				unsigned int max_count, uint32_t format);
 
 struct btsnoop *btsnoop_ref(struct btsnoop *btsnoop);
 void btsnoop_unref(struct btsnoop *btsnoop);

@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <inttypes.h>
 
@@ -200,6 +201,65 @@ static void read_version_rsp(const void *data, uint8_t size)
 	print_field("Firmware build: %u-%u.%u", fw_build_nn,
 					fw_build_cw, 2000 + fw_build_yy);
 	print_field("Firmware patch: %u", fw_patch);
+}
+
+static void set_uart_baudrate_cmd(const void *data, uint8_t size)
+{
+	uint8_t baudrate = get_u8(data);
+	const char *str;
+
+	switch (baudrate) {
+	case 0x00:
+		str = "9600 Baud";
+		break;
+	case 0x01:
+		str = "19200 Baud";
+		break;
+	case 0x02:
+		str = "38400 Baud";
+		break;
+	case 0x03:
+		str = "57600 Baud";
+		break;
+	case 0x04:
+		str = "115200 Baud";
+		break;
+	case 0x05:
+		str = "230400 Baud";
+		break;
+	case 0x06:
+		str = "460800 Baud";
+		break;
+	case 0x07:
+		str = "921600 Baud";
+		break;
+	case 0x08:
+		str = "1843200 Baud";
+		break;
+	case 0x09:
+		str = "3250000 baud";
+		break;
+	case 0x0a:
+		str = "2000000 baud";
+		break;
+	case 0x0b:
+		str = "3000000 baud";
+		break;
+	case 0x0c:
+		str = "3714286 baud";
+		break;
+	case 0x0d:
+		str = "4333333 baud";
+		break;
+	case 0x0e:
+		str = "6500000 baud";
+		break;
+	default:
+		str = "Reserved";
+		break;
+	}
+
+	print_field("Baudrate: %s (0x%2.2x)", str, baudrate);
 }
 
 static void secure_send_cmd(const void *data, uint8_t size)
@@ -378,7 +438,7 @@ static void ddc_config_write_cmd(const void *data, uint8_t size)
 		uint16_t param_id = get_le16(data + 1);
 
 		print_field("Identifier: 0x%4.4x", param_id);
-		packet_hexdump(data + 2, param_len - 2);
+		packet_hexdump(data + 3, param_len - 2);
 
 		data += param_len + 1;
 		size -= param_len + 1;
@@ -432,7 +492,9 @@ static const struct vendor_ocf vendor_ocf_table[] = {
 	{ 0x005, "Read Version",
 			null_cmd, 0, true,
 			read_version_rsp, 10, true },
-	{ 0x006, "Set UART Baudrate" },
+	{ 0x006, "Set UART Baudrate",
+			set_uart_baudrate_cmd, 1, true,
+			status_rsp, 1, true },
 	{ 0x007, "Enable LPM" },
 	{ 0x008, "PCM Write Configuration" },
 	{ 0x009, "Secure Send",

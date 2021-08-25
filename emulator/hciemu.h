@@ -31,6 +31,8 @@ enum hciemu_type {
 	HCIEMU_TYPE_BREDR,
 	HCIEMU_TYPE_LE,
 	HCIEMU_TYPE_LEGACY,
+	HCIEMU_TYPE_BREDRLE50,
+	HCIEMU_TYPE_BREDRLE52,
 };
 
 enum hciemu_hook_type {
@@ -56,6 +58,9 @@ const uint8_t *hciemu_get_client_bdaddr(struct hciemu *hciemu);
 uint8_t hciemu_get_master_scan_enable(struct hciemu *hciemu);
 
 uint8_t hciemu_get_master_le_scan_enable(struct hciemu *hciemu);
+
+void hciemu_set_master_le_states(struct hciemu *hciemu,
+						const uint8_t *le_states);
 
 typedef void (*hciemu_command_func_t)(uint16_t opcode, const void *data,
 						uint8_t len, void *user_data);

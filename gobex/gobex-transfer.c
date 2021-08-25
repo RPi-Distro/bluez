@@ -100,6 +100,11 @@ static void transfer_complete(struct transfer *transfer, GError *err)
 
 	g_obex_debug(G_OBEX_DEBUG_TRANSFER, "transfer %u", id);
 
+	if (err) {
+		/* No further tx must be performed */
+		g_obex_drop_tx_queue(transfer->obex);
+	}
+
 	transfer->complete_func(transfer->obex, err, transfer->user_data);
 	/* Check if the complete_func removed the transfer */
 	if (find_transfer(id) == NULL)
@@ -296,7 +301,7 @@ guint g_obex_put_req_pkt(GObex *obex, GObexPacket *req,
 
 guint g_obex_put_req(GObex *obex, GObexDataProducer data_func,
 			GObexFunc complete_func, gpointer user_data,
-			GError **err, guint8 first_hdr_id, ...)
+			GError **err, guint first_hdr_id, ...)
 {
 	GObexPacket *req;
 	va_list args;
@@ -414,7 +419,7 @@ done:
 guint g_obex_put_rsp(GObex *obex, GObexPacket *req,
 			GObexDataConsumer data_func, GObexFunc complete_func,
 			gpointer user_data, GError **err,
-			guint8 first_hdr_id, ...)
+			guint first_hdr_id, ...)
 {
 	struct transfer *transfer;
 	va_list args;
@@ -471,7 +476,7 @@ guint g_obex_get_req_pkt(GObex *obex, GObexPacket *req,
 
 guint g_obex_get_req(GObex *obex, GObexDataConsumer data_func,
 			GObexFunc complete_func, gpointer user_data,
-			GError **err, guint8 first_hdr_id, ...)
+			GError **err, guint first_hdr_id, ...)
 {
 	struct transfer *transfer;
 	GObexPacket *req;
@@ -617,7 +622,7 @@ guint g_obex_get_rsp_pkt(GObex *obex, GObexPacket *rsp,
 
 guint g_obex_get_rsp(GObex *obex, GObexDataProducer data_func,
 			GObexFunc complete_func, gpointer user_data,
-			GError **err, guint8 first_hdr_id, ...)
+			GError **err, guint first_hdr_id, ...)
 {
 	GObexPacket *rsp;
 	va_list args;

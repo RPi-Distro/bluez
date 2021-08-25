@@ -33,6 +33,7 @@ struct btd_device *device_create_from_storage(struct btd_adapter *adapter,
 char *btd_device_get_storage_path(struct btd_device *device,
 				const char *filename);
 
+
 void btd_device_device_set_name(struct btd_device *device, const char *name);
 void device_store_cached_name(struct btd_device *dev, const char *name);
 void device_get_name(struct btd_device *device, char *name, size_t len);
@@ -49,6 +50,7 @@ uint16_t btd_device_get_vendor(struct btd_device *device);
 uint16_t btd_device_get_vendor_src(struct btd_device *device);
 uint16_t btd_device_get_product(struct btd_device *device);
 uint16_t btd_device_get_version(struct btd_device *device);
+void device_remove_bonding(struct btd_device *device, uint8_t bdaddr_type);
 void device_remove(struct btd_device *device, gboolean remove_stored);
 int device_address_cmp(gconstpointer a, gconstpointer b);
 int device_bdaddr_cmp(gconstpointer a, gconstpointer b);
@@ -62,6 +64,9 @@ struct device_addr_type {
 int device_addr_type_cmp(gconstpointer a, gconstpointer b);
 GSList *btd_device_get_uuids(struct btd_device *device);
 void device_probe_profiles(struct btd_device *device, GSList *profiles);
+
+void btd_device_set_record(struct btd_device *device, const char *uuid,
+							const char *record);
 const sdp_record_t *btd_device_get_record(struct btd_device *device,
 						const char *uuid);
 struct gatt_primary *btd_device_get_primary(struct btd_device *device,
@@ -76,14 +81,20 @@ void btd_device_gatt_set_service_changed(struct btd_device *device,
 bool device_attach_att(struct btd_device *dev, GIOChannel *io);
 void btd_device_add_uuid(struct btd_device *device, const char *uuid);
 void device_add_eir_uuids(struct btd_device *dev, GSList *uuids);
-void device_set_manufacturer_data(struct btd_device *dev, GSList *list);
-void device_set_service_data(struct btd_device *dev, GSList *list);
+void device_set_manufacturer_data(struct btd_device *dev, GSList *list,
+							bool duplicate);
+void device_set_service_data(struct btd_device *dev, GSList *list,
+							bool duplicate);
+void device_set_data(struct btd_device *dev, GSList *list,
+							bool duplicate);
 void device_probe_profile(gpointer a, gpointer b);
 void device_remove_profile(gpointer a, gpointer b);
 struct btd_adapter *device_get_adapter(struct btd_device *device);
 const bdaddr_t *device_get_address(struct btd_device *device);
+uint8_t device_get_le_address_type(struct btd_device *device);
 const char *device_get_path(const struct btd_device *device);
 gboolean device_is_temporary(struct btd_device *device);
+bool device_is_connectable(struct btd_device *device);
 bool device_is_paired(struct btd_device *device, uint8_t bdaddr_type);
 bool device_is_bonded(struct btd_device *device, uint8_t bdaddr_type);
 gboolean device_is_trusted(struct btd_device *device);
@@ -124,6 +135,18 @@ void device_add_connection(struct btd_device *dev, uint8_t bdaddr_type);
 void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type);
 void device_request_disconnect(struct btd_device *device, DBusMessage *msg);
 bool device_is_disconnecting(struct btd_device *device);
+void device_set_ltk_enc_size(struct btd_device *device, uint8_t enc_size);
+
+void device_store_svc_chng_ccc(struct btd_device *device, uint8_t bdaddr_type,
+								uint16_t value);
+void device_load_svc_chng_ccc(struct btd_device *device, uint16_t *ccc_le,
+							uint16_t *ccc_bredr);
+void device_set_wake_support(struct btd_device *device, bool wake_support);
+void device_set_wake_override(struct btd_device *device, bool wake_override);
+void device_set_wake_allowed(struct btd_device *device, bool wake_allowed,
+			     guint32 id);
+void device_set_wake_allowed_complete(struct btd_device *device);
+void device_set_refresh_discovery(struct btd_device *dev, bool refresh);
 
 typedef void (*disconnect_watch) (struct btd_device *device, gboolean removal,
 					void *user_data);
@@ -160,6 +183,10 @@ struct btd_service *btd_device_get_service(struct btd_device *dev,
 
 int device_discover_services(struct btd_device *device);
 int btd_device_connect_services(struct btd_device *dev, GSList *services);
+
+uint32_t btd_device_get_current_flags(struct btd_device *dev);
+void btd_device_flags_changed(struct btd_device *dev, uint32_t supported_flags,
+			      uint32_t current_flags);
 
 void btd_device_init(void);
 void btd_device_cleanup(void);

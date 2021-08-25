@@ -20,6 +20,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -278,7 +279,7 @@ static int gap_accept(struct btd_service *service)
 	}
 
 	gas->db = gatt_db_ref(db);
-	gas->client = bt_gatt_client_ref(client);
+	gas->client = bt_gatt_client_clone(client);
 
 	/* Handle the GAP services */
 	bt_uuid16_create(&gap_uuid, GAP_UUID16);

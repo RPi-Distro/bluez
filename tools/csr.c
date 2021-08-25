@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -567,7 +568,7 @@ char *csr_buildidtostr(uint16_t id)
 		if (csr_map[i].id == id)
 			return csr_map[i].str;
 
-	snprintf(str, 11, "Build %d", id);
+	snprintf(str, sizeof(str), "Build %d", id);
 	return str;
 }
 

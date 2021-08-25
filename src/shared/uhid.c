@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -215,6 +216,15 @@ bool bt_uhid_unregister(struct bt_uhid *uhid, unsigned int id)
 		return false;
 
 	free(notify);
+	return true;
+}
+
+bool bt_uhid_unregister_all(struct bt_uhid *uhid)
+{
+	if (!uhid)
+		return false;
+
+	queue_remove_all(uhid->notify_list, NULL, NULL, free);
 	return true;
 }
 

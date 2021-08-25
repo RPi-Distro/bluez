@@ -20,9 +20,10 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <fcntl.h>
@@ -242,7 +243,8 @@ static void parse_line(char *line_read)
 		return;
 	}
 
-	add_history(line_read);
+	if (history_search(line_read, -1))
+		add_history(line_read);
 
 	g_shell_parse_argv(line_read, &argcp, &argvp, NULL);
 

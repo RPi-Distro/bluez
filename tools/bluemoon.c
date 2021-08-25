@@ -621,6 +621,7 @@ static const struct {
 	{ 0x0a, "iBT 2.1 (AG620)"	},
 	{ 0x0b, "iBT 3.0 (LnP)"		},
 	{ 0x0c, "iBT 3.0 (WsP)"		},
+	{ 0x12, "iBT 3.5 (ThP)"		},
 	{ }
 };
 
@@ -922,7 +923,6 @@ int main(int argc, char *argv[])
 {
 	const char *str;
 	bool use_raw = false;
-	sigset_t mask;
 	int exit_status;
 
 	for (;;) {
@@ -999,12 +999,6 @@ int main(int argc, char *argv[])
 
 	mainloop_init();
 
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
-
 	printf("Bluemoon configuration utility ver %s\n", VERSION);
 
 	if (check_firmware) {
@@ -1029,7 +1023,7 @@ int main(int argc, char *argv[])
 	bt_hci_send(hci_dev, CMD_READ_VERSION, NULL, 0,
 					read_version_complete, NULL, NULL);
 
-	exit_status = mainloop_run();
+	exit_status = mainloop_run_with_signal(signal_callback, NULL);
 
 	bt_hci_unref(hci_dev);
 

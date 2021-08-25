@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,7 +52,7 @@
 #define WAIT_ANY (-1)
 #endif
 
-#define CMDLINE_MAX 2048
+#define CMDLINE_MAX (2048 * 10)
 
 static const char *own_binary;
 static char **test_argv;
@@ -232,7 +233,7 @@ static void check_virtualization(void)
 
 static void start_qemu(void)
 {
-	char cwd[PATH_MAX], initcmd[PATH_MAX], testargs[PATH_MAX];
+	char cwd[PATH_MAX/2], initcmd[PATH_MAX], testargs[PATH_MAX];
 	char cmdline[CMDLINE_MAX];
 	char **argv;
 	int i, pos;
@@ -418,6 +419,10 @@ static void create_dbus_system_conf(void)
 	fputs("</busconfig>\n", fp);
 
 	fclose(fp);
+
+	if (symlink("/etc/dbus-1/system.conf",
+				"/usr/share/dbus-1/system.conf") < 0)
+		perror("Failed to create system.conf symlink");
 
 	mkdir("/run/dbus", 0755);
 }

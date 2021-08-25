@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -55,6 +56,7 @@
 
 #define DUN_DEFAULT_CHANNEL	1
 #define SPP_DEFAULT_CHANNEL	3
+#define HSP_HS_DEFAULT_CHANNEL	6
 #define HFP_HF_DEFAULT_CHANNEL	7
 #define OPP_DEFAULT_CHANNEL	9
 #define FTP_DEFAULT_CHANNEL	10
@@ -151,6 +153,49 @@
 		</attribute>						\
 		<attribute id=\"0x0301\" >				\
 			<uint8 value=\"0x01\" />			\
+		</attribute>						\
+	</record>"
+
+/* SDP record for Headset role of HSP 1.2 profile with Erratum 3507 */
+#define HSP_HS_RECORD							\
+	"<?xml version=\"1.0\" encoding=\"UTF-8\" ?>			\
+	<record>							\
+		<attribute id=\"0x0001\">				\
+			<sequence>					\
+				<uuid value=\"0x1108\" />		\
+				<uuid value=\"0x1131\" />		\
+				<uuid value=\"0x1203\" />		\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0004\">				\
+			<sequence>					\
+				<sequence>				\
+					<uuid value=\"0x0100\" />	\
+				</sequence>				\
+				<sequence>				\
+					<uuid value=\"0x0003\" />	\
+					<uint8 value=\"0x%02x\" />	\
+				</sequence>				\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0005\">				\
+			<sequence>					\
+				<uuid value=\"0x1002\" />		\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0009\">				\
+			<sequence>					\
+				<sequence>				\
+					<uuid value=\"0x1108\" />	\
+					<uint16 value=\"0x%04x\" />	\
+				</sequence>				\
+			</sequence>					\
+		</attribute>						\
+		<attribute id=\"0x0100\">				\
+			<text value=\"%s\" />				\
+		</attribute>						\
+		<attribute id=\"0x0302\">				\
+			<boolean value=\"%s\" />			\
 		</attribute>						\
 	</record>"
 
@@ -919,13 +964,26 @@ static void append_prop(gpointer a, gpointer b)
 	dbus_message_iter_close_container(dict, &entry);
 }
 
-static uint16_t get_supported_features(const sdp_record_t *rec)
+static int get_supported_features(const sdp_record_t *rec, const char *uuid)
 {
 	sdp_data_t *data;
 
+	if (strcasecmp(uuid, HSP_AG_UUID) == 0) {
+		/* HSP AG role does not provide any features */
+		return -ENOENT;
+	} else if (strcasecmp(uuid, HSP_HS_UUID) == 0) {
+		/* HSP HS role provides Remote Audio Volume Control */
+		data = sdp_data_get(rec, SDP_ATTR_REMOTE_AUDIO_VOLUME_CONTROL);
+		if (!data || data->dtd != SDP_BOOL)
+			return -ENOENT;
+		else
+			return data->val.int8 ? 0x1 : 0x0;
+	}
+
 	data = sdp_data_get(rec, SDP_ATTR_SUPPORTED_FEATURES);
-	if (!data || data->dtd != SDP_UINT16)
-		return 0;
+	if (!data || data->dtd != SDP_UINT16) {
+		return -ENOENT;
+	}
 
 	return data->val.uint16;
 }
@@ -958,7 +1016,8 @@ static bool send_new_connection(struct ext_profile *ext, struct ext_io *conn)
 	const char *remote_uuid = ext->remote_uuid;
 	const sdp_record_t *rec;
 	const char *path;
-	int fd;
+	int fd, features;
+	bool has_features = false;
 
 	msg = dbus_message_new_method_call(ext->owner, ext->path,
 							"org.bluez.Profile1",
@@ -971,7 +1030,11 @@ static bool send_new_connection(struct ext_profile *ext, struct ext_io *conn)
 	if (remote_uuid) {
 		rec = btd_device_get_record(conn->device, remote_uuid);
 		if (rec) {
-			conn->features = get_supported_features(rec);
+			features = get_supported_features(rec, remote_uuid);
+			if (features >= 0) {
+				conn->features = features;
+				has_features = true;
+			}
 			conn->version = get_profile_version(rec);
 		}
 	}
@@ -990,7 +1053,7 @@ static bool send_new_connection(struct ext_profile *ext, struct ext_io *conn)
 		dict_append_entry(&dict, "Version", DBUS_TYPE_UINT16,
 							&conn->version);
 
-	if (conn->features)
+	if (has_features)
 		dict_append_entry(&dict, "Features", DBUS_TYPE_UINT16,
 							&conn->features);
 
@@ -1022,12 +1085,13 @@ static void ext_connect(GIOChannel *io, GError *err, gpointer user_data)
 	if (!bt_io_get(io, &io_err,
 				BT_IO_OPT_DEST, addr,
 				BT_IO_OPT_INVALID)) {
-		error("Unable to get connect data for %s: %s", ext->name,
-							io_err->message);
 		if (err) {
+			error("%s failed %s", ext->name, err->message);
 			g_error_free(io_err);
 			io_err = NULL;
 		} else {
+			error("Unable to get connect data for %s: %s",
+				ext->name, io_err->message);
 			err = io_err;
 		}
 		goto drop;
@@ -1588,9 +1652,6 @@ static void record_cb(sdp_list_t *recs, int err, gpointer user_data)
 		if (conn->psm == 0 && sdp_get_proto_desc(protos, OBEX_UUID))
 			conn->psm = get_goep_l2cap_psm(rec);
 
-		conn->features = get_supported_features(rec);
-		conn->version = get_profile_version(rec);
-
 		sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free,
 									NULL);
 		sdp_list_free(protos, NULL);
@@ -1758,6 +1819,15 @@ static char *get_hfp_ag_record(struct ext_profile *ext, struct ext_io *l2cap,
 {
 	return g_strdup_printf(HFP_AG_RECORD, rfcomm->chan, ext->version,
 						ext->name, ext->features);
+}
+
+static char *get_hsp_hs_record(struct ext_profile *ext, struct ext_io *l2cap,
+							struct ext_io *rfcomm)
+{
+	/* HSP 1.2: By default Remote Audio Volume Control is off */
+	return g_strdup_printf(HSP_HS_RECORD, rfcomm->chan, ext->version,
+				ext->name, (ext->features & 0x1) ? "true" :
+				"false");
 }
 
 static char *get_hsp_ag_record(struct ext_profile *ext, struct ext_io *l2cap,
@@ -1971,7 +2041,17 @@ static struct default_settings {
 		.authorize	= true,
 		.auto_connect	= true,
 		.get_record	= get_hfp_hf_record,
-		.version	= 0x0105,
+		.version	= 0x0107,
+	}, {
+		.uuid		= HSP_HS_UUID,
+		.name		= "Headset unit",
+		.priority	= BTD_PROFILE_PRIORITY_HIGH,
+		.remote_uuid	= HSP_AG_UUID,
+		.channel	= HSP_HS_DEFAULT_CHANNEL,
+		.authorize	= true,
+		.auto_connect	= true,
+		.get_record	= get_hsp_hs_record,
+		.version	= 0x0102,
 	}, {
 		.uuid		= HFP_AG_UUID,
 		.name		= "Hands-Free Voice gateway",
@@ -1981,7 +2061,9 @@ static struct default_settings {
 		.authorize	= true,
 		.auto_connect	= true,
 		.get_record	= get_hfp_ag_record,
-		.version	= 0x0105,
+		.version	= 0x0107,
+		/* HFP 1.7.2: By default features bitfield is 0b001001 */
+		.features	= 0x09,
 	}, {
 		.uuid		= HSP_AG_UUID,
 		.name		= "Headset Voice gateway",

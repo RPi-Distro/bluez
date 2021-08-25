@@ -56,6 +56,7 @@ typedef enum {
 	BT_IO_OPT_FLUSHABLE,
 	BT_IO_OPT_PRIORITY,
 	BT_IO_OPT_VOICE,
+	BT_IO_OPT_PHY,
 } BtIOOption;
 
 typedef enum {
@@ -67,10 +68,10 @@ typedef enum {
 
 typedef enum {
 	BT_IO_MODE_BASIC = 0,
-	BT_IO_MODE_RETRANS,
-	BT_IO_MODE_FLOWCTL,
 	BT_IO_MODE_ERTM,
-	BT_IO_MODE_STREAMING
+	BT_IO_MODE_STREAMING,
+	BT_IO_MODE_LE_FLOWCTL,
+	BT_IO_MODE_EXT_FLOWCTL
 } BtIOMode;
 
 typedef void (*BtIOConfirm)(GIOChannel *io, gpointer user_data);

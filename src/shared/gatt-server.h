@@ -26,7 +26,10 @@
 struct bt_gatt_server;
 
 struct bt_gatt_server *bt_gatt_server_new(struct gatt_db *db,
-					struct bt_att *att, uint16_t mtu);
+					struct bt_att *att, uint16_t mtu,
+					uint8_t min_enc_size);
+uint16_t bt_gatt_server_get_mtu(struct bt_gatt_server *server);
+struct bt_att *bt_gatt_server_get_att(struct bt_gatt_server *server);
 
 struct bt_gatt_server *bt_gatt_server_ref(struct bt_gatt_server *server);
 void bt_gatt_server_unref(struct bt_gatt_server *server);
@@ -40,9 +43,16 @@ bool bt_gatt_server_set_debug(struct bt_gatt_server *server,
 					void *user_data,
 					bt_gatt_server_destroy_func_t destroy);
 
+typedef uint8_t (*bt_gatt_server_authorize_cb_t)(struct bt_att *att,
+					uint8_t opcode, uint16_t handle,
+					void *user_data);
+bool bt_gatt_server_set_authorize(struct bt_gatt_server *server,
+					bt_gatt_server_authorize_cb_t cb,
+					void *user_data);
+
 bool bt_gatt_server_send_notification(struct bt_gatt_server *server,
 					uint16_t handle, const uint8_t *value,
-					uint16_t length);
+					uint16_t length, bool multiple);
 
 bool bt_gatt_server_send_indication(struct bt_gatt_server *server,
 					uint16_t handle, const uint8_t *value,

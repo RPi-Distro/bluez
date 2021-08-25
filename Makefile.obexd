@@ -1,13 +1,14 @@
-
 if SYSTEMD
-systemduserunitdir = @SYSTEMD_USERUNITDIR@
+systemduserunitdir = $(SYSTEMD_USERUNITDIR)
 systemduserunit_DATA = obexd/src/obex.service
 
-dbussessionbusdir = @DBUS_SESSIONBUSDIR@
+dbussessionbusdir = $(DBUS_SESSIONBUSDIR)
 dbussessionbus_DATA = obexd/src/org.bluez.obex.service
 endif
 
 EXTRA_DIST += obexd/src/obex.service.in obexd/src/org.bluez.obex.service
+
+if OBEX
 
 obex_plugindir = $(libdir)/obex/plugins
 
@@ -32,7 +33,6 @@ obexd_builtin_sources += obexd/plugins/opp.c
 obexd_builtin_modules += ftp
 obexd_builtin_sources += obexd/plugins/ftp.c obexd/plugins/ftp.h
 
-if OBEX
 obexd_builtin_modules += irmc
 obexd_builtin_sources += obexd/plugins/irmc.c
 
@@ -41,7 +41,6 @@ obexd_builtin_sources += obexd/plugins/pbap.c \
 				obexd/plugins/vcard.h obexd/plugins/vcard.c \
 				obexd/plugins/phonebook.h \
 				obexd/plugins/phonebook-dummy.c
-endif
 
 obexd_builtin_modules += mas
 obexd_builtin_sources += obexd/plugins/mas.c obexd/src/map_ap.h \
@@ -52,7 +51,7 @@ obexd_builtin_modules += mns
 obexd_builtin_sources += obexd/client/mns.c obexd/src/map_ap.h \
 				obexd/client/map-event.h
 
-libexec_PROGRAMS += obexd/src/obexd
+pkglibexec_PROGRAMS += obexd/src/obexd
 
 obexd_src_obexd_SOURCES = $(btio_sources) $(gobex_sources) \
 			$(obexd_builtin_sources) \
@@ -76,21 +75,23 @@ obexd_src_obexd_SOURCES = $(btio_sources) $(gobex_sources) \
 			obexd/client/map-event.h obexd/client/map-event.c \
 			obexd/client/transfer.h obexd/client/transfer.c \
 			obexd/client/transport.h obexd/client/transport.c \
-			obexd/client/dbus.h obexd/client/dbus.c \
 			obexd/client/driver.h obexd/client/driver.c \
 			obexd/src/map_ap.h
 obexd_src_obexd_LDADD = lib/libbluetooth-internal.la \
 			gdbus/libgdbus-internal.la \
-			@ICAL_LIBS@ @DBUS_LIBS@ @GLIB_LIBS@ -ldl
+			$(ICAL_LIBS) $(DBUS_LIBS) $(GLIB_LIBS) -ldl
 
-obexd_src_obexd_LDFLAGS = -Wl,--export-dynamic
+obexd_src_obexd_LDFLAGS = $(AM_LDFLAGS) -Wl,--export-dynamic
 
-obexd_src_obexd_CFLAGS = $(AM_CFLAGS) @GLIB_CFLAGS@ @DBUS_CFLAGS@ \
-				@ICAL_CFLAGS@ -DOBEX_PLUGIN_BUILTIN \
+obexd_src_obexd_CPPFLAGS = $(AM_CPPFLAGS) $(GLIB_CFLAGS) $(DBUS_CFLAGS) \
+				$(ICAL_CFLAGS) -DOBEX_PLUGIN_BUILTIN \
 				-DPLUGINDIR=\""$(obex_plugindir)"\" \
-				-fPIC -D_FILE_OFFSET_BITS=64
+				-D_FILE_OFFSET_BITS=64 \
+				-I$(builddir)/lib -I$(builddir)/obexd/src
 
-obexd_src_obexd_CPPFLAGS = -I$(builddir)/lib -I$(builddir)/obexd/src
+obexd_src_obexd_CFLAGS = $(AM_CFLAGS) -fPIC
+
+endif
 
 obexd_src_obexd_SHORTNAME = obexd
 
@@ -103,6 +104,7 @@ BUILT_SOURCES += obexd/src/builtin.h
 obexd/src/plugin.$(OBJEXT): obexd/src/builtin.h
 
 obexd/src/builtin.h: obexd/src/genbuiltin $(obexd_builtin_sources)
+	$(AM_V_at)$(MKDIR_P) $(dir $@)
 	$(AM_V_GEN)$(srcdir)/obexd/src/genbuiltin $(obexd_builtin_modules) > $@
 
 CLEANFILES += obexd/src/builtin.h $(builtin_files) obexd/src/obex.service

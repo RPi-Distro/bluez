@@ -24,8 +24,16 @@ All files are in ini-file format.
 Storage directory structure
 ===========================
 
-There is one directory per adapter, named by its Bluetooth address, which
-contains:
+The storage root directory contains an optional addresses file that's
+used for managing adapters that come without a pre-allocated address.
+The format of the addresses file is:
+
+	[Static]
+	<manufacturer id> = <array of addresses>
+
+Each adapter with an assigned address has its own subdirectory under the
+root, named based on the address, which contains:
+
  - a settings file for the local adapter
  - an attributes file containing attributes of supported LE services
  - a cache directory containing:
@@ -151,7 +159,7 @@ Cache directory file format
 ============================
 
 Each file, named by remote device address, may includes multiple groups
-(General, ServiceRecords, Attributes).
+(General, ServiceRecords, Attributes, Endpoints).
 
 In ServiceRecords, SDP records are stored using their handle as key
 (hexadecimal format).
@@ -159,6 +167,11 @@ In ServiceRecords, SDP records are stored using their handle as key
 In "Attributes" group GATT database is stored using attribute handle as key
 (hexadecimal format). Value associated with this handle is serialized form of
 all data required to re-create given attribute. ":" is used to separate fields.
+
+In "Endpoints" group A2DP remote endpoints are stored using the seid as key
+(hexadecimal format) and ":" is used to separate fields. It may also contain
+an entry which key is set to "LastUsed" which represented the last endpoint
+used.
 
 [General] group contains:
 
@@ -203,6 +216,16 @@ Sample Attributes section:
   002b=2803:002c:02:00002a38-0000-1000-8000-00805f9b34fb
   002d=2803:002e:08:00002a39-0000-1000-8000-00805f9b34fb
 
+[Endpoints] group contains:
+
+	<xx>:<xx>:<xx>::<xx...> String	First field is the endpoint type,
+					followed by codec type and delay
+					reporting and its
+					capabilities as hexadecimal encoded
+					string.
+	LastUsed:<xx>:<xx>	String	LastUsed has two fields which are the
+					local and remote seids as hexadecimal
+					encoded string.
 
 Info file format
 ================
@@ -294,3 +317,11 @@ Long term key) related to a remote device.
   Counter		Integer		Signing counter
 
   Authenticated		Boolean		True if the key is authenticated
+
+[ServiceChanged]
+
+  This section holds information related to Service Changed characteristic
+  of GATT core service.
+
+  CCC_LE		Integer		CCC value for LE transport
+  CCC_BR/EDR		Integer		CCC value for BR/EDR transport

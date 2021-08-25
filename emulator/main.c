@@ -56,10 +56,12 @@ static void usage(void)
 	printf("options:\n"
 		"\t-S                    Create local serial port\n"
 		"\t-s                    Create local server sockets\n"
-		"\t-l [num]              Number of local controllers\n"
+		"\t-l[num]               Number of local controllers\n"
 		"\t-L                    Create LE only controller\n"
+		"\t-U[num]               Number of test LE controllers\n"
 		"\t-B                    Create BR/EDR only controller\n"
 		"\t-A                    Create AMP controller\n"
+		"\t-T[num]               Number of test AMP controllers\n"
 		"\t-h, --help            Show help options\n");
 }
 
@@ -90,7 +92,6 @@ int main(int argc, char *argv[])
 	int amptest_count = 0;
 	int vhci_count = 0;
 	enum vhci_type vhci_type = VHCI_TYPE_BREDRLE;
-	sigset_t mask;
 	int i;
 
 	mainloop_init();
@@ -98,7 +99,7 @@ int main(int argc, char *argv[])
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "Ssl::LBAUTvh",
+		opt = getopt_long(argc, argv, "Ssl::LBAU::T::vh",
 						main_options, NULL);
 		if (opt < 0)
 			break;
@@ -153,12 +154,6 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "No emulator specified\n");
 		return EXIT_FAILURE;
 	}
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
 
 	printf("Bluetooth emulator ver %s\n", VERSION);
 
@@ -227,5 +222,5 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "Failed to open monitor server\n");
 	}
 
-	return mainloop_run();
+	return mainloop_run_with_signal(signal_callback, NULL);
 }

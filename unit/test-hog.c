@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <unistd.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -32,8 +33,14 @@
 
 #include <glib.h>
 
+#include "lib/bluetooth.h"
+#include "lib/uuid.h"
+
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
+#include "src/shared/queue.h"
+#include "src/shared/att.h"
+#include "src/shared/gatt-db.h"
 
 #include "attrib/gattrib.h"
 
@@ -62,11 +69,11 @@ struct context {
 
 #define data(args...) ((const unsigned char[]) { args })
 
-#define raw_pdu(args...)    \
-{      \
-	.valid = true,		\
-	.data = data(args), \
-	.size = sizeof(data(args)),\
+#define raw_pdu(args...)					\
+{								\
+	.valid = true,						\
+	.data = g_memdup(data(args), sizeof(data(args))),	\
+	.size = sizeof(data(args)),				\
 }
 
 #define false_pdu()	\

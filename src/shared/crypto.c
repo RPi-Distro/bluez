@@ -75,6 +75,8 @@ struct af_alg_iv {
 /* Maximum message length that can be passed to aes_cmac */
 #define CMAC_MSG_MAX	80
 
+#define ATT_SIGN_LEN	12
+
 struct bt_crypto {
 	int ref_count;
 	int ecb_aes;
@@ -193,7 +195,7 @@ void bt_crypto_unref(struct bt_crypto *crypto)
 }
 
 bool bt_crypto_random_bytes(struct bt_crypto *crypto,
-					uint8_t *buf, uint8_t num_bytes)
+					void *buf, uint8_t num_bytes)
 {
 	ssize_t len;
 
@@ -265,7 +267,8 @@ static inline void swap_buf(const uint8_t *src, uint8_t *dst, uint16_t len)
 
 bool bt_crypto_sign_att(struct bt_crypto *crypto, const uint8_t key[16],
 				const uint8_t *m, uint16_t m_len,
-				uint32_t sign_cnt, uint8_t signature[12])
+				uint32_t sign_cnt,
+				uint8_t signature[ATT_SIGN_LEN])
 {
 	int fd;
 	int len;
@@ -319,10 +322,31 @@ bool bt_crypto_sign_att(struct bt_crypto *crypto, const uint8_t key[16],
 	 * 12 octets
 	 */
 	swap_buf(out, tmp, 16);
-	memcpy(signature, tmp + 4, 12);
+	memcpy(signature, tmp + 4, ATT_SIGN_LEN);
 
 	return true;
 }
+
+bool bt_crypto_verify_att_sign(struct bt_crypto *crypto, const uint8_t key[16],
+				const uint8_t *pdu, uint16_t pdu_len)
+{
+	uint8_t generated_sign[ATT_SIGN_LEN];
+	const uint8_t *sign;
+	uint32_t sign_cnt;
+
+	if (pdu_len < ATT_SIGN_LEN)
+		return false;
+
+	sign = pdu + pdu_len - ATT_SIGN_LEN;
+	sign_cnt = get_le32(sign);
+
+	if (!bt_crypto_sign_att(crypto, key, pdu, pdu_len - ATT_SIGN_LEN,
+						sign_cnt, generated_sign))
+		return false;
+
+	return memcmp(generated_sign, sign, ATT_SIGN_LEN) == 0;
+}
+
 /*
  * Security function e
  *
@@ -685,6 +709,37 @@ bool bt_crypto_h6(struct bt_crypto *crypto, const uint8_t w[16],
 {
 	if (!aes_cmac(crypto, w, keyid, 4, res))
 		return false;
+
+	return true;
+}
+
+bool bt_crypto_gatt_hash(struct bt_crypto *crypto, struct iovec *iov,
+				size_t iov_len, uint8_t res[16])
+{
+	const uint8_t key[16] = {};
+	ssize_t len;
+	int fd;
+
+	if (!crypto)
+		return false;
+
+	fd = alg_new(crypto->cmac_aes, key, 16);
+	if (fd < 0)
+		return false;
+
+	len = writev(fd, iov, iov_len);
+	if (len < 0) {
+		close(fd);
+		return false;
+	}
+
+	len = read(fd, res, 16);
+	if (len < 0) {
+		close(fd);
+		return false;
+	}
+
+	close(fd);
 
 	return true;
 }

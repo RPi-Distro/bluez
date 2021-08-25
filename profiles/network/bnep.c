@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
@@ -564,9 +565,7 @@ static uint16_t bnep_setup_decode(int sk, struct bnep_setup_conn_req *req,
 			return BNEP_CONN_INVALID_DST;
 		if (memcmp(&source[4], bt_base, sizeof(bt_base)) != 0)
 			return BNEP_CONN_INVALID_SRC;
-
-		/* Intentional no-break */
-
+		/* fall through */
 	case 4: /* UUID32 */
 		val = get_be32(dest);
 		if (val > 0xffff)

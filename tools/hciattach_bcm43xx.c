@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -228,8 +229,8 @@ static int bcm43xx_set_speed(int fd, struct termios *ti, uint32_t speed)
 static int bcm43xx_load_firmware(int fd, const char *fw)
 {
 	unsigned char cmd[] = { HCI_COMMAND_PKT, 0x2e, 0xfc, 0x00 };
-	struct timespec tm_mode = { 0, 50000 };
-	struct timespec tm_ready = { 0, 2000000 };
+	struct timespec tm_mode = { 0, 50000000 };
+	struct timespec tm_ready = { 0, 200000000 };
 	unsigned char resp[CC_MIN_SIZE];
 	unsigned char tx_buf[1024];
 	int len, fd_fw, n;

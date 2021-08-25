@@ -228,7 +228,7 @@ gboolean g_obex_packet_set_data(GObexPacket *pkt, const void *data, gsize len,
 }
 
 GObexPacket *g_obex_packet_new_valist(guint8 opcode, gboolean final,
-					guint8 first_hdr_id, va_list args)
+					guint first_hdr_id, va_list args)
 {
 	GObexPacket *pkt;
 
@@ -246,7 +246,7 @@ GObexPacket *g_obex_packet_new_valist(guint8 opcode, gboolean final,
 }
 
 GObexPacket *g_obex_packet_new(guint8 opcode, gboolean final,
-						guint8 first_hdr_id, ...)
+						guint first_hdr_id, ...)
 {
 	GObexPacket *pkt;
 	va_list args;
@@ -258,6 +258,11 @@ GObexPacket *g_obex_packet_new(guint8 opcode, gboolean final,
 	va_end(args);
 
 	return pkt;
+}
+
+static void header_free(void *data, void *user_data)
+{
+	g_obex_header_free(data);
 }
 
 void g_obex_packet_free(GObexPacket *pkt)
@@ -273,7 +278,7 @@ void g_obex_packet_free(GObexPacket *pkt)
 		break;
 	}
 
-	g_slist_foreach(pkt->headers, (GFunc) g_obex_header_free, NULL);
+	g_slist_foreach(pkt->headers, header_free, NULL);
 	g_slist_free(pkt->headers);
 	g_free(pkt);
 }

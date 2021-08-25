@@ -26,12 +26,14 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 
 #include "lib/bluetooth.h"
+#include "lib/uuid.h"
 
 #include "src/shared/util.h"
 
@@ -39,16 +41,16 @@
 #include "packet.h"
 #include "display.h"
 #include "l2cap.h"
-#include "uuid.h"
 #include "sdp.h"
 
 #define MAX_TID 16
+#define MAX_CONT_SIZE 17
 
 struct tid_data {
 	bool inuse;
 	uint16_t tid;
 	uint16_t channel;
-	uint8_t cont[17];
+	uint8_t cont[MAX_CONT_SIZE];
 };
 
 static struct tid_data tid_list[MAX_TID];
@@ -115,11 +117,11 @@ static void print_uuid(uint8_t indent, const uint8_t *data, uint32_t size)
 	switch (size) {
 	case 2:
 		print_field("%*c%s (0x%4.4x)", indent, ' ',
-			uuid16_to_str(get_be16(data)), get_be16(data));
+			bt_uuid16_to_str(get_be16(data)), get_be16(data));
 		break;
 	case 4:
 		print_field("%*c%s (0x%8.8x)", indent, ' ',
-			uuid32_to_str(get_be32(data)), get_be32(data));
+			bt_uuid32_to_str(get_be32(data)), get_be32(data));
 		break;
 	case 16:
 		/* BASE_UUID = 00000000-0000-1000-8000-00805F9B34FB */
@@ -134,7 +136,7 @@ static void print_uuid(uint8_t indent, const uint8_t *data, uint32_t size)
 				get_be16(data + 10) == 0x0080 &&
 				get_be32(data + 12) == 0x5F9B34FB)
 			print_field("%*c%s", indent, ' ',
-				uuid32_to_str(get_be32(data)));
+				bt_uuid32_to_str(get_be32(data)));
 		break;
 	default:
 		packet_hexdump(data, size);
@@ -308,6 +310,11 @@ static void decode_data_elements(uint32_t position, uint8_t indent,
 		break;
 	}
 
+	if (elemlen > size) {
+		print_text(COLOR_ERROR, "invalid data element size");
+		return;
+	}
+
 	data += elemlen;
 	size -= elemlen;
 
@@ -410,6 +417,10 @@ static void print_continuation(const uint8_t *data, uint16_t size)
 static void store_continuation(struct tid_data *tid,
 					const uint8_t *data, uint16_t size)
 {
+	if (size > MAX_CONT_SIZE) {
+		print_text(COLOR_ERROR, "invalid continuation size");
+		return;
+	}
 	memcpy(tid->cont, data, size);
 	print_continuation(data, size);
 }
@@ -522,6 +533,24 @@ static uint16_t common_rsp(const struct l2cap_frame *frame,
 	return bytes;
 }
 
+static const char *error_str(uint16_t code)
+{
+	switch (code) {
+	case 0x0001:
+		return "Invalid Version";
+	case 0x0002:
+		return "Invalid Record Handle";
+	case 0x0003:
+		return "Invalid Syntax";
+	case 0x0004:
+		return "Invalid PDU Size";
+	case 0x0005:
+		return "Invalid Continuation State";
+	default:
+		return "Unknown";
+	}
+}
+
 static void error_rsp(const struct l2cap_frame *frame, struct tid_data *tid)
 {
 	uint16_t error;
@@ -536,7 +565,7 @@ static void error_rsp(const struct l2cap_frame *frame, struct tid_data *tid)
 
 	error = get_be16(frame->data);
 
-	print_field("Error code: 0x%2.2x", error);
+	print_field("Error code: %s (0x%4.4x)", error_str(error), error);
 }
 
 static void service_req(const struct l2cap_frame *frame, struct tid_data *tid)
@@ -575,6 +604,10 @@ static void service_rsp(const struct l2cap_frame *frame, struct tid_data *tid)
 	}
 
 	count = get_be16(frame->data + 2);
+	if (count * 4 > frame->size) {
+		print_text(COLOR_ERROR, "invalid record count");
+                return;
+	}
 
 	print_field("Total record count: %d", get_be16(frame->data));
 	print_field("Current record count: %d", count);
@@ -649,6 +682,11 @@ static void search_attr_req(const struct l2cap_frame *frame,
 	attr_bytes = get_bytes(frame->data + search_bytes + 2,
 				frame->size - search_bytes - 2);
 	print_field("Attribute list: [len %d]", attr_bytes);
+
+	if (search_bytes + attr_bytes > frame->size) {
+		print_text(COLOR_ERROR, "invalid attribute list length");
+		return;
+	}
 
 	decode_data_elements(0, 2, frame->data + search_bytes + 2,
 						attr_bytes, NULL);

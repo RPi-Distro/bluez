@@ -1103,10 +1103,12 @@ struct avdtp_remote_sep *avdtp_find_remote_sep(struct avdtp *session,
 			a2dp_vendor_codec_t *vndcodec =
 						(void *) codec_data->data;
 
-			if (btohl(vndcodec->vendor_id) != lsep->vndcodec_vendor)
+			if (A2DP_GET_VENDOR_ID(*vndcodec) !=
+					lsep->vndcodec_vendor)
 				continue;
 
-			if (btohs(vndcodec->codec_id) != lsep->vndcodec_codec)
+			if (A2DP_GET_CODEC_ID(*vndcodec) !=
+					lsep->vndcodec_codec)
 				continue;
 		}
 
@@ -2647,6 +2649,7 @@ static gboolean avdtp_parse_resp(struct avdtp *session,
 		return avdtp_discover_resp(session, buf, size);
 	case AVDTP_GET_ALL_CAPABILITIES:
 		get_all = "ALL_";
+		/* fall through */
 	case AVDTP_GET_CAPABILITIES:
 		DBG("GET_%sCAPABILITIES request succeeded", get_all);
 		if (!avdtp_get_capabilities_resp(session, buf, size))

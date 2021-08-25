@@ -208,6 +208,122 @@ static void test_sign(gconstpointer data)
 	tester_test_passed();
 }
 
+static void test_gatt_hash(gconstpointer data)
+{
+	struct iovec iov[7];
+	const uint8_t m[7][16] = {
+		/* M0 */
+		{ 0x01, 0x00, 0x00, 0x28, 0x00, 0x18, 0x02, 0x00,
+		0x03, 0x28, 0x0A, 0x03, 0x00, 0x00, 0x2A, 0x04 },
+		/* M1 */
+		{ 0x00, 0x03, 0x28, 0x02, 0x05, 0x00, 0x01, 0x2A,
+		0x06, 0x00, 0x00, 0x28, 0x01, 0x18, 0x07, 0x00 },
+		/* M2 */
+		{ 0x03, 0x28, 0x20, 0x08, 0x00, 0x05, 0x2A, 0x09,
+		0x00, 0x02, 0x29, 0x0A, 0x00, 0x03, 0x28, 0x0A },
+		/* M3 */
+		{ 0x0B, 0x00, 0x29, 0x2B, 0x0C, 0x00, 0x03, 0x28,
+		0x02, 0x0D, 0x00, 0x2A, 0x2B, 0x0E, 0x00, 0x00 },
+		/* M4 */
+		{ 0x28, 0x08, 0x18, 0x0F, 0x00, 0x02, 0x28, 0x14,
+		0x00, 0x16, 0x00, 0x0F, 0x18, 0x10, 0x00, 0x03 },
+		/* M5 */
+		{ 0x28, 0xA2, 0x11, 0x00, 0x18, 0x2A, 0x12, 0x00,
+		0x02, 0x29, 0x13, 0x00, 0x00, 0x29, 0x00, 0x00 },
+		/* M6 */
+		{ 0x14, 0x00, 0x01, 0x28, 0x0F, 0x18, 0x15, 0x00,
+		0x03, 0x28, 0x02, 0x16, 0x00, 0x19, 0x2A }
+	};
+	const uint8_t exp[16] = {
+		0xF1, 0xCA, 0x2D, 0x48, 0xEC, 0xF5, 0x8B, 0xAC,
+		0x8A, 0x88, 0x30, 0xBB, 0xB9, 0xFB, 0xA9, 0x90
+	};
+	uint8_t res[16];
+	int i;
+
+	for (i = 0; i < 7; i++) {
+		int len = sizeof(m[i]);
+
+		if (i == 6)
+			len -= 1;
+
+		tester_debug("M%u:", i);
+		util_hexdump(' ', m[i], len, print_debug, NULL);
+		iov[i].iov_base = (void *) m[i];
+		iov[i].iov_len = len;
+	}
+
+	if (!bt_crypto_gatt_hash(crypto, iov, 7, res)) {
+		tester_test_failed();
+		return;
+	}
+
+	tester_debug("Expected:");
+	util_hexdump(' ', exp, 16, print_debug, NULL);
+
+	tester_debug("Result:");
+	util_hexdump(' ', res, 16, print_debug, NULL);
+
+	if (memcmp(res, exp, 16)) {
+		tester_test_failed();
+		return;
+	}
+
+	tester_test_passed();
+}
+
+struct verify_sign_test_data {
+	const uint8_t *msg;
+	uint16_t msg_len;
+	const uint8_t *key;
+	bool match;
+};
+
+static const uint8_t msg_to_verify_pass[] = {
+	0xd2, 0x12, 0x00, 0x13, 0x37, 0x01, 0x00, 0x00, 0x00, 0xF1, 0x87, 0x1E,
+	0x93, 0x3C, 0x90, 0x0F, 0xf2
+};
+
+static const struct verify_sign_test_data verify_sign_pass_data = {
+	.msg = msg_to_verify_pass,
+	.msg_len = sizeof(msg_to_verify_pass),
+	.key = key_5,
+	.match = true,
+};
+
+static const uint8_t msg_to_verify_bad_sign[] = {
+	0xd2, 0x12, 0x00, 0x13, 0x37, 0x01, 0x00, 0x00, 0x00, 0xF1, 0x87, 0x1E,
+	0x93, 0x3C, 0x90, 0x0F, 0xf1
+};
+
+static const struct verify_sign_test_data verify_sign_bad_sign_data = {
+	.msg = msg_to_verify_bad_sign,
+	.msg_len = sizeof(msg_to_verify_bad_sign),
+	.key = key_5,
+	.match = false,
+};
+
+static const uint8_t msg_to_verify_too_short[] = {
+	0xd2, 0x12, 0x00, 0x13, 0x37
+};
+
+static const struct verify_sign_test_data verify_sign_too_short_data = {
+	.msg = msg_to_verify_too_short,
+	.msg_len = sizeof(msg_to_verify_too_short),
+	.key = key_5,
+	.match = false,
+};
+
+static void test_verify_sign(gconstpointer data)
+{
+	const struct verify_sign_test_data *d = data;
+	bool result = bt_crypto_verify_att_sign(crypto, d->key, d->msg,
+						d->msg_len);
+	g_assert(result == d->match);
+
+	tester_test_passed();
+}
+
 int main(int argc, char *argv[])
 {
 	int exit_status;
@@ -225,6 +341,15 @@ int main(int argc, char *argv[])
 	tester_add("/crypto/sign_att_3", &test_data_3, NULL, test_sign, NULL);
 	tester_add("/crypto/sign_att_4", &test_data_4, NULL, test_sign, NULL);
 	tester_add("/crypto/sign_att_5", &test_data_5, NULL, test_sign, NULL);
+
+	tester_add("/crypto/gatt_hash", NULL, NULL, test_gatt_hash, NULL);
+
+	tester_add("/crypto/verify_sign_pass", &verify_sign_pass_data,
+						NULL, test_verify_sign, NULL);
+	tester_add("/crypto/verify_sign_bad_sign", &verify_sign_bad_sign_data,
+						NULL, test_verify_sign, NULL);
+	tester_add("/crypto/verify_sign_too_short", &verify_sign_too_short_data,
+						NULL, test_verify_sign, NULL);
 
 	exit_status = tester_run();
 

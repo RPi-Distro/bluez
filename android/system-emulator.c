@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
@@ -86,7 +87,7 @@ static void run_bluetoothd(char *prg_name)
 
 static void ctl_start(void)
 {
-	char prg_name[PATH_MAX];
+	char prg_name[PATH_MAX + 11];
 	pid_t pid;
 
 	snprintf(prg_name, sizeof(prg_name), "%s/%s", exec_dir, "bluetoothd");
@@ -114,7 +115,7 @@ static void ctl_start(void)
 
 static void snoop_start(void)
 {
-	char prg_name[PATH_MAX];
+	char prg_name[PATH_MAX + 17];
 	char *prg_argv[3];
 	char *prg_envp[1];
 	pid_t pid;
@@ -216,18 +217,10 @@ static void signal_callback(int signum, void *user_data)
 int main(int argc, char *argv[])
 {
 	const char SYSTEM_SOCKET_PATH[] = "\0android_system";
-	sigset_t mask;
 	struct sockaddr_un addr;
 	int fd;
 
 	mainloop_init();
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-	sigaddset(&mask, SIGCHLD);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
 
 	printf("Android system emulator ver %s\n", VERSION);
 
@@ -254,5 +247,5 @@ int main(int argc, char *argv[])
 	/* Make sure bluetoothd creates files with proper permissions */
 	umask(0177);
 
-	return mainloop_run();
+	return mainloop_run_with_signal(signal_callback, NULL);
 }

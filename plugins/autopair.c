@@ -60,13 +60,23 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 {
 	char addr[18];
 	char pinstr[7];
+	char name[25];
 	uint32_t class;
 
 	ba2str(device_get_address(device), addr);
 
 	class = btd_device_get_class(device);
 
-	DBG("device %s 0x%x", addr, class);
+	device_get_name(device, name, sizeof(name));
+
+	DBG("device '%s' (%s) class: 0x%x vid/pid: 0x%X/0x%X",
+		name, addr, class,
+		btd_device_get_vendor (device),
+		btd_device_get_product (device));
+
+	/* The iCade shouldn't use random PINs like normal keyboards */
+	if (strstr(name, "iCade") != NULL)
+		return 0;
 
 	/* This is a class-based pincode guesser. Ignore devices with an
 	 * unknown class.
@@ -82,15 +92,37 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 		case 0x06:		/* Headphones */
 		case 0x07:		/* Portable Audio */
 		case 0x0a:		/* HiFi Audio Device */
-			if (attempt > 1)
-				return 0;
-			memcpy(pinbuf, "0000", 4);
-			return 4;
+			{
+				const char *pincodes[] = {
+					"0000",
+					"1234",
+					"1111"
+				};
+				const char *pincode;
+
+				if (attempt > G_N_ELEMENTS(pincodes))
+					return 0;
+				pincode = pincodes[attempt - 1];
+				memcpy(pinbuf, pincode, strlen(pincode));
+				return strlen(pincode);
+			}
 		}
 		break;
 
 	case 0x05:		/* Peripheral */
 		switch ((class & 0xc0) >> 6) {
+		case 0x00:
+			switch ((class & 0x1e) >> 2) {
+			case 0x01:	/* Joystick */
+			case 0x02:	/* Gamepad */
+			case 0x03:	/* Remote Control */
+				if (attempt > 1)
+					return 0;
+				memcpy(pinbuf, "0000", 4);
+				return 4;
+			}
+
+			break;
 		case 0x01:		/* Keyboard */
 		case 0x03:		/* Combo keyboard/pointing device */
 			/* For keyboards rejecting the first random code
@@ -110,7 +142,7 @@ static ssize_t autopair_pincb(struct btd_adapter *adapter,
 			if (attempt >= 4)
 				return 0;
 
-			snprintf(pinstr, sizeof(pinstr), "%06d",
+			snprintf(pinstr, sizeof(pinstr), "%06u",
 						rand() % 1000000);
 			*display = true;
 			memcpy(pinbuf, pinstr, 6);

@@ -27,6 +27,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -162,6 +163,8 @@ char *hci_bustostr(int bus)
 		return "I2C";
 	case HCI_SMD:
 		return "SMD";
+	case HCI_VIRTIO:
+		return "VIRTIO";
 	default:
 		return "Unknown";
 	}
@@ -657,6 +660,9 @@ static hci_map ver_map[] = {
 	{ "4.0",	0x06 },
 	{ "4.1",	0x07 },
 	{ "4.2",	0x08 },
+	{ "5.0",	0x09 },
+	{ "5.1",	0x0a },
+	{ "5.2",	0x0b },
 	{ NULL }
 };
 
@@ -1604,7 +1610,7 @@ int hci_write_local_name(int dd, const char *name, int to)
 	struct hci_request rq;
 
 	memset(&cp, 0, sizeof(cp));
-	strncpy((char *) cp.name, name, sizeof(cp.name));
+	strncpy((char *) cp.name, name, sizeof(cp.name) - 1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.ogf    = OGF_HOST_CTL;

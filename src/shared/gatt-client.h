@@ -31,7 +31,8 @@ struct bt_gatt_client;
 
 struct bt_gatt_client *bt_gatt_client_new(struct gatt_db *db,
 							struct bt_att *att,
-							uint16_t mtu);
+							uint16_t mtu,
+							uint8_t features);
 struct bt_gatt_client *bt_gatt_client_clone(struct bt_gatt_client *client);
 
 struct bt_gatt_client *bt_gatt_client_ref(struct bt_gatt_client *client);
@@ -57,10 +58,12 @@ typedef void (*bt_gatt_client_service_changed_callback_t)(uint16_t start_handle,
 							void *user_data);
 
 bool bt_gatt_client_is_ready(struct bt_gatt_client *client);
-bool bt_gatt_client_set_ready_handler(struct bt_gatt_client *client,
+unsigned int bt_gatt_client_ready_register(struct bt_gatt_client *client,
 					bt_gatt_client_callback_t callback,
 					void *user_data,
 					bt_gatt_client_destroy_func_t destroy);
+bool bt_gatt_client_ready_unregister(struct bt_gatt_client *client,
+						unsigned int id);
 bool bt_gatt_client_set_service_changed(struct bt_gatt_client *client,
 			bt_gatt_client_service_changed_callback_t callback,
 			void *user_data,
@@ -71,7 +74,9 @@ bool bt_gatt_client_set_debug(struct bt_gatt_client *client,
 					bt_gatt_client_destroy_func_t destroy);
 
 uint16_t bt_gatt_client_get_mtu(struct bt_gatt_client *client);
+struct bt_att *bt_gatt_client_get_att(struct bt_gatt_client *client);
 struct gatt_db *bt_gatt_client_get_db(struct bt_gatt_client *client);
+uint8_t bt_gatt_client_get_features(struct bt_gatt_client *client);
 
 bool bt_gatt_client_cancel(struct bt_gatt_client *client, unsigned int id);
 bool bt_gatt_client_cancel_all(struct bt_gatt_client *client);

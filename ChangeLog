@@ -1,3 +1,153 @@
+ver 5.55:
+	Fix issue with handling security level for HoG.
+	Fix issue with handling HIDSDPDisable attribute.
+	Fix issue with handling HID virtual cable unplug.
+	Fix issue with handling HID channel disconnect order.
+	Fix issue with handling AVDTP delay reporting states.
+	Fix issue with handling AVRCP notification events.
+	Fix issue with handling AVRCP list player attributes.
+	Fix issue with handling AVRCP category 1 player settings.
+	Fix issue with handling AVRCP media player passthrough bitmask.
+	Fix issue with handling HFP 1.7 default features.
+	Fix issue with handling GATT disconnecting handling.
+	Fix issue with handling GATT database hash.
+	Fix issue with handling service changed characteristic.
+	Fix issue with handling read of multiple characteristic values.
+	Fix issue with handling Just-Works auto-accept pairing.
+	Fix issue with handling authentication of bonded devices.
+	Fix issue with handling L2CAP streaming mode for AVDTP.
+	Fix issue with handling SysEx parser for MIDI support.
+	Fix issue with handling configured scan parameter values.
+	Fix issue with handling temporary devices removal.
+	Fix issue with handling advertising flags.
+
+ver 5.54:
+	Fix issue with HOGP to accept data only from bonded devices.
+	Fix issue with A2DP sessions being connected at the same time.
+	Fix issue with class UUID matches before connecting profile.
+	Add support for handling MTU auto-tuning option for AVDTP.
+	Add support for new policy for Just-Works repairing.
+	Add support for Enhanced ATT bearer (EATT).
+
+ver 5.53:
+	Fix issue with handling unregistration for advertisment.
+	Fix issue with A2DP and handling recovering process.
+	Fix issue with udpating input device information.
+	Add support for loading blocked keys.
+
+ver 5.52:
+	Fix issue with AVDTP session disconnect timeout handling.
+	Mark media endpoint APIs as stable interfaces.
+
+ver 5.51:
+	Fix issue with first agent not being registered as default.
+	Fix issue with loading devices without Service Changed CCC.
+	Fix issue with GATT client and extended property reading.
+	Fix issue with handling GATT client invalid read behavior.
+	Fix issue with handling GATT disconnect handler removal.
+	Fix issue with missing GATT/GAP service records for SDP.
+	Fix issue with checking SDP continuation state length.
+	Fix issue with HID device removal on HoG disconnect.
+	Fix issue with AVDTP and session destroy handling.
+	Fix issue with AVCTP and output MTU accounting.
+	Fix issue with AVRCP and creating media items.
+	Add support for GATT database caching feature.
+	Add experimental support for Bluetooth Mesh Profile.
+
+ver 5.50:
+	Fix issue with GATT and reading long values.
+	Fix issue with GATT and reading multiple includes.
+	Fix issue with GATT and service changes when offline.
+	Fix issue with handling secondary service discovery.
+	Fix issue with handling persistency of CCC values.
+	Fix issue with handling Mesh session on disconnection.
+	Fix issue with handling Mesh proxy PDU SAR message length.
+	Fix issue with handling Mesh default heartbeat TTL value.
+	Add support for Mesh node-reset operation handling.
+	Add support for GATT authorization request handling.
+	Add support for GATT minimum key size requirements.
+	Add support for GATT server and included services.
+	Add support for handling additional advertising data.
+	Add support for handling separate discoverable state.
+	Add support for enabling HFP version 1.7 features.
+	Add support for dedicated Bluetooth logging daemon.
+
+ver 5.49:
+	Fix issue with configuring discoverable advertising flag.
+	Fix issue with bearer selection and single mode controllers.
+	Fix issue with Connect and ConnectProfile returning in progress.
+	Fix issue with missing Paired property change when not bonded.
+	Fix issue with storage for controllers without public address.
+	Fix issue with handling AVCTP disconnecting the channel queue.
+	Fix issue with not clearing connectable setting on power off.
+	Fix issue with creating multiple mgmt socket instances.
+	Fix issue with GATT server and BR/EDR only devices.
+	Fix issue with InterfaceAdded event ordering.
+	Add support for generic ConnectDevice method call.
+	Add support for Mesh heartbeat client functionality.
+
+ver 5.48:
+	Fix issue with subscriptions for unpaired devices.
+	Fix issue with handling A2DP and no available SEP.
+	Fix issue with handling AVCTP change path support.
+	Fix issue with handling AVCTP browsing channel.
+	Fix issue with handling AVCTP passthrough PDUs.
+	Fix issue with handling detaching of controller.
+	Fix issue with handling start discovery results.
+	Fix issue with handling non-connectable devices.
+	Fix issue with handling unused parameter in WriteValue.
+	Add support for service side AcquireWrite and AcquireNotify.
+	Add support for providing address type information.
+	Add support for cable based authentication and pairing.
+	Add support for Bluetooth Low-Energy battery service.
+	Add support for BTP client for qualification testing.
+	Add support for additional Mesh control functionality.
+	Mark advertising manager APIs as stable interfaces.
+
+ver 5.47:
+	Fix issue with handling AcquireNotify registration.
+	Fix issue with handling support for reconnection interval.
+	Fix issue with handling A2DP transport and accepting streams.
+	Fix issue with fallback from BR/EDR to LE bearer handling.
+	Add support for appearance and local name advertising data.
+	Add support for retrieving the supported discovery filters.
+	Add support for decoding Bluetooth 5.0 commands and events.
+	Add support for decoding Bluetooth Mesh advertising bearer.
+	Add support for Bluetooth Mesh control application.
+
+ver 5.46:
+	Fix issue with handling ATT over BR/EDR connections.
+	Fix issue with SDP browsing cleanup after connection.
+	Fix issue with pointer dereference and OPP Put request.
+	Fix issue with identity address updates during pairing.
+	Fix issue with not removing services that had disappeared.
+	Add support for improved discovery of included services.
+	Add support for simplified characteristics discovery.
+	Add support for GATT caching configuration option.
+	Add experimental support for AcquireWrite and AcquireNotify.
+
+ver 5.45:
+	Fix issue with agent support in Bluetooth client tool.
+	Fix issue with handling re-connection policy.
+	Fix issue with handling unknown ATT commands.
+	Fix issue with handling GATT Service Includes property.
+	Fix issue with handling PullAll for OBEX transfers.
+	Fix issue with handling delay in AVDTP Suspend responses.
+	Fix issue with handling decoding of management frames.
+	Add support for frame counters in Bluetooth monitor tool.
+
+ver 5.44:
+	Fix issue with GAP and GATT service registration.
+	Fix issue with wrong address type for ATT sockets.
+	Fix issue with dictionary entries for advertising.
+	Fix issue with device information and HID over GATT.
+	Fix issue with handling secondary service discovery.
+	Fix issue with handling Attribute Read Long procedure.
+	Fix issue with handling Attribute Write Long procedure.
+	Fix issue with handling abort of AVDTP SetConfiguration.
+	Add support for single-mode static address configuration.
+	Add support for MIDI over Bluetooth Low Energy.
+
 ver 5.43:
 	Fix issue with HID over GATT support.
 	Fix issue with ATT Find By Type response handling.

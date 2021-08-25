@@ -281,8 +281,9 @@ int btd_service_disconnect(struct btd_service *service)
 	case BTD_SERVICE_STATE_UNAVAILABLE:
 		return -EINVAL;
 	case BTD_SERVICE_STATE_DISCONNECTED:
-	case BTD_SERVICE_STATE_DISCONNECTING:
 		return -EALREADY;
+	case BTD_SERVICE_STATE_DISCONNECTING:
+		return 0;
 	case BTD_SERVICE_STATE_CONNECTING:
 	case BTD_SERVICE_STATE_CONNECTED:
 		break;
@@ -320,7 +321,6 @@ struct btd_profile *btd_service_get_profile(const struct btd_service *service)
 
 void btd_service_set_user_data(struct btd_service *service, void *user_data)
 {
-	btd_assert(service->state == BTD_SERVICE_STATE_UNAVAILABLE);
 	service->user_data = user_data;
 }
 

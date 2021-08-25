@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#define _GNU_SOURCE
 #include <hardware/hardware.h>
 
 #include <dlfcn.h>
@@ -100,12 +101,12 @@ int hw_get_module_by_class(const char *class_id, const char *inst,
                            const struct hw_module_t **module)
 {
     char path[PATH_MAX];
-    char name[PATH_MAX];
+    char name[PATH_MAX/2];
 
     if (inst)
-        snprintf(name, PATH_MAX, "%s.%s", class_id, inst);
+        snprintf(name, sizeof(name), "%s.%s", class_id, inst);
     else
-        snprintf(name, PATH_MAX, "%s", class_id);
+        snprintf(name, sizeof(name), "%s", class_id);
 
     /*
      * Here we rely on the fact that calling dlopen multiple times on

@@ -63,6 +63,8 @@ enum btdev_type {
 	BTDEV_TYPE_LE,
 	BTDEV_TYPE_AMP,
 	BTDEV_TYPE_BREDR20,
+	BTDEV_TYPE_BREDRLE50,
+	BTDEV_TYPE_BREDRLE52,
 };
 
 enum btdev_hook_type {
@@ -84,12 +86,13 @@ uint8_t btdev_get_scan_enable(struct btdev *btdev);
 
 uint8_t btdev_get_le_scan_enable(struct btdev *btdev);
 
+void btdev_set_le_states(struct btdev *btdev, const uint8_t *le_states);
+
 void btdev_set_command_handler(struct btdev *btdev, btdev_command_func handler,
 							void *user_data);
 
 void btdev_set_send_handler(struct btdev *btdev, btdev_send_func handler,
 							void *user_data);
-
 void btdev_receive_h4(struct btdev *btdev, const void *data, uint16_t len);
 
 int btdev_add_hook(struct btdev *btdev, enum btdev_hook_type type,

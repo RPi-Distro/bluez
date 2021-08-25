@@ -21,6 +21,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
@@ -28,6 +29,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/param.h>
@@ -499,7 +501,7 @@ static int set_patch_ram(int dev, char *patch_loc, int len)
 }
 
 #define PATCH_LOC_KEY    "DA:"
-#define PATCH_LOC_STRING_LEN    8
+#define PATCH_LOC_STRING_LEN    (8 + 237)
 static int ps_patch_download(int fd, FILE *stream)
 {
 	char byte[3];
@@ -572,20 +574,33 @@ static int ps_config_download(int fd, int tag_count)
 	return 0;
 }
 
-#define PS_ASIC_FILE			"PS_ASIC.pst"
-#define PS_FPGA_FILE			"PS_FPGA.pst"
+#define PS_ASIC_FILE_PREFIX		"PS_ASIC"
+#define PS_FPGA_FILE_PREFIX		"PS_FPGA"
 
-static void get_ps_file_name(uint32_t devtype, uint32_t rom_version,
-							char *path)
+static void get_ps_file_name(uint32_t devtype, uint32_t rom_version, char *path,
+								char *region)
 {
-	char *filename;
+	char *file_prefix;
+	struct stat st;
 
 	if (devtype == 0xdeadc0de)
-		filename = PS_ASIC_FILE;
+		file_prefix = PS_ASIC_FILE_PREFIX;
 	else
-		filename = PS_FPGA_FILE;
+		file_prefix = PS_FPGA_FILE_PREFIX;
 
-	snprintf(path, MAXPATHLEN, "%s%x/%s", FW_PATH, rom_version, filename);
+	if (!region)
+		goto default_ps_file;
+
+	snprintf(path, MAXPATHLEN, "%s%x/%s-%s.pst", FW_PATH, rom_version,
+			file_prefix, region);
+	if (stat(path, &st) == 0)
+		return;
+
+	perror("PS file with region code not exist, use default PS file\n");
+
+default_ps_file:
+	snprintf(path, MAXPATHLEN, "%s%x/%s.pst", FW_PATH, rom_version,
+			file_prefix);
 }
 
 #define PATCH_FILE        "RamPatch.txt"
@@ -822,7 +837,7 @@ static int ath_ps_download(int fd)
 		goto download_cmplete;
 	}
 
-	get_ps_file_name(dev_type, rom_version, ps_file);
+	get_ps_file_name(dev_type, rom_version, ps_file, NULL);
 	get_patch_file_name(dev_type, rom_version, build_version, patch_file);
 
 	stream = fopen(ps_file, "r");

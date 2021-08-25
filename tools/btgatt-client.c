@@ -24,6 +24,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -217,7 +218,7 @@ static struct client *client_create(int fd, uint16_t mtu)
 		return NULL;
 	}
 
-	cli->gatt = bt_gatt_client_new(cli->db, cli->att, mtu);
+	cli->gatt = bt_gatt_client_new(cli->db, cli->att, mtu, 0);
 	if (!cli->gatt) {
 		fprintf(stderr, "Failed to create GATT client\n");
 		gatt_db_unref(cli->db);
@@ -235,7 +236,7 @@ static struct client *client_create(int fd, uint16_t mtu)
 									NULL);
 	}
 
-	bt_gatt_client_set_ready_handler(cli->gatt, ready_cb, cli, NULL);
+	bt_gatt_client_ready_register(cli->gatt, ready_cb, cli, NULL);
 	bt_gatt_client_set_service_changed(cli->gatt, service_changed_cb, cli,
 									NULL);
 
@@ -1114,7 +1115,7 @@ static void register_notify_cb(uint16_t att_ecode, void *user_data)
 		return;
 	}
 
-	PRLOG("Registered notify handler!");
+	PRLOG("Registered notify handler!\n");
 }
 
 static void cmd_register_notify(struct client *cli, char *cmd_str)
@@ -1149,7 +1150,7 @@ static void cmd_register_notify(struct client *cli, char *cmd_str)
 		return;
 	}
 
-	PRLOG("Registering notify handler with id: %u\n", id);
+	printf("Registering notify handler with id: %u\n", id);
 }
 
 static void unregister_notify_usage(void)
@@ -1190,16 +1191,15 @@ static void cmd_unregister_notify(struct client *cli, char *cmd_str)
 
 static void set_security_usage(void)
 {
-	printf("Usage: set_security <level>\n"
+	printf("Usage: set-security <level>\n"
 		"level: 1-3\n"
 		"e.g.:\n"
-		"\tset-sec-level 2\n");
+		"\tset-security 2\n");
 }
 
 static void cmd_set_security(struct client *cli, char *cmd_str)
 {
-	char *argvbuf[1];
-	char **argv = argvbuf;
+	char *argv[2];
 	int argc = 0;
 	char *endptr = NULL;
 	int level;
@@ -1492,8 +1492,8 @@ static void usage(void)
 		"\t-d, --dest <addr>\t\tSpecify the destination address\n"
 		"\t-t, --type [random|public] \tSpecify the LE address type\n"
 		"\t-m, --mtu <mtu> \t\tThe ATT MTU to use\n"
-		"\t-s, --security-level <sec> \tSet security level (low|"
-								"medium|high)\n"
+		"\t-s, --security-level <sec> \tSet security level (low|medium|"
+								"high|fips)\n"
 		"\t-v, --verbose\t\t\tEnable extra logging\n"
 		"\t-h, --help\t\t\tDisplay help\n");
 }
@@ -1519,7 +1519,6 @@ int main(int argc, char *argv[])
 	bdaddr_t src_addr, dst_addr;
 	int dev_id = -1;
 	int fd;
-	sigset_t mask;
 	struct client *cli;
 
 	while ((opt = getopt_long(argc, argv, "+hvs:m:t:d:i:",
@@ -1538,6 +1537,8 @@ int main(int argc, char *argv[])
 				sec = BT_SECURITY_MEDIUM;
 			else if (strcmp(optarg, "high") == 0)
 				sec = BT_SECURITY_HIGH;
+			else if (strcmp(optarg, "fips") == 0)
+				sec = BT_SECURITY_FIPS;
 			else {
 				fprintf(stderr, "Invalid security level\n");
 				return EXIT_FAILURE;
@@ -1640,15 +1641,9 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_cb, NULL, NULL);
-
 	print_prompt();
 
-	mainloop_run();
+	mainloop_run_with_signal(signal_cb, NULL);
 
 	printf("\n\nShutting down...\n");
 

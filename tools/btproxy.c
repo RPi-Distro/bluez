@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
@@ -64,6 +65,7 @@ static uint16_t hci_index = 0;
 static bool client_active = false;
 static bool debug_enabled = false;
 static bool emulate_ecc = false;
+static bool skip_first_zero = false;
 
 static void hexdump_print(const char *str, void *user_data)
 {
@@ -71,13 +73,14 @@ static void hexdump_print(const char *str, void *user_data)
 }
 
 struct proxy {
-	/* Receive commands, ACL and SCO data */
+	/* Receive commands, ACL, SCO and ISO data */
 	int host_fd;
 	uint8_t host_buf[4096];
 	uint16_t host_len;
 	bool host_shutdown;
+	bool host_skip_first_zero;
 
-	/* Receive events, ACL and SCO data */
+	/* Receive events, ACL, SCO and ISO data */
 	int dev_fd;
 	uint8_t dev_buf[4096];
 	uint16_t dev_len;
@@ -293,6 +296,7 @@ static void host_read_callback(int fd, uint32_t events, void *user_data)
 	struct bt_hci_cmd_hdr *cmd_hdr;
 	struct bt_hci_acl_hdr *acl_hdr;
 	struct bt_hci_sco_hdr *sco_hdr;
+	struct bt_hci_iso_hdr *iso_hdr;
 	ssize_t len;
 	uint16_t pktlen;
 
@@ -323,6 +327,16 @@ static void host_read_callback(int fd, uint32_t events, void *user_data)
 		util_hexdump('>', proxy->host_buf + proxy->host_len, len,
 						hexdump_print, "H: ");
 
+	if (proxy->host_skip_first_zero && len > 0) {
+		proxy->host_skip_first_zero = false;
+		if (proxy->host_buf[proxy->host_len] == '\0') {
+			printf("Skipping initial zero byte\n");
+			len--;
+			memmove(proxy->host_buf + proxy->host_len,
+				proxy->host_buf + proxy->host_len + 1, len);
+		}
+	}
+
 	proxy->host_len += len;
 
 process_packet:
@@ -350,6 +364,13 @@ process_packet:
 
 		sco_hdr = (void *) (proxy->host_buf + 1);
 		pktlen = 1 + sizeof(*sco_hdr) + sco_hdr->dlen;
+		break;
+	case BT_H4_ISO_PKT:
+		if (proxy->host_len < 1 + sizeof(*iso_hdr))
+			return;
+
+		iso_hdr = (void *) (proxy->host_buf + 1);
+		pktlen = 1 + sizeof(*iso_hdr) + cpu_to_le16(iso_hdr->dlen);
 		break;
 	case 0xff:
 		/* Notification packet from /dev/vhci - ignore */
@@ -405,6 +426,7 @@ static void dev_read_callback(int fd, uint32_t events, void *user_data)
 	struct bt_hci_evt_hdr *evt_hdr;
 	struct bt_hci_acl_hdr *acl_hdr;
 	struct bt_hci_sco_hdr *sco_hdr;
+	struct bt_hci_iso_hdr *iso_hdr;
 	ssize_t len;
 	uint16_t pktlen;
 
@@ -463,6 +485,13 @@ process_packet:
 		sco_hdr = (void *) (proxy->dev_buf + 1);
 		pktlen = 1 + sizeof(*sco_hdr) + sco_hdr->dlen;
 		break;
+	case BT_H4_ISO_PKT:
+		if (proxy->dev_len < 1 + sizeof(*iso_hdr))
+			return;
+
+		iso_hdr = (void *) (proxy->dev_buf + 1);
+		pktlen = 1 + sizeof(*iso_hdr) + cpu_to_le16(iso_hdr->dlen);
+		break;
 	default:
 		fprintf(stderr, "Received unknown device packet type 0x%02x\n",
 							proxy->dev_buf[0]);
@@ -502,6 +531,7 @@ static bool setup_proxy(int host_fd, bool host_shutdown,
 
 	proxy->host_fd = host_fd;
 	proxy->host_shutdown = host_shutdown;
+	proxy->host_skip_first_zero = skip_first_zero;
 
 	proxy->dev_fd = dev_fd;
 	proxy->dev_shutdown = dev_shutdown;
@@ -597,7 +627,14 @@ static void server_callback(int fd, uint32_t events, void *user_data)
 static int open_unix(const char *path)
 {
 	struct sockaddr_un addr;
+	size_t len;
 	int fd;
+
+	len = strlen(path);
+	if (len > sizeof(addr.sun_path) - 1) {
+		fprintf(stderr, "Path too long\n");
+		return -1;
+	}
 
 	unlink(path);
 
@@ -609,7 +646,7 @@ static int open_unix(const char *path)
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
-	strcpy(addr.sun_path, path);
+	strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
 
 	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		perror("Failed to bind Unix server socket");
@@ -760,12 +797,11 @@ int main(int argc, char *argv[])
 	bool use_redirect = false;
 	uint8_t type = HCI_PRIMARY;
 	const char *str;
-	sigset_t mask;
 
 	for (;;) {
 		int opt;
 
-		opt = getopt_long(argc, argv, "rc:l::u::p:i:aedvh",
+		opt = getopt_long(argc, argv, "rc:l::u::p:i:aezdvh",
 						main_options, NULL);
 		if (opt < 0)
 			break;
@@ -784,9 +820,16 @@ int main(int argc, char *argv[])
 				server_address = "0.0.0.0";
 			break;
 		case 'u':
-			if (optarg)
+			if (optarg) {
+				struct sockaddr_un addr;
+
 				unix_path = optarg;
-			else
+				if (strlen(unix_path) >
+						sizeof(addr.sun_path) - 1) {
+					fprintf(stderr, "Path too long\n");
+					return EXIT_FAILURE;
+				}
+			} else
 				unix_path = "/tmp/bt-server-bredr";
 			break;
 		case 'p':
@@ -808,6 +851,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'e':
 			emulate_ecc = true;
+			break;
+		case 'z':
+			skip_first_zero = true;
 			break;
 		case 'd':
 			debug_enabled = true;
@@ -839,12 +885,6 @@ int main(int argc, char *argv[])
 	}
 
 	mainloop_init();
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
 
 	if (connect_address || use_redirect) {
 		int host_fd, dev_fd;
@@ -900,5 +940,5 @@ int main(int argc, char *argv[])
 							NULL, NULL);
 	}
 
-	return mainloop_run();
+	return mainloop_run_with_signal(signal_callback, NULL);
 }

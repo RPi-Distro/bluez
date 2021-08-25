@@ -36,6 +36,7 @@
 #include "src/shared/gatt-server.h"
 #include "src/shared/gatt-helpers.h"
 #include "src/shared/util.h"
+#include "src/shared/timeout.h"
 
 #ifndef MAX
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -51,7 +52,10 @@
  */
 #define DEFAULT_MAX_PREP_QUEUE_LEN 30
 
+#define NFY_MULT_TIMEOUT 10
+
 struct async_read_op {
+	struct bt_att_chan *chan;
 	struct bt_gatt_server *server;
 	uint8_t opcode;
 	bool done;
@@ -62,6 +66,7 @@ struct async_read_op {
 };
 
 struct async_write_op {
+	struct bt_att_chan *chan;
 	struct bt_gatt_server *server;
 	uint8_t opcode;
 };
@@ -84,6 +89,13 @@ static void prep_write_data_destroy(void *user_data)
 	free(data);
 }
 
+struct nfy_mult_data {
+	unsigned int id;
+	uint8_t *pdu;
+	uint16_t offset;
+	uint16_t len;
+};
+
 struct bt_gatt_server {
 	struct gatt_db *db;
 	struct bt_att *att;
@@ -100,8 +112,11 @@ struct bt_gatt_server {
 	unsigned int read_id;
 	unsigned int read_blob_id;
 	unsigned int read_multiple_id;
+	unsigned int read_multiple_vl_id;
 	unsigned int prep_write_id;
 	unsigned int exec_write_id;
+
+	uint8_t min_enc_size;
 
 	struct queue *prep_queue;
 	unsigned int max_prep_queue_len;
@@ -112,6 +127,11 @@ struct bt_gatt_server {
 	bt_gatt_server_debug_func_t debug_callback;
 	bt_gatt_server_destroy_func_t debug_destroy;
 	void *debug_data;
+
+	bt_gatt_server_authorize_cb_t authorize;
+	void *authorize_data;
+
+	struct nfy_mult_data *nfy_mult;
 };
 
 static void bt_gatt_server_free(struct bt_gatt_server *server)
@@ -129,6 +149,7 @@ static void bt_gatt_server_free(struct bt_gatt_server *server)
 	bt_att_unregister(server->att, server->read_id);
 	bt_att_unregister(server->att, server->read_blob_id);
 	bt_att_unregister(server->att, server->read_multiple_id);
+	bt_att_unregister(server->att, server->read_multiple_vl_id);
 	bt_att_unregister(server->att, server->prep_write_id);
 	bt_att_unregister(server->att, server->exec_write_id);
 
@@ -234,8 +255,9 @@ static bool encode_read_by_grp_type_rsp(struct gatt_db *db, struct queue *q,
 	return true;
 }
 
-static void read_by_grp_type_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void read_by_grp_type_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t start, end;
@@ -303,15 +325,14 @@ static void read_by_grp_type_cb(uint8_t opcode, const void *pdu,
 
 	queue_destroy(q, NULL);
 
-	bt_att_send(server->att, BT_ATT_OP_READ_BY_GRP_TYPE_RSP,
-							rsp_pdu, rsp_len,
-							NULL, NULL, NULL);
+	bt_att_chan_send_rsp(chan, BT_ATT_OP_READ_BY_GRP_TYPE_RSP,
+						rsp_pdu, rsp_len);
 
 	return;
 
 error:
 	queue_destroy(q, NULL);
-	bt_att_send_error_rsp(server->att, opcode, ehandle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, ehandle, ecode);
 }
 
 static void async_read_op_destroy(struct async_read_op *op)
@@ -345,7 +366,7 @@ static void read_by_type_read_complete_cb(struct gatt_db_attribute *attr,
 
 	/* Terminate the operation if there was an error */
 	if (err) {
-		bt_att_send_error_rsp(server->att, BT_ATT_OP_READ_BY_TYPE_REQ,
+		bt_att_chan_send_error_rsp(op->chan, BT_ATT_OP_READ_BY_TYPE_REQ,
 								handle, err);
 		async_read_op_destroy(op);
 		return;
@@ -379,9 +400,18 @@ done:
 	process_read_by_type(op);
 }
 
+static bool check_min_key_size(uint8_t min_size, uint8_t size)
+{
+	if (!min_size || !size)
+		return true;
+
+	return min_size <= size;
+}
+
 static uint8_t check_permissions(struct bt_gatt_server *server,
 				struct gatt_db_attribute *attr, uint32_t mask)
 {
+	uint8_t enc_size;
 	uint32_t perm;
 	int security;
 
@@ -397,15 +427,33 @@ static uint8_t check_permissions(struct bt_gatt_server *server,
 	if (!perm)
 		return 0;
 
-	security = bt_att_get_security(server->att);
-	if (perm & BT_ATT_PERM_SECURE && security < BT_ATT_SECURITY_FIPS)
-		return BT_ATT_ERROR_AUTHENTICATION;
+	security = bt_att_get_security(server->att, &enc_size);
+	if (security < 0)
+		return BT_ATT_ERROR_UNLIKELY;
 
-	if (perm & BT_ATT_PERM_AUTHEN && security < BT_ATT_SECURITY_HIGH)
-		return BT_ATT_ERROR_AUTHENTICATION;
+	if (perm & BT_ATT_PERM_SECURE) {
+		if (security < BT_ATT_SECURITY_FIPS)
+			return BT_ATT_ERROR_AUTHENTICATION;
 
-	if (perm & BT_ATT_PERM_ENCRYPT && security < BT_ATT_SECURITY_MEDIUM)
-		return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION;
+		if (!check_min_key_size(server->min_enc_size, enc_size))
+			return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION_KEY_SIZE;
+	}
+
+	if (perm & BT_ATT_PERM_AUTHEN) {
+		if (security < BT_ATT_SECURITY_HIGH)
+			return BT_ATT_ERROR_AUTHENTICATION;
+
+		if (!check_min_key_size(server->min_enc_size, enc_size))
+			return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION_KEY_SIZE;
+	}
+
+	if (perm & BT_ATT_PERM_ENCRYPT) {
+		if (security < BT_ATT_SECURITY_MEDIUM)
+			return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION;
+
+		if (!check_min_key_size(server->min_enc_size, enc_size))
+			return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION_KEY_SIZE;
+	}
 
 	return 0;
 }
@@ -419,10 +467,8 @@ static void process_read_by_type(struct async_read_op *op)
 	attr = queue_pop_head(op->db_data);
 
 	if (op->done || !attr) {
-		bt_att_send(server->att, BT_ATT_OP_READ_BY_TYPE_RSP, op->pdu,
-								op->pdu_len,
-								NULL, NULL,
-								NULL);
+		bt_att_chan_send_rsp(op->chan, BT_ATT_OP_READ_BY_TYPE_RSP,
+						op->pdu, op->pdu_len);
 		async_read_op_destroy(op);
 		return;
 	}
@@ -440,13 +486,14 @@ static void process_read_by_type(struct async_read_op *op)
 	ecode = BT_ATT_ERROR_UNLIKELY;
 
 error:
-	bt_att_send_error_rsp(server->att, BT_ATT_OP_READ_BY_TYPE_REQ,
+	bt_att_chan_send_error_rsp(op->chan, BT_ATT_OP_READ_BY_TYPE_REQ,
 				gatt_db_attribute_get_handle(attr), ecode);
 	async_read_op_destroy(op);
 }
 
-static void read_by_type_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void read_by_type_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t start, end;
@@ -503,6 +550,7 @@ static void read_by_type_cb(uint8_t opcode, const void *pdu,
 		goto error;
 	}
 
+	op->chan = chan;
 	op->opcode = opcode;
 	op->server = server;
 	op->db_data = q;
@@ -513,7 +561,7 @@ static void read_by_type_cb(uint8_t opcode, const void *pdu,
 	return;
 
 error:
-	bt_att_send_error_rsp(server->att, opcode, ehandle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, ehandle, ecode);
 	queue_destroy(q, NULL);
 }
 
@@ -571,8 +619,9 @@ static bool encode_find_info_rsp(struct gatt_db *db, struct queue *q,
 	return true;
 }
 
-static void find_info_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void find_info_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t start, end;
@@ -621,14 +670,14 @@ static void find_info_cb(uint8_t opcode, const void *pdu,
 		goto error;
 	}
 
-	bt_att_send(server->att, BT_ATT_OP_FIND_INFO_RSP, rsp_pdu, rsp_len,
-							NULL, NULL, NULL);
+	bt_att_chan_send_rsp(chan, BT_ATT_OP_FIND_INFO_RSP, rsp_pdu, rsp_len);
+
 	queue_destroy(q, NULL);
 
 	return;
 
 error:
-	bt_att_send_error_rsp(server->att, opcode, ehandle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, ehandle, ecode);
 	queue_destroy(q, NULL);
 
 }
@@ -670,8 +719,9 @@ static void find_by_type_val_att_cb(struct gatt_db_attribute *attrib,
 	data->len += 4;
 }
 
-static void find_by_type_val_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void find_by_type_val_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t start, end, uuid16;
@@ -716,13 +766,13 @@ static void find_by_type_val_cb(uint8_t opcode, const void *pdu,
 	if (data.ecode)
 		goto error;
 
-	bt_att_send(server->att, BT_ATT_OP_FIND_BY_TYPE_RSP, data.pdu,
-						data.len, NULL, NULL, NULL);
+	bt_att_chan_send_rsp(chan, BT_ATT_OP_FIND_BY_TYPE_RSP,
+					data.pdu, data.len);
 
 	return;
 
 error:
-	bt_att_send_error_rsp(server->att, opcode, ehandle, data.ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, ehandle, data.ecode);
 }
 
 static void async_write_op_destroy(struct async_write_op *op)
@@ -745,18 +795,30 @@ static void write_complete_cb(struct gatt_db_attribute *attr, int err,
 		return;
 	}
 
+	util_debug(server->debug_callback, server->debug_data,
+						"Write Complete: err %d", err);
+
 	handle = gatt_db_attribute_get_handle(attr);
 
 	if (err)
-		bt_att_send_error_rsp(server->att, op->opcode, handle, err);
+		bt_att_chan_send_error_rsp(op->chan, op->opcode, handle, err);
 	else
-		bt_att_send(server->att, BT_ATT_OP_WRITE_RSP, NULL, 0,
-							NULL, NULL, NULL);
+		bt_att_chan_send_rsp(op->chan, BT_ATT_OP_WRITE_RSP, NULL, 0);
 
 	async_write_op_destroy(op);
 }
 
-static void write_cb(uint8_t opcode, const void *pdu,
+static uint8_t authorize_req(struct bt_gatt_server *server,
+					uint8_t opcode, uint16_t handle)
+{
+	if (!server->authorize)
+		return 0;
+
+	return server->authorize(server->att, opcode, handle,
+						server->authorize_data);
+}
+
+static void write_cb(struct bt_att_chan *chan, uint8_t opcode, const void *pdu,
 					uint16_t length, void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
@@ -769,6 +831,10 @@ static void write_cb(uint8_t opcode, const void *pdu,
 		ecode = BT_ATT_ERROR_INVALID_PDU;
 		goto error;
 	}
+
+	ecode = authorize_req(server, opcode, handle);
+	if (ecode)
+		goto error;
 
 	handle = get_le16(pdu);
 	attr = gatt_db_get_attribute(server->db, handle);
@@ -794,6 +860,7 @@ static void write_cb(uint8_t opcode, const void *pdu,
 	}
 
 	op = new0(struct async_write_op, 1);
+	op->chan = chan;
 	op->server = server;
 	op->opcode = opcode;
 	server->pending_write_op = op;
@@ -803,8 +870,7 @@ static void write_cb(uint8_t opcode, const void *pdu,
 							write_complete_cb, op))
 		return;
 
-	if (op)
-		async_write_op_destroy(op);
+	async_write_op_destroy(op);
 
 	ecode = BT_ATT_ERROR_UNLIKELY;
 
@@ -812,7 +878,7 @@ error:
 	if (opcode == BT_ATT_OP_WRITE_CMD)
 		return;
 
-	bt_att_send_error_rsp(server->att, opcode, handle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, handle, ecode);
 }
 
 static uint8_t get_read_rsp_opcode(uint8_t opcode)
@@ -853,30 +919,36 @@ static void read_complete_cb(struct gatt_db_attribute *attr, int err,
 		return;
 	}
 
+	util_debug(server->debug_callback, server->debug_data,
+				"Read Complete: err %d", err);
+
 	mtu = bt_att_get_mtu(server->att);
 	handle = gatt_db_attribute_get_handle(attr);
 
 	if (err) {
-		bt_att_send_error_rsp(server->att, op->opcode, handle, err);
+		bt_att_chan_send_error_rsp(op->chan, op->opcode, handle, err);
 		async_read_op_destroy(op);
 		return;
 	}
 
 	rsp_opcode = get_read_rsp_opcode(op->opcode);
 
-	bt_att_send(server->att, rsp_opcode, len ? value : NULL,
-						MIN((unsigned) mtu - 1, len),
-						NULL, NULL, NULL);
+	bt_att_chan_send_rsp(op->chan, rsp_opcode, len ? value : NULL,
+					MIN((unsigned int) mtu - 1, len));
 	async_read_op_destroy(op);
 }
 
-static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
-								uint16_t handle,
-								uint16_t offset)
+static void handle_read_req(struct bt_att_chan *chan,
+				struct bt_gatt_server *server, uint8_t opcode,
+				uint16_t handle, uint16_t offset)
 {
 	struct gatt_db_attribute *attr;
 	uint8_t ecode;
 	struct async_read_op *op = NULL;
+
+	ecode = authorize_req(server, opcode, handle);
+	if (ecode)
+		goto error;
 
 	attr = gatt_db_get_attribute(server->db, handle);
 	if (!attr) {
@@ -901,6 +973,7 @@ static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
 	}
 
 	op = new0(struct async_read_op, 1);
+	op->chan = chan;
 	op->opcode = opcode;
 	op->server = server;
 	server->pending_read_op = op;
@@ -915,34 +988,35 @@ error:
 	if (op)
 		async_read_op_destroy(op);
 
-	bt_att_send_error_rsp(server->att, opcode, handle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, handle, ecode);
 }
 
-static void read_cb(uint8_t opcode, const void *pdu,
+static void read_cb(struct bt_att_chan *chan, uint8_t opcode, const void *pdu,
 					uint16_t length, void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t handle;
 
 	if (length != 2) {
-		bt_att_send_error_rsp(server->att, opcode, 0,
+		bt_att_chan_send_error_rsp(chan, opcode, 0,
 						BT_ATT_ERROR_INVALID_PDU);
 		return;
 	}
 
 	handle = get_le16(pdu);
 
-	handle_read_req(server, opcode, handle, 0);
+	handle_read_req(chan, server, opcode, handle, 0);
 }
 
-static void read_blob_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void read_blob_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t handle, offset;
 
 	if (length != 4) {
-		bt_att_send_error_rsp(server->att, opcode, 0,
+		bt_att_chan_send_error_rsp(chan, opcode, 0,
 						BT_ATT_ERROR_INVALID_PDU);
 		return;
 	}
@@ -950,11 +1024,13 @@ static void read_blob_cb(uint8_t opcode, const void *pdu,
 	handle = get_le16(pdu);
 	offset = get_le16(pdu + 2);
 
-	handle_read_req(server, opcode, handle, offset);
+	handle_read_req(chan, server, opcode, handle, offset);
 }
 
-struct read_multiple_resp_data {
+struct read_mult_data {
+	struct bt_att_chan *chan;
 	struct bt_gatt_server *server;
+	uint8_t opcode;
 	uint16_t *handles;
 	size_t cur_handle;
 	size_t num_handles;
@@ -963,134 +1039,167 @@ struct read_multiple_resp_data {
 	size_t mtu;
 };
 
-static void read_multiple_resp_data_free(struct read_multiple_resp_data *data)
+static void read_mult_data_free(struct read_mult_data *data)
 {
 	free(data->handles);
-	data->handles = NULL;
-
 	free(data->rsp_data);
-	data->rsp_data = NULL;
+	free(data);
 }
 
 static void read_multiple_complete_cb(struct gatt_db_attribute *attr, int err,
 					const uint8_t *value, size_t len,
 					void *user_data)
 {
-	struct read_multiple_resp_data *data = user_data;
+	struct read_mult_data *data = user_data;
 	struct gatt_db_attribute *next_attr;
 	uint16_t handle = gatt_db_attribute_get_handle(attr);
 	uint8_t ecode;
+	uint16_t length;
 
 	if (err != 0) {
-		bt_att_send_error_rsp(data->server->att,
-					BT_ATT_OP_READ_MULT_REQ, handle, err);
-		read_multiple_resp_data_free(data);
-		return;
+		ecode = err;
+		goto error;
 	}
 
-	ecode = check_permissions(data->server, attr, BT_ATT_PERM_READ |
-						BT_ATT_PERM_READ_AUTHEN |
-						BT_ATT_PERM_READ_ENCRYPT);
-	if (ecode) {
-		bt_att_send_error_rsp(data->server->att,
-					BT_ATT_OP_READ_MULT_REQ, handle, ecode);
-		read_multiple_resp_data_free(data);
-		return;
+	length = data->opcode == BT_ATT_OP_READ_MULT_VL_REQ ?
+			MIN(len, MAX(data->mtu - data->length, 3) - 3) :
+			MIN(len, data->mtu - data->length - 1);
+
+	if (data->opcode == BT_ATT_OP_READ_MULT_VL_REQ) {
+		/* The Length Value Tuple List may be truncated within the first
+		 * two octets of a tuple due to the size limits of the current
+		 * ATT_MTU, but the first two octets cannot be separated.
+		 */
+		if (data->mtu - data->length >= 3) {
+			put_le16(len, data->rsp_data + data->length);
+			data->length += 2;
+		}
 	}
 
-	len = MIN(len, data->mtu - data->length - 1);
-
-	memcpy(data->rsp_data + data->length, value, len);
-	data->length += len;
+	memcpy(data->rsp_data + data->length, value, length);
+	data->length += length;
 
 	data->cur_handle++;
 
-	if ((data->length >= data->mtu - 1) ||
-				(data->cur_handle == data->num_handles)) {
-		bt_att_send(data->server->att, BT_ATT_OP_READ_MULT_RSP,
-				data->rsp_data, data->length, NULL, NULL, NULL);
-		read_multiple_resp_data_free(data);
+	if (data->cur_handle == data->num_handles) {
+		bt_att_chan_send_rsp(data->chan, data->opcode + 1,
+						data->rsp_data, data->length);
+		read_mult_data_free(data);
 		return;
 	}
+
+	handle = data->handles[data->cur_handle];
 
 	util_debug(data->server->debug_callback, data->server->debug_data,
-				"Read Multiple Req - #%zu of %zu: 0x%04x",
+				"%s Req - #%zu of %zu: 0x%04x",
+				data->opcode == BT_ATT_OP_READ_MULT_REQ ?
+				"Read Multiple" :
+				"Read Multiple Variable Length",
 				data->cur_handle + 1, data->num_handles,
-				data->handles[data->cur_handle]);
+				handle);
 
-	next_attr = gatt_db_get_attribute(data->server->db,
-					data->handles[data->cur_handle]);
+	next_attr = gatt_db_get_attribute(data->server->db, handle);
 
 	if (!next_attr) {
-		bt_att_send_error_rsp(data->server->att,
-					BT_ATT_OP_READ_MULT_REQ,
-					data->handles[data->cur_handle],
-					BT_ATT_ERROR_INVALID_HANDLE);
-		read_multiple_resp_data_free(data);
-		return;
+		ecode = BT_ATT_ERROR_INVALID_HANDLE;
+		goto error;
 	}
 
-	if (!gatt_db_attribute_read(next_attr, 0, BT_ATT_OP_READ_MULT_REQ,
+	ecode = check_permissions(data->server, next_attr, BT_ATT_PERM_READ |
+						BT_ATT_PERM_READ_AUTHEN |
+						BT_ATT_PERM_READ_ENCRYPT);
+	if (ecode)
+		goto error;
+
+	if (gatt_db_attribute_read(next_attr, 0, data->opcode,
 					data->server->att,
-					read_multiple_complete_cb, data)) {
-		bt_att_send_error_rsp(data->server->att,
-						BT_ATT_OP_READ_MULT_REQ,
-						data->handles[data->cur_handle],
-						BT_ATT_ERROR_UNLIKELY);
-		read_multiple_resp_data_free(data);
-	}
+					read_multiple_complete_cb, data))
+		return;
+
+	ecode = BT_ATT_ERROR_UNLIKELY;
+
+error:
+	bt_att_chan_send_error_rsp(data->chan, data->opcode, handle, ecode);
+	read_mult_data_free(data);
 }
 
-static void read_multiple_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static struct read_mult_data *read_mult_data_new(struct bt_gatt_server *server,
+						struct bt_att_chan *chan,
+						uint8_t opcode,
+						uint16_t num_handles)
+{
+	struct read_mult_data *data;
+
+	data = new0(struct read_mult_data, 1);
+	data->chan = chan;
+	data->opcode = opcode;
+	data->handles = new0(uint16_t, num_handles);
+	data->rsp_data = NULL;
+	data->server = server;
+	data->num_handles = num_handles;
+	data->cur_handle = 0;
+	data->mtu = bt_att_get_mtu(server->att);
+	data->length = 0;
+	data->rsp_data = new0(uint8_t, data->mtu - 1);
+
+	return data;
+}
+
+static void read_multiple_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	struct gatt_db_attribute *attr;
-	struct read_multiple_resp_data data;
-	uint8_t ecode = BT_ATT_ERROR_UNLIKELY;
+	struct read_mult_data *data = NULL;
+	uint8_t ecode;
 	size_t i = 0;
-
-	data.handles = NULL;
-	data.rsp_data = NULL;
+	uint16_t handle = 0;
 
 	if (length < 4) {
 		ecode = BT_ATT_ERROR_INVALID_PDU;
 		goto error;
 	}
 
-	data.server = server;
-	data.num_handles = length / 2;
-	data.cur_handle = 0;
-	data.mtu = bt_att_get_mtu(server->att);
-	data.length = 0;
-	data.rsp_data = malloc(data.mtu - 1);
-
-	if (!data.rsp_data)
+	data = read_mult_data_new(server, chan, opcode, length / 2);
+	if (!data)
 		goto error;
 
-	data.handles = new0(uint16_t, data.num_handles);
+	for (i = 0; i < data->num_handles; i++)
+		data->handles[i] = get_le16(pdu + i * 2);
 
-	for (i = 0; i < data.num_handles; i++)
-		data.handles[i] = get_le16(pdu + i * 2);
+	handle = data->handles[0];
 
 	util_debug(server->debug_callback, server->debug_data,
-			"Read Multiple Req - %zu handles, 1st: 0x%04x",
-			data.num_handles, data.handles[0]);
+			"%s Req - %zu handles, 1st: 0x%04x",
+			data->opcode == BT_ATT_OP_READ_MULT_REQ ?
+			"Read Multiple" : "Read Multiple Variable Length",
+			data->num_handles, handle);
 
-	attr = gatt_db_get_attribute(server->db, data.handles[0]);
+	attr = gatt_db_get_attribute(server->db, handle);
 
 	if (!attr) {
 		ecode = BT_ATT_ERROR_INVALID_HANDLE;
 		goto error;
 	}
 
+	ecode = check_permissions(data->server, attr, BT_ATT_PERM_READ |
+						BT_ATT_PERM_READ_AUTHEN |
+						BT_ATT_PERM_READ_ENCRYPT);
+	if (ecode)
+		goto error;
+
 	if (gatt_db_attribute_read(attr, 0, opcode, server->att,
-					read_multiple_complete_cb, &data))
+					read_multiple_complete_cb, data))
 		return;
 
+	ecode = BT_ATT_ERROR_UNLIKELY;
+
 error:
-	read_multiple_resp_data_free(&data);
-	bt_att_send_error_rsp(server->att, opcode, 0, ecode);
+	if (data)
+		read_mult_data_free(data);
+
+	bt_att_chan_send_error_rsp(chan, opcode, handle, ecode);
 }
 
 static bool append_prep_data(struct prep_write_data *prep_data, uint16_t handle,
@@ -1180,14 +1289,56 @@ static bool store_prep_data(struct bt_gatt_server *server,
 	return prep_data_new(server, handle, offset, length, value);
 }
 
-static void prep_write_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+struct prep_write_complete_data {
+	struct bt_att_chan *chan;
+	void *pdu;
+	uint16_t length;
+	struct bt_gatt_server *server;
+};
+
+static void prep_write_complete_cb(struct gatt_db_attribute *attr, int err,
+								void *user_data)
+{
+	struct prep_write_complete_data *pwcd = user_data;
+	uint16_t handle = 0;
+	uint16_t offset;
+
+	handle = get_le16(pwcd->pdu);
+
+	if (err) {
+		bt_att_chan_send_error_rsp(pwcd->chan, BT_ATT_OP_PREP_WRITE_REQ,
+								handle, err);
+		free(pwcd->pdu);
+		free(pwcd);
+
+		return;
+	}
+
+	offset = get_le16(pwcd->pdu + 2);
+
+	if (!store_prep_data(pwcd->server, handle, offset, pwcd->length - 4,
+						&((uint8_t *) pwcd->pdu)[4]))
+		bt_att_chan_send_error_rsp(pwcd->chan, BT_ATT_OP_PREP_WRITE_RSP,
+					handle,
+					BT_ATT_ERROR_INSUFFICIENT_RESOURCES);
+
+	bt_att_chan_send_rsp(pwcd->chan, BT_ATT_OP_PREP_WRITE_RSP, pwcd->pdu,
+								pwcd->length);
+
+	free(pwcd->pdu);
+	free(pwcd);
+}
+
+static void prep_write_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t handle = 0;
 	uint16_t offset;
 	struct gatt_db_attribute *attr;
-	uint8_t ecode;
+	struct prep_write_complete_data *pwcd;
+	uint8_t ecode, status;
 
 	if (length < 4) {
 		ecode = BT_ATT_ERROR_INVALID_PDU;
@@ -1217,34 +1368,46 @@ static void prep_write_cb(uint8_t opcode, const void *pdu,
 	if (ecode)
 		goto error;
 
-	if (!store_prep_data(server, handle, offset, length - 4,
-						&((uint8_t *) pdu)[4])) {
-		ecode = BT_ATT_ERROR_INSUFFICIENT_RESOURCES;
-		goto error;
-	}
+	pwcd = new0(struct prep_write_complete_data, 1);
+	pwcd->chan = chan;
+	pwcd->pdu = malloc(length);
+	memcpy(pwcd->pdu, pdu, length);
+	pwcd->length = length;
+	pwcd->server = server;
 
-	bt_att_send(server->att, BT_ATT_OP_PREP_WRITE_RSP, pdu, length, NULL,
-								NULL, NULL);
-	return;
+	status = gatt_db_attribute_write(attr, offset, NULL, 0,
+						BT_ATT_OP_PREP_WRITE_REQ,
+						server->att,
+						prep_write_complete_cb, pwcd);
+
+	if (status)
+		return;
+
+	ecode = BT_ATT_ERROR_UNLIKELY;
 
 error:
-	bt_att_send_error_rsp(server->att, opcode, handle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, handle, ecode);
 }
 
-static void exec_next_prep_write(struct bt_gatt_server *server,
-						uint16_t ehandle, int err);
+struct exec_data {
+	struct bt_att_chan *chan;
+	struct bt_gatt_server *server;
+};
+
+static void exec_next_prep_write(struct exec_data *data, uint16_t ehandle,
+								int err);
 
 static void exec_write_complete_cb(struct gatt_db_attribute *attr, int err,
 								void *user_data)
 {
-	struct bt_gatt_server *server = user_data;
+	struct exec_data *data = user_data;
 	uint16_t handle = gatt_db_attribute_get_handle(attr);
 
-	exec_next_prep_write(server, handle, err);
+	exec_next_prep_write(data, handle, err);
 }
 
-static void exec_next_prep_write(struct bt_gatt_server *server,
-						uint16_t ehandle, int err)
+static void exec_next_prep_write(struct exec_data *data, uint16_t ehandle,
+								int err)
 {
 	struct prep_write_data *next = NULL;
 	struct gatt_db_attribute *attr;
@@ -1253,14 +1416,15 @@ static void exec_next_prep_write(struct bt_gatt_server *server,
 	if (err)
 		goto error;
 
-	next = queue_pop_head(server->prep_queue);
+	next = queue_pop_head(data->server->prep_queue);
 	if (!next) {
-		bt_att_send(server->att, BT_ATT_OP_EXEC_WRITE_RSP, NULL, 0,
-							NULL, NULL, NULL);
+		bt_att_chan_send_rsp(data->chan, BT_ATT_OP_EXEC_WRITE_RSP,
+								NULL, 0);
+		free(data);
 		return;
 	}
 
-	attr = gatt_db_get_attribute(server->db, next->handle);
+	attr = gatt_db_get_attribute(data->server->db, next->handle);
 	if (!attr) {
 		err = BT_ATT_ERROR_UNLIKELY;
 		goto error;
@@ -1269,8 +1433,8 @@ static void exec_next_prep_write(struct bt_gatt_server *server,
 	status = gatt_db_attribute_write(attr, next->offset,
 						next->value, next->length,
 						BT_ATT_OP_EXEC_WRITE_REQ,
-						server->att,
-						exec_write_complete_cb, server);
+						data->server->att,
+						exec_write_complete_cb, data);
 
 	prep_write_data_destroy(next);
 
@@ -1280,11 +1444,12 @@ static void exec_next_prep_write(struct bt_gatt_server *server,
 	err = BT_ATT_ERROR_UNLIKELY;
 
 error:
-	queue_remove_all(server->prep_queue, NULL, NULL,
+	queue_remove_all(data->server->prep_queue, NULL, NULL,
 						prep_write_data_destroy);
 
-	bt_att_send_error_rsp(server->att, BT_ATT_OP_EXEC_WRITE_REQ,
+	bt_att_chan_send_error_rsp(data->chan, BT_ATT_OP_EXEC_WRITE_REQ,
 								ehandle, err);
+	free(data);
 }
 
 static bool find_no_reliable_characteristic(const void *data,
@@ -1295,10 +1460,12 @@ static bool find_no_reliable_characteristic(const void *data,
 	return !prep_data->reliable_supported;
 }
 
-static void exec_write_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void exec_write_cb(struct bt_att_chan *chan, uint8_t opcode,
+					const void *pdu, uint16_t length,
+					void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
+	struct exec_data *data;
 	uint8_t flags;
 	uint8_t ecode;
 	bool write;
@@ -1326,8 +1493,7 @@ static void exec_write_cb(uint8_t opcode, const void *pdu,
 	if (!write) {
 		queue_remove_all(server->prep_queue, NULL, NULL,
 						prep_write_data_destroy);
-		bt_att_send(server->att, BT_ATT_OP_EXEC_WRITE_RSP, NULL, 0,
-							NULL, NULL, NULL);
+		bt_att_chan_send_rsp(chan, BT_ATT_OP_EXEC_WRITE_RSP, NULL, 0);
 		return;
 	}
 
@@ -1344,18 +1510,23 @@ static void exec_write_cb(uint8_t opcode, const void *pdu,
 		}
 	}
 
-	exec_next_prep_write(server, 0, 0);
+	data = new0(struct exec_data, 1);
+	data->chan = chan;
+	data->server = server;
+
+	exec_next_prep_write(data, 0, 0);
 
 	return;
 
 error:
 	queue_remove_all(server->prep_queue, NULL, NULL,
 						prep_write_data_destroy);
-	bt_att_send_error_rsp(server->att, opcode, ehandle, ecode);
+	bt_att_chan_send_error_rsp(chan, opcode, ehandle, ecode);
 }
 
-static void exchange_mtu_cb(uint8_t opcode, const void *pdu,
-					uint16_t length, void *user_data)
+static void exchange_mtu_cb(struct bt_att_chan *chan, uint8_t opcode,
+				const void *pdu, uint16_t length,
+				void *user_data)
 {
 	struct bt_gatt_server *server = user_data;
 	uint16_t client_rx_mtu;
@@ -1363,7 +1534,7 @@ static void exchange_mtu_cb(uint8_t opcode, const void *pdu,
 	uint8_t rsp_pdu[2];
 
 	if (length != 2) {
-		bt_att_send_error_rsp(server->att, opcode, 0,
+		bt_att_chan_send_error_rsp(chan, opcode, 0,
 						BT_ATT_ERROR_INVALID_PDU);
 		return;
 	}
@@ -1373,8 +1544,7 @@ static void exchange_mtu_cb(uint8_t opcode, const void *pdu,
 
 	/* Respond with the server MTU */
 	put_le16(server->mtu, rsp_pdu);
-	bt_att_send(server->att, BT_ATT_OP_MTU_RSP, rsp_pdu, 2, NULL, NULL,
-									NULL);
+	bt_att_chan_send_rsp(chan, BT_ATT_OP_MTU_RSP, rsp_pdu, 2);
 
 	/* Set MTU to be the minimum */
 	server->mtu = final_mtu;
@@ -1464,6 +1634,15 @@ static bool gatt_server_register_att_handlers(struct bt_gatt_server *server)
 	if (!server->read_multiple_id)
 		return false;
 
+	/* Read Multiple Variable Length Request */
+	server->read_multiple_vl_id = bt_att_register(server->att,
+						BT_ATT_OP_READ_MULT_VL_REQ,
+						read_multiple_cb,
+						server, NULL);
+
+	if (!server->read_multiple_vl_id)
+		return false;
+
 	/* Prepare Write Request */
 	server->prep_write_id = bt_att_register(server->att,
 						BT_ATT_OP_PREP_WRITE_REQ,
@@ -1482,7 +1661,8 @@ static bool gatt_server_register_att_handlers(struct bt_gatt_server *server)
 }
 
 struct bt_gatt_server *bt_gatt_server_new(struct gatt_db *db,
-					struct bt_att *att, uint16_t mtu)
+					struct bt_att *att, uint16_t mtu,
+					uint8_t min_enc_size)
 {
 	struct bt_gatt_server *server;
 
@@ -1495,6 +1675,7 @@ struct bt_gatt_server *bt_gatt_server_new(struct gatt_db *db,
 	server->mtu = MAX(mtu, BT_ATT_DEFAULT_LE_MTU);
 	server->max_prep_queue_len = DEFAULT_MAX_PREP_QUEUE_LEN;
 	server->prep_queue = queue_new();
+	server->min_enc_size = min_enc_size;
 
 	if (!gatt_server_register_att_handlers(server)) {
 		bt_gatt_server_free(server);
@@ -1502,6 +1683,22 @@ struct bt_gatt_server *bt_gatt_server_new(struct gatt_db *db,
 	}
 
 	return bt_gatt_server_ref(server);
+}
+
+uint16_t bt_gatt_server_get_mtu(struct bt_gatt_server *server)
+{
+	if (!server || !server->att)
+		return 0;
+
+	return bt_att_get_mtu(server->att);
+}
+
+struct bt_att *bt_gatt_server_get_att(struct bt_gatt_server *server)
+{
+	if (!server)
+		return NULL;
+
+	return server->att;
 }
 
 struct bt_gatt_server *bt_gatt_server_ref(struct bt_gatt_server *server)
@@ -1543,28 +1740,69 @@ bool bt_gatt_server_set_debug(struct bt_gatt_server *server,
 	return true;
 }
 
+static bool notify_multiple(void *user_data)
+{
+	struct bt_gatt_server *server = user_data;
+
+	bt_att_send(server->att, BT_ATT_OP_HANDLE_NFY_MULT,
+			server->nfy_mult->pdu, server->nfy_mult->offset, NULL,
+			NULL, NULL);
+
+	free(server->nfy_mult->pdu);
+	free(server->nfy_mult);
+	server->nfy_mult = NULL;
+
+	return false;
+}
+
 bool bt_gatt_server_send_notification(struct bt_gatt_server *server,
 					uint16_t handle, const uint8_t *value,
-					uint16_t length)
+					uint16_t length, bool multiple)
 {
-	uint16_t pdu_len;
-	uint8_t *pdu;
+	struct nfy_mult_data *data = NULL;
 	bool result;
 
 	if (!server || (length && !value))
 		return false;
 
-	pdu_len = MIN(bt_att_get_mtu(server->att) - 1, length + 2);
-	pdu = malloc(pdu_len);
-	if (!pdu)
-		return false;
+	if (multiple)
+		data = server->nfy_mult;
 
-	put_le16(handle, pdu);
-	memcpy(pdu + 2, value, pdu_len - 2);
+	if (!data) {
+		data = new0(struct nfy_mult_data, 1);
+		data->len = bt_att_get_mtu(server->att) - 1;
+		data->pdu = malloc(data->len);
+	}
 
-	result = !!bt_att_send(server->att, BT_ATT_OP_HANDLE_VAL_NOT, pdu,
-						pdu_len, NULL, NULL, NULL);
-	free(pdu);
+	put_le16(handle, data->pdu + data->offset);
+	data->offset += 2;
+
+	length = MIN(data->len - data->offset, length);
+
+	if (multiple) {
+		put_le16(length, data->pdu + data->offset);
+		data->offset += 2;
+	}
+
+	memcpy(data->pdu + data->offset, value, length);
+	data->offset += length;
+
+	if (multiple) {
+		if (!server->nfy_mult)
+			server->nfy_mult = data;
+
+		if (!server->nfy_mult->id)
+			server->nfy_mult->id = timeout_add(NFY_MULT_TIMEOUT,
+						   notify_multiple, server,
+						   NULL);
+
+		return true;
+	}
+
+	result = !!bt_att_send(server->att, BT_ATT_OP_HANDLE_NFY,
+				data->pdu, data->offset, NULL, NULL, NULL);
+	free(data->pdu);
+	free(data);
 
 	return result;
 }
@@ -1623,7 +1861,7 @@ bool bt_gatt_server_send_indication(struct bt_gatt_server *server,
 	put_le16(handle, pdu);
 	memcpy(pdu + 2, value, pdu_len - 2);
 
-	result = !!bt_att_send(server->att, BT_ATT_OP_HANDLE_VAL_IND, pdu,
+	result = !!bt_att_send(server->att, BT_ATT_OP_HANDLE_IND, pdu,
 							pdu_len, conf_cb,
 							data, destroy_ind_data);
 	if (!result)
@@ -1632,4 +1870,17 @@ bool bt_gatt_server_send_indication(struct bt_gatt_server *server,
 	free(pdu);
 
 	return result;
+}
+
+bool bt_gatt_server_set_authorize(struct bt_gatt_server *server,
+					bt_gatt_server_authorize_cb_t cb,
+					void *user_data)
+{
+	if (!server)
+		return false;
+
+	server->authorize = cb;
+	server->authorize_data = user_data;
+
+	return true;
 }

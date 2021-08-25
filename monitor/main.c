@@ -26,11 +26,13 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <sys/un.h>
 
 #include "src/shared/mainloop.h"
 #include "src/shared/tty.h"
@@ -66,35 +68,50 @@ static void usage(void)
 		"\t-i, --index <num>      Show only specified controller\n"
 		"\t-d, --tty <tty>        Read data from TTY\n"
 		"\t-B, --tty-speed <rate> Set TTY speed (default 115200)\n"
+		"\t-V, --vendor <compid>  Set default company identifier\n"
+		"\t-M, --mgmt             Open channel for mgmt events\n"
 		"\t-t, --time             Show time instead of time offset\n"
 		"\t-T, --date             Show time and date information\n"
 		"\t-S, --sco              Dump SCO traffic\n"
+		"\t-A, --a2dp             Dump A2DP stream traffic\n"
 		"\t-E, --ellisys [ip]     Send Ellisys HCI Injection\n"
+		"\t-P, --no-pager         Disable pager usage\n"
+		"\t-J  --jlink <device>,[<serialno>],[<interface>],[<speed>]\n"
+		"\t                       Read data from RTT\n"
+		"\t-R  --rtt [<address>],[<area>],[<name>]\n"
+		"\t                       RTT control block parameters\n"
 		"\t-h, --help             Show help options\n");
 }
 
 static const struct option main_options[] = {
-	{ "tty",     required_argument, NULL, 'd' },
+	{ "read",      required_argument, NULL, 'r' },
+	{ "write",     required_argument, NULL, 'w' },
+	{ "analyze",   required_argument, NULL, 'a' },
+	{ "server",    required_argument, NULL, 's' },
+	{ "priority",  required_argument, NULL, 'p' },
+	{ "index",     required_argument, NULL, 'i' },
+	{ "tty",       required_argument, NULL, 'd' },
 	{ "tty-speed", required_argument, NULL, 'B' },
-	{ "read",    required_argument, NULL, 'r' },
-	{ "write",   required_argument, NULL, 'w' },
-	{ "analyze", required_argument, NULL, 'a' },
-	{ "server",  required_argument, NULL, 's' },
-	{ "priority",required_argument, NULL, 'p' },
-	{ "index",   required_argument, NULL, 'i' },
-	{ "time",    no_argument,       NULL, 't' },
-	{ "date",    no_argument,       NULL, 'T' },
-	{ "sco",     no_argument,	NULL, 'S' },
-	{ "ellisys", required_argument, NULL, 'E' },
-	{ "todo",    no_argument,       NULL, '#' },
-	{ "version", no_argument,       NULL, 'v' },
-	{ "help",    no_argument,       NULL, 'h' },
+	{ "vendor",    required_argument, NULL, 'V' },
+	{ "mgmt",      no_argument,       NULL, 'M' },
+	{ "time",      no_argument,       NULL, 't' },
+	{ "date",      no_argument,       NULL, 'T' },
+	{ "sco",       no_argument,       NULL, 'S' },
+	{ "a2dp",      no_argument,       NULL, 'A' },
+	{ "ellisys",   required_argument, NULL, 'E' },
+	{ "no-pager",  no_argument,       NULL, 'P' },
+	{ "jlink",     required_argument, NULL, 'J' },
+	{ "rtt",       required_argument, NULL, 'R' },
+	{ "todo",      no_argument,       NULL, '#' },
+	{ "version",   no_argument,       NULL, 'v' },
+	{ "help",      no_argument,       NULL, 'h' },
 	{ }
 };
 
 int main(int argc, char *argv[])
 {
 	unsigned long filter_mask = 0;
+	bool use_pager = true;
 	const char *reader_path = NULL;
 	const char *writer_path = NULL;
 	const char *analyze_path = NULL;
@@ -103,8 +120,9 @@ int main(int argc, char *argv[])
 	unsigned int tty_speed = B115200;
 	unsigned short ellisys_port = 0;
 	const char *str;
+	char *jlink = NULL;
+	char *rtt = NULL;
 	int exit_status;
-	sigset_t mask;
 
 	mainloop_init();
 
@@ -112,23 +130,14 @@ int main(int argc, char *argv[])
 
 	for (;;) {
 		int opt;
+		struct sockaddr_un addr;
 
-		opt = getopt_long(argc, argv, "d:r:w:a:s:p:i:tTSE:vh",
-						main_options, NULL);
+		opt = getopt_long(argc, argv, "r:w:a:s:p:i:d:B:V:MtTSAE:PJ:R:vh",
+							main_options, NULL);
 		if (opt < 0)
 			break;
 
 		switch (opt) {
-		case 'd':
-			tty= optarg;
-			break;
-		case 'B':
-			tty_speed = tty_get_speed(atoi(optarg));
-			if (!tty_speed) {
-				fprintf(stderr, "Unknown speed: %s\n", optarg);
-				return EXIT_FAILURE;
-			}
-			break;
 		case 'r':
 			reader_path = optarg;
 			break;
@@ -139,6 +148,10 @@ int main(int argc, char *argv[])
 			analyze_path = optarg;
 			break;
 		case 's':
+			if (strlen(optarg) > sizeof(addr.sun_path) - 1) {
+				fprintf(stderr, "Socket name too long\n");
+				return EXIT_FAILURE;
+			}
 			control_server(optarg);
 			break;
 		case 'p':
@@ -155,6 +168,23 @@ int main(int argc, char *argv[])
 			}
 			packet_select_index(atoi(str));
 			break;
+		case 'd':
+			tty = optarg;
+			break;
+		case 'B':
+			tty_speed = tty_get_speed(atoi(optarg));
+			if (!tty_speed) {
+				fprintf(stderr, "Unknown speed: %s\n", optarg);
+				return EXIT_FAILURE;
+			}
+			break;
+		case 'V':
+			str = optarg;
+			packet_set_fallback_manufacturer(atoi(str));
+			break;
+		case 'M':
+			filter_mask |= PACKET_FILTER_SHOW_MGMT_SOCKET;
+			break;
 		case 't':
 			filter_mask &= ~PACKET_FILTER_SHOW_TIME_OFFSET;
 			filter_mask |= PACKET_FILTER_SHOW_TIME;
@@ -167,9 +197,21 @@ int main(int argc, char *argv[])
 		case 'S':
 			filter_mask |= PACKET_FILTER_SHOW_SCO_DATA;
 			break;
+		case 'A':
+			filter_mask |= PACKET_FILTER_SHOW_A2DP_STREAM;
+			break;
 		case 'E':
 			ellisys_server = optarg;
 			ellisys_port = 24352;
+			break;
+		case 'P':
+			use_pager = false;
+			break;
+		case 'J':
+			jlink = optarg;
+			break;
+		case 'R':
+			rtt = optarg;
 			break;
 		case '#':
 			packet_todo();
@@ -196,12 +238,6 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	mainloop_set_signal(&mask, signal_callback, NULL, NULL);
-
 	printf("Bluetooth monitor ver %s\n", VERSION);
 
 	keys_setup();
@@ -217,7 +253,7 @@ int main(int argc, char *argv[])
 		if (ellisys_server)
 			ellisys_enable(ellisys_server, ellisys_port);
 
-		control_reader(reader_path);
+		control_reader(reader_path, use_pager);
 		return EXIT_SUCCESS;
 	}
 
@@ -229,13 +265,16 @@ int main(int argc, char *argv[])
 	if (ellisys_server)
 		ellisys_enable(ellisys_server, ellisys_port);
 
-	if (!tty && control_tracing() < 0)
+	if (!tty && !jlink && control_tracing() < 0)
 		return EXIT_FAILURE;
 
 	if (tty && control_tty(tty, tty_speed) < 0)
 		return EXIT_FAILURE;
 
-	exit_status = mainloop_run();
+	if (jlink && control_rtt(jlink, rtt) < 0)
+		return EXIT_FAILURE;
+
+	exit_status = mainloop_run_with_signal(signal_callback, NULL);
 
 	keys_cleanup();
 

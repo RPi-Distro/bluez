@@ -16,6 +16,10 @@ In order to compile Bluetooth utilities you need following software packages:
 	- udev library (optional)
 	- readline (command line clients)
 
+	On a debian based system, this can be done by running the following command:
+		sudo apt-get build-dep bluez
+		./bootstrap
+
 To configure run:
 	./configure --prefix=/usr --mandir=/usr/share/man \
 				--sysconfdir=/etc --localstatedir=/var
@@ -24,6 +28,62 @@ Configure automatically searches for all required components and packages.
 
 To compile and install run:
 	make && make install
+
+
+Embedded Linux library
+======================
+
+In order to compile mesh support and test client utility the development
+version of Embedded Linux library is required to be present. The development
+repositories can be found here:
+
+	git://git.kernel.org/pub/scm/libs/ell/ell.git
+	https://kernel.googlesource.com/pub/scm/libs/ell/ell.git
+
+The build systems requires that the Embedded Linux library source code
+is available on the same top level directory as the source code:
+
+	.
+	|--- ell
+	|    |--- ell
+	|    `--- unit
+	`--- bluez
+	     |--- src
+	     `--- tools
+
+It is not required to build or install Embedded Linux library. The build
+will happen when building the binaries and it will then be linked internally.
+
+When using --enable-external-ell build option, it is not required that the
+Embedded Linux library source code is available in the top level directory.
+
+When neither --enable-mesh nor --enable-btpclient is specified, then this
+part is irrelevant and Embedded Linux library is not required.
+
+
+Kernel Build Options (for Mesh)
+===============================
+
+The Mesh daemon uses kernel provided crypto utilities to perform security
+functions required of Bluetooth Mesh. Many standard distributions currently
+enable all required crypto features, but a few notable distributions do
+not.
+
+If Mesh Cryptography is not working, the following configuration options
+may need to be enabled, and the kernel rebuilt.
+
+1. A minimum of kernel version 4.9 or later is required
+
+2. The kernel must at a minimum have the following .config options turned on:
+	CONFIG_CRYPTO_USER
+	CONFIG_CRYPTO_USER_API
+	CONFIG_CRYPTO_USER_API_AEAD
+	CONFIG_CRYPTO_USER_API_HASH
+
+	CONFIG_CRYPTO_AES
+	CONFIG_CRYPTO_CCM
+	CONFIG_CRYPTO_AEAD
+	CONFIG_CRYPTO_CMAC
 
 
 Configuration and options
@@ -105,17 +165,130 @@ For a working system, certain configuration options need to be enabled:
 		support systemd. In that case all integration with the
 		init system is up to the package.
 
+	--disable-a2dp
+
+		Disable A2DP profile
+
+		By default bluetoothd supports A2DP profile using a built-in
+		plugin, this option disables it.
+
+		This option is provided for distributions that do not have any
+		audio capabilities.
+
+	--disable-avrcp
+
+		Disable AVRCP profile
+
+		By default bluetoothd supports AVRCP profile using a built-in
+		plugin, this option disables it.
+
+		This option is provided for distributions that do not have any
+		audio capabilities.
+
+	--disable-network
+
+		Disable PANU, NAP, GN profiles
+
+		By default bluetoothd supports PANU, NAP and GN profile using a
+		built-in plugin, this option disables it.
+
+		This option is provided for distributions that do not have any
+		network capabilities.
+
+	--disable-hid
+
+		Disable HID profile
+
+		By default bluetoothd supports HID profile using a built-in
+		plugin, this option disables it.
+
+		This option is provided for distributions that do not have any
+		input capabilities.
+
+	--disable-hog
+
+		Disable HoG profile
+
+		By default bluetoothd supports HoG profile using a built-in
+		plugin, this option disables it.
+
+		This option is provided for distributions that do not have any
+		input capabilities.
+
+	--enable-testing
+
+		Enable testing tools
+
+		By default tools used only for testing emulation are disabled.
+		This option can be used to enable them.
+
+		It is not recommended to enable this option for production
+		systems. These tools may contain tests that depend on specific
+		environment or kernel features in development.
+
 	--enable-experimental
 
-		Enable experimental plugins
+		Enable experimental tools
 
-		By default all plugins that are still in development
+		By default all tools that are still in development
 		are disabled. This option can be used to enable them.
 
 		It is not recommended to enable this option for production
-		systems. The APIs or behavior of the experimental plugins
-		is unstable and might still change.
+		systems. The behavior of the experimental tools is unstable
+		and might still change.
 
+	--enable-deprecated
+
+		Enable deprecated tools
+
+		By defauld all tools that are no longer maintained are
+		disabled. This option can be used to enable them.
+
+		It is not recommended to enable this option for production
+		systems. The behavior of the deprecated tools may be unstable
+		or simply don't work anymore.
+
+	--enable-nfc
+
+		This option enable NFC pairing support.
+
+		By default the integration with neard is disabled, this gives
+		the option to enable it in system where neard is supported.
+
+		The plugin is built into bluetoothd therefore it does not need
+		to be package separately.
+
+	--enable-sap
+
+		This option enable SAP profile using sap plugin.
+
+		By default sap plugin is disabled since it requires tight
+		integration with systems and is very rarely required.
+
+		The plugin is built into bluetoothd therefore it does not need
+		to be package separately.
+
+	--enable-health
+
+		This option enable health profiles.
+
+		By default health plugin is disabled since its profiles are
+		target for the health industry.
+
+		The plugin is built into bluetoothd therefore it does not need
+		to be package separately.
+
+	--enable-midi
+
+		This option enable MIDI support via ALSA Sequencer.
+
+		By default midi plugin is disabled since it still considered
+		experimental. When bluetoothd will create a new ALSA Sequencer
+		client and port for each device connected that supports the
+		MIDI GATT primary service.
+
+		The plugin is built into bluetoothd therefore it does not need
+		to be package separately.
 
 Information
 ===========

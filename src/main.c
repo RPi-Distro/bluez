@@ -27,6 +27,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -50,7 +51,10 @@
 #include "log.h"
 #include "backtrace.h"
 
+#include "shared/att-types.h"
+#include "shared/mainloop.h"
 #include "lib/uuid.h"
+#include "shared/util.h"
 #include "hcid.h"
 #include "sdpd.h"
 #include "adapter.h"
@@ -58,39 +62,97 @@
 #include "dbus-common.h"
 #include "agent.h"
 #include "profile.h"
-#include "systemd.h"
 
 #define BLUEZ_NAME "org.bluez"
 
 #define DEFAULT_PAIRABLE_TIMEOUT       0 /* disabled */
 #define DEFAULT_DISCOVERABLE_TIMEOUT 180 /* 3 minutes */
+#define DEFAULT_TEMPORARY_TIMEOUT     30 /* 30 seconds */
 
 #define SHUTDOWN_GRACE_SECONDS 10
 
 struct main_opts main_opts;
 static GKeyFile *main_conf;
+static char *main_conf_file_path;
 
-static enum {
-	MPS_OFF,
-	MPS_SINGLE,
-	MPS_MULTIPLE,
-} mps = MPS_OFF;
-
-static const char * const supported_options[] = {
+static const char *supported_options[] = {
 	"Name",
 	"Class",
 	"DiscoverableTimeout",
 	"AlwaysPairable",
 	"PairableTimeout",
-	"AutoConnectTimeout",
 	"DeviceID",
 	"ReverseServiceDiscovery",
 	"NameResolving",
 	"DebugKeys",
 	"ControllerMode",
 	"MultiProfile",
+	"FastConnectable",
 	"Privacy",
+	"JustWorksRepairing",
+	"TemporaryTimeout",
+	NULL
 };
+
+static const char *controller_options[] = {
+	"BRPageScanType",
+	"BRPageScanInterval",
+	"BRPageScanWindow",
+	"BRInquiryScanType",
+	"BRInquiryScanInterval",
+	"BRInquiryScanWindow",
+	"BRLinkSupervisionTimeout",
+	"BRPageTimeout",
+	"BRMinSniffInterval",
+	"BRMaxSniffInterval",
+	"LEMinAdvertisementInterval",
+	"LEMaxAdvertisementInterval",
+	"LEMultiAdvertisementRotationInterval",
+	"LEScanIntervalAutoConnect",
+	"LEScanWindowAutoConnect",
+	"LEScanIntervalSuspend",
+	"LEScanWindowSuspend",
+	"LEScanIntervalDiscovery",
+	"LEScanWindowDiscovery",
+	"LEScanIntervalAdvMonitoring",
+	"LEScanWindowAdvMonitoring",
+	"LEScanIntervalConnect",
+	"LEScanWindowConnect",
+	"LEMinConnectionInterval",
+	"LEMaxConnectionInterval",
+	"LEConnectionLatency",
+	"LEConnectionSupervisionTimeout",
+	"LEAutoconnecttimeout",
+	NULL
+};
+
+static const char *policy_options[] = {
+	"ReconnectUUIDs",
+	"ReconnectAttempts",
+	"ReconnectIntervals",
+	"AutoEnable",
+	NULL
+};
+
+static const char *gatt_options[] = {
+	"Cache",
+	"KeySize",
+	"ExchangeMTU",
+	"Channels",
+	NULL
+};
+
+static const struct group_table {
+	const char *name;
+	const char **options;
+} valid_groups[] = {
+	{ "General",	supported_options },
+	{ "Controller", controller_options },
+	{ "Policy",	policy_options },
+	{ "GATT",	gatt_options },
+	{ }
+};
+
 
 GKeyFile *btd_get_main_conf(void)
 {
@@ -149,11 +211,67 @@ done:
 	main_opts.did_version = version;
 }
 
-static void check_config(GKeyFile *config)
+static bt_gatt_cache_t parse_gatt_cache(const char *cache)
 {
-	const char *valid_groups[] = { "General", "Policy", NULL };
+	if (!strcmp(cache, "always")) {
+		return BT_GATT_CACHE_ALWAYS;
+	} else if (!strcmp(cache, "yes")) {
+		return BT_GATT_CACHE_YES;
+	} else if (!strcmp(cache, "no")) {
+		return BT_GATT_CACHE_NO;
+	} else {
+		DBG("Invalid value for KeepCache=%s", cache);
+		return BT_GATT_CACHE_ALWAYS;
+	}
+}
+
+static enum jw_repairing_t parse_jw_repairing(const char *jw_repairing)
+{
+	if (!strcmp(jw_repairing, "never")) {
+		return JW_REPAIRING_NEVER;
+	} else if (!strcmp(jw_repairing, "confirm")) {
+		return JW_REPAIRING_CONFIRM;
+	} else if (!strcmp(jw_repairing, "always")) {
+		return JW_REPAIRING_ALWAYS;
+	} else {
+		return JW_REPAIRING_NEVER;
+	}
+}
+
+
+static void check_options(GKeyFile *config, const char *group,
+						const char **options)
+{
 	char **keys;
 	int i;
+
+	keys = g_key_file_get_keys(config, group, NULL, NULL);
+
+	for (i = 0; keys != NULL && keys[i] != NULL; i++) {
+		bool found;
+		unsigned int j;
+
+		found = false;
+		for (j = 0; options != NULL && options[j] != NULL; j++) {
+			if (g_str_equal(keys[i], options[j])) {
+				found = true;
+				break;
+			}
+		}
+
+		if (!found)
+			warn("Unknown key %s for group %s in %s",
+					keys[i], group, main_conf_file_path);
+	}
+
+	g_strfreev(keys);
+}
+
+static void check_config(GKeyFile *config)
+{
+	char **keys;
+	int i;
+	const struct group_table *group;
 
 	if (!config)
 		return;
@@ -161,41 +279,24 @@ static void check_config(GKeyFile *config)
 	keys = g_key_file_get_groups(config, NULL);
 
 	for (i = 0; keys != NULL && keys[i] != NULL; i++) {
-		const char **group;
 		bool match = false;
 
-		for (group = valid_groups; *group; group++) {
-			if (g_str_equal(keys[i], *group)) {
+		for (group = valid_groups; group && group->name ; group++) {
+			if (g_str_equal(keys[i], group->name)) {
 				match = true;
 				break;
 			}
 		}
 
 		if (!match)
-			warn("Unknown group %s in main.conf", keys[i]);
+			warn("Unknown group %s in %s", keys[i],
+						main_conf_file_path);
 	}
 
 	g_strfreev(keys);
 
-	keys = g_key_file_get_keys(config, "General", NULL, NULL);
-
-	for (i = 0; keys != NULL && keys[i] != NULL; i++) {
-		bool found;
-		unsigned int j;
-
-		found = false;
-		for (j = 0; j < G_N_ELEMENTS(supported_options); j++) {
-			if (g_str_equal(keys[i], supported_options[j])) {
-				found = true;
-				break;
-			}
-		}
-
-		if (!found)
-			warn("Unknown key %s in main.conf", keys[i]);
-	}
-
-	g_strfreev(keys);
+	for (group = valid_groups; group && group->name; group++)
+		check_options(config, group->name, group->options);
 }
 
 static int get_mode(const char *str)
@@ -212,6 +313,150 @@ static int get_mode(const char *str)
 	return BT_MODE_DUAL;
 }
 
+static void parse_controller_config(GKeyFile *config)
+{
+	static const struct {
+		const char * const val_name;
+		uint16_t * const val;
+		const uint16_t min;
+		const uint16_t max;
+	} params[] = {
+		{ "BRPageScanType",
+		  &main_opts.default_params.br_page_scan_type,
+		  0,
+		  1},
+		{ "BRPageScanInterval",
+		  &main_opts.default_params.br_page_scan_interval,
+		  0x0012,
+		  0x1000},
+		{ "BRPageScanWindow",
+		  &main_opts.default_params.br_page_scan_win,
+		  0x0011,
+		  0x1000},
+		{ "BRInquiryScanType",
+		  &main_opts.default_params.br_scan_type,
+		  0,
+		  1},
+		{ "BRInquiryScanInterval",
+		  &main_opts.default_params.br_scan_interval,
+		  0x0012,
+		  0x1000},
+		{ "BRInquiryScanWindow",
+		  &main_opts.default_params.br_scan_win,
+		  0x0011,
+		  0x1000},
+		{ "BRLinkSupervisionTimeout",
+		  &main_opts.default_params.br_link_supervision_timeout,
+		  0x0001,
+		  0xFFFF},
+		{ "BRPageTimeout",
+		  &main_opts.default_params.br_page_timeout,
+		  0x0001,
+		  0xFFFF},
+		{ "BRMinSniffInterval",
+		  &main_opts.default_params.br_min_sniff_interval,
+		  0x0001,
+		  0xFFFE},
+		{ "BRMaxSniffInterval",
+		  &main_opts.default_params.br_max_sniff_interval,
+		  0x0001,
+		  0xFFFE},
+		{ "LEMinAdvertisementInterval",
+		  &main_opts.default_params.le_min_adv_interval,
+		  0x0020,
+		  0x4000},
+		{ "LEMaxAdvertisementInterval",
+		  &main_opts.default_params.le_max_adv_interval,
+		  0x0020,
+		  0x4000},
+		{ "LEMultiAdvertisementRotationInterval",
+		  &main_opts.default_params.le_multi_adv_rotation_interval,
+		  0x0001,
+		  0xFFFF},
+		{ "LEScanIntervalAutoConnect",
+		  &main_opts.default_params.le_scan_interval_autoconnect,
+		  0x0004,
+		  0x4000},
+		{ "LEScanWindowAutoConnect",
+		  &main_opts.default_params.le_scan_win_autoconnect,
+		  0x0004,
+		  0x4000},
+		{ "LEScanIntervalSuspend",
+		  &main_opts.default_params.le_scan_interval_suspend,
+		  0x0004,
+		  0x4000},
+		{ "LEScanWindowSuspend",
+		  &main_opts.default_params.le_scan_win_suspend,
+		  0x0004,
+		  0x4000},
+		{ "LEScanIntervalDiscovery",
+		  &main_opts.default_params.le_scan_interval_discovery,
+		  0x0004,
+		  0x4000},
+		{ "LEScanWindowDiscovery",
+		  &main_opts.default_params.le_scan_win_discovery,
+		  0x0004,
+		  0x4000},
+		{ "LEScanIntervalAdvMonitor",
+		  &main_opts.default_params.le_scan_interval_adv_monitor,
+		  0x0004,
+		  0x4000},
+		{ "LEScanWindowAdvMonitor",
+		  &main_opts.default_params.le_scan_win_adv_monitor,
+		  0x0004,
+		  0x4000},
+		{ "LEScanIntervalConnect",
+		  &main_opts.default_params.le_scan_interval_connect,
+		  0x0004,
+		  0x4000},
+		{ "LEScanWindowConnect",
+		  &main_opts.default_params.le_scan_win_connect,
+		  0x0004,
+		  0x4000},
+		{ "LEMinConnectionInterval",
+		  &main_opts.default_params.le_min_conn_interval,
+		  0x0006,
+		  0x0C80},
+		{ "LEMaxConnectionInterval",
+		  &main_opts.default_params.le_max_conn_interval,
+		  0x0006,
+		  0x0C80},
+		{ "LEConnectionLatency",
+		  &main_opts.default_params.le_conn_latency,
+		  0x0000,
+		  0x01F3},
+		{ "LEConnectionSupervisionTimeout",
+		  &main_opts.default_params.le_conn_lsto,
+		  0x000A,
+		  0x0C80},
+		{ "LEAutoconnecttimeout",
+		  &main_opts.default_params.le_autoconnect_timeout,
+		  0x0001,
+		  0x4000},
+	};
+	uint16_t i;
+
+	if (!config)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(params); ++i) {
+		GError *err = NULL;
+		int val = g_key_file_get_integer(config, "Controller",
+						params[i].val_name, &err);
+		if (err) {
+			warn("%s", err->message);
+			g_clear_error(&err);
+		} else {
+			info("%s=%d", params[i].val_name, val);
+
+			val = MAX(val, params[i].min);
+			val = MIN(val, params[i].max);
+			*params[i].val = val;
+			++main_opts.default_params.num_entries;
+		}
+	}
+}
+
 static void parse_config(GKeyFile *config)
 {
 	GError *err = NULL;
@@ -224,7 +469,7 @@ static void parse_config(GKeyFile *config)
 
 	check_config(config);
 
-	DBG("parsing main.conf");
+	DBG("parsing %s", main_conf_file_path);
 
 	val = g_key_file_get_integer(config, "General",
 						"DiscoverableTimeout", &err);
@@ -236,6 +481,16 @@ static void parse_config(GKeyFile *config)
 		main_opts.discovto = val;
 	}
 
+	boolean = g_key_file_get_boolean(config, "General",
+						"AlwaysPairable", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("pairable=%s", boolean ? "true" : "false");
+		main_opts.pairable = boolean;
+	}
+
 	val = g_key_file_get_integer(config, "General",
 						"PairableTimeout", &err);
 	if (err) {
@@ -244,16 +499,6 @@ static void parse_config(GKeyFile *config)
 	} else {
 		DBG("pairto=%d", val);
 		main_opts.pairto = val;
-	}
-
-	val = g_key_file_get_integer(config, "General", "AutoConnectTimeout",
-									&err);
-	if (err) {
-		DBG("%s", err->message);
-		g_clear_error(&err);
-	} else {
-		DBG("auto_to=%d", val);
-		main_opts.autoto = val;
 	}
 
 	str = g_key_file_get_string(config, "General", "Privacy", &err);
@@ -274,6 +519,28 @@ static void parse_config(GKeyFile *config)
 		}
 
 		g_free(str);
+	}
+
+	str = g_key_file_get_string(config, "General",
+						"JustWorksRepairing", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+		main_opts.jw_repairing = JW_REPAIRING_NEVER;
+	} else {
+		DBG("just_works_repairing=%s", str);
+		main_opts.jw_repairing = parse_jw_repairing(str);
+		g_free(str);
+	}
+
+	val = g_key_file_get_integer(config, "General",
+						"TemporaryTimeout", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("tmpto=%d", val);
+		main_opts.tmpto = val;
 	}
 
 	str = g_key_file_get_string(config, "General", "Name", &err);
@@ -312,7 +579,7 @@ static void parse_config(GKeyFile *config)
 		DBG("%s", err->message);
 		g_clear_error(&err);
 	} else
-		main_opts.reverse_sdp = boolean;
+		main_opts.reverse_discovery = boolean;
 
 	boolean = g_key_file_get_boolean(config, "General",
 						"NameResolving", &err);
@@ -344,9 +611,11 @@ static void parse_config(GKeyFile *config)
 		DBG("MultiProfile=%s", str);
 
 		if (!strcmp(str, "single"))
-			mps = MPS_SINGLE;
+			main_opts.mps = MPS_SINGLE;
 		else if (!strcmp(str, "multiple"))
-			mps = MPS_MULTIPLE;
+			main_opts.mps = MPS_MULTIPLE;
+		else
+			main_opts.mps = MPS_OFF;
 
 		g_free(str);
 	}
@@ -357,6 +626,59 @@ static void parse_config(GKeyFile *config)
 		g_clear_error(&err);
 	else
 		main_opts.fast_conn = boolean;
+
+	boolean = g_key_file_get_boolean(config, "General",
+						"RefreshDiscovery", &err);
+	if (err)
+		g_clear_error(&err);
+	else
+		main_opts.refresh_discovery = boolean;
+
+	str = g_key_file_get_string(config, "GATT", "Cache", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		main_opts.gatt_cache = parse_gatt_cache(str);
+		g_free(str);
+	}
+
+	val = g_key_file_get_integer(config, "GATT", "KeySize", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("KeySize=%d", val);
+
+		if (val >=7 && val <= 16)
+			main_opts.key_size = val;
+	}
+
+	val = g_key_file_get_integer(config, "GATT", "ExchangeMTU", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		/* Ensure the mtu is within a valid range. */
+		val = MIN(val, BT_ATT_MAX_LE_MTU);
+		val = MAX(val, BT_ATT_DEFAULT_LE_MTU);
+		DBG("ExchangeMTU=%d", val);
+		main_opts.gatt_mtu = val;
+	}
+
+	val = g_key_file_get_integer(config, "GATT", "Channels", &err);
+	if (err) {
+		DBG("%s", err->message);
+		g_clear_error(&err);
+	} else {
+		DBG("Channels=%d", val);
+		/* Ensure the channels is within a valid range. */
+		val = MIN(val, 5);
+		val = MAX(val, 1);
+		main_opts.gatt_channels = val;
+	}
+
+	parse_controller_config(config);
 }
 
 static void init_defaults(void)
@@ -369,9 +691,15 @@ static void init_defaults(void)
 	main_opts.class = 0x000000;
 	main_opts.pairto = DEFAULT_PAIRABLE_TIMEOUT;
 	main_opts.discovto = DEFAULT_DISCOVERABLE_TIMEOUT;
-	main_opts.reverse_sdp = TRUE;
+	main_opts.tmpto = DEFAULT_TEMPORARY_TIMEOUT;
+	main_opts.reverse_discovery = TRUE;
 	main_opts.name_resolv = TRUE;
 	main_opts.debug_keys = FALSE;
+	main_opts.refresh_discovery = TRUE;
+
+	main_opts.default_params.num_entries = 0;
+	main_opts.default_params.br_page_scan_type = 0xFFFF;
+	main_opts.default_params.br_scan_type = 0xFFFF;
 
 	if (sscanf(VERSION, "%hhu.%hhu", &major, &minor) != 2)
 		return;
@@ -380,6 +708,10 @@ static void init_defaults(void)
 	main_opts.did_vendor = 0x1d6b;		/* Linux Foundation */
 	main_opts.did_product = 0x0246;		/* BlueZ */
 	main_opts.did_version = (major << 8 | minor);
+
+	main_opts.gatt_cache = BT_GATT_CACHE_ALWAYS;
+	main_opts.gatt_mtu = BT_ATT_MAX_LE_MTU;
+	main_opts.gatt_channels = 3;
 }
 
 static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
@@ -397,11 +729,9 @@ static void log_handler(const gchar *log_domain, GLogLevelFlags log_level,
 	btd_backtrace(0xffff);
 }
 
-static GMainLoop *event_loop;
-
 void btd_exit(void)
 {
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static gboolean quit_eventloop(gpointer user_data)
@@ -410,24 +740,11 @@ static gboolean quit_eventloop(gpointer user_data)
 	return FALSE;
 }
 
-static gboolean signal_handler(GIOChannel *channel, GIOCondition cond,
-							gpointer user_data)
+static void signal_callback(int signum, void *user_data)
 {
 	static bool terminated = false;
-	struct signalfd_siginfo si;
-	ssize_t result;
-	int fd;
 
-	if (cond & (G_IO_NVAL | G_IO_ERR | G_IO_HUP))
-		return FALSE;
-
-	fd = g_io_channel_unix_get_fd(channel);
-
-	result = read(fd, &si, sizeof(si));
-	if (result != sizeof(si))
-		return FALSE;
-
-	switch (si.ssi_signo) {
+	switch (signum) {
 	case SIGINT:
 	case SIGTERM:
 		if (!terminated) {
@@ -435,7 +752,7 @@ static gboolean signal_handler(GIOChannel *channel, GIOCondition cond,
 			g_timeout_add_seconds(SHUTDOWN_GRACE_SECONDS,
 							quit_eventloop, NULL);
 
-			sd_notify(0, "STATUS=Powering down");
+			mainloop_sd_notify("STATUS=Powering down");
 			adapter_shutdown();
 		}
 
@@ -445,51 +762,12 @@ static gboolean signal_handler(GIOChannel *channel, GIOCondition cond,
 		__btd_toggle_debug();
 		break;
 	}
-
-	return TRUE;
-}
-
-static guint setup_signalfd(void)
-{
-	GIOChannel *channel;
-	guint source;
-	sigset_t mask;
-	int fd;
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-	sigaddset(&mask, SIGUSR2);
-
-	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
-		perror("Failed to set signal mask");
-		return 0;
-	}
-
-	fd = signalfd(-1, &mask, 0);
-	if (fd < 0) {
-		perror("Failed to create signal descriptor");
-		return 0;
-	}
-
-	channel = g_io_channel_unix_new(fd);
-
-	g_io_channel_set_close_on_unref(channel, TRUE);
-	g_io_channel_set_encoding(channel, NULL, NULL);
-	g_io_channel_set_buffered(channel, FALSE);
-
-	source = g_io_add_watch(channel,
-				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				signal_handler, NULL);
-
-	g_io_channel_unref(channel);
-
-	return source;
 }
 
 static char *option_debug = NULL;
 static char *option_plugin = NULL;
 static char *option_noplugin = NULL;
+static char *option_configfile = NULL;
 static gboolean option_compat = FALSE;
 static gboolean option_detach = TRUE;
 static gboolean option_version = FALSE;
@@ -505,6 +783,9 @@ static void free_options(void)
 
 	g_free(option_noplugin);
 	option_noplugin = NULL;
+
+	g_free(option_configfile);
+	option_configfile = NULL;
 }
 
 static void disconnect_dbus(void)
@@ -523,7 +804,7 @@ static void disconnect_dbus(void)
 static void disconnected_dbus(DBusConnection *conn, void *data)
 {
 	info("Disconnected from D-Bus. Exiting.");
-	g_main_loop_quit(event_loop);
+	mainloop_quit();
 }
 
 static int connect_dbus(void)
@@ -551,13 +832,6 @@ static int connect_dbus(void)
 	return 0;
 }
 
-static gboolean watchdog_callback(gpointer user_data)
-{
-	sd_notify(0, "WATCHDOG=1");
-
-	return TRUE;
-}
-
 static gboolean parse_debug(const char *key, const char *value,
 				gpointer user_data, GError **error)
 {
@@ -577,6 +851,8 @@ static GOptionEntry options[] = {
 				"Specify plugins to load", "NAME,..," },
 	{ "noplugin", 'P', 0, G_OPTION_ARG_STRING, &option_noplugin,
 				"Specify plugins not to load", "NAME,..." },
+	{ "configfile", 'f', 0, G_OPTION_ARG_STRING, &option_configfile,
+			"Specify an explicit path to the config file", "FILE"},
 	{ "compat", 'C', 0, G_OPTION_ARG_NONE, &option_compat,
 				"Provide deprecated command line interfaces" },
 	{ "experimental", 'E', 0, G_OPTION_ARG_NONE, &option_experimental,
@@ -596,8 +872,6 @@ int main(int argc, char *argv[])
 	uint16_t sdp_mtu = 0;
 	uint32_t sdp_flags = 0;
 	int gdbus_flags = 0;
-	guint signal, watchdog;
-	const char *watchdog_usec;
 
 	init_defaults();
 
@@ -624,9 +898,7 @@ int main(int argc, char *argv[])
 
 	btd_backtrace_init();
 
-	event_loop = g_main_loop_new(NULL, FALSE);
-
-	signal = setup_signalfd();
+	mainloop_init();
 
 	__btd_log_init(option_debug, option_detach);
 
@@ -634,9 +906,14 @@ int main(int argc, char *argv[])
 							G_LOG_FLAG_RECURSION,
 							log_handler, NULL);
 
-	sd_notify(0, "STATUS=Starting up");
+	mainloop_sd_notify("STATUS=Starting up");
 
-	main_conf = load_config(CONFIGDIR "/main.conf");
+	if (option_configfile)
+		main_conf_file_path = option_configfile;
+	else
+		main_conf_file_path = CONFIGDIR "/main.conf";
+
+	main_conf = load_config(main_conf_file_path);
 
 	parse_config(main_conf);
 
@@ -672,8 +949,8 @@ int main(int argc, char *argv[])
 						main_opts.did_version);
 	}
 
-	if (mps != MPS_OFF)
-		register_mps(mps == MPS_MULTIPLE);
+	if (main_opts.mps != MPS_OFF)
+		register_mps(main_opts.mps == MPS_MULTIPLE);
 
 	/* Loading plugins has to be done after D-Bus has been setup since
 	 * the plugins might wanna expose some paths on the bus. However the
@@ -688,28 +965,12 @@ int main(int argc, char *argv[])
 
 	DBG("Entering main loop");
 
-	sd_notify(0, "STATUS=Running");
-	sd_notify(0, "READY=1");
+	mainloop_sd_notify("STATUS=Running");
+	mainloop_sd_notify("READY=1");
 
-	watchdog_usec = getenv("WATCHDOG_USEC");
-	if (watchdog_usec) {
-		unsigned int seconds;
+	mainloop_run_with_signal(signal_callback, NULL);
 
-		seconds = atoi(watchdog_usec) / (1000 * 1000);
-		info("Watchdog timeout is %d seconds", seconds);
-
-		watchdog = g_timeout_add_seconds_full(G_PRIORITY_HIGH,
-							seconds / 2,
-							watchdog_callback,
-							NULL, NULL);
-	} else
-		watchdog = 0;
-
-	g_main_loop_run(event_loop);
-
-	sd_notify(0, "STATUS=Quitting");
-
-	g_source_remove(signal);
+	mainloop_sd_notify("STATUS=Quitting");
 
 	plugin_cleanup();
 
@@ -724,17 +985,12 @@ int main(int argc, char *argv[])
 	if (main_opts.mode != BT_MODE_LE)
 		stop_sdp_server();
 
-	g_main_loop_unref(event_loop);
-
 	if (main_conf)
 		g_key_file_free(main_conf);
 
 	disconnect_dbus();
 
 	info("Exit");
-
-	if (watchdog > 0)
-		g_source_remove(watchdog);
 
 	__btd_log_cleanup();
 

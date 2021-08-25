@@ -38,9 +38,13 @@
 #include "lib/bluetooth.h"
 #include "lib/sdp.h"
 #include "lib/sdp_lib.h"
+#include "lib/uuid.h"
 #include "src/shared/mgmt.h"
 #include "src/shared/util.h"
 #include "src/shared/uhid.h"
+#include "src/shared/queue.h"
+#include "src/shared/att.h"
+#include "src/shared/gatt-db.h"
 #include "src/sdp-client.h"
 #include "src/uuid-helper.h"
 #include "src/log.h"
@@ -82,8 +86,6 @@
 
 /* HID Virtual Cable Unplug */
 #define HID_VIRTUAL_CABLE_UNPLUG	0x05
-
-#define HOG_UUID		"00001812-0000-1000-8000-00805f9b34fb"
 
 static bdaddr_t adapter_addr;
 

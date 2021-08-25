@@ -1,10 +1,9 @@
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.43)
+AC_INIT(bluez, 5.55)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
 AC_CONFIG_HEADERS(config.h)
-AC_USE_SYSTEM_EXTENSIONS
 
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
@@ -46,6 +45,8 @@ MISC_FLAGS
 
 AC_ARG_ENABLE(threads, AC_HELP_STRING([--enable-threads],
 		[enable threading support]), [enable_threads=${enableval}])
+
+AC_CHECK_FUNCS(explicit_bzero)
 
 AC_CHECK_FUNC(signalfd, dummy=yes,
 			AC_MSG_ERROR(signalfd support is required))
@@ -118,6 +119,18 @@ if (test -z "${path_dbussessionbusdir}"); then
 fi
 AC_SUBST(DBUS_SESSIONBUSDIR, [${path_dbussessionbusdir}])
 
+AC_ARG_WITH([zsh-completion-dir], AC_HELP_STRING([--with-zsh-completion-dir=DIR],
+				[path to install zsh completions]),
+					[path_zshcompletiondir=${withval}],
+						[path_zshcompletiondir="yes"])
+
+if (test "${path_zshcompletiondir}" = "yes"); then
+	path_zshcompletiondir="$datarootdir/zsh/site-functions"
+	AC_MSG_RESULT([${path_zshcompletiondir}])
+fi
+AC_SUBST(ZSH_COMPLETIONDIR, [${path_zshcompletiondir}])
+AM_CONDITIONAL(ZSH_COMPLETIONS, test "${path_zshcompletiondir}" != "no")
+
 AC_ARG_ENABLE(backtrace, AC_HELP_STRING([--enable-backtrace],
 		[compile backtrace support]), [enable_backtrace=${enableval}])
 
@@ -139,6 +152,38 @@ AM_CONDITIONAL(LIBRARY, test "${enable_library}" = "yes")
 AC_ARG_ENABLE(test, AC_HELP_STRING([--enable-test],
 		[enable test/example scripts]), [enable_test=${enableval}])
 AM_CONDITIONAL(TEST, test "${enable_test}" = "yes")
+
+AC_ARG_ENABLE(nfc, AC_HELP_STRING([--enable-nfc],
+		[enable NFC paring]), [enable_nfc=${enableval}])
+AM_CONDITIONAL(NFC, test "${enable_nfc}" = "yes")
+
+AC_ARG_ENABLE(sap, AC_HELP_STRING([--enable-sap],
+		[enable SAP profile]), [enable_sap=${enableval}])
+AM_CONDITIONAL(SAP, test "${enable_sap}" = "yes")
+
+AC_ARG_ENABLE(a2dp, AC_HELP_STRING([--disable-a2dp],
+		[disable A2DP profile]), [enable_a2dp=${enableval}])
+AM_CONDITIONAL(A2DP, test "${enable_a2dp}" != "no")
+
+AC_ARG_ENABLE(avrcp, AC_HELP_STRING([--disable-avrcp],
+		[disable AVRCP profile]), [enable_avrcp=${enableval}])
+AM_CONDITIONAL(AVRCP, test "${enable_avrcp}" != "no")
+
+AC_ARG_ENABLE(network, AC_HELP_STRING([--disable-network],
+		[disable network profiles]), [enable_network=${enableval}])
+AM_CONDITIONAL(NETWORK, test "${enable_network}" != "no")
+
+AC_ARG_ENABLE(hid, AC_HELP_STRING([--disable-hid],
+		[disable HID profile]), [enable_hid=${enableval}])
+AM_CONDITIONAL(HID, test "${enable_hid}" != "no")
+
+AC_ARG_ENABLE(hog, AC_HELP_STRING([--disable-hog],
+		[disable HoG profile]), [enable_hog=${enableval}])
+AM_CONDITIONAL(HOG, test "${enable_hog}" != "no")
+
+AC_ARG_ENABLE(health, AC_HELP_STRING([--enable-health],
+		[enable health profiles]), [enable_health=${enableval}])
+AM_CONDITIONAL(HEALTH, test "${enable_health}" = "yes")
 
 AC_ARG_ENABLE(tools, AC_HELP_STRING([--disable-tools],
 		[disable Bluetooth tools]), [enable_tools=${enableval}])
@@ -173,12 +218,31 @@ if (test "${enable_udev}" != "no" && test -z "${path_udevdir}"); then
 fi
 AC_SUBST(UDEV_DIR, [${path_udevdir}])
 
-AM_CONDITIONAL(HID2HCI, test "${enable_tools}" != "no" &&
-						test "${enable_udev}" != "no")
-
 AC_ARG_ENABLE(cups, AC_HELP_STRING([--disable-cups],
                 [disable CUPS printer support]), [enable_cups=${enableval}])
 AM_CONDITIONAL(CUPS, test "${enable_cups}" != "no")
+
+AC_ARG_ENABLE(mesh, AC_HELP_STRING([--enable-mesh],
+		[enable Mesh profile support]), [enable_mesh=${enableval}])
+AM_CONDITIONAL(MESH, test "${enable_mesh}" = "yes")
+
+if (test "${enable_mesh}" = "yes"); then
+	PKG_CHECK_MODULES(JSONC, json-c >= 0.13, dummy=yes,
+				AC_MSG_ERROR(json-c >= 0.13 is required))
+	AC_SUBST(JSON_CFLAGS)
+	AC_SUBST(JSON_LIBS)
+fi
+
+AC_ARG_ENABLE(midi, AC_HELP_STRING([--enable-midi],
+                [enable MIDI support]), [enable_midi=${enableval}])
+AM_CONDITIONAL(MIDI, test "${enable_midi}" = "yes")
+
+if (test "${enable_midi}" = "yes"); then
+	PKG_CHECK_MODULES(ALSA, alsa, dummy=yes,
+				AC_MSG_ERROR(ALSA lib is required for MIDI support))
+	AC_SUBST(ALSA_CFLAGS)
+	AC_SUBST(ALSA_LIBS)
+fi
 
 AC_ARG_ENABLE(obex, AC_HELP_STRING([--disable-obex],
 		[disable OBEX profile support]), [enable_obex=${enableval}])
@@ -190,11 +254,30 @@ if (test "${enable_obex}" != "no"); then
 fi
 AM_CONDITIONAL(OBEX, test "${enable_obex}" != "no")
 
+AC_ARG_ENABLE(btpclient, AC_HELP_STRING([--enable-btpclient],
+		[enable BTP client]), [enable_btpclient=${enableval}])
+AM_CONDITIONAL(BTPCLIENT, test "${enable_btpclient}" = "yes")
+
+AC_ARG_ENABLE([external_ell], AC_HELP_STRING([--enable-external-ell],
+				[enable external Embedded Linux library]),
+					[enable_external_ell=${enableval}])
+if (test "${enable_external_ell}" = "yes"); then
+	PKG_CHECK_MODULES(ELL, ell >= 0.28, dummy=yes,
+		AC_MSG_ERROR(Embedded Linux library >= 0.28 is required))
+	AC_SUBST(ELL_CFLAGS)
+	AC_SUBST(ELL_LIBS)
+fi
+AM_CONDITIONAL(EXTERNAL_ELL, test "${enable_external_ell}" = "yes" ||
+				(test "${enable_btpclient}" != "yes" &&
+						test "${enable_mesh}" != "yes"))
+AM_CONDITIONAL(LIBSHARED_ELL, test "${enable_btpclient}" = "yes" ||
+						test "${enable_mesh}" = "yes")
+
 AC_ARG_ENABLE(client, AC_HELP_STRING([--disable-client],
 		[disable command line client]), [enable_client=${enableval}])
 AM_CONDITIONAL(CLIENT, test "${enable_client}" != "no")
 
-if (test "${enable_client}" != "no"); then
+if (test "${enable_client}" != "no" || test "${enable_mesh}" = "yes"); then
         AC_CHECK_HEADERS(readline/readline.h, enable_readline=yes,
                 AC_MSG_ERROR(readline header files are required))
 fi
@@ -242,13 +325,18 @@ AC_ARG_ENABLE(manpages, AC_HELP_STRING([--enable-manpages],
 					[enable_manpages=${enableval}])
 AM_CONDITIONAL(MANPAGES, test "${enable_manpages}" = "yes")
 
+AC_ARG_ENABLE(testing, AC_HELP_STRING([--enable-testing],
+			[enable testing tools]),
+					[enable_testing=${enableval}])
+AM_CONDITIONAL(TESTING, test "${enable_testing}" = "yes")
+
 AC_ARG_ENABLE(experimental, AC_HELP_STRING([--enable-experimental],
-			[enable experimental plugins (SAP, NFC, ...)]),
+			[enable experimental tools]),
 					[enable_experimental=${enableval}])
 AM_CONDITIONAL(EXPERIMENTAL, test "${enable_experimental}" = "yes")
 
 AC_ARG_ENABLE(deprecated, AC_HELP_STRING([--enable-deprecated],
-			[enable deprecated plugins (BLE services, ...)]),
+			[enable deprecated tools]),
 					[enable_deprecated=${enableval}])
 AM_CONDITIONAL(DEPRECATED, test "${enable_deprecated}" = "yes")
 
@@ -256,6 +344,15 @@ AC_ARG_ENABLE(sixaxis, AC_HELP_STRING([--enable-sixaxis],
 		[enable sixaxis plugin]), [enable_sixaxis=${enableval}])
 AM_CONDITIONAL(SIXAXIS, test "${enable_sixaxis}" = "yes" &&
 					 test "${enable_udev}" != "no")
+
+AC_ARG_ENABLE(hid2hci, AC_HELP_STRING([--enable-hid2hci],
+		[enable hid2hci tool]), [enable_hid2hci=${enableval}])
+AM_CONDITIONAL(HID2HCI, test "${enable_hid2hci}" = "yes" &&
+					test "${enable_udev}" != "no")
+
+AC_ARG_ENABLE(logger, AC_HELP_STRING([--enable-logger],
+		[enable HCI logger service]), [enable_logger=${enableval}])
+AM_CONDITIONAL(LOGGER, test "${enable_logger}" = "yes")
 
 if (test "${prefix}" = "NONE"); then
 	dnl no prefix and no localstatedir, so default to /var
@@ -282,6 +379,9 @@ fi
 AC_DEFINE_UNQUOTED(CONFIGDIR, "${configdir}",
 			[Directory for the configuration files])
 AC_SUBST(CONFIGDIR, "${configdir}")
+
+AC_DEFINE_UNQUOTED(MESH_STORAGEDIR, "${storagedir}/mesh",
+			[Directory for the mesh daemon storage files])
 
 AC_ARG_ENABLE(android, AC_HELP_STRING([--enable-android],
 			[enable BlueZ for Android]),

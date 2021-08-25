@@ -24,6 +24,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -40,7 +41,6 @@
 
 #include "obexd/src/log.h"
 #include "obexd/src/map_ap.h"
-#include "dbus.h"
 #include "map-event.h"
 
 #include "map.h"
@@ -231,8 +231,9 @@ static void folder_element(GMarkupParseContext *ctxt, const char *element,
 
 	for (i = 0, key = names[i]; key; key = names[++i]) {
 		if (strcasecmp("name", key) == 0)
-			obex_dbus_dict_append(&dict, "Name", DBUS_TYPE_STRING,
-								&values[i]);
+			g_dbus_dict_append_entry(&dict, "Name",
+							DBUS_TYPE_STRING,
+							&values[i]);
 	}
 
 	dbus_message_iter_close_container(iter, &dict);
@@ -1913,6 +1914,7 @@ static void map_handle_notification(struct map_event *event, void *user_data)
 	switch (event->type) {
 	case MAP_ET_NEW_MESSAGE:
 		map_handle_new_message(map, event);
+		map_handle_status_changed(map, event, "notification");
 		break;
 	case MAP_ET_DELIVERY_SUCCESS:
 		map_handle_status_changed(map, event, "delivery-success");

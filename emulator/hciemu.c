@@ -25,6 +25,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -331,6 +332,12 @@ struct hciemu *hciemu_new(enum hciemu_type type)
 	case HCIEMU_TYPE_LEGACY:
 		hciemu->btdev_type = BTDEV_TYPE_BREDR20;
 		break;
+	case HCIEMU_TYPE_BREDRLE50:
+		hciemu->btdev_type = BTDEV_TYPE_BREDRLE50;
+		break;
+	case HCIEMU_TYPE_BREDRLE52:
+		hciemu->btdev_type = BTDEV_TYPE_BREDRLE52;
+		break;
 	default:
 		return NULL;
 	}
@@ -442,6 +449,14 @@ uint8_t hciemu_get_master_le_scan_enable(struct hciemu *hciemu)
 		return 0;
 
 	return btdev_get_le_scan_enable(hciemu->master_dev);
+}
+
+void hciemu_set_master_le_states(struct hciemu *hciemu, const uint8_t *le_states)
+{
+	if (!hciemu || !hciemu->master_dev)
+		return;
+
+	btdev_set_le_states(hciemu->master_dev, le_states);
 }
 
 bool hciemu_add_master_post_command_hook(struct hciemu *hciemu,

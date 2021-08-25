@@ -43,6 +43,7 @@
 #include "src/device.h"
 #include "src/profile.h"
 
+#include "sixaxis.h"
 #include "device.h"
 #include "server.h"
 
@@ -123,6 +124,7 @@ static bool dev_is_sixaxis(const bdaddr_t *src, const bdaddr_t *dst)
 {
 	struct btd_device *device;
 	uint16_t vid, pid;
+	const struct cable_pairing *cp;
 
 	device = btd_adapter_find_device(adapter_find(src), dst, BDADDR_BREDR);
 	if (!device)
@@ -131,16 +133,9 @@ static bool dev_is_sixaxis(const bdaddr_t *src, const bdaddr_t *dst)
 	vid = btd_device_get_vendor(device);
 	pid = btd_device_get_product(device);
 
-	/* DualShock 3 */
-	if (vid == 0x054c && pid == 0x0268)
-		return true;
-
-	/* DualShock 4 */
-	if (vid == 0x054c && pid == 0x05c4)
-		return true;
-
-	/* Navigation Controller */
-	if (vid == 0x054c && pid == 0x042f)
+	cp = get_pairing(vid, pid);
+	if (cp && (cp->type == CABLE_PAIRING_SIXAXIS ||
+					cp->type == CABLE_PAIRING_DS4))
 		return true;
 
 	return false;
@@ -288,6 +283,8 @@ int server_start(const bdaddr_t *src)
 {
 	struct input_server *server;
 	GError *err = NULL;
+	BtIOSecLevel sec_level = input_get_classic_bonded_only() ?
+					BT_IO_SEC_MEDIUM : BT_IO_SEC_LOW;
 
 	server = g_new0(struct input_server, 1);
 	bacpy(&server->src, src);
@@ -296,7 +293,7 @@ int server_start(const bdaddr_t *src)
 				server, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, src,
 				BT_IO_OPT_PSM, L2CAP_PSM_HIDP_CTRL,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 	if (!server->ctrl) {
 		error("Failed to listen on control channel");
@@ -309,7 +306,7 @@ int server_start(const bdaddr_t *src)
 				server, NULL, &err,
 				BT_IO_OPT_SOURCE_BDADDR, src,
 				BT_IO_OPT_PSM, L2CAP_PSM_HIDP_INTR,
-				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_LOW,
+				BT_IO_OPT_SEC_LEVEL, sec_level,
 				BT_IO_OPT_INVALID);
 	if (!server->intr) {
 		error("Failed to listen on interrupt channel");

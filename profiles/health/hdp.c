@@ -21,9 +21,10 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -59,7 +60,6 @@ static uint8_t next_app_id = HDP_MDEP_INITIAL;
 
 static GSList *adapters;
 
-static gboolean update_adapter(struct hdp_adapter *adapter);
 static struct hdp_device *create_health_device(struct btd_device *device);
 static void free_echo_data(struct hdp_echo_data *edata);
 
@@ -313,12 +313,14 @@ static void free_health_device(struct hdp_device *device)
 	g_free(device);
 }
 
+static void update_adapter_cb(void *data, void *user_data);
+
 static void remove_application(struct hdp_application *app)
 {
 	DBG("Application %s deleted", app->path);
 	hdp_application_unref(app);
 
-	g_slist_foreach(adapters, (GFunc) update_adapter, NULL);
+	g_slist_foreach(adapters, update_adapter_cb, NULL);
 }
 
 static void client_disconnected(DBusConnection *conn, void *user_data)
@@ -369,7 +371,7 @@ static DBusMessage *manager_create_application(DBusConnection *conn,
 	app->dbus_watcher =
 			g_dbus_add_disconnect_watch(btd_get_dbus_connection(),
 					name, client_disconnected, app, NULL);
-	g_slist_foreach(adapters, (GFunc) update_adapter, NULL);
+	g_slist_foreach(adapters, update_adapter_cb, NULL);
 
 	DBG("Health application created with id %s", app->path);
 
@@ -404,14 +406,19 @@ static DBusMessage *manager_destroy_application(DBusConnection *conn,
 	return g_dbus_create_reply(msg, DBUS_TYPE_INVALID);
 }
 
+static void application_unref(void *data, void *user_data)
+{
+	hdp_application_unref(data);
+}
+
 static void manager_path_unregister(gpointer data)
 {
-	g_slist_foreach(applications, (GFunc) hdp_application_unref, NULL);
+	g_slist_foreach(applications, application_unref, NULL);
 
 	g_slist_free(applications);
 	applications = NULL;
 
-	g_slist_foreach(adapters, (GFunc) update_adapter, NULL);
+	g_slist_foreach(adapters, update_adapter_cb, NULL);
 }
 
 static const GDBusMethodTable health_manager_methods[] = {
@@ -536,9 +543,9 @@ static void hdp_get_dcpsm_cb(uint16_t dcpsm, gpointer user_data, GError *err)
 	}
 
 	if (hdp_chann->config == HDP_RELIABLE_DC)
-		mode = L2CAP_MODE_ERTM;
+		mode = BT_IO_MODE_ERTM;
 	else
-		mode = L2CAP_MODE_STREAMING;
+		mode = BT_IO_MODE_STREAMING;
 
 	if (mcap_connect_mdl(hdp_chann->mdl, mode, dcpsm, hdp_conn->cb,
 					hdp_tmp_dc_data_ref(hdp_conn),
@@ -907,11 +914,11 @@ static gboolean check_channel_conf(struct hdp_channel *chan)
 
 	switch (chan->config) {
 	case HDP_RELIABLE_DC:
-		if (mode != L2CAP_MODE_ERTM)
+		if (mode != BT_IO_MODE_ERTM)
 			return FALSE;
 		break;
 	case HDP_STREAMING_DC:
-		if (mode != L2CAP_MODE_STREAMING)
+		if (mode != BT_IO_MODE_STREAMING)
 			return FALSE;
 		break;
 	default:
@@ -1050,8 +1057,8 @@ static void hdp_mcap_mdl_aborted_cb(struct mcap_mdl *mdl, void *data)
 
 static uint8_t hdp2l2cap_mode(uint8_t hdp_mode)
 {
-	return hdp_mode == HDP_STREAMING_DC ? L2CAP_MODE_STREAMING :
-								L2CAP_MODE_ERTM;
+	return hdp_mode == HDP_STREAMING_DC ? BT_IO_MODE_STREAMING :
+								BT_IO_MODE_ERTM;
 }
 
 static uint8_t hdp_mcap_mdl_conn_req_cb(struct mcap_mcl *mcl, uint8_t mdepid,
@@ -1082,7 +1089,7 @@ static uint8_t hdp_mcap_mdl_conn_req_cb(struct mcap_mcl *mcl, uint8_t mdepid,
 		}
 
 		if (!mcap_set_data_chan_mode(dev->hdp_adapter->mi,
-						L2CAP_MODE_ERTM, &err)) {
+						BT_IO_MODE_ERTM, &err)) {
 			error("Error: %s", err->message);
 			g_error_free(err);
 			return MCAP_MDL_BUSY;
@@ -1382,6 +1389,11 @@ fail:
 		g_error_free(err);
 
 	return FALSE;
+}
+
+static void update_adapter_cb(void *data, void *user_data)
+{
+	update_adapter(data);
 }
 
 int hdp_adapter_register(struct btd_adapter *adapter)

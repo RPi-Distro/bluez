@@ -21,7 +21,7 @@
  */
 
 #ifdef HAVE_CONFIG_H
-# include "config.h"
+#include <config.h>
 #endif
 
 #include <unistd.h>
@@ -521,6 +521,16 @@ static void enable_tx(GObex *obex)
 	obex->write_source = g_io_add_watch(obex->io, cond, write_data, obex);
 }
 
+void g_obex_drop_tx_queue(GObex *obex)
+{
+	struct pending_pkt *p;
+
+	g_obex_debug(G_OBEX_DEBUG_COMMAND, "");
+
+	while ((p = g_queue_pop_head(obex->tx_queue)))
+		pending_pkt_free(p);
+}
+
 static gboolean g_obex_send_internal(GObex *obex, struct pending_pkt *p,
 								GError **err)
 {
@@ -853,7 +863,7 @@ immediate_completion:
 }
 
 gboolean g_obex_send_rsp(GObex *obex, guint8 rspcode, GError **err,
-						guint8 first_hdr_type, ...)
+						guint first_hdr_type, ...)
 {
 	GObexPacket *rsp;
 	va_list args;
@@ -1508,6 +1518,11 @@ GObex *g_obex_ref(GObex *obex)
 	return obex;
 }
 
+static void tx_queue_free(void *data, void *user_data)
+{
+	pending_pkt_free(data);
+}
+
 void g_obex_unref(GObex *obex)
 {
 	int refs;
@@ -1521,7 +1536,7 @@ void g_obex_unref(GObex *obex)
 
 	g_slist_free_full(obex->req_handlers, g_free);
 
-	g_queue_foreach(obex->tx_queue, (GFunc) pending_pkt_free, NULL);
+	g_queue_foreach(obex->tx_queue, tx_queue_free, NULL);
 	g_queue_free(obex->tx_queue);
 
 	if (obex->io != NULL)
@@ -1549,7 +1564,7 @@ void g_obex_unref(GObex *obex)
 /* Higher level functions */
 
 guint g_obex_connect(GObex *obex, GObexResponseFunc func, gpointer user_data,
-					GError **err, guint8 first_hdr_id, ...)
+					GError **err, guint first_hdr_id, ...)
 {
 	GObexPacket *req;
 	struct connect_data data;

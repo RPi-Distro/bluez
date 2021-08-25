@@ -26,6 +26,7 @@
 #include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <errno.h>
 
 #include <glib.h>
@@ -85,12 +86,13 @@ struct media_owner {
 struct a2dp_transport {
 	struct avdtp		*session;
 	uint16_t		delay;
-	uint16_t		volume;
+	int8_t			volume;
 };
 
 struct media_transport {
 	char			*path;		/* Transport object path */
 	struct btd_device	*device;	/* Transport device */
+	const char		*remote_endpoint; /* Transport remote SEP */
 	struct media_endpoint	*endpoint;	/* Transport endpoint */
 	struct media_owner	*owner;		/* Transport owner */
 	uint8_t			*configuration; /* Transport configuration */
@@ -632,7 +634,7 @@ static gboolean volume_exists(const GDBusPropertyTable *property, void *data)
 	struct media_transport *transport = data;
 	struct a2dp_transport *a2dp = transport->data;
 
-	return a2dp->volume <= 127;
+	return a2dp->volume >= 0;
 }
 
 static gboolean get_volume(const GDBusPropertyTable *property,
@@ -640,8 +642,9 @@ static gboolean get_volume(const GDBusPropertyTable *property,
 {
 	struct media_transport *transport = data;
 	struct a2dp_transport *a2dp = transport->data;
+	uint16_t volume = (uint16_t)a2dp->volume;
 
-	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &a2dp->volume);
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &volume);
 
 	return TRUE;
 }
@@ -652,27 +655,20 @@ static void set_volume(const GDBusPropertyTable *property,
 {
 	struct media_transport *transport = data;
 	struct a2dp_transport *a2dp = transport->data;
-	uint16_t volume;
+	uint16_t arg;
+	int8_t volume;
 	bool notify;
 
-	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16) {
-		g_dbus_pending_property_error(id,
-					ERROR_INTERFACE ".InvalidArguments",
-					"Invalid arguments in method call");
-		return;
-	}
+	if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT16)
+		goto error;
 
-	dbus_message_iter_get_basic(iter, &volume);
-
-	if (volume > 127) {
-		g_dbus_pending_property_error(id,
-					ERROR_INTERFACE ".InvalidArguments",
-					"Invalid arguments in method call");
-		return;
-	}
+	dbus_message_iter_get_basic(iter, &arg);
+	if (arg > INT8_MAX)
+		goto error;
 
 	g_dbus_pending_property_success(id);
 
+	volume = (int8_t)arg;
 	if (a2dp->volume == volume)
 		return;
 
@@ -686,6 +682,29 @@ static void set_volume(const GDBusPropertyTable *property,
 						"Volume");
 
 	avrcp_set_volume(transport->device, volume, notify);
+	return;
+
+error:
+	g_dbus_pending_property_error(id, ERROR_INTERFACE ".InvalidArguments",
+					"Invalid arguments in method call");
+}
+
+static gboolean endpoint_exists(const GDBusPropertyTable *property, void *data)
+{
+	struct media_transport *transport = data;
+
+	return transport->remote_endpoint != NULL;
+}
+
+static gboolean get_endpoint(const GDBusPropertyTable *property,
+					DBusMessageIter *iter, void *data)
+{
+	struct media_transport *transport = data;
+
+	dbus_message_iter_append_basic(iter, DBUS_TYPE_OBJECT_PATH,
+					&transport->remote_endpoint);
+
+	return TRUE;
 }
 
 static const GDBusMethodTable transport_methods[] = {
@@ -711,6 +730,8 @@ static const GDBusPropertyTable transport_properties[] = {
 	{ "State", "s", get_state },
 	{ "Delay", "q", get_delay, NULL, delay_exists },
 	{ "Volume", "q", get_volume, set_volume, volume_exists },
+	{ "Endpoint", "o", get_endpoint, NULL, endpoint_exists,
+				G_DBUS_PROPERTY_FLAG_EXPERIMENTAL },
 	{ }
 };
 
@@ -835,6 +856,7 @@ static int media_transport_init_sink(struct media_transport *transport)
 }
 
 struct media_transport *media_transport_create(struct btd_device *device,
+						const char *remote_endpoint,
 						uint8_t *configuration,
 						size_t size, void *data)
 {
@@ -849,8 +871,10 @@ struct media_transport *media_transport_create(struct btd_device *device,
 	transport->configuration = g_new(uint8_t, size);
 	memcpy(transport->configuration, configuration, size);
 	transport->size = size;
-	transport->path = g_strdup_printf("%s/fd%d", device_get_path(device),
-									fd++);
+	transport->remote_endpoint = remote_endpoint;
+	transport->path = g_strdup_printf("%s/fd%d",
+				remote_endpoint ? remote_endpoint :
+				device_get_path(device), fd++);
 	transport->fd = -1;
 
 	uuid = media_endpoint_get_uuid(endpoint);
@@ -906,14 +930,14 @@ struct btd_device *media_transport_get_dev(struct media_transport *transport)
 	return transport->device;
 }
 
-uint16_t media_transport_get_volume(struct media_transport *transport)
+int8_t media_transport_get_volume(struct media_transport *transport)
 {
 	struct a2dp_transport *a2dp = transport->data;
 	return a2dp->volume;
 }
 
 void media_transport_update_volume(struct media_transport *transport,
-								uint8_t volume)
+								int8_t volume)
 {
 	struct a2dp_transport *a2dp = transport->data;
 
@@ -928,12 +952,12 @@ void media_transport_update_volume(struct media_transport *transport,
 					MEDIA_TRANSPORT_INTERFACE, "Volume");
 }
 
-uint8_t media_transport_get_device_volume(struct btd_device *dev)
+int8_t media_transport_get_device_volume(struct btd_device *dev)
 {
 	GSList *l;
 
 	if (dev == NULL)
-		return 128;
+		return -1;
 
 	for (l = transports; l; l = l->next) {
 		struct media_transport *transport = l->data;
@@ -949,11 +973,11 @@ uint8_t media_transport_get_device_volume(struct btd_device *dev)
 }
 
 void media_transport_update_device_volume(struct btd_device *dev,
-								uint8_t volume)
+								int8_t volume)
 {
 	GSList *l;
 
-	if (dev == NULL)
+	if (dev == NULL || volume < 0)
 		return;
 
 	for (l = transports; l; l = l->next) {

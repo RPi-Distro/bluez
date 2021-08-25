@@ -23,13 +23,15 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
+#define _GNU_SOURCE
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <glib.h>
 
@@ -764,6 +766,16 @@ uint16_t mcap_mdl_get_mdlid(struct mcap_mdl *mdl)
 	return mdl->mdlid;
 }
 
+static void shutdown_mdl_cb(void *data, void *user_data)
+{
+	shutdown_mdl(data);
+}
+
+static void mdl_unref_cb(void *data, void *user_data)
+{
+	mcap_mdl_unref(data);
+}
+
 static void close_mcl(struct mcap_mcl *mcl, gboolean cache_requested)
 {
 	gboolean save = ((!(mcl->ctrl & MCAP_CTRL_FREE)) && cache_requested);
@@ -789,7 +801,7 @@ static void close_mcl(struct mcap_mcl *mcl, gboolean cache_requested)
 	if (mcl->priv_data)
 		free_mcl_priv_data(mcl);
 
-	g_slist_foreach(mcl->mdls, (GFunc) shutdown_mdl, NULL);
+	g_slist_foreach(mcl->mdls, shutdown_mdl_cb, NULL);
 
 	mcap_sync_stop(mcl);
 
@@ -798,7 +810,7 @@ static void close_mcl(struct mcap_mcl *mcl, gboolean cache_requested)
 	if (save)
 		return;
 
-	g_slist_foreach(mcl->mdls, (GFunc) mcap_mdl_unref, NULL);
+	g_slist_foreach(mcl->mdls, mdl_unref_cb, NULL);
 	g_slist_free(mcl->mdls);
 	mcl->mdls = NULL;
 }
@@ -1729,7 +1741,7 @@ gboolean mcap_connect_mdl(struct mcap_mdl *mdl, uint8_t mode,
 		return FALSE;
 	}
 
-	if ((mode != L2CAP_MODE_ERTM) && (mode != L2CAP_MODE_STREAMING)) {
+	if ((mode != BT_IO_MODE_ERTM) && (mode != BT_IO_MODE_STREAMING)) {
 		g_set_error(err, MCAP_ERROR, MCAP_ERROR_INVALID_ARGS,
 						"Invalid MDL configuration");
 		return FALSE;
@@ -1921,7 +1933,7 @@ gboolean mcap_create_mcl(struct mcap_instance *mi,
 				BT_IO_OPT_PSM, ccpsm,
 				BT_IO_OPT_MTU, MCAP_CC_MTU,
 				BT_IO_OPT_SEC_LEVEL, mi->sec,
-				BT_IO_OPT_MODE, L2CAP_MODE_ERTM,
+				BT_IO_OPT_MODE, BT_IO_MODE_ERTM,
 				BT_IO_OPT_INVALID);
 	if (!mcl->cc) {
 		mcl->ctrl &= ~MCAP_CTRL_CONN;
@@ -2099,7 +2111,7 @@ struct mcap_instance *mcap_create_instance(const bdaddr_t *src,
 				BT_IO_OPT_PSM, ccpsm,
 				BT_IO_OPT_MTU, MCAP_CC_MTU,
 				BT_IO_OPT_SEC_LEVEL, sec,
-				BT_IO_OPT_MODE, L2CAP_MODE_ERTM,
+				BT_IO_OPT_MODE, BT_IO_MODE_ERTM,
 				BT_IO_OPT_INVALID);
 	if (!mi->ccio) {
 		error("%s", (*gerr)->message);
