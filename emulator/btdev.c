@@ -83,6 +83,7 @@ struct le_ext_adv {
 	uint8_t direct_addr[6];		/* peer_addr */
 	uint8_t filter_policy;		/* filter_policy */
 	uint8_t random_addr[6];
+	bool rpa;
 	uint8_t adv_data[252];
 	uint8_t adv_data_len;
 	uint8_t scan_data[252];
@@ -298,24 +299,42 @@ static inline struct btdev *find_btdev_by_bdaddr(const uint8_t *bdaddr)
 	return NULL;
 }
 
+static bool match_adv_addr(const void *data, const void *match_data)
+{
+	const struct le_ext_adv *adv = data;
+	const uint8_t *bdaddr = match_data;
+
+	return !memcmp(adv->random_addr, bdaddr, 6);
+}
+
 static inline struct btdev *find_btdev_by_bdaddr_type(const uint8_t *bdaddr,
 							uint8_t bdaddr_type)
 {
 	int i;
 
 	for (i = 0; i < MAX_BTDEV_ENTRIES; i++) {
+		struct btdev *dev = btdev_list[i];
 		int cmp;
+		struct le_ext_adv *adv;
 
-		if (!btdev_list[i])
+		if (!dev)
 			continue;
 
 		if (bdaddr_type == 0x01)
-			cmp = memcmp(btdev_list[i]->random_addr, bdaddr, 6);
+			cmp = memcmp(dev->random_addr, bdaddr, 6);
 		else
-			cmp = memcmp(btdev_list[i]->bdaddr, bdaddr, 6);
+			cmp = memcmp(dev->bdaddr, bdaddr, 6);
 
 		if (!cmp)
-			return btdev_list[i];
+			return dev;
+
+		/* Check for instance own Random addresses */
+		if (bdaddr_type == 0x01) {
+			adv = queue_find(dev->le_ext_adv, match_adv_addr,
+								bdaddr);
+			if (adv)
+				return dev;
+		}
 	}
 
 	return NULL;
@@ -2296,6 +2315,22 @@ static int cmd_read_rssi(struct btdev *dev, const void *data,
 	return 0;
 }
 
+static int cmd_read_clock(struct btdev *dev, const void *data,
+							uint8_t len)
+{
+	const struct bt_hci_cmd_read_clock *cmd = data;
+	struct bt_hci_rsp_read_clock rsp;
+
+	memset(&rsp, 0, sizeof(rsp));
+	rsp.status = BT_HCI_ERR_SUCCESS;
+	rsp.handle = le16_to_cpu(cmd->handle);
+	rsp.clock = 0x11223344;
+	rsp.accuracy = 0x5566;
+	cmd_complete(dev, BT_HCI_CMD_READ_CLOCK, &rsp, sizeof(rsp));
+
+	return 0;
+}
+
 static int cmd_enable_dut_mode(struct btdev *dev, const void *data,
 							uint8_t len)
 {
@@ -2389,6 +2424,7 @@ static int cmd_enable_dut_mode(struct btdev *dev, const void *data,
 					NULL), \
 	CMD(BT_HCI_CMD_READ_COUNTRY_CODE, cmd_read_country_code, NULL), \
 	CMD(BT_HCI_CMD_READ_RSSI, cmd_read_rssi, NULL), \
+	CMD(BT_HCI_CMD_READ_CLOCK, cmd_read_clock, NULL), \
 	CMD(BT_HCI_CMD_ENABLE_DUT_MODE, cmd_enable_dut_mode, NULL)
 
 static void set_common_commands_bredr20(struct btdev *btdev)
@@ -2448,7 +2484,61 @@ static void set_common_commands_bredr20(struct btdev *btdev)
 	btdev->commands[14] |= 0x40;	/* Read Local Extended Features */
 	btdev->commands[15] |= 0x01;	/* Read Country Code */
 	btdev->commands[15] |= 0x20;	/* Read RSSI */
+	btdev->commands[15] |= 0x80;	/* Read Clock */
 	btdev->commands[16] |= 0x04;	/* Enable Device Under Test Mode */
+}
+
+static int cmd_enhanced_setup_sync_conn(struct btdev *dev, const void *data,
+					uint8_t len)
+{
+	const struct bt_hci_cmd_enhanced_setup_sync_conn *cmd = data;
+	uint8_t status =  BT_HCI_ERR_SUCCESS;
+
+	if (cmd->tx_coding_format[0] > 5)
+		status = BT_HCI_ERR_INVALID_PARAMETERS;
+
+	cmd_status(dev, status, BT_HCI_EVT_SYNC_CONN_COMPLETE);
+
+	return 0;
+}
+
+static int cmd_enhanced_setup_sync_conn_complete(struct btdev *dev,
+						 const void *data, uint8_t len)
+{
+	const struct bt_hci_cmd_enhanced_setup_sync_conn *cmd = data;
+	struct bt_hci_evt_sync_conn_complete cc;
+	struct btdev_conn *conn;
+
+	memset(&cc, 0, sizeof(cc));
+
+	conn = queue_find(dev->conns, match_handle,
+				UINT_TO_PTR(le16_to_cpu(cmd->handle)));
+	if (!conn) {
+		cc.status = BT_HCI_ERR_UNKNOWN_CONN_ID;
+		goto done;
+	}
+
+	conn = conn_add_sco(conn);
+	if (!conn) {
+		cc.status = BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
+		goto done;
+	}
+
+	cc.status = BT_HCI_ERR_SUCCESS;
+	memcpy(cc.bdaddr, conn->link->dev->bdaddr, 6);
+
+	cc.handle = cpu_to_le16(conn->handle);
+	cc.link_type = 0x02;
+	cc.tx_interval = 0x000c;
+	cc.retrans_window = 0x06;
+	cc.rx_pkt_len = 60;
+	cc.tx_pkt_len = 60;
+	cc.air_mode = cmd->tx_coding_format[0];
+
+done:
+	send_event(dev, BT_HCI_EVT_SYNC_CONN_COMPLETE, &cc, sizeof(cc));
+
+	return 0;
 }
 
 static int cmd_setup_sync_conn(struct btdev *dev, const void *data, uint8_t len)
@@ -2849,7 +2939,9 @@ static int cmd_get_mws_transport_config(struct btdev *dev, const void *data,
 	CMD(BT_HCI_CMD_READ_DATA_BLOCK_SIZE, cmd_read_data_block_size, NULL), \
 	CMD(BT_HCI_CMD_READ_LOCAL_CODECS, cmd_read_local_codecs, NULL), \
 	CMD(BT_HCI_CMD_GET_MWS_TRANSPORT_CONFIG, cmd_get_mws_transport_config, \
-					NULL)
+					NULL), \
+	CMD(BT_HCI_CMD_ENHANCED_SETUP_SYNC_CONN, cmd_enhanced_setup_sync_conn, \
+					cmd_enhanced_setup_sync_conn_complete)
 
 static const struct btdev_cmd cmd_bredr[] = {
 	CMD_COMMON_ALL,
@@ -2882,6 +2974,7 @@ static void set_bredr_commands(struct btdev *btdev)
 	btdev->commands[20] |= 0x10;	/* Read Encryption Key Size */
 	btdev->commands[23] |= 0x04;	/* Read Data Block Size */
 	btdev->commands[29] |= 0x20;	/* Read Local Supported Codecs */
+	btdev->commands[29] |= 0x08;	/* Enhanced Setup Synchronous Conn */
 	btdev->commands[30] |= 0x08;	/* Get MWS Transport Layer Config */
 	btdev->cmds = cmd_bredr;
 }
@@ -2980,8 +3073,21 @@ static int cmd_set_random_address(struct btdev *dev, const void *data,
 	const struct bt_hci_cmd_le_set_random_address *cmd = data;
 	uint8_t status;
 
+	/* If the Host issues this command when any of advertising
+	 * (created using legacy advertising commands), scanning, or initiating
+	 * are enabled, the Controller shall return the error code
+	 * Command Disallowed (0x0C).
+	 */
+	if (dev->le_scan_enable || (dev->le_adv_enable &&
+					queue_isempty(dev->le_ext_adv))) {
+		status = BT_HCI_ERR_COMMAND_DISALLOWED;
+		goto done;
+	}
+
 	memcpy(dev->random_addr, cmd->addr, 6);
 	status = BT_HCI_ERR_SUCCESS;
+
+done:
 	cmd_complete(dev, BT_HCI_CMD_LE_SET_RANDOM_ADDRESS, &status,
 						sizeof(status));
 
@@ -3201,10 +3307,29 @@ static void le_set_adv_enable_complete(struct btdev *btdev)
 	}
 }
 
+#define RL_ADDR_EQUAL(_rl, _type, _addr) \
+	(_rl->type == _type && !bacmp(&_rl->addr, (bdaddr_t *)_addr))
+
+static const struct btdev_rl *rl_find(const struct btdev *dev, uint8_t type,
+							const uint8_t *addr)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(dev->le_rl); i++) {
+		const struct btdev_rl *rl = &dev->le_rl[i];
+
+		if (RL_ADDR_EQUAL(rl, type, addr))
+			return rl;
+	}
+
+	return NULL;
+}
+
 static int cmd_set_adv_enable(struct btdev *dev, const void *data, uint8_t len)
 {
 	const struct bt_hci_cmd_le_set_ext_adv_enable *cmd = data;
 	uint8_t status;
+	bool random_addr;
 
 	if (dev->le_adv_enable == cmd->enable) {
 		status = BT_HCI_ERR_COMMAND_DISALLOWED;
@@ -3213,6 +3338,36 @@ static int cmd_set_adv_enable(struct btdev *dev, const void *data, uint8_t len)
 
 	dev->le_adv_enable = cmd->enable;
 	status = BT_HCI_ERR_SUCCESS;
+
+	if (!cmd->enable)
+		goto done;
+
+	random_addr = bacmp((bdaddr_t *)dev->random_addr, BDADDR_ANY);
+
+	/* If Advertising_Enable is set to 0x01, the advertising parameters'
+	 * Own_Address_Type parameter is set to 0x01, and the random address for
+	 * the device has not been initialized, the Controller shall return the
+	 * error code Invalid HCI Command Parameters (0x12).
+	 */
+	if (dev->le_adv_own_addr == 0x01 && !random_addr) {
+		status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	/* If Advertising_Enable is set to 0x01, the advertising parameters'
+	 * Own_Address_Type parameter is set to 0x03, the controller's resolving
+	 * list did not contain a matching entry, and the random address for the
+	 * device has not been initialized, the Controller shall return the
+	 * error code Invalid HCI Command Parameters (0x12).
+	 */
+	if (dev->le_adv_own_addr == 0x03 && !random_addr) {
+		if (!dev->le_rl_enable ||
+				!rl_find(dev, dev->le_adv_direct_addr_type,
+					dev->le_adv_direct_addr)) {
+			status = BT_HCI_ERR_INVALID_PARAMETERS;
+			goto done;
+		}
+	}
 
 done:
 	cmd_complete(dev, BT_HCI_CMD_LE_SET_ADV_ENABLE, &status,
@@ -3253,6 +3408,18 @@ static int cmd_set_scan_enable(struct btdev *dev, const void *data, uint8_t len)
 
 	if (dev->le_scan_enable == cmd->enable) {
 		status = BT_HCI_ERR_COMMAND_DISALLOWED;
+		goto done;
+	}
+
+	/* If LE_Scan_Enable is set to 0x01, the scanning parameters'
+	 * Own_Address_Type parameter is set to 0x01 or 0x03, and the random
+	 * address for the device has not been initialized, the Controller shall
+	 * return the error code Invalid HCI Command Parameters (0x12).
+	 */
+	if ((dev->le_scan_own_addr_type == 0x01 ||
+			dev->le_scan_own_addr_type == 0x03) &&
+			!bacmp((bdaddr_t *)dev->random_addr, BDADDR_ANY)) {
+		status = BT_HCI_ERR_INVALID_PARAMETERS;
 		goto done;
 	}
 
@@ -3566,9 +3733,6 @@ static int cmd_remove_wl(struct btdev *dev, const void *data, uint8_t len)
 
 	return 0;
 }
-
-#define RL_ADDR_EQUAL(_rl, _type, _addr) \
-	(_rl->type == _type && !bacmp(&_rl->addr, (bdaddr_t *)_addr))
 
 static int cmd_add_rl(struct btdev *dev, const void *data, uint8_t len)
 {
@@ -4203,11 +4367,39 @@ static int cmd_set_default_phy(struct btdev *dev, const void *data,
 	return 0;
 }
 
+static const uint8_t *ext_adv_gen_rpa(const struct btdev *dev,
+						struct le_ext_adv *adv)
+{
+	const struct btdev_rl *rl;
+
+	if (adv->rpa)
+		return adv->random_addr;
+
+	/* Lookup for Local IRK in the resolving list */
+	rl = rl_find(dev, adv->direct_addr_type, adv->direct_addr);
+	if (rl) {
+		uint8_t rpa[6];
+
+		bt_crypto_random_bytes(dev->crypto, rpa + 3, 3);
+		rpa[5] &= 0x3f; /* Clear two most significant bits */
+		rpa[5] |= 0x40; /* Set second most significant bit */
+		bt_crypto_ah(dev->crypto, rl->peer_irk, rpa + 3, rpa);
+
+		memcpy(adv->random_addr, rpa, sizeof(rpa));
+		adv->rpa = true;
+	}
+
+	return adv->random_addr;
+}
+
 static const uint8_t *ext_adv_addr(const struct btdev *btdev,
 						struct le_ext_adv *ext_adv)
 {
 	if (ext_adv->own_addr_type == 0x01)
 		return ext_adv->random_addr;
+
+	if (ext_adv->own_addr_type == 0x03)
+		return ext_adv_gen_rpa(btdev, ext_adv);
 
 	return btdev->bdaddr;
 }
@@ -4416,6 +4608,23 @@ static int cmd_set_ext_scan_rsp_data(struct btdev *dev, const void *data,
 	return 0;
 }
 
+static uint8_t ext_adv_addr_type(struct le_ext_adv *adv)
+{
+	/* Converts the address type on advertising params to advertising
+	 * report.
+	 */
+	switch (adv->own_addr_type) {
+	/* LL RPAs shall be advertised as random type or they need to be
+	 * resolved depending on the filter policy.
+	 */
+	case 0x02:
+	case 0x03:
+		return 0x01;
+	}
+
+	return adv->own_addr_type;
+}
+
 static void send_ext_adv(struct btdev *btdev, const struct btdev *remote,
 					struct le_ext_adv *ext_adv,
 					uint16_t type, bool is_scan_rsp)
@@ -4431,7 +4640,7 @@ static void send_ext_adv(struct btdev *btdev, const struct btdev *remote,
 	memset(&meta_event.lear, 0, sizeof(meta_event.lear));
 	meta_event.num_reports = 1;
 	meta_event.lear.event_type = cpu_to_le16(type);
-	meta_event.lear.addr_type = ext_adv->own_addr_type;
+	meta_event.lear.addr_type = ext_adv_addr_type(ext_adv);
 	memcpy(meta_event.lear.addr, ext_adv_addr(remote, ext_adv), 6);
 	meta_event.lear.rssi = 127;
 	meta_event.lear.tx_power = 127;
@@ -4542,6 +4751,7 @@ static int cmd_set_ext_adv_enable(struct btdev *dev, const void *data,
 	for (i = 0; i < cmd->num_of_sets; i++) {
 		const struct bt_hci_cmd_ext_adv_set *eas;
 		struct le_ext_adv *ext_adv;
+		bool random_addr;
 
 		eas = data + sizeof(*cmd) + (sizeof(*eas) * i);
 
@@ -4555,6 +4765,35 @@ static int cmd_set_ext_adv_enable(struct btdev *dev, const void *data,
 		if (ext_adv->enable == cmd->enable) {
 			status = BT_HCI_ERR_COMMAND_DISALLOWED;
 			goto exit_complete;
+		}
+
+		random_addr = bacmp((bdaddr_t *)ext_adv->random_addr,
+							BDADDR_ANY);
+
+		/* If the advertising set's Own_Address_Type parameter
+		 * is set to 0x01 and the random address for
+		 * the advertising set has not been initialized, the
+		 * Controller shall return the error code Invalid HCI
+		 * Command Parameters (0x12).
+		 */
+		if (ext_adv->own_addr_type == 0x01 && !random_addr) {
+			status = BT_HCI_ERR_INVALID_PARAMETERS;
+			goto exit_complete;
+		}
+
+		/* If the advertising set's Own_Address_Type parameter is set
+		 * to 0x03, the controller's resolving list did not contain a
+		 * matching entry, and the random address for the advertising
+		 * set has not been initialized, the Controller shall return the
+		 * error code Invalid HCI Command Parameters (0x12).
+		 */
+		if (ext_adv->own_addr_type == 0x03 && !random_addr) {
+			if (!dev->le_rl_enable ||
+					!rl_find(dev, ext_adv->direct_addr_type,
+					ext_adv->direct_addr)) {
+				status = BT_HCI_ERR_INVALID_PARAMETERS;
+				goto exit_complete;
+			}
 		}
 
 		ext_adv->enable = cmd->enable;
@@ -4756,14 +4995,28 @@ static int cmd_set_ext_scan_enable(struct btdev *dev, const void *data,
 	const struct bt_hci_cmd_le_set_ext_scan_enable *cmd = data;
 	uint8_t status;
 
-	if (dev->le_scan_enable == cmd->enable)
+	if (dev->le_scan_enable == cmd->enable) {
 		status = BT_HCI_ERR_COMMAND_DISALLOWED;
-	else {
-		dev->le_scan_enable = cmd->enable;
-		dev->le_filter_dup = cmd->filter_dup;
-		status = BT_HCI_ERR_SUCCESS;
+		goto done;
 	}
 
+	/* If Enable is set to 0x01, the scanning parameters' Own_Address_Type
+	 * parameter is set to 0x01 or 0x03, and the random address for the
+	 * device has not been initialized, the Controller shall return the
+	 * error code Invalid HCI Command Parameters (0x12).
+	 */
+	if ((dev->le_scan_own_addr_type == 0x01 ||
+			dev->le_scan_own_addr_type == 0x03) &&
+			!bacmp((bdaddr_t *)dev->random_addr, BDADDR_ANY)) {
+		status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	dev->le_scan_enable = cmd->enable;
+	dev->le_filter_dup = cmd->filter_dup;
+	status = BT_HCI_ERR_SUCCESS;
+
+done:
 	cmd_complete(dev, BT_HCI_CMD_LE_SET_EXT_SCAN_ENABLE, &status,
 							sizeof(status));
 
@@ -4840,9 +5093,9 @@ static void ext_adv_term(void *data, void *user_data)
 
 	/* if connectable bit is set the send adv terminate */
 	if (conn && adv->type & 0x01) {
-		adv_set_terminate(conn->dev, 0x00, adv->handle, conn->handle,
+		adv_set_terminate(adv->dev, 0x00, adv->handle, conn->handle,
 									0x00);
-		le_ext_adv_free(adv);
+		ext_adv_disable(adv, NULL);
 	}
 }
 
@@ -4851,21 +5104,16 @@ static void le_ext_conn_complete(struct btdev *btdev,
 			struct le_ext_adv *ext_adv,
 			uint8_t status)
 {
+	struct btdev_conn *conn = NULL;
 	struct bt_hci_evt_le_enhanced_conn_complete ev;
 	struct bt_hci_le_ext_create_conn *lecc = (void *)cmd->data;
 
 	memset(&ev, 0, sizeof(ev));
 
 	if (!status) {
-		struct btdev_conn *conn;
-
 		conn = conn_add_acl(btdev, cmd->peer_addr, cmd->peer_addr_type);
 		if (!conn)
 			return;
-
-		/* Disable EXT ADV */
-		queue_foreach(btdev->le_ext_adv, ext_adv_term, conn);
-		queue_foreach(conn->link->dev->le_ext_adv, ext_adv_term, conn);
 
 		ev.status = status;
 		ev.peer_addr_type = btdev->le_scan_own_addr_type;
@@ -4883,6 +5131,9 @@ static void le_ext_conn_complete(struct btdev *btdev,
 		le_meta_event(conn->link->dev,
 				BT_HCI_EVT_LE_ENHANCED_CONN_COMPLETE, &ev,
 				sizeof(ev));
+
+		/* Disable EXT ADV */
+		queue_foreach(conn->link->dev->le_ext_adv, ext_adv_term, conn);
 	}
 
 	ev.status = status;
@@ -4890,8 +5141,17 @@ static void le_ext_conn_complete(struct btdev *btdev,
 	memcpy(ev.peer_addr, cmd->peer_addr, 6);
 	ev.role = 0x00;
 
+	/* Set Local RPA if an RPA was generated for the advertising */
+	if (ext_adv->rpa)
+		memcpy(ev.local_rpa, ext_adv->random_addr,
+					sizeof(ev.local_rpa));
+
 	le_meta_event(btdev, BT_HCI_EVT_LE_ENHANCED_CONN_COMPLETE, &ev,
 						sizeof(ev));
+
+	/* Disable EXT ADV */
+	if (conn)
+		queue_foreach(btdev->le_ext_adv, ext_adv_term, conn);
 }
 
 static int cmd_ext_create_conn_complete(struct btdev *dev, const void *data,
@@ -4916,7 +5176,7 @@ static int cmd_ext_create_conn_complete(struct btdev *dev, const void *data,
 
 		if (ext_adv_is_connectable(ext_adv) &&
 			ext_adv_match_addr(dev, ext_adv) &&
-			ext_adv->own_addr_type == cmd->peer_addr_type) {
+			ext_adv_addr_type(ext_adv) == cmd->peer_addr_type) {
 			le_ext_conn_complete(dev, cmd, ext_adv, 0);
 			return 0;
 		}

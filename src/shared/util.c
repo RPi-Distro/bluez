@@ -1025,6 +1025,9 @@ static const struct {
 		"BlueZ Experimental Simultaneous Central and Peripheral" },
 	{ "15c0a148-c273-11ea-b3de-0242ac130004",
 		"BlueZ Experimental LL privacy" },
+	{ "330859bc-7506-492d-9370-9a6f0614037f",
+		"BlueZ Experimental Bluetooth Quality Report" },
+	{ "a6695ace-ee7f-4fb9-881a-5fac66c629af", "BlueZ Offload Codecs"},
 	{ }
 };
 

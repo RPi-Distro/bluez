@@ -266,6 +266,8 @@ struct index_data {
 	uint8_t  bdaddr[6];
 	uint16_t manufacturer;
 	uint16_t msft_opcode;
+	uint8_t  msft_evt_prefix[8];
+	uint8_t  msft_evt_len;
 	size_t   frame;
 };
 
@@ -279,6 +281,12 @@ void packet_set_fallback_manufacturer(uint16_t manufacturer)
 		index_list[i].manufacturer = manufacturer;
 
 	fallback_manufacturer = manufacturer;
+}
+
+void packet_set_msft_evt_prefix(const uint8_t *prefix, uint8_t len)
+{
+	if (index_current < MAX_INDEX && len < 8)
+		memcpy(index_list[index_current].msft_evt_prefix, prefix, len);
 }
 
 static void print_packet(struct timeval *tv, struct ucred *cred, char ident,
@@ -713,10 +721,9 @@ static void print_addr_resolve(const char *label, const uint8_t *addr,
 	}
 }
 
-static void print_addr(const char *label, const uint8_t *addr,
-						uint8_t addr_type)
+static void print_addr(const char *label, const uint8_t *addr, uint8_t type)
 {
-	print_addr_resolve(label, addr, addr_type, true);
+	print_addr_resolve(label, addr, type, true);
 }
 
 static void print_bdaddr(const uint8_t *bdaddr)
@@ -3780,9 +3787,9 @@ static void print_eir(const uint8_t *eir, uint8_t eir_len, bool le)
 		packet_hexdump(eir, eir_len - len);
 }
 
-void packet_print_addr(const char *label, const void *data, bool random)
+void packet_print_addr(const char *label, const void *data, uint8_t type)
 {
-	print_addr(label ? : "Address", data, random ? 0x01 : 0x00);
+	print_addr(label ? : "Address", data, type);
 }
 
 void packet_print_handle(uint16_t handle)
@@ -8063,12 +8070,14 @@ static void print_cis_params_test(const void *data, int i)
 
 	print_field("CIS ID: 0x%2.2x", cis->cis_id);
 	print_field("NSE: 0x%2.2x", cis->nse);
-	print_field("Master to Slave Maximum SDU: 0x%4.4x", cis->m_sdu);
+	print_field("Master to Slave Maximum SDU: 0x%4.4x",
+						le16_to_cpu(cis->m_sdu));
 	print_field("Slave to Master Maximum SDU: 0x%4.4x",
 						le16_to_cpu(cis->s_sdu));
-	print_field("Master to Slave Maximum PDU: 0x%2.2x",
+	print_field("Master to Slave Maximum PDU: 0x%4.4x",
 						le16_to_cpu(cis->m_pdu));
-	print_field("Slave to Master Maximum PDU: 0x%2.2x", cis->s_pdu);
+	print_field("Slave to Master Maximum PDU: 0x%4.4x",
+						le16_to_cpu(cis->s_pdu));
 	print_le_phy("Master to Slave PHY", cis->m_phy);
 	print_le_phy("Slave to Master PHY", cis->s_phy);
 	print_field("Master to Slave Burst Number: 0x%2.2x", cis->m_bn);
@@ -8081,7 +8090,7 @@ static void le_set_cig_params_test_cmd(const void *data, uint8_t size)
 
 	print_field("CIG ID: 0x%2.2x", cmd->cig_id);
 	print_usec_interval("Master to Slave SDU Interval", cmd->m_interval);
-	print_usec_interval("Master to Slave SDU Interval", cmd->s_interval);
+	print_usec_interval("Slave to Master SDU Interval", cmd->s_interval);
 	print_field("Master to Slave Flush Timeout: 0x%2.2x", cmd->m_ft);
 	print_field("Slave to Master Flush Timeout: 0x%2.2x", cmd->s_ft);
 	print_field("ISO Interval: %.2f ms (0x%4.4x)",
@@ -9371,9 +9380,14 @@ static const struct vendor_ocf *current_vendor_ocf(uint16_t ocf)
 	return NULL;
 }
 
-static const struct vendor_evt *current_vendor_evt(uint8_t evt)
+static const struct vendor_evt *current_vendor_evt(const void *data,
+							int *consumed_size)
 {
 	uint16_t manufacturer, msft_opcode;
+	uint8_t evt = *((const uint8_t *) data);
+
+	/* A regular vendor event consumes 1 byte. */
+	*consumed_size = 1;
 
 	if (index_current < MAX_INDEX) {
 		manufacturer = index_list[index_current].manufacturer;
@@ -9388,7 +9402,7 @@ static const struct vendor_evt *current_vendor_evt(uint8_t evt)
 
 	switch (manufacturer) {
 	case 2:
-		return intel_vendor_evt(evt);
+		return intel_vendor_evt(data, consumed_size);
 	case 15:
 		return broadcom_vendor_evt(evt);
 	}
@@ -10602,6 +10616,7 @@ static void le_ext_adv_report_evt(const void *data, uint8_t size)
 		print_field("  Data length: 0x%2.2x", report->data_len);
 		data += sizeof(struct bt_hci_le_ext_adv_report);
 		packet_hexdump(data, report->data_len);
+		print_eir(data, report->data_len, true);
 		data += report->data_len;
 	}
 }
@@ -11007,10 +11022,10 @@ static void le_meta_event_evt(const void *data, uint8_t size)
 
 static void vendor_evt(const void *data, uint8_t size)
 {
-	uint8_t subevent = *((const uint8_t *) data);
 	struct subevent_data vendor_data;
 	char vendor_str[150];
-	const struct vendor_evt *vnd = current_vendor_evt(subevent);
+	int consumed_size;
+	const struct vendor_evt *vnd = current_vendor_evt(data, &consumed_size);
 
 	if (vnd) {
 		const char *str = current_vendor_str();
@@ -11021,12 +11036,13 @@ static void vendor_evt(const void *data, uint8_t size)
 			vendor_data.str = vendor_str;
 		} else
 			vendor_data.str = vnd->str;
-		vendor_data.subevent = subevent;
+		vendor_data.subevent = vnd->evt;
 		vendor_data.func = vnd->evt_func;
 		vendor_data.size = vnd->evt_size;
 		vendor_data.fixed = vnd->evt_fixed;
 
-		print_subevent(&vendor_data, data + 1, size - 1);
+		print_subevent(&vendor_data, data + consumed_size,
+							size - consumed_size);
 	} else {
 		uint16_t manufacturer;
 

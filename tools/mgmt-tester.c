@@ -302,6 +302,7 @@ struct generic_data {
 	bool expect_sc_key;
 	bool force_power_off;
 	bool addr_type_avail;
+	bool fail_tolerant;
 	uint8_t addr_type;
 	bool set_adv;
 	const uint8_t *adv_data;
@@ -3917,6 +3918,53 @@ static const struct generic_data set_privacy_nval_param_test = {
 	.expect_status = MGMT_STATUS_INVALID_PARAMS,
 };
 
+static const void *get_clock_info_send_param_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[7];
+
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const void *get_clock_info_expect_param_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[17];
+	struct mgmt_rp_get_clock_info *rp;
+
+	rp = (struct mgmt_rp_get_clock_info *)param;
+	memset(param, 0, sizeof(param));
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+
+	rp->local_clock = 0x11223344;
+	rp->piconet_clock = 0x11223344;
+	rp->accuracy = 0x5566;
+
+	*len = sizeof(param);
+
+	return param;
+}
+
+static const void *get_clock_info_expect_param_not_powered_func(uint16_t *len)
+{
+	struct test_data *data = tester_get_data();
+	static uint8_t param[17];
+
+	memset(param, 0, sizeof(param));
+	memcpy(param, hciemu_get_client_bdaddr(data->hciemu), 6);
+	param[6] = 0x00; /* Address type */
+
+	*len = sizeof(param);
+
+	return param;
+}
+
 static const void *get_conn_info_send_param_func(uint16_t *len)
 {
 	struct test_data *data = tester_get_data();
@@ -3962,6 +4010,21 @@ static const void *get_conn_info_error_expect_param_func(uint16_t *len)
 	return param;
 }
 
+static const struct generic_data get_clock_info_succes1_test = {
+	.setup_settings = settings_powered_connectable_bondable_ssp,
+	.send_opcode = MGMT_OP_GET_CLOCK_INFO,
+	.send_func = get_clock_info_send_param_func,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_func = get_clock_info_expect_param_func,
+};
+
+static const struct generic_data get_clock_info_fail1_test = {
+	.send_opcode = MGMT_OP_GET_CLOCK_INFO,
+	.send_func = get_clock_info_send_param_func,
+	.expect_status = MGMT_STATUS_NOT_POWERED,
+	.expect_func = get_clock_info_expect_param_not_powered_func,
+};
+
 static const struct generic_data get_conn_info_succes1_test = {
 	.setup_settings = settings_powered_connectable_bondable_ssp,
 	.send_opcode = MGMT_OP_GET_CONN_INFO,
@@ -4001,6 +4064,7 @@ static const struct generic_data get_conn_info_power_off_test = {
 	.force_power_off = true,
 	.expect_status = MGMT_STATUS_NOT_POWERED,
 	.expect_func = get_conn_info_expect_param_power_off_func,
+	.fail_tolerant = true,
 };
 
 static const uint8_t load_conn_param_nval_1[16] = { 0x12, 0x11 };
@@ -5267,6 +5331,44 @@ static const struct generic_data read_local_oob_success_ssp_test = {
 static const struct generic_data read_local_oob_success_sc_test = {
 	.setup_settings = settings_powered_sc,
 	.send_opcode = MGMT_OP_READ_LOCAL_OOB_DATA,
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_ignore_param = true,
+	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_EXT_DATA,
+};
+
+static const uint8_t oob_type_bredr[] = { 0x01 };
+static const struct generic_data read_local_oob_ext_invalid_index_test = {
+	.send_index_none = true,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_EXT_DATA,
+	.send_param = oob_type_bredr,
+	.send_len = sizeof(oob_type_bredr),
+	.expect_status = MGMT_STATUS_INVALID_INDEX,
+};
+
+static const struct generic_data read_local_oob_ext_legacy_pairing_test = {
+	.setup_settings = settings_powered,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_EXT_DATA,
+	.send_param = oob_type_bredr,
+	.send_len = sizeof(oob_type_bredr),
+	.expect_ignore_param = true,
+	.expect_status = MGMT_STATUS_NOT_SUPPORTED,
+};
+
+static const struct generic_data read_local_oob_ext_success_ssp_test = {
+	.setup_settings = settings_powered_ssp,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_EXT_DATA,
+	.send_param = oob_type_bredr,
+	.send_len = sizeof(oob_type_bredr),
+	.expect_status = MGMT_STATUS_SUCCESS,
+	.expect_ignore_param = true,
+	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_DATA,
+};
+
+static const struct generic_data read_local_oob_ext_success_sc_test = {
+	.setup_settings = settings_powered_sc,
+	.send_opcode = MGMT_OP_READ_LOCAL_OOB_EXT_DATA,
+	.send_param = oob_type_bredr,
+	.send_len = sizeof(oob_type_bredr),
 	.expect_status = MGMT_STATUS_SUCCESS,
 	.expect_ignore_param = true,
 	.expect_hci_command = BT_HCI_CMD_READ_LOCAL_OOB_EXT_DATA,
@@ -6976,8 +7078,13 @@ static void command_generic_callback(uint8_t status, uint16_t length,
 			test->send_opcode, mgmt_errstr(status), status);
 
 	if (status != test->expect_status) {
-		tester_test_abort();
-		return;
+		if (!test->fail_tolerant || !!status != !!test->expect_status) {
+			tester_test_abort();
+			return;
+		}
+
+		tester_warn("Unexpected status got %d expected %d",
+						status, test->expect_status);
 	}
 
 	if (!test->expect_ignore_param) {
@@ -9780,7 +9887,7 @@ static void test_command_generic_connect(const void *test_data)
 
 	addr_type = data->hciemu_type == HCIEMU_TYPE_BREDRLE ? BDADDR_BREDR :
 							BDADDR_LE_PUBLIC;
-
+	tester_print("ADDR TYPE: %d", addr_type);
 	bthost = hciemu_client_get_host(data->hciemu);
 	bthost_hci_connect(bthost, master_bdaddr, addr_type);
 }
@@ -10755,6 +10862,13 @@ int main(int argc, char *argv[])
 				&set_privacy_nval_param_test,
 				NULL, test_command_generic);
 
+	test_bredrle("Get Clock Info - Success",
+				&get_clock_info_succes1_test, NULL,
+				test_command_generic_connect);
+	test_bredrle("Get Clock Info - Fail (Power Off)",
+				&get_clock_info_fail1_test, NULL,
+				test_command_generic);
+
 	test_bredrle("Get Conn Info - Success",
 				&get_conn_info_succes1_test, NULL,
 				test_command_generic_connect);
@@ -11159,6 +11273,18 @@ int main(int argc, char *argv[])
 				NULL, test_command_generic);
 	test_bredrle("Read Local OOB Data - Success SC",
 				&read_local_oob_success_sc_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Ext Data - Invalid index",
+				&read_local_oob_ext_invalid_index_test,
+				NULL, test_command_generic);
+	test_bredr20("Read Local OOB Ext Data - Legacy pairing",
+				&read_local_oob_ext_legacy_pairing_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Ext Data - Success SSP",
+				&read_local_oob_ext_success_ssp_test,
+				NULL, test_command_generic);
+	test_bredrle("Read Local OOB Ext Data - Success SC",
+				&read_local_oob_ext_success_sc_test,
 				NULL, test_command_generic);
 
 	test_bredrle("Device Found - Advertising data - Zero padded",
