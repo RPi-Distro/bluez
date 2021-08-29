@@ -1,6 +1,7 @@
 bluez (5.61-1) UNRELEASED; urgency=medium
 
   * Update to 5.61.
+  * Update d/copyright.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 25 Aug 2021 17:33:39 +0900
 
