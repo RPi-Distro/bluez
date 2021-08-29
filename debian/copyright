@@ -224,11 +224,6 @@ Files: obexd/client/bluetooth.c
 Copyright: 2011-2015, Intel Corporation
 License: GPL-2+
 
-Files: obexd/client/dbus.c
-  obexd/client/dbus.h
-Copyright: 2008-2011, Intel Corporation.
-License: GPL-2
-
 Files: obexd/client/map-event.c
   obexd/client/map-event.h
   obexd/client/mns.c
@@ -313,11 +308,6 @@ License: GPL-2+
 
 Files: plugins/external-dummy.c
 Copyright: no-info-found
-License: GPL-2+
-
-Files: plugins/gatt-example.c
-Copyright: 2006-2011, Nokia Corporation
-  2004-2011, Marcel Holtmann <marcel@holtmann.org>
 License: GPL-2+
 
 Files: plugins/hostname.c
