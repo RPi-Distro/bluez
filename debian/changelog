@@ -1,4 +1,4 @@
-bluez (5.61-1) UNRELEASED; urgency=medium
+bluez (5.61-1) unstable; urgency=medium
 
   * Update to 5.61.
   * Update d/copyright.
