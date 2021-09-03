@@ -2,6 +2,7 @@ bluez (5.61-1) unstable; urgency=medium
 
   * Update to 5.61.
   * Update d/copyright.
+  * Add manpages create by help2man.
 
  -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 25 Aug 2021 17:33:39 +0900
 
