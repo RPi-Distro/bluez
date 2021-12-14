@@ -1,3 +1,10 @@
+bluez (5.62-1) UNRELEASED; urgency=medium
+
+  * Update to 5.62. (Closes: #1000262, #998626)
+    Fixed CVE-2021-43400 and CVE-2021-41229.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Tue, 14 Dec 2021 09:23:03 +0900
+
 bluez (5.61-1) unstable; urgency=medium
 
   * Update to 5.61.
