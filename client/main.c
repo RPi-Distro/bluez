@@ -319,7 +319,7 @@ static void print_property(GDBusProxy *proxy, const char *name)
 	print_property_with_label(proxy, name, NULL);
 }
 
-static void print_uuid(const char *uuid)
+static void print_uuid(const char *label, const char *uuid)
 {
 	const char *text;
 
@@ -340,9 +340,10 @@ static void print_uuid(const char *uuid)
 			n = sizeof(str) - 1;
 		}
 
-		bt_shell_printf("\tUUID: %s%*c(%s)\n", str, 26 - n, ' ', uuid);
+		bt_shell_printf("\t%s: %s%*c(%s)\n", label, str, 26 - n, ' ',
+									uuid);
 	} else
-		bt_shell_printf("\tUUID: %*c(%s)\n", 26, ' ', uuid);
+		bt_shell_printf("\t%s: %*c(%s)\n", label, 26, ' ', uuid);
 }
 
 static void print_uuids(GDBusProxy *proxy)
@@ -359,25 +360,46 @@ static void print_uuids(GDBusProxy *proxy)
 
 		dbus_message_iter_get_basic(&value, &uuid);
 
-		print_uuid(uuid);
+		print_uuid("UUID", uuid);
 
 		dbus_message_iter_next(&value);
 	}
 }
 
-static gboolean device_is_child(GDBusProxy *device, GDBusProxy *master)
+static void print_experimental(GDBusProxy *proxy)
+{
+	DBusMessageIter iter, value;
+
+	if (g_dbus_proxy_get_property(proxy, "ExperimentalFeatures",
+						&iter) == FALSE)
+		return;
+
+	dbus_message_iter_recurse(&iter, &value);
+
+	while (dbus_message_iter_get_arg_type(&value) == DBUS_TYPE_STRING) {
+		const char *uuid;
+
+		dbus_message_iter_get_basic(&value, &uuid);
+
+		print_uuid("ExperimentalFeatures", uuid);
+
+		dbus_message_iter_next(&value);
+	}
+}
+
+static gboolean device_is_child(GDBusProxy *device, GDBusProxy *parent)
 {
 	DBusMessageIter iter;
 	const char *adapter, *path;
 
-	if (!master)
+	if (!parent)
 		return FALSE;
 
 	if (g_dbus_proxy_get_property(device, "Adapter", &iter) == FALSE)
 		return FALSE;
 
 	dbus_message_iter_get_basic(&iter, &adapter);
-	path = g_dbus_proxy_get_path(master);
+	path = g_dbus_proxy_get_path(parent);
 
 	if (!strcmp(path, adapter))
 		return TRUE;
@@ -984,6 +1006,7 @@ static void cmd_show(int argc, char *argv[])
 	print_property(adapter->proxy, "Modalias");
 	print_property(adapter->proxy, "Discovering");
 	print_property(adapter->proxy, "Roles");
+	print_experimental(adapter->proxy);
 
 	if (adapter->ad_proxy) {
 		bt_shell_printf("Advertising Features:\n");
@@ -1424,7 +1447,7 @@ static void cmd_scan_filter_uuids(int argc, char *argv[])
 		char **uuid;
 
 		for (uuid = filter.uuids; uuid && *uuid; uuid++)
-			print_uuid(*uuid);
+			print_uuid("UUID", *uuid);
 
 		return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 	}
@@ -2021,7 +2044,8 @@ static void connect_reply(DBusMessage *message, void *user_data)
 	dbus_error_init(&error);
 
 	if (dbus_set_error_from_message(&error, message) == TRUE) {
-		bt_shell_printf("Failed to connect: %s\n", error.name);
+		bt_shell_printf("Failed to connect: %s %s\n", error.name,
+				error.message);
 		dbus_error_free(&error);
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
 	}
@@ -2209,6 +2233,7 @@ static void cmd_attribute_info(int argc, char *argv[])
 		print_property(proxy, "Value");
 		print_property(proxy, "Notifying");
 		print_property(proxy, "Flags");
+		print_property(proxy, "MTU");
 		print_property(proxy, "Descriptors");
 	} else if (!strcmp(iface, "org.bluez.GattDescriptor1")) {
 		bt_shell_printf("Descriptor - %s\n", text);

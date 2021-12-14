@@ -1614,7 +1614,7 @@ static void avctp_confirm_cb(GIOChannel *chan, gpointer data)
 	return;
 }
 
-static GIOChannel *avctp_server_socket(const bdaddr_t *src, gboolean master,
+static GIOChannel *avctp_server_socket(const bdaddr_t *src, gboolean central,
 						uint8_t mode, uint16_t psm)
 {
 	GError *err = NULL;
@@ -1625,7 +1625,7 @@ static GIOChannel *avctp_server_socket(const bdaddr_t *src, gboolean master,
 				BT_IO_OPT_SOURCE_BDADDR, src,
 				BT_IO_OPT_PSM, psm,
 				BT_IO_OPT_SEC_LEVEL, BT_IO_SEC_MEDIUM,
-				BT_IO_OPT_MASTER, master,
+				BT_IO_OPT_CENTRAL, central,
 				BT_IO_OPT_MODE, mode,
 				BT_IO_OPT_INVALID);
 	if (!io) {
@@ -1636,30 +1636,24 @@ static GIOChannel *avctp_server_socket(const bdaddr_t *src, gboolean master,
 	return io;
 }
 
-int avctp_register(struct btd_adapter *adapter, gboolean master)
+int avctp_register(struct btd_adapter *adapter, bool central, bool *browsing)
 {
 	struct avctp_server *server;
 	const bdaddr_t *src = btd_adapter_get_address(adapter);
 
 	server = g_new0(struct avctp_server, 1);
 
-	server->control_io = avctp_server_socket(src, master, BT_IO_MODE_BASIC,
+	server->control_io = avctp_server_socket(src, central, BT_IO_MODE_BASIC,
 							AVCTP_CONTROL_PSM);
 	if (!server->control_io) {
 		g_free(server);
 		return -1;
 	}
-	server->browsing_io = avctp_server_socket(src, master, BT_IO_MODE_ERTM,
+
+	server->browsing_io = avctp_server_socket(src, central, BT_IO_MODE_ERTM,
 							AVCTP_BROWSING_PSM);
-	if (!server->browsing_io) {
-		if (server->control_io) {
-			g_io_channel_shutdown(server->control_io, TRUE, NULL);
-			g_io_channel_unref(server->control_io);
-			server->control_io = NULL;
-		}
-		g_free(server);
-		return -1;
-	}
+	if (browsing)
+		*browsing = server->browsing_io ? true : false;
 
 	server->adapter = btd_adapter_ref(adapter);
 
@@ -1681,9 +1675,11 @@ void avctp_unregister(struct btd_adapter *adapter)
 
 	servers = g_slist_remove(servers, server);
 
-	g_io_channel_shutdown(server->browsing_io, TRUE, NULL);
-	g_io_channel_unref(server->browsing_io);
-	server->browsing_io = NULL;
+	if (server->browsing_io) {
+		g_io_channel_shutdown(server->browsing_io, TRUE, NULL);
+		g_io_channel_unref(server->browsing_io);
+		server->browsing_io = NULL;
+	}
 
 	g_io_channel_shutdown(server->control_io, TRUE, NULL);
 	g_io_channel_unref(server->control_io);

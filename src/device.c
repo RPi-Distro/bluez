@@ -580,6 +580,7 @@ static void gatt_cache_cleanup(struct btd_device *device)
 
 	bt_gatt_client_cancel_all(device->client);
 	gatt_db_clear(device->db);
+	device->le_state.svc_resolved = false;
 }
 
 static void gatt_client_cleanup(struct btd_device *device)
@@ -1122,7 +1123,7 @@ static void set_blocked(GDBusPendingPropertySet id, gboolean value, void *data)
 		break;
 	case EINVAL:
 		g_dbus_pending_property_error(id, ERROR_INTERFACE ".Failed",
-					"Kernel lacks blacklist support");
+					"Kernel lacks reject list support");
 		break;
 	default:
 		g_dbus_pending_property_error(id, ERROR_INTERFACE ".Failed",
@@ -1605,7 +1606,7 @@ void device_request_disconnect(struct btd_device *device, DBusMessage *msg)
 
 	if (device->connect) {
 		DBusMessage *reply = btd_error_failed(device->connect,
-								"Cancelled");
+						ERR_BREDR_CONN_CANCELED);
 		g_dbus_send_message(dbus_conn, reply);
 		dbus_message_unref(device->connect);
 		device->connect = NULL;
@@ -1799,7 +1800,8 @@ done:
 		}
 
 		g_dbus_send_message(dbus_conn,
-				btd_error_failed(dev->connect, strerror(-err)));
+			btd_error_failed(dev->connect,
+					btd_error_bredr_conn_from_errno(err)));
 	} else {
 		/* Start passive SDP discovery to update known services */
 		if (dev->bredr && !dev->svc_refreshed && dev->refresh_discovery)
@@ -2060,10 +2062,12 @@ static DBusMessage *connect_profiles(struct btd_device *dev, uint8_t bdaddr_type
 						dbus_message_get_sender(msg));
 
 	if (dev->pending || dev->connect || dev->browse)
-		return btd_error_in_progress(msg);
+		return btd_error_in_progress_str(msg, ERR_BREDR_CONN_BUSY);
 
-	if (!btd_adapter_get_powered(dev->adapter))
-		return btd_error_not_ready(msg);
+	if (!btd_adapter_get_powered(dev->adapter)) {
+		return btd_error_not_ready_str(msg,
+					ERR_BREDR_CONN_ADAPTER_NOT_POWERED);
+	}
 
 	btd_device_set_temporary(dev, false);
 
@@ -2076,10 +2080,12 @@ static DBusMessage *connect_profiles(struct btd_device *dev, uint8_t bdaddr_type
 			if (dbus_message_is_method_call(msg, DEVICE_INTERFACE,
 							"Connect") &&
 				find_service_with_state(dev->services,
-						BTD_SERVICE_STATE_CONNECTED))
+						BTD_SERVICE_STATE_CONNECTED)) {
 				return dbus_message_new_method_return(msg);
-			else
-				return btd_error_not_available(msg);
+			} else {
+				return btd_error_not_available_str(msg,
+					ERR_BREDR_CONN_PROFILE_UNAVAILABLE);
+			}
 		}
 
 		goto resolve_services;
@@ -2089,7 +2095,8 @@ static DBusMessage *connect_profiles(struct btd_device *dev, uint8_t bdaddr_type
 	if (err < 0) {
 		if (err == -EALREADY)
 			return dbus_message_new_method_return(msg);
-		return btd_error_failed(msg, strerror(-err));
+		return btd_error_failed(msg,
+					btd_error_bredr_conn_from_errno(err));
 	}
 
 	dev->connect = dbus_message_ref(msg);
@@ -2103,8 +2110,10 @@ resolve_services:
 		err = device_browse_sdp(dev, msg);
 	else
 		err = device_browse_gatt(dev, msg);
-	if (err < 0)
-		return btd_error_failed(msg, strerror(-err));
+	if (err < 0) {
+		return btd_error_failed(msg, bdaddr_type == BDADDR_BREDR ?
+			ERR_BREDR_CONN_SDP_SEARCH : ERR_LE_CONN_GATT_BROWSE);
+	}
 
 	return NULL;
 }
@@ -2214,8 +2223,10 @@ static DBusMessage *connect_profile(DBusConnection *conn, DBusMessage *msg,
 	DBusMessage *reply;
 
 	if (!dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &pattern,
-							DBUS_TYPE_INVALID))
-		return btd_error_invalid_args(msg);
+							DBUS_TYPE_INVALID)) {
+		return btd_error_invalid_args_str(msg,
+					ERR_BREDR_CONN_INVALID_ARGUMENTS);
+	}
 
 	uuid = bt_name2string(pattern);
 	reply = connect_profiles(dev, BDADDR_BREDR, msg, uuid);
@@ -2598,7 +2609,10 @@ static void browse_request_complete(struct browse_req *req, uint8_t type,
 			if (err == 0)
 				goto done;
 		}
-		reply = btd_error_failed(req->msg, strerror(-err));
+		reply = btd_error_failed(req->msg,
+				bdaddr_type == BDADDR_BREDR ?
+				btd_error_bredr_conn_from_errno(err) :
+				btd_error_le_conn_from_errno(err));
 		goto done;
 	}
 
@@ -3073,6 +3087,7 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 	struct bearer_state *state = get_state(device, bdaddr_type);
 	DBusMessage *reply;
 	bool remove_device = false;
+	bool paired_status_updated = false;
 
 	if (!state->connected)
 		return;
@@ -3093,7 +3108,8 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 	 */
 	if (device->connect) {
 		DBG("connection removed while Connect() is waiting reply");
-		reply = btd_error_failed(device->connect, "Disconnected early");
+		reply = btd_error_failed(device->connect,
+						ERR_BREDR_CONN_CANCELED);
 		g_dbus_send_message(dbus_conn, reply);
 		dbus_message_unref(device->connect);
 		device->connect = NULL;
@@ -3111,23 +3127,41 @@ void device_remove_connection(struct btd_device *device, uint8_t bdaddr_type)
 		dbus_message_unref(msg);
 	}
 
-	if (state->paired && !state->bonded) {
-		btd_adapter_remove_bonding(device->adapter, &device->bdaddr,
-								bdaddr_type);
-
-		state->paired = false;
-
-		/* report change only if both bearers are unpaired */
-		if (!device->bredr_state.paired && !device->le_state.paired)
-			g_dbus_emit_property_changed(dbus_conn, device->path,
-							DEVICE_INTERFACE,
-							"Paired");
+	/* Check paired status of both bearers since it's possible to be
+	 * paired but not connected via link key to LTK conversion.
+	 */
+	if (!device->bredr_state.connected && device->bredr_state.paired &&
+						!device->bredr_state.bonded) {
+		btd_adapter_remove_bonding(device->adapter,
+						&device->bdaddr,
+						BDADDR_BREDR);
+		device->bredr_state.paired = false;
+		paired_status_updated = true;
 	}
+
+	if (!device->le_state.connected && device->le_state.paired &&
+						!device->le_state.bonded) {
+		btd_adapter_remove_bonding(device->adapter,
+						&device->bdaddr,
+						device->bdaddr_type);
+		device->le_state.paired = false;
+		paired_status_updated = true;
+	}
+
+	/* report change only if both bearers are unpaired */
+	if (!device->bredr_state.paired && !device->le_state.paired &&
+							paired_status_updated)
+		g_dbus_emit_property_changed(dbus_conn, device->path,
+						DEVICE_INTERFACE,
+						"Paired");
 
 	if (device->bredr_state.connected || device->le_state.connected)
 		return;
 
 	device_update_last_seen(device, bdaddr_type);
+
+	g_slist_free_full(device->eir_uuids, g_free);
+	device->eir_uuids = NULL;
 
 	g_dbus_emit_property_changed(dbus_conn, device->path,
 						DEVICE_INTERFACE, "Connected");
@@ -4511,6 +4545,7 @@ static void device_remove_stored(struct btd_device *device)
 	key_file = g_key_file_new();
 	g_key_file_load_from_file(key_file, filename, 0, NULL);
 	g_key_file_remove_group(key_file, "ServiceRecords", NULL);
+	g_key_file_remove_group(key_file, "Attributes", NULL);
 
 	data = g_key_file_to_data(key_file, &length, NULL);
 	if (length > 0) {
@@ -5303,6 +5338,13 @@ static void gatt_client_init(struct btd_device *device)
 	}
 
 	btd_gatt_client_connected(device->client_dbus);
+
+	/* Only initiate EATT connection when acting as initiator, as acceptor
+	 * it shall be triggered only when ready to avoid possible clashes where
+	 * both sides attempt to connection at same time.
+	 */
+	if (device->connect)
+		btd_gatt_client_eatt_connect(device->client_dbus);
 }
 
 static void gatt_server_init(struct btd_device *device,
@@ -5517,7 +5559,7 @@ done:
 	if (device->connect) {
 		if (err < 0)
 			reply = btd_error_failed(device->connect,
-							strerror(-err));
+					btd_error_le_conn_from_errno(err));
 		else
 			reply = dbus_message_new_method_return(device->connect);
 
@@ -5777,7 +5819,7 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 
 	if (temporary) {
 		if (device->bredr)
-			adapter_whitelist_remove(device->adapter, device);
+			adapter_accept_list_remove(device->adapter, device);
 		adapter_connect_list_remove(device->adapter, device);
 		if (device->auto_connect) {
 			device->disable_auto_connect = TRUE;
@@ -5789,7 +5831,7 @@ void btd_device_set_temporary(struct btd_device *device, bool temporary)
 		clear_temporary_timer(device);
 
 	if (device->bredr)
-		adapter_whitelist_add(device->adapter, device);
+		adapter_accept_list_add(device->adapter, device);
 
 	store_device_info(device);
 

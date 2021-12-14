@@ -12,6 +12,7 @@
 #include <config.h>
 #endif
 
+#include <stdlib.h>
 #include <dbus/dbus.h>
 #include <gdbus/gdbus.h>
 #include <sys/file.h>
@@ -67,14 +68,14 @@ static struct btd_admin_policy *admin_policy_new(struct btd_adapter *adapter)
 
 	admin_policy->adapter = adapter;
 	admin_policy->adapter_id = btd_adapter_get_index(adapter);
-	admin_policy->service_allowlist = NULL;
+	admin_policy->service_allowlist = queue_new();
 
 	return admin_policy;
 }
 
 static void free_service_allowlist(struct queue *q)
 {
-	queue_destroy(q, g_free);
+	queue_destroy(q, free);
 }
 
 static void admin_policy_free(void *data)
@@ -83,6 +84,17 @@ static void admin_policy_free(void *data)
 
 	free_service_allowlist(admin_policy->service_allowlist);
 	g_free(admin_policy);
+}
+
+static void admin_policy_destroy(struct btd_admin_policy *admin_policy)
+{
+	const char *path = adapter_get_path(admin_policy->adapter);
+
+	g_dbus_unregister_interface(dbus_conn, path,
+						ADMIN_POLICY_SET_INTERFACE);
+	g_dbus_unregister_interface(dbus_conn, path,
+						ADMIN_POLICY_STATUS_INTERFACE);
+	admin_policy_free(admin_policy);
 }
 
 static bool uuid_match(const void *data, const void *match_data)
@@ -196,12 +208,17 @@ static char **new_uuid_strings(struct queue *allowlist, gsize *num)
 	char **uuid_strs = NULL;
 	gsize i = 0, allowlist_num;
 
+	allowlist_num = queue_length(allowlist);
+	if (!allowlist_num) {
+		*num = 0;
+		return NULL;
+	}
+
 	/* Set num to a non-zero number so that whoever call this could know if
 	 * this function success or not
 	 */
 	*num = 1;
 
-	allowlist_num = queue_length(allowlist);
 	uuid_strs = g_try_malloc_n(allowlist_num, sizeof(char *));
 	if (!uuid_strs)
 		return NULL;
@@ -291,7 +308,7 @@ static void key_file_load_service_allowlist(GKeyFile *key_file,
 		if (!uuid)
 			goto failed;
 
-		if (bt_string_to_uuid(uuid, *uuids)) {
+		if (bt_string_to_uuid(uuid, uuids[i])) {
 
 			btd_error(admin_policy->adapter_id,
 					"Failed to convert '%s' to uuid struct",
@@ -302,14 +319,16 @@ static void key_file_load_service_allowlist(GKeyFile *key_file,
 		}
 
 		queue_push_tail(uuid_list, uuid);
-		uuids++;
 	}
 
 	if (!service_allowlist_set(admin_policy, uuid_list))
 		goto failed;
 
+	g_strfreev(uuids);
+
 	return;
 failed:
+	g_strfreev(uuids);
 	free_service_allowlist(uuid_list);
 }
 
@@ -319,12 +338,8 @@ static void load_policy_settings(struct btd_admin_policy *admin_policy)
 	char *filename = ADMIN_POLICY_STORAGE;
 	struct stat st;
 
-	if (stat(filename, &st) < 0) {
-		btd_error(admin_policy->adapter_id,
-				"Failed to get file %s information",
-				filename);
-		return;
-	}
+	if (stat(filename, &st) < 0)
+		store_policy_settings(policy_data);
 
 	key_file = g_key_file_new();
 
@@ -487,7 +502,7 @@ static int admin_policy_adapter_probe(struct btd_adapter *adapter)
 	if (!g_dbus_register_interface(dbus_conn, adapter_path,
 					ADMIN_POLICY_SET_INTERFACE,
 					admin_policy_adapter_methods, NULL,
-					NULL, policy_data, admin_policy_free)) {
+					NULL, policy_data, NULL)) {
 		btd_error(policy_data->adapter_id,
 			"Admin Policy Set interface init failed on path %s",
 								adapter_path);
@@ -501,7 +516,7 @@ static int admin_policy_adapter_probe(struct btd_adapter *adapter)
 					ADMIN_POLICY_STATUS_INTERFACE,
 					NULL, NULL,
 					admin_policy_adapter_properties,
-					policy_data, admin_policy_free)) {
+					policy_data, NULL)) {
 		btd_error(policy_data->adapter_id,
 			"Admin Policy Status interface init failed on path %s",
 								adapter_path);
@@ -569,10 +584,25 @@ static void admin_policy_device_removed(struct btd_adapter *adapter,
 		unregister_device_data(data, NULL);
 }
 
+static void admin_policy_remove(struct btd_adapter *adapter)
+{
+	DBG("");
+
+	queue_foreach(devices, unregister_device_data, NULL);
+	queue_destroy(devices, g_free);
+	devices = NULL;
+
+	if (policy_data) {
+		admin_policy_destroy(policy_data);
+		policy_data = NULL;
+	}
+}
+
 static struct btd_adapter_driver admin_policy_driver = {
 	.name	= "admin_policy",
 	.probe	= admin_policy_adapter_probe,
 	.resume = NULL,
+	.remove = admin_policy_remove,
 	.device_resolved = admin_policy_device_added,
 	.device_removed = admin_policy_device_removed
 };
@@ -592,11 +622,6 @@ static void admin_exit(void)
 	DBG("");
 
 	btd_unregister_adapter_driver(&admin_policy_driver);
-	queue_foreach(devices, unregister_device_data, NULL);
-	queue_destroy(devices, g_free);
-
-	if (policy_data)
-		admin_policy_free(policy_data);
 }
 
 BLUETOOTH_PLUGIN_DEFINE(admin, VERSION,

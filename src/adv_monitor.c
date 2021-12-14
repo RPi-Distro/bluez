@@ -1892,7 +1892,9 @@ static bool handle_device_lost_timeout(gpointer user_data)
 	g_dbus_proxy_method_call(monitor->proxy, "DeviceLost",
 				 report_device_state_setup,
 				 NULL, dev->device, NULL);
+
 	dev->lost_timer = 0;
+	dev->found = false;
 
 	return FALSE;
 }
@@ -2010,4 +2012,55 @@ static void adv_monitor_filter_rssi(struct adv_monitor *monitor,
 					    handle_device_lost_timeout, dev,
 					    NULL);
 	}
+}
+
+/* Clears running DeviceLost timer for a given device */
+static void clear_device_lost_timer(void *data, void *user_data)
+{
+	struct adv_monitor_device *dev = data;
+	struct adv_monitor *monitor = NULL;
+
+	if (dev->lost_timer) {
+		timeout_remove(dev->lost_timer);
+		dev->lost_timer = 0;
+
+		monitor = dev->monitor;
+
+		DBG("Calling DeviceLost() for device %p on Adv Monitor "
+				"of owner %s at path %s", dev->device,
+				monitor->app->owner, monitor->path);
+
+		g_dbus_proxy_method_call(monitor->proxy, "DeviceLost",
+				report_device_state_setup,
+				NULL, dev->device, NULL);
+	}
+}
+
+/* Clears running DeviceLost timers from each monitor */
+static void clear_lost_timers_from_monitor(void *data, void *user_data)
+{
+	struct adv_monitor *monitor = data;
+
+	queue_foreach(monitor->devices, clear_device_lost_timer, NULL);
+}
+
+/* Clears running DeviceLost timers from each app */
+static void clear_lost_timers_from_app(void *data, void *user_data)
+{
+	struct adv_monitor_app *app = data;
+
+	queue_foreach(app->monitors, clear_lost_timers_from_monitor, NULL);
+}
+
+/* Handles bt power down scenario */
+void btd_adv_monitor_power_down(struct btd_adv_monitor_manager *manager)
+{
+	if (!manager) {
+		error("Unexpected NULL btd_adv_monitor_manager object upon "
+				"power down");
+		return;
+	}
+
+	/* Clear any running DeviceLost timers in case of power down */
+	queue_foreach(manager->apps, clear_lost_timers_from_app, NULL);
 }
