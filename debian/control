@@ -77,7 +77,7 @@ Depends: ${shlibs:Depends},
          kmod,
          udev,
          lsb-base,
-         dbus
+         default-dbus-system-bus | dbus-system-bus
 Pre-Depends: ${misc:Pre-Depends}
 Suggests: pulseaudio-module-bluetooth
 Breaks: udev (<< 170-1)
