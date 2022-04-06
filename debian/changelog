@@ -1,9 +1,14 @@
-bluez (5.64-1) UNRELEASED; urgency=medium
+bluez (5.64-1) unstable; urgency=medium
 
   * Update to 5.64.
     Fixed CVE-2022-0204 (Closes: #1003712)
+  * Update d/control.
+    + bluez; depend on default-dbus-system-bus | dbus-system-bus | dbus.
+  * Drop d/patches/sdpd-Fix-leaking-buffers-stored-in-cstates-cache.patch.
+  * Update d/copyright
+    + Drop nonexistent files.
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 07 Apr 2022 05:20:32 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 07 Apr 2022 06:35:07 +0900
 
 bluez (5.62-2) unstable; urgency=medium
 
