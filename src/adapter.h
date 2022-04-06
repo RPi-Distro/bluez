@@ -87,6 +87,15 @@ struct btd_device *btd_adapter_find_device(struct btd_adapter *adapter,
 struct btd_device *btd_adapter_find_device_by_path(struct btd_adapter *adapter,
 						   const char *path);
 
+void btd_adapter_update_found_device(struct btd_adapter *adapter,
+					const bdaddr_t *bdaddr,
+					uint8_t bdaddr_type, int8_t rssi,
+					bool confirm, bool legacy,
+					bool not_connectable,
+					bool name_resolve_failed,
+					const uint8_t *data, uint8_t data_len,
+					bool monitored);
+
 const char *adapter_get_path(struct btd_adapter *adapter);
 const bdaddr_t *btd_adapter_get_address(struct btd_adapter *adapter);
 uint8_t btd_adapter_get_address_type(struct btd_adapter *adapter);
@@ -219,8 +228,13 @@ int adapter_connect_list_add(struct btd_adapter *adapter,
 					struct btd_device *device);
 void adapter_connect_list_remove(struct btd_adapter *adapter,
 						struct btd_device *device);
-void adapter_set_device_wakeable(struct btd_adapter *adapter,
-				 struct btd_device *dev, bool wakeable);
+typedef void (*adapter_set_device_flags_func_t)(uint8_t status, uint16_t length,
+						const void *param,
+						void *user_data);
+void adapter_set_device_flags(struct btd_adapter *adapter,
+				struct btd_device *device, uint32_t flags,
+				adapter_set_device_flags_func_t func,
+				void *user_data);
 void adapter_auto_connect_add(struct btd_adapter *adapter,
 					struct btd_device *device);
 void adapter_auto_connect_remove(struct btd_adapter *adapter,

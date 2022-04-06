@@ -13,6 +13,7 @@
 #endif
 
 #define _GNU_SOURCE
+#include <fcntl.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <stdbool.h>
@@ -23,9 +24,13 @@
 #include <limits.h>
 #include <string.h>
 
+#ifdef HAVE_SYS_RANDOM_H
+#include <sys/random.h>
+#endif
+
 #include "src/shared/util.h"
 
-void *btd_malloc(size_t size)
+void *util_malloc(size_t size)
 {
 	if (__builtin_expect(!!size, 1)) {
 		void *ptr;
@@ -39,6 +44,22 @@ void *btd_malloc(size_t size)
 	}
 
 	return NULL;
+}
+
+void *util_memdup(const void *src, size_t size)
+{
+	void *cpy;
+
+	if (!src || !size)
+		return NULL;
+
+	cpy = util_malloc(size);
+	if (!cpy)
+		return NULL;
+
+	memcpy(cpy, src, size);
+
+	return cpy;
 }
 
 void util_debug_va(util_debug_func_t function, void *user_data,
@@ -120,6 +141,26 @@ unsigned char util_get_dt(const char *parent, const char *name)
 		return DT_DIR;
 
 	return DT_UNKNOWN;
+}
+
+/* Helper for getting a random in case getrandom unavailable (glibc < 2.25) */
+ssize_t util_getrandom(void *buf, size_t buflen, unsigned int flags)
+{
+#ifdef HAVE_GETRANDOM
+	return getrandom(buf, buflen, flags);
+#else
+	int fd;
+	ssize_t bytes;
+
+	fd = open("/dev/urandom", O_CLOEXEC);
+	if (fd < 0)
+		return -1;
+
+	bytes = read(fd, buf, buflen);
+	close(fd);
+
+	return bytes;
+#endif
 }
 
 /* Helpers for bitfield operations */

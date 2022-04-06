@@ -24,17 +24,18 @@ pkgincludedir = $(includedir)/bluetooth
 
 pkginclude_HEADERS =
 
-AM_CFLAGS = $(WARNING_CFLAGS) $(MISC_CFLAGS) $(UDEV_CFLAGS) $(LIBEBOOK_CFLAGS) $(LIBEDATASERVER_CFLAGS) $(ell_cflags)
+AM_CFLAGS = $(MISC_CFLAGS) $(WARNING_CFLAGS) $(UDEV_CFLAGS) $(LIBEBOOK_CFLAGS) \
+				$(LIBEDATASERVER_CFLAGS) $(ell_cflags)
 AM_LDFLAGS = $(MISC_LDFLAGS)
+
+confdir = $(sysconfdir)/bluetooth
+statedir = $(localstatedir)/lib/bluetooth
 
 if DATAFILES
 dbusdir = $(DBUS_CONFDIR)/dbus-1/system.d
 dbus_DATA = src/bluetooth.conf
 
-confdir = $(sysconfdir)/bluetooth
 conf_DATA =
-
-statedir = $(localstatedir)/lib/bluetooth
 state_DATA =
 endif
 
@@ -145,6 +146,7 @@ ell_headers = ell/util.h \
 			ell/tls-private.h \
 			ell/ecc.h \
 			ell/ecc-private.h \
+			ell/cleanup.h \
 			ell/ecdh.h
 
 ell_sources = ell/private.h ell/missing.h \
@@ -241,6 +243,8 @@ src_libshared_glib_la_SOURCES = $(shared_sources) \
 				src/shared/mainloop-notify.h \
 				src/shared/mainloop-notify.c \
 				src/shared/tester.c
+src_libshared_glib_la_LDFLAGS = $(AM_LDFLAGS)
+src_libshared_glib_la_CFLAGS = $(AM_CFLAGS)
 
 src_libshared_mainloop_la_SOURCES = $(shared_sources) \
 				src/shared/io-mainloop.c \
@@ -248,6 +252,8 @@ src_libshared_mainloop_la_SOURCES = $(shared_sources) \
 				src/shared/mainloop.h src/shared/mainloop.c \
 				src/shared/mainloop-notify.h \
 				src/shared/mainloop-notify.c
+src_libshared_mainloop_la_LDFLAGS = $(AM_LDFLAGS)
+src_libshared_mainloop_la_CFLAGS = $(AM_CFLAGS)
 
 if LIBSHARED_ELL
 src_libshared_ell_la_SOURCES = $(shared_sources) \
@@ -255,12 +261,13 @@ src_libshared_ell_la_SOURCES = $(shared_sources) \
 				src/shared/timeout-ell.c \
 				src/shared/mainloop.h \
 				src/shared/mainloop-ell.c
+src_libshared_ell_la_LDFLAGS = $(AM_LDFLAGS)
+src_libshared_ell_la_CFLAGS = $(AM_CFLAGS)
 endif
 
 attrib_sources = attrib/att.h attrib/att-database.h attrib/att.c \
 		attrib/gatt.h attrib/gatt.c \
-		attrib/gattrib.h attrib/gattrib.c \
-		attrib/gatt-service.h attrib/gatt-service.c
+		attrib/gattrib.h attrib/gattrib.c
 
 btio_sources = btio/btio.h btio/btio.c
 
@@ -297,13 +304,11 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			src/rfkill.c src/btd.h src/sdpd.h \
 			src/sdpd-server.c src/sdpd-request.c \
 			src/sdpd-service.c src/sdpd-database.c \
-			src/attrib-server.h src/attrib-server.c \
 			src/gatt-database.h src/gatt-database.c \
 			src/sdp-xml.h src/sdp-xml.c \
 			src/sdp-client.h src/sdp-client.c \
 			src/textfile.h src/textfile.c \
 			src/uuid-helper.h src/uuid-helper.c \
-			src/uinput.h \
 			src/plugin.h src/plugin.c \
 			src/storage.h src/storage.c \
 			src/advertising.h src/advertising.c \
@@ -501,23 +506,23 @@ unit_tests += unit/test-gobex-header unit/test-gobex-packet unit/test-gobex \
 
 unit_test_gobex_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex.c
-unit_test_gobex_LDADD = $(GLIB_LIBS)
+unit_test_gobex_LDADD = src/libshared-glib.la $(GLIB_LIBS)
 
 unit_test_gobex_packet_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex-packet.c
-unit_test_gobex_packet_LDADD = $(GLIB_LIBS)
+unit_test_gobex_packet_LDADD = src/libshared-glib.la $(GLIB_LIBS)
 
 unit_test_gobex_header_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex-header.c
-unit_test_gobex_header_LDADD = $(GLIB_LIBS)
+unit_test_gobex_header_LDADD = src/libshared-glib.la $(GLIB_LIBS)
 
 unit_test_gobex_transfer_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex-transfer.c
-unit_test_gobex_transfer_LDADD = $(GLIB_LIBS)
+unit_test_gobex_transfer_LDADD = src/libshared-glib.la $(GLIB_LIBS)
 
 unit_test_gobex_apparam_SOURCES = $(gobex_sources) unit/util.c unit/util.h \
 						unit/test-gobex-apparam.c
-unit_test_gobex_apparam_LDADD = $(GLIB_LIBS)
+unit_test_gobex_apparam_LDADD = src/libshared-glib.la $(GLIB_LIBS)
 endif
 
 unit_tests += unit/test-lib
@@ -617,6 +622,9 @@ MAINTAINERCLEANFILES = Makefile.in \
 
 SED_PROCESS = $(AM_V_GEN)$(MKDIR_P) $(dir $@) && \
 		$(SED) -e 's,@pkglibexecdir\@,$(pkglibexecdir),g' \
+		       -e 's,@libexecdir\@,$(libexecdir),g' \
+		       -e 's,@statedir\@,$(statedir),g' \
+		       -e 's,@confdir\@,$(confdir),g' \
 		< $< > $@
 
 if RUN_RST2MAN

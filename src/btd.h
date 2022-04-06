@@ -103,6 +103,8 @@ struct btd_opts {
 	uint32_t	discovto;
 	uint32_t	tmpto;
 	uint8_t		privacy;
+	bool		device_privacy;
+	uint32_t	name_request_retry_delay;
 
 	struct btd_defaults defaults;
 
@@ -119,6 +121,7 @@ struct btd_opts {
 	uint16_t	did_version;
 
 	bt_mode_t	mode;
+	uint16_t	max_adapters;
 	bt_gatt_cache_t gatt_cache;
 	uint16_t	gatt_mtu;
 	uint8_t		gatt_channels;

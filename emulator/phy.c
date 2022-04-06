@@ -173,8 +173,13 @@ struct bt_phy *bt_phy_new(void)
 	mainloop_add_fd(phy->rx_fd, EPOLLIN, phy_rx_callback, phy, NULL);
 
 	if (!get_random_bytes(&phy->id, sizeof(phy->id))) {
-		srandom(time(NULL));
-		phy->id = random();
+		if (util_getrandom(&phy->id, sizeof(phy->id), 0) < 0) {
+			mainloop_remove_fd(phy->rx_fd);
+			close(phy->tx_fd);
+			close(phy->rx_fd);
+			free(phy);
+			return NULL;
+		}
 	}
 
 	bt_phy_send(phy, BT_PHY_PKT_NULL, NULL, 0);

@@ -12,8 +12,24 @@ NotifyAccess=main
 #Restart=on-failure
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 LimitNPROC=1
+
+# Filesystem lockdown
 ProtectHome=true
 ProtectSystem=full
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=@statedir@
+ReadOnlyPaths=@confdir@
+
+# Execute Mappings
+MemoryDenyWriteExecute=true
+
+# Privilege escalation
+NoNewPrivileges=true
+
+# Real-time
+RestrictRealtime=true
 
 [Install]
 WantedBy=bluetooth.target

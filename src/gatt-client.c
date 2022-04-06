@@ -883,14 +883,19 @@ static gboolean characteristic_get_mtu(const GDBusPropertyTable *property,
 	uint16_t mtu;
 
 	att = bt_gatt_client_get_att(gatt);
-	if (!att)
-		return FALSE;
-
-	mtu = bt_att_get_mtu(att);
+	mtu = att ? bt_att_get_mtu(att) : BT_ATT_DEFAULT_LE_MTU;
 
 	dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT16, &mtu);
 
 	return TRUE;
+}
+
+static gboolean characteristic_mtu_exists(const GDBusPropertyTable *property,
+								void *data)
+{
+	struct characteristic *chrc = data;
+
+	return chrc->service->client->gatt ? TRUE : FALSE;
 }
 
 static void write_characteristic_cb(struct gatt_db_attribute *attr, int err,
@@ -1666,7 +1671,7 @@ static const GDBusPropertyTable characteristic_properties[] = {
 				characteristic_write_acquired_exists },
 	{ "NotifyAcquired", "b", characteristic_get_notify_acquired, NULL,
 				characteristic_notify_acquired_exists },
-	{ "MTU", "q", characteristic_get_mtu, NULL, NULL },
+	{ "MTU", "q", characteristic_get_mtu, NULL, characteristic_mtu_exists },
 	{ }
 };
 

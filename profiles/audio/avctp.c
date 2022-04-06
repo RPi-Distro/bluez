@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <linux/uinput.h>
 
 #include <glib.h>
 
@@ -38,8 +39,8 @@
 #include "src/device.h"
 #include "src/log.h"
 #include "src/error.h"
-#include "src/uinput.h"
 #include "src/shared/timeout.h"
+#include "src/shared/util.h"
 
 #include "avctp.h"
 #include "avrcp.h"
@@ -302,7 +303,7 @@ static gboolean avctp_passthrough_rsp(struct avctp *session, uint8_t code,
 
 static int send_event(int fd, uint16_t type, uint16_t code, int32_t value)
 {
-	struct uinput_event event;
+	struct input_event event;
 
 	memset(&event, 0, sizeof(event));
 	event.type	= type;
@@ -760,7 +761,7 @@ static void control_req_destroy(void *data)
 						NULL, 0, req->user_data);
 
 done:
-	g_free(req->operands);
+	free(req->operands);
 	g_free(req);
 }
 
@@ -776,7 +777,7 @@ static void browsing_req_destroy(void *data)
 	req->func(session, NULL, 0, req->user_data);
 
 done:
-	g_free(req->operands);
+	free(req->operands);
 	g_free(req);
 }
 
@@ -1156,7 +1157,7 @@ failed:
 static int uinput_create(struct btd_device *device, const char *name,
 			 const char *suffix)
 {
-	struct uinput_dev dev;
+	struct uinput_user_dev dev;
 	int fd, err, i;
 	char src[18];
 
@@ -1177,7 +1178,7 @@ static int uinput_create(struct btd_device *device, const char *name,
 	memset(&dev, 0, sizeof(dev));
 
 	if (name) {
-		strncpy(dev.name, name, UINPUT_MAX_NAME_SIZE);
+		strncpy(dev.name, name, UINPUT_MAX_NAME_SIZE - 1);
 		dev.name[UINPUT_MAX_NAME_SIZE - 1] = '\0';
 	}
 
@@ -1727,7 +1728,7 @@ static int avctp_send_req(struct avctp *session, uint8_t code,
 	req->subunit = subunit;
 	req->op = opcode;
 	req->func = func;
-	req->operands = g_memdup(operands, operand_count);
+	req->operands = util_memdup(operands, operand_count);
 	req->operand_count = operand_count;
 	req->user_data = user_data;
 
@@ -1765,7 +1766,7 @@ int avctp_send_browsing_req(struct avctp *session,
 
 	req = g_new0(struct avctp_browsing_req, 1);
 	req->func = func;
-	req->operands = g_memdup(operands, operand_count);
+	req->operands = util_memdup(operands, operand_count);
 	req->operand_count = operand_count;
 	req->user_data = user_data;
 

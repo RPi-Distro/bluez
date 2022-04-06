@@ -31,6 +31,7 @@
 #endif
 
 #include "src/shared/mainloop.h"
+#include "src/shared/util.h"
 #include "peripheral/efivars.h"
 #include "peripheral/attach.h"
 #include "peripheral/gap.h"
@@ -72,12 +73,13 @@ static void prepare_filesystem(void)
 	if (!is_init)
 		return;
 
-	for (i = 0; mount_table[i].fstype; i++) {
+	for (i = 0; mount_table[i].fstype && mount_table[i].target; i++) {
 		struct stat st;
 
 		if (lstat(mount_table[i].target, &st) < 0) {
 			printf("Creating %s\n", mount_table[i].target);
-			mkdir(mount_table[i].target, 0755);
+			if (mkdir(mount_table[i].target, 0755) < 0)
+				perror("Failed to create dir");
 		}
 
 		printf("Mounting %s to %s\n", mount_table[i].fstype,
@@ -190,11 +192,11 @@ int main(int argc, char *argv[])
 							addr, 6) < 0) {
 			printf("Generating new persistent static address\n");
 
-			addr[0] = rand();
-			addr[1] = rand();
-			addr[2] = rand();
-			addr[3] = 0x34;
-			addr[4] = 0x12;
+			if (util_getrandom(addr, sizeof(addr), 0) < 0) {
+				perror("Failed to get random static address");
+				return EXIT_FAILURE;
+			}
+			/* Overwrite the MSB to make it a static address */
 			addr[5] = 0xc0;
 
 			efivars_write("BluetoothStaticAddress",

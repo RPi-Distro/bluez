@@ -665,7 +665,8 @@ struct mgmt_rp_get_device_flags {
 	uint32_t current_flags;
 } __packed;
 
-#define DEVICE_FLAG_REMOTE_WAKEUP	(1 << 0)
+#define DEVICE_FLAG_REMOTE_WAKEUP	BIT(0)
+#define DEVICE_FLAG_DEVICE_PRIVACY	BIT(1)
 
 #define MGMT_OP_SET_DEVICE_FLAGS	0x0050
 #define MGMT_SET_DEVICE_FLAGS_SIZE	11
@@ -853,9 +854,10 @@ struct mgmt_ev_auth_failed {
 	uint8_t status;
 } __packed;
 
-#define MGMT_DEV_FOUND_CONFIRM_NAME	0x01
-#define MGMT_DEV_FOUND_LEGACY_PAIRING	0x02
-#define MGMT_DEV_FOUND_NOT_CONNECTABLE	0x04
+#define MGMT_DEV_FOUND_CONFIRM_NAME		0x01
+#define MGMT_DEV_FOUND_LEGACY_PAIRING		0x02
+#define MGMT_DEV_FOUND_NOT_CONNECTABLE		0x04
+#define MGMT_DEV_FOUND_NAME_REQUEST_FAILED	0x10
 
 #define MGMT_EV_DEVICE_FOUND		0x0012
 struct mgmt_ev_device_found {
@@ -1014,6 +1016,22 @@ struct mgmt_ev_controller_resume {
 	uint8_t wake_reason;
 } __packed;
 
+#define MGMT_EV_ADV_MONITOR_DEVICE_FOUND	0x002f
+struct mgmt_ev_adv_monitor_device_found {
+	uint16_t monitor_handle;
+	struct mgmt_addr_info addr;
+	int8_t rssi;
+	uint32_t flags;
+	uint16_t ad_data_len;
+	uint8_t ad_data[0];
+} __packed;
+
+#define MGMT_EV_ADV_MONITOR_DEVICE_LOST		0x0030
+struct mgmt_ev_adv_monitor_device_lost {
+	uint16_t monitor_handle;
+	struct mgmt_addr_info addr;
+} __packed;
+
 static const char *mgmt_op[] = {
 	"<0x0000>",
 	"Read Version",
@@ -1152,6 +1170,8 @@ static const char *mgmt_ev[] = {
 	"Advertisement Monitor Removed",
 	"Controller Suspend",
 	"Controller Resume",
+	"Advertisement Monitor Device Found",		/* 0x002f */
+	"Advertisement Monitor Device Lost",
 };
 
 static const char *mgmt_status[] = {

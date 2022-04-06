@@ -26,14 +26,13 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <linux/uinput.h>
 
 #include <glib.h>
 
 #include "lib/sdp.h"
-
+#include "src/shared/util.h"
 #include "src/log.h"
-#include "src/uinput.h"
-
 #include "avctp.h"
 
 /*
@@ -259,7 +258,7 @@ static gboolean avctp_passthrough_rsp(struct avctp *session, uint8_t code,
 
 static int send_event(int fd, uint16_t type, uint16_t code, int32_t value)
 {
-	struct uinput_event event;
+	struct input_event event;
 	int err;
 
 	memset(&event, 0, sizeof(event));
@@ -1012,7 +1011,7 @@ failed:
 
 static int uinput_create(const char *name)
 {
-	struct uinput_dev dev;
+	struct uinput_user_dev dev;
 	int fd, err, i;
 
 	fd = open("/dev/uinput", O_RDWR);
@@ -1179,7 +1178,7 @@ static int avctp_send_req(struct avctp *session, uint8_t code, uint8_t subunit,
 
 	for (i = 0; i < iov_cnt; i++) {
 		pdu[i].iov_len = iov[i].iov_len;
-		pdu[i].iov_base = g_memdup(iov[i].iov_base, iov[i].iov_len);
+		pdu[i].iov_base = util_memdup(iov[i].iov_base, iov[i].iov_len);
 	}
 
 	req = g_new0(struct avctp_control_req, 1);
@@ -1220,7 +1219,7 @@ int avctp_send_browsing_req(struct avctp *session,
 
 	for (i = 0; i < iov_cnt; i++) {
 		pdu[i].iov_len = iov[i].iov_len;
-		pdu[i].iov_base = g_memdup(iov[i].iov_base, iov[i].iov_len);
+		pdu[i].iov_base = util_memdup(iov[i].iov_base, iov[i].iov_len);
 	}
 
 	req = g_new0(struct avctp_browsing_req, 1);

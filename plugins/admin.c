@@ -247,6 +247,7 @@ failed:
 static void store_policy_settings(struct btd_admin_policy *admin_policy)
 {
 	GKeyFile *key_file = NULL;
+	GError *gerr = NULL;
 	char *filename = ADMIN_POLICY_STORAGE;
 	char *key_file_data = NULL;
 	char **uuid_strs = NULL;
@@ -274,7 +275,12 @@ static void store_policy_settings(struct btd_admin_policy *admin_policy)
 	}
 
 	key_file_data = g_key_file_to_data(key_file, &length, NULL);
-	g_file_set_contents(ADMIN_POLICY_STORAGE, key_file_data, length, NULL);
+	if (!g_file_set_contents(ADMIN_POLICY_STORAGE, key_file_data, length,
+								&gerr)) {
+		error("Unable set contents for %s: (%s)", ADMIN_POLICY_STORAGE,
+								gerr->message);
+		g_error_free(gerr);
+	}
 
 	g_free(key_file_data);
 	free_uuid_strings(uuid_strs, num_uuids);
@@ -335,6 +341,7 @@ failed:
 static void load_policy_settings(struct btd_admin_policy *admin_policy)
 {
 	GKeyFile *key_file;
+	GError *gerr = NULL;
 	char *filename = ADMIN_POLICY_STORAGE;
 	struct stat st;
 
@@ -343,7 +350,11 @@ static void load_policy_settings(struct btd_admin_policy *admin_policy)
 
 	key_file = g_key_file_new();
 
-	g_key_file_load_from_file(key_file, filename, 0, NULL);
+	if (!g_key_file_load_from_file(key_file, filename, 0, &gerr)) {
+		error("Unable to load key file from %s: (%s)", filename,
+								gerr->message);
+		g_error_free(gerr);
+	}
 
 	key_file_load_service_allowlist(key_file, admin_policy);
 
@@ -485,6 +496,9 @@ static int admin_policy_adapter_probe(struct btd_adapter *adapter)
 {
 	const char *adapter_path;
 
+	if (!devices)
+		devices = queue_new();
+
 	if (policy_data) {
 		btd_warn(policy_data->adapter_id,
 						"Policy data already exists");
@@ -612,7 +626,6 @@ static int admin_init(void)
 	DBG("");
 
 	dbus_conn = btd_get_dbus_connection();
-	devices = queue_new();
 
 	return btd_register_adapter_driver(&admin_policy_driver);
 }

@@ -503,11 +503,17 @@ static void send_adv_pkt(struct bt_le *hci, uint8_t channel)
 
 static unsigned int get_adv_delay(void)
 {
+	unsigned int val;
+
 	/* The advertising delay is a pseudo-random value with a range
 	 * of 0 ms to 10 ms generated for each advertising event.
 	 */
-	srand(time(NULL));
-	return (rand() % 11);
+	if (util_getrandom(&val, sizeof(val), 0) < 0) {
+		/* If it fails to get the random number, use a static value */
+		val = 5;
+	}
+
+	return (val % 11);
 }
 
 static void adv_timeout_callback(int id, void *user_data)

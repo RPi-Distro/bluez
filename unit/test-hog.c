@@ -59,32 +59,25 @@ struct context {
 #define raw_pdu(args...)					\
 {								\
 	.valid = true,						\
-	.data = g_memdup(data(args), sizeof(data(args))),	\
+	.data = util_memdup(data(args), sizeof(data(args))),	\
 	.size = sizeof(data(args)),				\
 }
 
-#define false_pdu()	\
-{						\
-		.valid = false, \
+#define false_pdu()						\
+{								\
+		.valid = false,					\
 }
 
-#define define_test(name, function, args...)      \
-	do {    \
-		const struct test_pdu pdus[] = {			\
-			args, { }					\
-		};		\
-		static struct test_data data;      \
-		data.test_name = g_strdup(name);   \
-		data.pdu_list = g_memdup(pdus, sizeof(pdus));		\
-		tester_add(name, &data, NULL, function, NULL);     \
+#define define_test(name, function, args...)			\
+	do {							\
+		const struct test_pdu pdus[] = {		\
+			args, { }				\
+		};						\
+		static struct test_data data;			\
+		data.test_name = g_strdup(name);		\
+		data.pdu_list = util_memdup(pdus, sizeof(pdus));\
+		tester_add(name, &data, NULL, function, NULL);	\
 	} while (0)
-
-static void test_debug(const char *str, void *user_data)
-{
-	const char *prefix = user_data;
-
-	tester_debug("%s%s", prefix, str);
-}
 
 static gboolean context_quit(gpointer user_data)
 {
@@ -117,7 +110,7 @@ static gboolean send_pdu(gpointer user_data)
 
 	len = write(context->fd, pdu->data, pdu->size);
 
-	util_hexdump('<', pdu->data, len, test_debug, "hog: ");
+	tester_monitor('<', 0x0004, 0x0000, pdu->data, len);
 
 	g_assert_cmpint(len, ==, pdu->size);
 
@@ -152,7 +145,7 @@ static gboolean test_handler(GIOChannel *channel, GIOCondition cond,
 
 	g_assert(len > 0);
 
-	util_hexdump('>', buf, len, test_debug, "hog: ");
+	tester_monitor('>', 0x0004, 0x0000, buf, len);
 
 	g_assert_cmpint(len, ==, pdu->size);
 
