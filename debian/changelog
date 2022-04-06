@@ -1,3 +1,10 @@
+bluez (5.64-1) UNRELEASED; urgency=medium
+
+  * Update to 5.64.
+    Fixed CVE-2022-0204 (Closes: #1003712)
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Thu, 07 Apr 2022 05:20:32 +0900
+
 bluez (5.62-2) unstable; urgency=medium
 
   * Add debian/patches/sdpd-Fix-leaking-buffers-stored-in-cstates-cache.patch
