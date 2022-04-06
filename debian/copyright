@@ -231,7 +231,6 @@ Files: gdbus/client.c
  src/storage.h
  src/textfile.c
  src/textfile.h
- src/uinput.h
  src/uuid-helper.c
  src/uuid-helper.h
  tools/bdaddr.c
@@ -463,8 +462,6 @@ Files: android/avctp.h
  android/avdtp.h
  attrib/att.c
  attrib/att.h
- attrib/gatt-service.c
- attrib/gatt-service.h
  attrib/gatt.c
  attrib/gatt.h
  attrib/gattrib.c
@@ -498,8 +495,6 @@ Files: android/avctp.h
  src/adapter.h
  src/agent.c
  src/agent.h
- src/attrib-server.c
- src/attrib-server.h
  src/dbus-common.h
  src/device.c
  src/device.h
@@ -1040,10 +1035,6 @@ License: GPL-2+
 
 Files: profiles/deviceinfo/dis.c
 Copyright: 2012, Texas Instruments, Inc.
-License: GPL-2+
-
-Files: profiles/input/uhid_copy.h
-Copyright: 2012, David Herrmann
 License: GPL-2+
 
 Files: monitor/a2dp.c
