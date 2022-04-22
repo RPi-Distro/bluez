@@ -1,3 +1,10 @@
+bluez (5.64-2) unstable; urgency=medium
+
+  * Create /var/lib/bluetooth (Closes: #1009987)
+    Add d/bluez.prerm d/bluez.preinst.
+
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Fri, 22 Apr 2022 21:18:22 +0900
+
 bluez (5.64-1) unstable; urgency=medium
 
   * Update to 5.64.
