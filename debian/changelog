@@ -1,8 +1,16 @@
 bluez (5.65-1) unstable; urgency=medium
 
   * Update to 5.65.
+  * Update d/rules
+    - Add optimize=+lto.
+  * Refresh d/patches/main.conf.patch.
+  * Add isotest to bluez-test-tools.
+  * Update d/libbluetooth3.symbols (Closes: #1015361)
+  * Add d/upstream/metadata
+  * Update d/control
+    - Bumped Standards-Version to 4.6.1
 
- -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 03 Aug 2022 09:39:31 +0900
+ -- Nobuhiro Iwamatsu <iwamatsu@debian.org>  Wed, 03 Aug 2022 10:57:23 +0900
 
 bluez (5.64-2) unstable; urgency=medium
 
