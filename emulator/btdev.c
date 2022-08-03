@@ -509,6 +509,42 @@ void btdev_set_rl_len(struct btdev *btdev, uint8_t len)
 	btdev->le_rl_len = len;
 }
 
+static void conn_unlink(struct btdev_conn *conn1, struct btdev_conn *conn2)
+{
+	conn1->link = NULL;
+	conn2->link = NULL;
+}
+
+static void conn_remove(void *data)
+{
+	struct btdev_conn *conn = data;
+
+	if (conn->link) {
+		struct btdev_conn *link = conn->link;
+
+		conn_unlink(conn, conn->link);
+		conn_remove(link);
+	}
+
+	queue_remove(conn->dev->conns, conn);
+
+	free(conn->data);
+	free(conn);
+}
+
+static void le_ext_adv_free(void *data)
+{
+	struct le_ext_adv *ext_adv = data;
+
+	/* Remove to queue */
+	queue_remove(ext_adv->dev->le_ext_adv, ext_adv);
+
+	if (ext_adv->id)
+		timeout_remove(ext_adv->id);
+
+	free(ext_adv);
+}
+
 static void btdev_reset(struct btdev *btdev)
 {
 	/* FIXME: include here clearing of all states that should be
@@ -517,12 +553,16 @@ static void btdev_reset(struct btdev *btdev)
 
 	btdev->le_scan_enable		= 0x00;
 	btdev->le_adv_enable		= 0x00;
+	btdev->le_pa_enable		= 0x00;
 
 	al_clear(btdev);
 	rl_clear(btdev);
 
 	btdev->le_al_len = AL_SIZE;
 	btdev->le_rl_len = RL_SIZE;
+
+	queue_remove_all(btdev->conns, NULL, NULL, conn_remove);
+	queue_remove_all(btdev->le_ext_adv, NULL, NULL, le_ext_adv_free);
 }
 
 static int cmd_reset(struct btdev *dev, const void *data, uint8_t len)
@@ -672,29 +712,6 @@ static bool match_handle(const void *data, const void *match_data)
 	uint16_t handle = PTR_TO_UINT(match_data);
 
 	return conn->handle == handle;
-}
-
-static void conn_unlink(struct btdev_conn *conn1, struct btdev_conn *conn2)
-{
-	conn1->link = NULL;
-	conn2->link = NULL;
-}
-
-static void conn_remove(void *data)
-{
-	struct btdev_conn *conn = data;
-
-	if (conn->link) {
-		struct btdev_conn *link = conn->link;
-
-		conn_unlink(conn, conn->link);
-		conn_remove(link);
-	}
-
-	queue_remove(conn->dev->conns, conn);
-
-	free(conn->data);
-	free(conn);
 }
 
 static void disconnect_complete(struct btdev *dev, uint16_t handle,
@@ -1139,7 +1156,8 @@ static struct btdev_conn *conn_add_bis(struct btdev *dev, uint16_t handle,
 	return conn;
 }
 
-static struct btdev_conn *find_bis_index(struct btdev *remote, uint8_t index)
+static struct btdev_conn *find_bis_index(const struct btdev *remote,
+							uint8_t index)
 {
 	struct btdev_conn *conn;
 	const struct queue_entry *entry;
@@ -1365,6 +1383,11 @@ static void auth_complete(struct btdev_conn *conn, uint8_t status)
 	ev.status = status;
 
 	send_event(conn->dev, BT_HCI_EVT_AUTH_COMPLETE, &ev, sizeof(ev));
+
+	conn->dev->ssp_status = 0;
+	conn->dev->ssp_auth_complete = false;
+	conn->link->dev->ssp_status = 0;
+	conn->link->dev->ssp_auth_complete = false;
 }
 
 static int cmd_link_key_reply_complete(struct btdev *dev, const void *data,
@@ -4621,19 +4644,6 @@ static struct le_ext_adv *le_ext_adv_new(struct btdev *btdev, uint8_t handle)
 	return ext_adv;
 }
 
-static void le_ext_adv_free(void *data)
-{
-	struct le_ext_adv *ext_adv = data;
-
-	/* Remove to queue */
-	queue_remove(ext_adv->dev->le_ext_adv, ext_adv);
-
-	if (ext_adv->id)
-		timeout_remove(ext_adv->id);
-
-	free(ext_adv);
-}
-
 static int cmd_set_adv_rand_addr(struct btdev *dev, const void *data,
 							uint8_t len)
 {
@@ -5105,6 +5115,40 @@ static int cmd_set_pa_data(struct btdev *dev, const void *data,
 	return 0;
 }
 
+static void send_biginfo(struct btdev *dev, const struct btdev *remote)
+{
+	struct bt_hci_evt_le_big_info_adv_report ev;
+	const struct btdev_conn *conn;
+	struct bt_hci_bis *bis;
+
+	conn = find_bis_index(remote, 0);
+	if (!conn)
+		return;
+
+	bis = conn->data;
+
+	memset(&ev, 0, sizeof(ev));
+	ev.sync_handle = cpu_to_le16(dev->le_pa_sync_handle);
+	ev.num_bis = 1;
+
+	while (find_bis_index(remote, ev.num_bis))
+		ev.num_bis++;
+
+	ev.nse = 0x01;
+	ev.iso_interval = bis->latency / 1.25;
+	ev.bn = 0x01;
+	ev.pto = 0x00;
+	ev.irc = 0x01;
+	ev.max_pdu = bis->sdu;
+	memcpy(ev.sdu_interval, bis->sdu_interval, sizeof(ev.sdu_interval));
+	ev.max_sdu = bis->sdu;
+	ev.phy = bis->phy;
+	ev.framing = bis->framing;
+	ev.encryption = bis->encryption;
+
+	le_meta_event(dev, BT_HCI_EVT_LE_BIG_INFO_ADV_REPORT, &ev, sizeof(ev));
+}
+
 static void send_pa(struct btdev *dev, const struct btdev *remote,
 						uint8_t offset)
 {
@@ -5135,7 +5179,10 @@ static void send_pa(struct btdev *dev, const struct btdev *remote,
 	if (pdu.ev.data_status == 0x01) {
 		offset += pdu.ev.data_len;
 		send_pa(dev, remote, offset);
+		return;
 	}
+
+	send_biginfo(dev, remote);
 }
 
 static void le_pa_sync_estabilished(struct btdev *dev, struct btdev *remote,
@@ -5718,11 +5765,63 @@ static int cmd_set_cig_params(struct btdev *dev, const void *data,
 		uint16_t handle[CIS_SIZE];
 	} __attribute__ ((packed)) rsp;
 	int i = 0;
+	uint32_t interval;
+	uint16_t latency;
 
 	memset(&rsp, 0, sizeof(rsp));
 
 	if (cmd->num_cis > ARRAY_SIZE(dev->le_cig.cis)) {
 		rsp.params.status = BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
+		goto done;
+	}
+
+	if (cmd->cig_id > 0xef) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	interval = get_le24(cmd->c_interval);
+	if (interval < 0x0000ff || interval > 0x0fffff) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	interval = get_le24(cmd->p_interval);
+	if (interval < 0x0000ff || interval > 0x0fffff) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	if (cmd->sca > 0x07) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	if (cmd->packing > 0x01) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	if (cmd->framing > 0x01) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	latency = cpu_to_le16(cmd->c_latency);
+	if (latency < 0x0005 || latency > 0x0fa0) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	latency = cpu_to_le16(cmd->p_latency);
+	if (latency < 0x0005 || latency > 0x0fa0) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+		goto done;
+	}
+
+	if (dev->le_cig.params.cig_id != 0xff &&
+				dev->le_cig.params.cig_id != cmd->cig_id) {
+		rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
 		goto done;
 	}
 
@@ -5732,8 +5831,25 @@ static int cmd_set_cig_params(struct btdev *dev, const void *data,
 	rsp.params.cig_id = cmd->cig_id;
 
 	for (i = 0; i < cmd->num_cis; i++) {
+		struct btdev_conn *iso;
+
 		rsp.params.num_handles++;
 		rsp.handle[i] = cpu_to_le16(ISO_HANDLE + i);
+
+		/* BLUETOOTH CORE SPECIFICATION Version 5.3 | Vol 4, Part E
+		 * page 2553
+		 *
+		 * If the Host issues this command when the CIG is not in the
+		 * configurable state, the Controller shall return the error
+		 * code Command Disallowed (0x0C).
+		 */
+		iso = queue_find(dev->conns, match_handle,
+				UINT_TO_PTR(cpu_to_le16(rsp.handle[i])));
+		if (iso) {
+			rsp.params.status = BT_HCI_ERR_INVALID_PARAMETERS;
+			i = 0;
+			goto done;
+		}
 	}
 
 done:
@@ -5765,7 +5881,7 @@ static void le_cis_estabilished(struct btdev *dev, struct btdev_conn *conn,
 	memset(&evt, 0, sizeof(evt));
 
 	evt.status = status;
-	evt.conn_handle = cpu_to_le16(conn->handle);
+	evt.conn_handle = conn ? cpu_to_le16(conn->handle) : 0x0000;
 
 	if (!evt.status) {
 		struct btdev *remote = conn->link->dev;
@@ -5775,10 +5891,10 @@ static void le_cis_estabilished(struct btdev *dev, struct btdev_conn *conn,
 				sizeof(remote->le_cig.params.c_interval));
 		memcpy(evt.cis_sync_delay, remote->le_cig.params.p_interval,
 				sizeof(remote->le_cig.params.p_interval));
-		memcpy(evt.c_latency, &remote->le_cig.params.c_latency,
-				sizeof(remote->le_cig.params.c_latency));
-		memcpy(evt.p_latency, &remote->le_cig.params.p_latency,
-				sizeof(remote->le_cig.params.p_latency));
+		memcpy(evt.c_latency, &remote->le_cig.params.c_interval,
+				sizeof(remote->le_cig.params.c_interval));
+		memcpy(evt.p_latency, &remote->le_cig.params.p_interval,
+				sizeof(remote->le_cig.params.p_interval));
 		evt.c_phy = remote->le_cig.cis[0].c_phy;
 		evt.p_phy = remote->le_cig.cis[0].p_phy;
 		evt.nse = 0x01;
@@ -5849,8 +5965,13 @@ static int cmd_remove_cig(struct btdev *dev, const void *data, uint8_t len)
 	memset(&dev->le_cig, 0, sizeof(dev->le_cig));
 	memset(&rsp, 0, sizeof(rsp));
 
-	rsp.status = BT_HCI_ERR_SUCCESS;
 	rsp.cig_id = cmd->cig_id;
+
+	if (dev->le_cig.params.cig_id == cmd->cig_id)
+		rsp.status = BT_HCI_ERR_SUCCESS;
+	else
+		rsp.status = BT_HCI_ERR_UNKNOWN_CONN_ID;
+
 	cmd_complete(dev, BT_HCI_CMD_LE_REMOVE_CIG, &rsp, sizeof(rsp));
 
 	return 0;
@@ -5975,15 +6096,19 @@ static int cmd_big_create_sync(struct btdev *dev, const void *data, uint8_t len)
 	/* If the Sync_Handle does not exist, the Controller shall return the
 	 * error code Unknown Advertising Identifier (0x42).
 	 */
-	if (dev->le_pa_sync_handle != le16_to_cpu(cmd->sync_handle))
+	if (dev->le_pa_sync_handle != le16_to_cpu(cmd->sync_handle)) {
 		status = BT_HCI_ERR_UNKNOWN_ADVERTISING_ID;
+		goto done;
+	}
 
 	/* If the Host sends this command with a BIG_Handle that is already
 	 * allocated, the Controller shall return the error code Command
 	 * Disallowed (0x0C).
 	 */
-	if (dev->big_handle == cmd->handle)
+	if (dev->big_handle == cmd->handle) {
 		status = BT_HCI_ERR_COMMAND_DISALLOWED;
+		goto done;
+	}
 
 	/* If the Num_BIS parameter is greater than the total number of BISes
 	 * in the BIG, the Controller shall return the error code Unsupported
@@ -5992,12 +6117,10 @@ static int cmd_big_create_sync(struct btdev *dev, const void *data, uint8_t len)
 	if (cmd->num_bis != len - sizeof(*cmd))
 		status = BT_HCI_ERR_UNSUPPORTED_FEATURE;
 
-	if (status)
-		return status;
-
+done:
 	cmd_status(dev, status, BT_HCI_CMD_LE_BIG_CREATE_SYNC);
 
-	return status;
+	return 0;
 }
 
 static int cmd_big_create_sync_complete(struct btdev *dev, const void *data,
@@ -6045,7 +6168,7 @@ static int cmd_big_create_sync_complete(struct btdev *dev, const void *data,
 	pdu.ev.pto = 0x00;
 	pdu.ev.irc = 0x01;
 	pdu.ev.max_pdu = bis->sdu;
-	pdu.ev.interval = bis->latency;
+	pdu.ev.interval = bis->latency / 1.25;
 	pdu.ev.num_bis = cmd->num_bis;
 
 	le_meta_event(dev, BT_HCI_EVT_LE_BIG_SYNC_ESTABILISHED, &pdu,
@@ -6777,6 +6900,8 @@ struct btdev *btdev_create(enum btdev_type type, uint16_t id)
 
 	btdev->iso_mtu = 251;
 	btdev->iso_max_pkt = 1;
+	btdev->le_cig.params.cig_id = 0xff;
+	btdev->big_handle = 0xff;
 
 	btdev->country_code = 0x00;
 

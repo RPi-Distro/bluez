@@ -3517,6 +3517,34 @@ struct bt_hci_evt_le_per_sync_established {
 	uint8_t  clock_accuracy;
 } __attribute__ ((packed));
 
+struct bt_hci_le_pa_base_codec {
+	uint8_t  id;
+	uint16_t cid;
+	uint16_t vid;
+} __attribute__ ((packed));
+
+struct bt_hci_lv_data {
+	uint8_t  len;
+	uint8_t  data[];
+} __attribute__ ((packed));
+
+struct bt_hci_le_pa_base_bis {
+	uint8_t  index;
+	struct bt_hci_lv_data codec_cfg[];
+} __attribute__ ((packed));
+
+struct bt_hci_le_pa_base_subgroup {
+	uint8_t  num_bis;
+	struct bt_hci_le_pa_base_codec codec;
+	uint8_t  data[];
+} __attribute__ ((packed));
+
+struct bt_hci_le_pa_base_data {
+	uint8_t  pd[3];
+	uint8_t  num_subgroups;
+	struct bt_hci_le_pa_base_subgroup subgroups[];
+} __attribute__ ((packed));
+
 #define BT_HCI_EVT_LE_PA_REPORT			0x0f
 struct bt_hci_le_pa_report {
 	uint16_t handle;
@@ -3621,8 +3649,8 @@ struct bt_hci_evt_le_big_complete {
 
 #define BT_HCI_EVT_LE_BIG_TERMINATE		0x1c
 struct bt_hci_evt_le_big_terminate {
-	uint8_t  reason;
 	uint8_t  handle;
+	uint8_t  reason;
 } __attribute__ ((packed));
 
 #define BT_HCI_EVT_LE_BIG_SYNC_ESTABILISHED	0x1d
@@ -3651,6 +3679,23 @@ struct bt_hci_evt_le_req_peer_sca_complete {
 	uint8_t  status;
 	uint16_t handle;
 	uint8_t  sca;
+} __attribute__ ((packed));
+
+#define BT_HCI_EVT_LE_BIG_INFO_ADV_REPORT	0x22
+struct bt_hci_evt_le_big_info_adv_report {
+	uint16_t sync_handle;
+	uint8_t  num_bis;
+	uint8_t  nse;
+	uint16_t iso_interval;
+	uint8_t  bn;
+	uint8_t  pto;
+	uint8_t  irc;
+	uint16_t max_pdu;
+	uint8_t  sdu_interval[3];
+	uint16_t max_sdu;
+	uint8_t  phy;
+	uint8_t  framing;
+	uint8_t  encryption;
 } __attribute__ ((packed));
 
 #define BT_HCI_ERR_SUCCESS			0x00

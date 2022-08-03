@@ -69,7 +69,7 @@ lib_headers = lib/bluetooth.h lib/hci.h lib/hci_lib.h \
 		lib/sco.h lib/l2cap.h lib/sdp.h lib/sdp_lib.h \
 		lib/rfcomm.h lib/bnep.h lib/cmtp.h lib/hidp.h
 
-extra_headers = lib/mgmt.h lib/uuid.h lib/a2mp.h lib/amp.h
+extra_headers = lib/mgmt.h lib/uuid.h lib/a2mp.h lib/amp.h lib/iso.h
 extra_sources = lib/uuid.c
 
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
@@ -82,7 +82,7 @@ pkginclude_HEADERS += $(lib_headers)
 lib_LTLIBRARIES += lib/libbluetooth.la
 
 lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 22:6:19
+lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 22:7:19
 lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 endif
 
@@ -322,7 +322,8 @@ src_bluetoothd_SOURCES = $(builtin_sources) \
 			src/dbus-common.c src/dbus-common.h \
 			src/eir.h src/eir.c \
 			src/adv_monitor.h src/adv_monitor.c \
-			src/battery.h src/battery.c
+			src/battery.h src/battery.c \
+			src/settings.h src/settings.c
 src_bluetoothd_LDADD = lib/libbluetooth-internal.la \
 			gdbus/libgdbus-internal.la \
 			src/libshared-glib.la \
