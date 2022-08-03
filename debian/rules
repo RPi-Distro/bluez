@@ -2,7 +2,7 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
 CONFIGURE_FLAGS := \
 	--disable-silent-rules \
 	--libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
