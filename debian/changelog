@@ -1,3 +1,12 @@
+bluez (5.55-3.1+rpt1) bullseye; urgency=medium
+
+  [ Phil Elwell ]
+  * bdaddr: Cypress (305) devices behave as Broadcom devices
+  * Add avdtp_set_priority
+  * Merge in patches to hciattach for Raspberry Pi
+
+ -- Serge Schneider <serge@raspberrypi.com>  Tue, 07 Sep 2021 15:40:21 +0100
+
 bluez (5.55-3.1) unstable; urgency=high
 
   * Non-maintainer upload.

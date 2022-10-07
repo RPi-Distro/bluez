@@ -13,3 +13,6 @@ headers-use-releative-symlinks.patch
 main-Don-t-warn-for-unset-config-option.patch
 shared-gatt-server-Fix-not-properly-checking-for-sec.patch
 gatt-Fix-potential-buffer-out-of-bound.patch
+raspberry-pi-mods.patch
+Add-avdtp_set_priority.patch
+0001-bdaddr-Cypress-305-devices-behave-as-Broadcom-device.patch

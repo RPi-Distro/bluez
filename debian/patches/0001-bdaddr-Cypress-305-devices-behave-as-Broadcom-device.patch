@@ -1,0 +1,21 @@
+From 777bd31f214ace320fe8f9d66432ca5e5dd824be Mon Sep 17 00:00:00 2001
+From: Phil Elwell <phil@raspberrypi.com>
+Date: Fri, 3 Jul 2020 14:39:15 +0100
+Subject: [PATCH 7/7] bdaddr: Cypress (305) devices behave as Broadcom devices
+
+---
+ tools/bdaddr.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+Index: bluez-5.55/tools/bdaddr.c
+===================================================================
+--- bluez-5.55.orig/tools/bdaddr.c
++++ bluez-5.55/tools/bdaddr.c
+@@ -316,6 +316,7 @@ static struct {
+ 	{ 48,		st_write_bd_addr,	generic_reset_device	},
+ 	{ 57,		ericsson_write_bd_addr,	generic_reset_device	},
+ 	{ 72,		mrvl_write_bd_addr,	generic_reset_device	},
++	{ 305,		bcm_write_bd_addr,	generic_reset_device	},
+ 	{ 65535,	NULL,			NULL			},
+ };
+ 

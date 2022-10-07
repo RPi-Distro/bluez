@@ -1,0 +1,127 @@
+From 16e8f09a7e645df9077860a743851edf24759bdb Mon Sep 17 00:00:00 2001
+From: Phil Elwell <phil@raspberrypi.org>
+Date: Thu, 13 Jul 2017 09:51:52 +0100
+Subject: [PATCH] Add avdtp_set_priority
+
+---
+ profiles/audio/a2dp.c  |  8 ++++++++
+ profiles/audio/avdtp.c | 47 +++++++++++++++++++++++++++++++++++++++++++++++
+ profiles/audio/avdtp.h | 13 +++++++++++++
+ 3 files changed, 68 insertions(+)
+
+Index: bluez-5.55/profiles/audio/a2dp.c
+===================================================================
+--- bluez-5.55.orig/profiles/audio/a2dp.c
++++ bluez-5.55/profiles/audio/a2dp.c
+@@ -1034,6 +1034,10 @@ static void start_cfm(struct avdtp *sess
+ 
+ 	a2dp_sep->starting = FALSE;
+ 
++	avdtp_set_priority(session, CONN_PRIO_AVDTP,
++			   (a2dp_sep->type == AVDTP_SEP_TYPE_SINK) ?
++			   CONN_DIR_SINK : CONN_DIR_SOURCE);
++
+ 	setup = find_setup_by_session(session);
+ 	if (!setup)
+ 		return;
+@@ -1110,6 +1114,10 @@ static void suspend_cfm(struct avdtp *se
+ 
+ 	a2dp_sep->suspending = FALSE;
+ 
++	avdtp_set_priority(session, CONN_PRIO_NORMAL,
++			   (a2dp_sep->type == AVDTP_SEP_TYPE_SINK) ?
++			   CONN_DIR_SINK : CONN_DIR_SOURCE);
++
+ 	setup = find_setup_by_session(session);
+ 	if (!setup)
+ 		return;
+Index: bluez-5.55/profiles/audio/avdtp.c
+===================================================================
+--- bluez-5.55.orig/profiles/audio/avdtp.c
++++ bluez-5.55/profiles/audio/avdtp.c
+@@ -37,6 +37,8 @@
+ #include <glib.h>
+ 
+ #include "lib/bluetooth.h"
++#include "lib/hci.h"
++#include "lib/hci_lib.h"
+ #include "lib/sdp.h"
+ #include "lib/sdp_lib.h"
+ #include "lib/uuid.h"
+@@ -3810,3 +3812,48 @@ gboolean avdtp_remove_state_cb(unsigned
+ 
+ 	return FALSE;
+ }
++
++void avdtp_set_priority(struct avdtp *session, conn_prio_t prio, conn_dir_t dir)
++{
++	uint16_t handle;
++	GError *gerr = NULL;
++
++	if (bt_io_get(session->io, &gerr, BT_IO_OPT_HANDLE, &handle, BT_IO_OPT_INVALID)) {
++		struct write_connection_prio_rp {
++			uint16_t handle;
++			char prio;
++			char dir;
++		} rp;
++		struct hci_request rq;
++		struct hci_version ver;
++		int dd;
++		int hdev = 0; // XXX
++		int ret;
++
++		dd = hci_open_dev(hdev);
++		if (dd < 0) {
++		    error("Can't open device hci%d: %s (%d)\n",
++			  hdev, strerror(errno), errno);
++		    exit(1);
++		}
++
++		ret = hci_read_local_version(dd, &ver, 1000);
++		if (ret == 0 && ver.manufacturer == 15) { /* Broadcom */
++		    rp.handle = handle;
++		    rp.prio = prio;
++		    rp.dir = dir;
++
++		    memset(&rq, 0, sizeof(rq));
++		    rq.ogf    = OGF_VENDOR_CMD;
++		    rq.ocf    = 0x11a;
++		    rq.cparam = &rp;
++		    rq.clen   = sizeof(rp);
++
++		    ret = hci_send_req(dd, &rq, 1000);
++		}
++
++		hci_close_dev(dd);
++	} else {
++	    g_error_free(gerr);
++	}
++}
+Index: bluez-5.55/profiles/audio/avdtp.h
+===================================================================
+--- bluez-5.55.orig/profiles/audio/avdtp.h
++++ bluez-5.55/profiles/audio/avdtp.h
+@@ -28,6 +28,18 @@ typedef enum {
+ 	AVDTP_SESSION_STATE_CONNECTED
+ } avdtp_session_state_t;
+ 
++
++typedef enum {
++	CONN_PRIO_NORMAL = 0,
++	CONN_PRIO_AVDTP = 1,
++} conn_prio_t;
++
++
++typedef enum {
++	CONN_DIR_SOURCE = 0,
++	CONN_DIR_SINK = 1,
++} conn_dir_t;
++
+ struct avdtp;
+ struct avdtp_server;
+ struct avdtp_stream;
+@@ -314,3 +326,4 @@ struct avdtp_server *avdtp_get_server(st
+ struct avdtp *avdtp_new(GIOChannel *chan, struct btd_device *device,
+ 							struct queue *lseps);
+ uint16_t avdtp_get_version(struct avdtp *session);
++void avdtp_set_priority(struct avdtp *session, conn_prio_t prio, conn_dir_t dir);
